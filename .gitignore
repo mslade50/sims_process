@@ -214,3 +214,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Credentials and secrets
+credentials.json
+*.json.bak
+ 
+ 

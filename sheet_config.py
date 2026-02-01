@@ -39,6 +39,10 @@ import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+from dotenv import load_dotenv  
+
+# Load environment variables
+load_dotenv() 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION — Update these to match your setup
@@ -81,8 +85,18 @@ def _find_credentials():
 
 def _connect_sheet():
     """Authenticate and return the worksheet."""
-    creds_path = _find_credentials()
-    creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+    # Try environment variable first (GitHub Actions or .env file)
+    creds_json = os.getenv('GOOGLE_CREDS_JSON')
+    
+    if creds_json:
+        # Load credentials from environment variable
+        creds_dict = json.loads(creds_json)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    else:
+        # Fallback to credentials.json file (backwards compatibility)
+        creds_path = _find_credentials()
+        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+    
     client = gspread.authorize(creds)
     spreadsheet = client.open(SHEET_NAME)
     worksheet = spreadsheet.worksheet(TAB_NAME)

@@ -31,7 +31,12 @@ from sim_inputs import (
     tourney, STD_DEV, name_replacements,
 )
 
-API_KEY = "c05ee5fd8f2f3b14baab409bd83c"
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+API_KEY = os.getenv("DATAGOLF_API_KEY")
 MATCHUPS_URL = "https://feeds.datagolf.com/betting-tools/matchups"
 
 NUM_SIMULATIONS = 100_000
@@ -44,8 +49,8 @@ SCORE_CARD_STEP = 0.5         # half-stroke intervals
 MIN_PRED_FOR_CARD = -0.5      # exclude players with pred below this
 
 # Email
-EMAIL_FROM = "mckinleyslade@gmail.com"
-EMAIL_TO = ["mckinleyslade@gmail.com", "mckinley.slade@gmail.com"]
+EMAIL_FROM = os.getenv("EMAIL_USER")
+EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
 
 # Matchup email filter thresholds
 EMAIL_MIN_PRED = 0.75
@@ -647,7 +652,7 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
     
     Non-blocking: prints warning on failure but doesn't crash.
     """
-    password = os.environ.get("GMAIL_APP_PASSWORD")
+    password = os.getenv("EMAIL_PASSWORD")
     if not password:
         print("  ⚠️  GMAIL_APP_PASSWORD not set. Skipping email.")
         return
