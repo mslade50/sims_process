@@ -1,0 +1,67 @@
+name: Run Round Simulation
+
+# When to run this workflow
+on:
+  # Manual trigger with inputs
+  workflow_dispatch:
+    inputs:
+      sim_round:
+        description: 'Round to simulate (1-4)'
+        required: true
+        type: number
+        default: 2
+      expected_avg:
+        description: 'Expected field scoring average (optional, reads from sheet if blank)'
+        required: false
+        type: number
+  
+  # Scheduled runs (optional - uncomment to enable)
+  # schedule:
+  #   - cron: '0 12 * * 4'  # Thursdays at noon UTC (after R1 typically)
+  #   - cron: '0 12 * * 5'  # Fridays at noon UTC (after R2 typically)
+
+jobs:
+  run-simulation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth xlsxwriter
+    
+    - name: Run simulation
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+      run: |
+        if [ -n "${{ github.event.inputs.expected_avg }}" ]; then
+          # CLI mode with manual inputs
+          python round_sim.py --cli --sim-round ${{ github.event.inputs.sim_round }} --expected-avg ${{ github.event.inputs.expected_avg }}
+        elif [ -n "${{ github.event.inputs.sim_round }}" ]; then
+          # CLI mode with just round number
+          python round_sim.py --cli --sim-round ${{ github.event.inputs.sim_round }}
+        else
+          # Sheet mode (default)
+          python round_sim.py
+        fi
+    
+    - name: Upload simulation results
+      uses: actions/upload-artifact@v3
+      if: always()  # Upload even if simulation partially fails
+      with:
+        name: simulation-results
+        path: |
+          **/round_*_sim_*.xlsx
+          **/fair_card_r*.csv
+        retention-days: 30

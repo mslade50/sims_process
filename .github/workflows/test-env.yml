@@ -1,0 +1,40 @@
+name: Test Environment Setup
+
+# When to run this workflow
+on:
+  workflow_dispatch:  # Manual trigger from GitHub UI
+  push:
+    branches:
+      - main
+    paths:
+      - '.env.example'
+      - 'test_env_setup.py'
+      - 'sheet_config.py'
+      - '.github/workflows/test-env.yml'
+
+jobs:
+  test-credentials:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install python-dotenv requests gspread google-auth
+    
+    - name: Run environment tests
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+      run: |
+        python test_env_setup.py
