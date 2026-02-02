@@ -1,6 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[codz]
+*.py[cod]
 *$py.class
 
 # C extensions
@@ -27,8 +27,6 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
@@ -83,46 +81,20 @@ profile_default/
 ipython_config.py
 
 # pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+.python-version
 
 # pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
 # Pipfile.lock
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
-
 # poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 # poetry.lock
 # poetry.toml
 
 # pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
 # pdm.lock
 # pdm.toml
 .pdm-python
 .pdm-build/
-
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-# pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
@@ -130,19 +102,6 @@ __pypackages__/
 # Celery stuff
 celerybeat-schedule
 celerybeat.pid
-
-# Redis
-*.rdb
-*.aof
-*.pid
-
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
-
-# ActiveMQ
-activemq-data/
 
 # SageMath parsed files
 *.sage.py
@@ -182,30 +141,13 @@ dmypy.json
 cython_debug/
 
 # PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
-.abstra/
+.idea/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 
 # Ruff stuff:
 .ruff_cache/
-
-# PyPI configuration file
-.pypirc
 
 # Marimo
 marimo/_static/
@@ -215,8 +157,72 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Credentials and secrets
+# =============================================================================
+# GOLF SIMULATION PROJECT SPECIFIC IGNORES
+# =============================================================================
+
+# Credentials and secrets (NEVER commit these)
 credentials.json
 *.json.bak
- 
- 
+.env
+.env.local
+.env.*.local
+
+# Tournament data files (cleaned weekly, stored in Google Drive)
+# These are transient files generated during tournament week
+/*.csv
+/*.xlsx
+/*.txt
+*.tar.gz
+cleanup_backup_*.tar.gz
+
+# Tournament folders (auto-generated, should be in Drive)
+/*/
+!permanent_data/
+!.github/
+!.git/
+
+# Scraped sportsbook data (temporary)
+*_scraped_data.csv
+*_with_counts.csv
+
+# Simulation output files (should go to Drive)
+rd_*_results_*.csv
+hole_lvl_*.csv
+model_predictions_*.csv
+r*_live_model.csv
+pre_sim_summary_*.csv
+round_scores.xlsx
+matchups_*.csv
+*balls_*.csv
+positions_*.csv
+fair_card_*.csv
+sharp_pos_*.csv
+grouped_bankroll_*.xlsx
+
+# Distribution adjustment files (generated per tournament)
+this_week_dists_adjusted.csv
+
+# =============================================================================
+# EXCEPTIONS: Files that SHOULD be committed
+# =============================================================================
+
+# Permanent reference data (correlation matrices, calibration data)
+!permanent_data/**/*.csv
+!permanent_data/**/*.xlsx
+
+# Configuration and utility scripts
+!requirements.txt
+!*.py
+!*.md
+!.github/**/*
+
+# Documentation
+!README.md
+!PHASE_2_TODO.md
+!GITHUB_ACTIONS_GUIDE.md
+!migration_guide.md
+
+# Git configuration
+!.gitignore
+!.gitattributes
