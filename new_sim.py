@@ -8,6 +8,10 @@ import json
 import numpy as np
 import pandas as pd
 import requests
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
 
@@ -28,16 +32,15 @@ from sim_inputs import (
 # Matchup weather-impact report settings (doesn't affect sim)
 wind_calculation_report = WIND_FACTOR_SIM
 
-# Dump the full leaderboard for the FIRST simulation iteration
-DUMP_FIRST_SIM = True
+# (debug dump removed — set DUMP_FIRST_SIM = True to re-enable)
+DUMP_FIRST_SIM = False
 DUMP_FILENAME  = f"sim_iter_0001_leaderboard_{tourney}.csv"
 
 # Master toggle: use OTT-based in-tournament adjustments or not
 USE_IN_TOURN_OTT = True  # set to False to zero all in-tournament OTT adjustments
 
 # Input predictions
-primary_path  = f"pre_course_fit_{tourney}.csv"
-fallback_path = f"pre_course_fit_{tourney}.csv"
+PRED_PATH = f"pre_course_fit_{tourney}.csv"
 
 # Per-player category distribution file (course-shaped)
 DISTS_FILE = "this_week_dists_adjusted.csv"
@@ -54,9 +57,24 @@ CLIP_CAT = (-8.0, 8.0)
 RNG = np.random.default_rng(123)
 
 # DataGolf API
-API_KEY = 'c05ee5fd8f2f3b14baab409bd83c'
+API_KEY = os.getenv('DATAGOLF_API_KEY', 'c05ee5fd8f2f3b14baab409bd83c')
 MATCHUPS_URL = "https://feeds.datagolf.com/betting-tools/matchups"
 OUTRIGHTS_URL = "https://feeds.datagolf.com/betting-tools/outrights"
+
+# Email config
+EMAIL_FROM = os.getenv("EMAIL_USER")
+EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+# Tournament sim email filter thresholds
+EMAIL_MU_MIN_PRED = 0.75
+EMAIL_MU_MIN_SAMPLE = 30
+EMAIL_FP_MIN_PRED = 0.0  # finish positions: include all pred > 0
+
+# Sharp books for matchup filtering
+SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
+HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
+
 
 # --- Helpers ---
 def parse_time(teetime):
@@ -138,18 +156,14 @@ def ensure_array(x, shape):
     return x if isinstance(x, np.ndarray) else np.zeros(shape, dtype=float)
 
 # --- Load predictions ---
-if os.path.exists(primary_path):
-    model_preds = pd.read_csv(primary_path).drop(columns=['my_pred'], errors='ignore')
-    model_preds['my_pred'] = pd.read_csv(fallback_path)['pred']
-else:
-    model_preds = pd.read_csv(fallback_path).rename(columns={'pred': 'my_pred'})
+model_preds = pd.read_csv(PRED_PATH).rename(columns={'pred': 'my_pred'})
 
 model_preds['player_name'] = (
     model_preds['player_name'].astype(str).str.lower().str.strip()
     .replace(name_replacements)
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
-model_preds.to_csv('test.csv')
+
 # --- Weather for SIM (R1/R2 only; sim waves centered) ---
 wind_r1_sim, wind_r2_sim, dew_r1_sim, dew_r2_sim = [], [], [], []
 for _, row in model_preds.iterrows():
@@ -166,7 +180,7 @@ model_preds['dew_adj_r1_sim']  = dew_calculation * np.array(dew_r1_sim, dtype=fl
 model_preds['dew_adj_r2_sim']  = dew_calculation * np.array(dew_r2_sim, dtype=float)
 
 for col in ['wind_adj_r1_sim', 'wind_adj_r2_sim', 'dew_adj_r1_sim', 'dew_adj_r2_sim']:
-    model_preds[col] = model_preds[col].mean() - model_preds[col]
+    model_preds[col] = model_preds[col] - model_preds[col].mean()
 
 # Round-level means for SIM
 model_preds['r1_pred'] = model_preds['my_pred'] + model_preds['wind_adj_r1_sim'] + model_preds['dew_adj_r1_sim']
@@ -180,6 +194,14 @@ preds['std'] = (preds['std_dev'] + STD_DEV) / 2.0
 
 player_names = preds['player_name'].tolist()
 n_players = len(player_names)
+
+# --- Sample sizes and pred lookups for email filtering ---
+sample_lookup = dict(zip(
+    model_preds['player_name'],
+    model_preds['sample'].fillna(0).astype(int)
+)) if 'sample' in model_preds.columns else {}
+
+my_pred_lookup = dict(zip(model_preds['player_name'], model_preds['my_pred']))
 
 # --- Load per-player category distributions ---
 if not os.path.exists(DISTS_FILE):
@@ -731,8 +753,9 @@ wx['wind_adj_r2'] = np.array(wind_r2_rep) * wind_calculation_report
 wx['dew_adj_r1']  = np.array(dew_r1_rep) * dew_calculation
 wx['dew_adj_r2']  = np.array(dew_r2_rep) * dew_calculation
 
+# center field means (so waves sum to ~0; individual - mean matches rd_1_sd pattern)
 for c in ['wind_adj_r1','wind_adj_r2','dew_adj_r1','dew_adj_r2']:
-    wx[c] = wx[c].mean() - wx[c]
+    wx[c] = wx[c] - wx[c].mean()
 
 wx['wind_adv_r1_2'] = wx['wind_adj_r1'] + wx['wind_adj_r2']
 wx['dew_adv_r1_2']  = wx['dew_adj_r1']  + wx['dew_adj_r2']
@@ -968,7 +991,7 @@ if not combined_finish_df.empty:
     # Rank within player/market by size
     output_df['rank'] = output_df.groupby(['player_name','market'])['size'].rank(method='max', ascending=False)
     # After: output_df['rank'] = ...
-    fb = pd.read_csv(fallback_path)
+    fb = pd.read_csv(PRED_PATH)
     fb['player_name'] = (
         fb['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     )
@@ -1074,9 +1097,9 @@ wx['wind_adj_r2'] = np.array(wind_r2_rep) * wind_calculation_report
 wx['dew_adj_r1']  = np.array(dew_r1_rep) * dew_calculation
 wx['dew_adj_r2']  = np.array(dew_r2_rep) * dew_calculation
 
-# center field means (so waves sum to ~0)
+# center field means (so waves sum to ~0; individual - mean matches rd_1_sd pattern)
 for c in ['wind_adj_r1','wind_adj_r2','dew_adj_r1','dew_adj_r2']:
-    wx[c] = wx[c].mean() - wx[c]
+    wx[c] = wx[c] - wx[c].mean()
 
 wx['wind_adv_r1_2'] = wx['wind_adj_r1'] + wx['wind_adj_r2']
 wx['dew_adv_r1_2']  = wx['dew_adj_r1']  + wx['dew_adj_r2']
@@ -1168,11 +1191,49 @@ if not df_match.empty:
     df_match['my_odds_p1_ties_loss'] = p1_probs_tl
     df_match['my_odds_p2_ties_loss'] = p2_probs_tl
 
-    # Convert book odds to implied, decimals, edges
+    # --- Compute edge metrics on full df_match before splitting by book ---
     df_match['P1 Odds'] = pd.to_numeric(df_match['P1 Odds'], errors='coerce')
     df_match['P2 Odds'] = pd.to_numeric(df_match['P2 Odds'], errors='coerce')
 
+    # Decimal odds
+    df_match['p1_dec'] = np.where(
+        df_match['P1 Odds'] > 0,
+        df_match['P1 Odds'] / 100 + 1,
+        100 / df_match['P1 Odds'].abs() + 1,
+    )
+    df_match['p2_dec'] = np.where(
+        df_match['P2 Odds'] > 0,
+        df_match['P2 Odds'] / 100 + 1,
+        100 / df_match['P2 Odds'].abs() + 1,
+    )
+
+    # Which prob to use: ties-loss when "separate bet offered"
+    use_tl = df_match['Ties'] == 'separate bet offered'
+    prob_p1 = np.where(use_tl, df_match['my_odds_p1_ties_loss'], df_match['my_odds_p1'])
+    prob_p2 = np.where(use_tl, df_match['my_odds_p2_ties_loss'], df_match['my_odds_p2'])
+
+    df_match['edge_p1'] = (prob_p1 * (df_match['p1_dec'] - 1) - (1 - prob_p1)) * 100
+    df_match['edge_p2'] = (prob_p2 * (df_match['p2_dec'] - 1) - (1 - prob_p2)) * 100
+
+    # Fair American odds (ties push)
+    df_match['Fair_p1'] = df_match['my_odds_p1'].apply(
+        lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
+    df_match['Fair_p2'] = df_match['my_odds_p2'].apply(
+        lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
+
+    # Half-shot values
+    df_match['half_shot_p1'] = (df_match['my_odds_p1'] - df_match['my_odds_p1_ties_loss']) * 400
+    df_match['half_shot_p2'] = (df_match['my_odds_p2'] - df_match['my_odds_p2_ties_loss']) * 400
+
+    # edge_on, bet_on, pred_on for downstream filtering
+    df_match['edge_on'] = df_match[['edge_p1', 'edge_p2']].max(axis=1).round(1)
+    df_match['bet_on'] = df_match.apply(
+        lambda r: r['Player 1'] if r['edge_p1'] > r['edge_p2'] else r['Player 2'], axis=1)
+    df_match['pred_on'] = df_match['bet_on'].str.lower().map(my_pred_lookup)
+    df_match['sample_on'] = df_match['bet_on'].str.lower().map(sample_lookup)
+
     dfs_by_book = {bk: df for bk, df in df_match.groupby('Bookmaker', dropna=True)}
+
     round_var = 'tourn'  # label column header
 
     # optional: sample & my_pred lookups (for later filters)
@@ -1308,6 +1369,22 @@ if not df_match.empty:
         sharp_df.to_csv(sharp_filename, index=False)
         print(f"[ok] sharp filtered -> {sharp_filename}")
 
+        # --- Send tournament email ---
+        print("\n[email] Building tournament sim email...")
+        _finish_for_email = combined_finish_df if ('combined_finish_df' in dir() and not combined_finish_df.empty) else None
+        _attachments = [f for f in [
+            combined_csv_name,
+            sharp_filename,
+            f"finish_equity_{tourney}.csv",
+        ] if os.path.exists(f)]
+        send_tournament_email(
+            sharp_mu_df=sharp_df,
+            finish_df=_finish_for_email,
+            sample_lookup=sample_lookup,
+            my_pred_lookup=my_pred_lookup,
+            attachment_paths=_attachments,
+        )
+
         # rename a couple files to {book}_{tourney}.csv (compat)
         for bk in ['betcris','betonline']:
             oldf = f"{bk}_odds_with_my_odds_tu.csv"
@@ -1328,6 +1405,224 @@ else:
 # ============== (Optional) Finish-position distribution widget =============
 # You can reuse the Plotly widget from earlier if you want a UI toggle.
 # ==========================================================================
+
+# ============================================================
+# EMAIL: Tournament Sim Summary
+# ============================================================
+
+def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup):
+    """
+    Build HTML email body with:
+      1. Sharp tournament matchup picks (pred > 0.75, sample > 30)
+      2. Finish position edge table (pred > 0)
+    """
+    timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
+
+    # ── Section 1: Tournament Matchups ──
+    mu_html = ""
+    if sharp_mu_df is not None and not sharp_mu_df.empty:
+        filtered = sharp_mu_df.copy()
+        # Ensure sample_on and pred_on exist
+        if 'sample_on' not in filtered.columns:
+            filtered['sample_on'] = filtered['bet_on'].str.lower().map(sample_lookup).fillna(0)
+        if 'pred_on' not in filtered.columns:
+            filtered['pred_on'] = filtered['bet_on'].str.lower().map(my_pred_lookup).fillna(0)
+
+        filtered = filtered[
+            (filtered['pred_on'] > EMAIL_MU_MIN_PRED) &
+            (filtered['sample_on'] >= EMAIL_MU_MIN_SAMPLE)
+        ]
+
+        if not filtered.empty:
+            filtered = filtered.sort_values('edge_on', ascending=False)
+            rows_html = ""
+            for _, row in filtered.iterrows():
+                bet_player = str(row.get('bet_on', '')).title()
+                opponent = (
+                    str(row['Player 2']).title()
+                    if str(row.get('bet_on', '')).lower() == str(row['Player 1']).lower()
+                    else str(row['Player 1']).title()
+                )
+                book = str(row.get('Bookmaker', ''))
+                ties = str(row.get('Ties', ''))
+                book_odds = (
+                    row['P1 Odds'] if str(row.get('bet_on', '')).lower() == str(row['Player 1']).lower()
+                    else row['P2 Odds']
+                )
+                fair_odds = (
+                    row.get('Fair_p1') if str(row.get('bet_on', '')).lower() == str(row['Player 1']).lower()
+                    else row.get('Fair_p2')
+                )
+                edge = row.get('edge_on', 0)
+                pred = row.get('pred_on', 0)
+                sample = int(row.get('sample_on', 0))
+                half_shot = (
+                    row.get('half_shot_p1', '')
+                    if str(row.get('bet_on', '')).lower() == str(row['Player 1']).lower()
+                    else row.get('half_shot_p2', '')
+                )
+
+                edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
+                pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
+                book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
+                fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
+                hs_str = f"{half_shot:.1f}" if pd.notna(half_shot) and half_shot != "" else ""
+
+                rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{bet_player}</td>
+                    <td style="padding:6px 10px; color:#666;">vs {opponent}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{ties}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
+                    <td style="padding:6px 10px; text-align:center;">{sample}</td>
+                    <td style="padding:6px 10px; text-align:center;">{hs_str}</td>
+                </tr>"""
+
+            mu_html = f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                Tournament Matchups (pred &gt; {EMAIL_MU_MIN_PRED}, sample &gt; {EMAIL_MU_MIN_SAMPLE})
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Bet On</th>
+                    <th style="padding:6px 10px; text-align:left;">Opponent</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Ties</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                    <th style="padding:6px 10px; text-align:center;">Sample</th>
+                    <th style="padding:6px 10px; text-align:center;">½ Shot</th>
+                </tr>
+                {rows_html}
+            </table>"""
+        else:
+            mu_html = "<p>No tournament matchups passed filters.</p>"
+    else:
+        mu_html = "<p>No tournament matchup data available.</p>"
+
+    # ── Section 2: Finish Positions ──
+    fp_html = ""
+    if finish_df is not None and not finish_df.empty:
+        fp_filtered = finish_df[finish_df['my_pred'].fillna(0) > EMAIL_FP_MIN_PRED].copy()
+        if not fp_filtered.empty:
+            fp_filtered = fp_filtered.sort_values('edge', ascending=False)
+            fp_rows = ""
+            for _, row in fp_filtered.iterrows():
+                player = str(row.get('player_name', '')).title()
+                market = str(row.get('market_type', ''))
+                book_odds_str = f"{int(row['american_odds']):+d}" if pd.notna(row.get('american_odds')) else ""
+                fair_str = f"{int(row['my_fair']):+d}" if pd.notna(row.get('my_fair')) else ""
+                edge = row.get('edge', 0)
+                pred = row.get('my_pred', 0)
+                sample = int(row.get('sample', 0)) if pd.notna(row.get('sample')) else 0
+                book = str(row.get('sportsbook', ''))
+
+                edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
+
+                fp_rows += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{market}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book_odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center;">{pred:.2f}</td>
+                    <td style="padding:6px 10px; text-align:center;">{sample}</td>
+                </tr>"""
+
+            fp_html = f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                Finish Position Edges (pred &gt; {EMAIL_FP_MIN_PRED})
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Market</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                    <th style="padding:6px 10px; text-align:center;">Sample</th>
+                </tr>
+                {fp_rows}
+            </table>"""
+        else:
+            fp_html = "<p>No finish position edges passed pred filter.</p>"
+    else:
+        fp_html = "<p>No finish position data available.</p>"
+
+    html = f"""
+    <html>
+    <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
+        <h2 style="margin-bottom:4px;">Tournament Sim — {tourney.replace('_', ' ').title()}</h2>
+        <p style="color:#666; margin-top:0;">{timestamp_str} | {SIMULATIONS:,} simulations</p>
+
+        {mu_html}
+        {fp_html}
+
+        <p style="color:#999; font-size:11px; margin-top:30px;">
+            Fair = our no-vig price (ties push) | Edge = expected return % |
+            Pred = model SG prediction | ½ Shot = value of half-shot spread (in edge pts)
+        </p>
+    </body>
+    </html>"""
+    return html
+
+
+def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
+                          attachment_paths=None):
+    """
+    Send tournament sim email with HTML tables + optional attachments.
+    Non-blocking: prints warning on failure but doesn't crash.
+    """
+    if not EMAIL_PASSWORD:
+        print("  ⚠️  EMAIL_PASSWORD not set. Skipping email.")
+        return
+    if not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
+        print("  ⚠️  EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
+        return
+
+    try:
+        html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup)
+
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = f"Tournament Sim — {tourney.replace('_', ' ').title()}"
+        msg["From"] = EMAIL_FROM
+        msg["To"] = ", ".join(EMAIL_TO)
+
+        msg.attach(MIMEText(html, "html"))
+
+        # Attach any provided files
+        if attachment_paths:
+            for fpath in attachment_paths:
+                if fpath and os.path.exists(fpath):
+                    with open(fpath, "rb") as f:
+                        ext = os.path.splitext(fpath)[1].lstrip('.')
+                        att = MIMEApplication(f.read(), _subtype=ext)
+                        att.add_header(
+                            "Content-Disposition", "attachment",
+                            filename=os.path.basename(fpath),
+                        )
+                        msg.attach(att)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_FROM, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+
+        print("  ✓ Tournament sim email sent")
+
+    except Exception as e:
+        print(f"  ⚠️  Email failed: {e}")
+        print("    (Sim outputs still saved — email is non-blocking)")
+
 
 # ============================================================
 # SENSITIVITY ANALYSIS: Edge per unit SG

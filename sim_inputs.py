@@ -24,9 +24,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [4]
-course_id = 4
-tourney = 'farmers'
+event_ids = [3]
+course_id = 510
+tourney = 'wm_phoenix'
 course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Spyglass Hill Golf Course"
@@ -35,8 +35,8 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=4
-course_id_2=104
+course_id_1=510
+course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
 cutline = 65
@@ -47,15 +47,15 @@ default_birthday = datetime(1995, 1, 1)
 
 #wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
 
-dewpoint_1 = [35.8, 20.9, 16.1, 10.8, 9.2, 9.2, 12.3, 10.9, 10.7, 9.8, 10.4, 13.6, 15.6, 21.1, 27.4]
-dewpoint_2 = [15.0, 14.8, 14.7, 14.5, 14.7, 15.2, 17.4, 19.5, 20.6, 23.1, 24.4, 28.8, 31.1, 32.5, 33.1]
-dewpoint_3 = [24.1, 23.8, 23.6, 23.4, 22.1, 21.8, 21.3, 21.7, 22.8, 22.4, 24.3, 26.9, 27.7, 27.8, 29.2]
-dewpoint_4 = [40.8, 40.5, 39.5, 36.1, 33.9, 32.1, 30.3, 29.1, 32.9, 37.5, 40.5, 39.9, 38.3, 37.9, 41.0]
+dewpoint_1 = [23.2, 23.7, 24.4, 24.8, 25.7, 25.6, 26.1, 26.4, 26.2, 26.5, 27.2, 28.6, 30.3, 31.8, 31.2]
+dewpoint_2 = [44.0, 45.3, 45.2, 44.1, 42.6, 40.8, 39.4, 38.7, 37.3, 36.8, 35.8, 35.4, 35.4, 36.1, 36.9]
+dewpoint_3 = [37.5, 37.4, 37.4, 37.5, 37.6, 37.5, 37.4, 37.5, 37.5, 38.0, 37.6, 36.3, 34.8, 33.8, 33.4]
+dewpoint_4 = [36.0, 36.1, 37.2, 38.7, 39.6, 39.4, 38.8, 37.8, 37.1, 36.9, 36.5, 36.4, 36.0, 36.1, 36.6]
 
-wind_1 = [2,2,2,2,2,2,3,4,5,5,5,5,5,3,3]
-wind_2 = [3,3,3,3,3,4,5,6,6,6,6,6,6,6,6]
-wind_3 = [3,3,3,3,3,4,5,6,6,6,6,6,6,6,6]
-wind_4 = [3,3,3,3,3,4,5,6,6,6,6,6,6,6,6]
+wind_1 = [7.1, 6.8, 6.6, 7.0, 6.0, 5.2, 5.7, 5.2, 6.2, 8.1, 9.0, 9.5, 9.5, 5.4, 1.9]
+wind_2 = [3.7, 3.7, 5.1, 5.7, 4.6, 4.2, 3.9, 4.2, 4.6, 5.0, 5.7, 6.0, 5.0, 4.6, 3.6]
+wind_3 = [2.9, 3.8, 4.0, 4.3, 4.1, 3.5, 3.4, 3.4, 3.0, 3.2, 3.4, 3.4, 3.7, 4.5, 5.0]
+wind_4 = [2.9, 2.8, 4.2, 5.1, 5.4, 4.8, 3.4, 1.9, 0.6, 3.4, 5.8, 7.6, 8.8, 9.1, 8.1]
 # wind = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] to gauge length of list
 # wind = [1,1,1,1,1,1,1,1,10,10,10,10,10,10,10] 8 single 7 double
 # wind = [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10] all double
