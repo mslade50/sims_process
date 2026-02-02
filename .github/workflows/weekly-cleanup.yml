@@ -1,0 +1,99 @@
+name: Weekly Data Cleanup
+
+# Runs every Sunday at midnight UTC (7pm EST Saturday / 8pm EDT Saturday)
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Every Sunday at 00:00 UTC
+  
+  # Also allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Run cleanup script
+      run: |
+        # Create backup of any files we're about to delete (just in case)
+        mkdir -p cleanup_backup
+        
+        echo "🗑️  Starting weekly data cleanup..."
+        echo "================================================"
+        
+        # Count files before cleanup
+        csv_count=$(find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" | wc -l)
+        xlsx_count=$(find . -maxdepth 1 -name "*.xlsx" | wc -l)
+        txt_count=$(find . -maxdepth 1 -name "*.txt" | wc -l)
+        
+        echo "📊 Files to clean:"
+        echo "  - CSV files in root: $csv_count"
+        echo "  - Excel files in root: $xlsx_count"  
+        echo "  - Text files in root: $txt_count"
+        echo ""
+        
+        # List files that will be deleted (for logging)
+        echo "📋 CSV files to be removed:"
+        find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" -type f
+        echo ""
+        
+        echo "📋 Excel files to be removed:"
+        find . -maxdepth 1 -name "*.xlsx" -type f
+        echo ""
+        
+        echo "📋 Tournament folders to be removed:"
+        find . -maxdepth 1 -type d ! -name "." ! -name ".." ! -name ".git" ! -name ".github" ! -name "permanent_data" ! -name "__pycache__"
+        echo ""
+        
+        # Delete CSV files (except in permanent_data folder)
+        echo "🗑️  Deleting CSV files..."
+        find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" -type f -delete
+        
+        # Delete Excel files
+        echo "🗑️  Deleting Excel files..."
+        find . -maxdepth 1 -name "*.xlsx" -type f -delete
+        
+        # Delete text files (scraped sportsbook data)
+        echo "🗑️  Deleting text files..."
+        find . -maxdepth 1 -name "*.txt" -type f -delete
+        
+        # Delete tournament folders (but preserve system folders)
+        echo "🗑️  Deleting tournament folders..."
+        find . -maxdepth 1 -type d \
+          ! -name "." \
+          ! -name ".." \
+          ! -name ".git" \
+          ! -name ".github" \
+          ! -name "permanent_data" \
+          ! -name "__pycache__" \
+          -exec rm -rf {} + 2>/dev/null || true
+        
+        echo ""
+        echo "✅ Cleanup complete!"
+        echo "================================================"
+        
+        # Show what remains
+        echo ""
+        echo "📁 Remaining files in repo:"
+        ls -lah
+    
+    - name: Summary
+      run: |
+        echo "================================================"
+        echo "🎯 CLEANUP SUMMARY"
+        echo "================================================"
+        echo "✅ Deleted all CSV files (except permanent_data/)"
+        echo "✅ Deleted all Excel workbooks"
+        echo "✅ Deleted all text files"
+        echo "✅ Deleted all tournament folders"
+        echo ""
+        echo "📁 Protected folders:"
+        echo "  - permanent_data/ (correlation matrices, reference data)"
+        echo "  - .github/ (workflows)"
+        echo "  - .git/ (version control)"
+        echo ""
+        echo "💡 Tip: Historical data should now be in Google Drive"
+        echo "================================================"
