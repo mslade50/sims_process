@@ -806,7 +806,42 @@ def main():
         excel_path=excel_path,
         card_csv_path=card_csv,
     )
+    # ── Storage ──────────────────────────────────────────────────────────────
+    from sheets_storage import (
+        is_valid_run_time,
+        store_round_matchups,
+        store_sharp_filtered,
+        load_dg_id_lookup,
+    )
 
+    if is_valid_run_time():
+        print("\\n[storage] Saving round matchups to Google Sheets...")
+        try:
+            from sim_inputs import event_ids
+
+            # Build dg_id lookup (may not have all round-sim players, but best effort)
+            dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
+
+            # 1. All filtered round matchups
+            store_round_matchups(
+                combined, sim_round, tourney, event_ids[0],
+                dg_id_lookup=dg_id_lookup,
+            )
+
+            # 2. Sharp filtered round matchups
+            store_sharp_filtered(
+                tourney=tourney,
+                event_id=event_ids[0],
+                sharp_rounds=sharp,
+                sim_round=sim_round,
+            )
+
+            print("[storage] Done.")
+        except Exception as e:
+            print(f"[storage] ⚠️ Failed: {e}")
+            import traceback; traceback.print_exc()
+    else:
+        print("[storage] Skipped — before Monday 3 PM EST cutoff.")
     print(f"\n{'='*60}")
     print(f"  Done.")
     print(f"{'='*60}")

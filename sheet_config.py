@@ -61,10 +61,9 @@ CREDENTIALS_PATHS = [
     os.path.join(os.path.dirname(__file__), "credentials.json"),
 ]
 
-# Google API scopes
 SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive',
 ]
 
 

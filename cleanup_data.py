@@ -12,11 +12,10 @@ Usage:
 The script will:
 1. Delete all CSV files in the root directory (except permanent_data/)
 2. Delete all Excel files in the root directory
-3. Delete all text files in the root directory  
+3. Delete all text files in the root directory (EXCEPT requirements.txt)
 4. Delete all tournament folders
 5. Create a backup archive before deletion
 6. Automatically commit and push changes to git
-7. Preserve: permanent_data/, .git/, .github/, Python scripts, .env files
 
 Safety features:
 - Creates backup archive before deletion (cleanup_backup_YYYYMMDD_HHMM.tar.gz)
@@ -29,6 +28,7 @@ import sys
 import argparse
 import tarfile
 import subprocess
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -42,6 +42,14 @@ def get_files_to_delete():
     """
     root_dir = Path(".")
     
+    # Define files that should NEVER be deleted
+    protected_files = {
+        "requirements.txt", 
+        "LICENSE.txt", 
+        "CMakeLists.txt",
+        "robots.txt"
+    }
+
     # CSV files (excluding permanent_data folder)
     csv_files = [
         f for f in root_dir.glob("*.csv") 
@@ -52,7 +60,11 @@ def get_files_to_delete():
     xlsx_files = list(root_dir.glob("*.xlsx"))
     
     # Text files in root (scraped sportsbook data)
-    txt_files = list(root_dir.glob("*.txt"))
+    # Filter out protected files like requirements.txt
+    txt_files = [
+        f for f in root_dir.glob("*.txt")
+        if f.name not in protected_files
+    ]
     
     # Tournament folders (exclude system folders)
     protected_dirs = {
@@ -130,10 +142,10 @@ def print_summary(files_dict):
     print("✅ PROTECTED (will NOT be deleted):")
     print("="*70)
     print("  - permanent_data/ folder and all contents")
+    print("  - requirements.txt")
     print("  - All .py Python scripts")
     print("  - .env and .gitignore files")
     print("  - .git/ and .github/ folders")
-    print("  - requirements.txt, README.md, etc.")
     print("="*70 + "\n")
 
 
@@ -197,7 +209,6 @@ def delete_files(files_dict):
             print(f"  ⚠️  Error deleting {f}: {e}")
     
     # Delete tournament folders
-    import shutil
     for d in files_dict["tournament_folders"]:
         try:
             shutil.rmtree(d)
@@ -240,8 +251,7 @@ def git_commit_and_push(deleted_items):
         commit_msg = f"chore: Weekly data cleanup - {timestamp}\n\n"
         commit_msg += "Automated cleanup of transient data files:\n"
         commit_msg += f"- Removed {len(deleted_items)} items\n"
-        commit_msg += "- Preserved permanent_data/ folder\n"
-        commit_msg += "- Preserved all Python scripts and config files"
+        commit_msg += "- Preserved permanent_data/ and requirements.txt\n"
         
         # Commit changes
         print("💾 Committing changes...")

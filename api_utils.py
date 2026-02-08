@@ -130,6 +130,17 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False)
     df = df[[c for c in keep if c in df.columns]].copy()
     df["player_name"] = df["player_name"].str.lower().replace(name_replacements)
 
+    # If tee time column is missing or all empty (API returns structure before
+    # tee times are set, e.g. R3 before cut), fill with 10:00 AM default.
+    # This gives every player identical wind/dew, effectively zeroing out
+    # the player-vs-field weather differential (skill-only differentiation).
+    if teetime_col not in df.columns or df[teetime_col].isna().all():
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        default_teetime = f"{today_str} 10:00"
+        df[teetime_col] = default_teetime
+        print(f"  ⚠️  {teetime_col} unavailable — defaulting to {default_teetime}")
+
+
     return df
 
 

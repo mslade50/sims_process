@@ -1,0 +1,10 @@
+pandas
+numpy
+scipy
+requests
+python-dotenv
+gspread
+google-auth
+xlsxwriter
+google-api-python-client
+pytz                        
