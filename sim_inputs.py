@@ -5,7 +5,7 @@ import numpy as np
 SIMULATIONS   = 100000
 STD_DEV       = 3.02
 PAR           = 72
-CUT_LINE      = 65
+CUT_LINE      = 80
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.15  # must match your main script
 TOP_K = 20 
@@ -24,9 +24,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [3]
-course_id = 510
-tourney = 'wm_phoenix'
+event_ids = [5]
+course_id = 5
+tourney = 'att'
 course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Spyglass Hill Golf Course"
@@ -35,11 +35,11 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=510
+course_id_1=5
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
-cutline = 65
+cutline = CUT_LINE
 shot_rule=0
 
 #for players who we don't have a birthday (monday q guys etc.)

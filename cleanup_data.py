@@ -29,75 +29,110 @@ import argparse
 import tarfile
 import subprocess
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
+
+
+def was_modified_today(path):
+    """Check if a file or folder was modified today."""
+    try:
+        mtime = os.path.getmtime(path)
+        mod_date = datetime.fromtimestamp(mtime).date()
+        return mod_date == date.today()
+    except (OSError, ValueError):
+        return False
 
 
 def get_files_to_delete():
     """
     Identify all files that will be deleted by the cleanup process.
-    
+
+    Files modified today are excluded to avoid deleting active work.
+
     Returns:
         dict with keys: csv_files, xlsx_files, txt_files, tournament_folders
+        Also returns skipped_today: files skipped because they were modified today
     """
     root_dir = Path(".")
-    
+
     # Define files that should NEVER be deleted
     protected_files = {
-        "requirements.txt", 
-        "LICENSE.txt", 
+        "requirements.txt",
+        "LICENSE.txt",
         "CMakeLists.txt",
         "robots.txt"
     }
 
-    # CSV files (excluding permanent_data folder)
-    csv_files = [
-        f for f in root_dir.glob("*.csv") 
-        if not str(f).startswith("permanent_data")
-    ]
-    
-    # Excel files in root
-    xlsx_files = list(root_dir.glob("*.xlsx"))
-    
-    # Text files in root (scraped sportsbook data)
-    # Filter out protected files like requirements.txt
-    txt_files = [
-        f for f in root_dir.glob("*.txt")
-        if f.name not in protected_files
-    ]
-    
-    # Tournament folders (exclude system folders)
+    # Track files skipped because they were modified today
+    skipped_today = []
+
+    # CSV files (excluding permanent_data folder and files modified today)
+    csv_files = []
+    for f in root_dir.glob("*.csv"):
+        if str(f).startswith("permanent_data"):
+            continue
+        if was_modified_today(f):
+            skipped_today.append(f)
+            continue
+        csv_files.append(f)
+
+    # Excel files in root (excluding files modified today)
+    xlsx_files = []
+    for f in root_dir.glob("*.xlsx"):
+        if was_modified_today(f):
+            skipped_today.append(f)
+            continue
+        xlsx_files.append(f)
+
+    # Text files in root (excluding protected and files modified today)
+    txt_files = []
+    for f in root_dir.glob("*.txt"):
+        if f.name in protected_files:
+            continue
+        if was_modified_today(f):
+            skipped_today.append(f)
+            continue
+        txt_files.append(f)
+
+    # Tournament folders (exclude system folders and folders modified today)
     protected_dirs = {
-        ".", "..", ".git", ".github", "permanent_data", 
-        "__pycache__", ".venv", "venv", "env"
+        ".", "..", ".git", ".github", "permanent_data",
+        "__pycache__", ".venv", "venv", "env", "backups", ".claude"
     }
-    tournament_folders = [
-        d for d in root_dir.iterdir() 
-        if d.is_dir() and d.name not in protected_dirs
-    ]
-    
+    tournament_folders = []
+    for d in root_dir.iterdir():
+        if not d.is_dir():
+            continue
+        if d.name in protected_dirs:
+            continue
+        if was_modified_today(d):
+            skipped_today.append(d)
+            continue
+        tournament_folders.append(d)
+
     return {
         "csv_files": csv_files,
         "xlsx_files": xlsx_files,
         "txt_files": txt_files,
-        "tournament_folders": tournament_folders
+        "tournament_folders": tournament_folders,
+        "skipped_today": skipped_today,
     }
 
 
 def print_summary(files_dict):
     """Print a summary of what will be deleted."""
     print("\n" + "="*70)
-    print("📋 CLEANUP SUMMARY - Files to be deleted:")
+    print("[LIST] CLEANUP SUMMARY - Files to be deleted:")
     print("="*70)
     
     total_files = sum(len(v) for k, v in files_dict.items() if k != "tournament_folders")
     total_folders = len(files_dict["tournament_folders"])
     
-    print(f"\n📊 Total: {total_files} files + {total_folders} folders\n")
+    print(f"\n[EXCEL] Total: {total_files} files + {total_folders} folders\n")
     
     # CSV files
     csv_files = files_dict["csv_files"]
-    print(f"📄 CSV files ({len(csv_files)}):")
+    print(f"[CSV] CSV files ({len(csv_files)}):")
     if csv_files:
         for f in sorted(csv_files)[:10]:  # Show first 10
             print(f"  - {f}")
@@ -108,7 +143,7 @@ def print_summary(files_dict):
     
     # Excel files
     xlsx_files = files_dict["xlsx_files"]
-    print(f"\n📊 Excel files ({len(xlsx_files)}):")
+    print(f"\n[EXCEL] Excel files ({len(xlsx_files)}):")
     if xlsx_files:
         for f in sorted(xlsx_files)[:10]:
             print(f"  - {f}")
@@ -119,7 +154,7 @@ def print_summary(files_dict):
     
     # Text files
     txt_files = files_dict["txt_files"]
-    print(f"\n📝 Text files ({len(txt_files)}):")
+    print(f"\n[TXT] Text files ({len(txt_files)}):")
     if txt_files:
         for f in sorted(txt_files)[:10]:
             print(f"  - {f}")
@@ -130,7 +165,7 @@ def print_summary(files_dict):
     
     # Tournament folders
     folders = files_dict["tournament_folders"]
-    print(f"\n📁 Tournament folders ({len(folders)}):")
+    print(f"\n[FOLDER] Tournament folders ({len(folders)}):")
     if folders:
         for d in sorted(folders):
             file_count = len(list(d.rglob("*")))
@@ -138,14 +173,26 @@ def print_summary(files_dict):
     else:
         print("  (none found)")
     
+    # Files skipped because modified today
+    skipped = files_dict.get("skipped_today", [])
+    if skipped:
+        print(f"\n[SKIP]  SKIPPED (modified today - {len(skipped)} items):")
+        for item in sorted(skipped)[:10]:
+            suffix = "/" if item.is_dir() else ""
+            print(f"  - {item}{suffix}")
+        if len(skipped) > 10:
+            print(f"  ... and {len(skipped) - 10} more")
+
     print("\n" + "="*70)
-    print("✅ PROTECTED (will NOT be deleted):")
+    print("[OK] PROTECTED (will NOT be deleted):")
     print("="*70)
     print("  - permanent_data/ folder and all contents")
+    print("  - backups/ folder and all contents")
+    print("  - Files/folders modified today")
     print("  - requirements.txt")
     print("  - All .py Python scripts")
     print("  - .env and .gitignore files")
-    print("  - .git/ and .github/ folders")
+    print("  - .git/, .github/, .claude/ folders")
     print("="*70 + "\n")
 
 
@@ -154,7 +201,7 @@ def create_backup(files_dict):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     backup_name = f"cleanup_backup_{timestamp}.tar.gz"
     
-    print(f"📦 Creating backup: {backup_name}")
+    print(f"[PKG] Creating backup: {backup_name}")
     
     try:
         with tarfile.open(backup_name, "w:gz") as tar:
@@ -164,19 +211,19 @@ def create_backup(files_dict):
                         tar.add(item, arcname=str(item))
         
         backup_size = os.path.getsize(backup_name) / (1024 * 1024)  # MB
-        print(f"✅ Backup created: {backup_name} ({backup_size:.2f} MB)")
-        print(f"💡 Keep this backup for a week, then delete if everything looks good\n")
+        print(f"[OK] Backup created: {backup_name} ({backup_size:.2f} MB)")
+        print(f"[TIP] Keep this backup for a week, then delete if everything looks good\n")
         
         return backup_name
     except Exception as e:
-        print(f"⚠️  Warning: Backup creation failed: {e}")
-        print(f"⚠️  Continuing with cleanup anyway...\n")
+        print(f"[WARN]  Warning: Backup creation failed: {e}")
+        print(f"[WARN]  Continuing with cleanup anyway...\n")
         return None
 
 
 def delete_files(files_dict):
     """Delete all identified files and folders."""
-    print("\n🗑️  Starting deletion...")
+    print("\n[DEL]  Starting deletion...")
     
     deleted_count = 0
     deleted_items = []
@@ -188,7 +235,7 @@ def delete_files(files_dict):
             deleted_count += 1
             deleted_items.append(str(f))
         except Exception as e:
-            print(f"  ⚠️  Error deleting {f}: {e}")
+            print(f"  [WARN]  Error deleting {f}: {e}")
     
     # Delete Excel files
     for f in files_dict["xlsx_files"]:
@@ -197,7 +244,7 @@ def delete_files(files_dict):
             deleted_count += 1
             deleted_items.append(str(f))
         except Exception as e:
-            print(f"  ⚠️  Error deleting {f}: {e}")
+            print(f"  [WARN]  Error deleting {f}: {e}")
     
     # Delete text files
     for f in files_dict["txt_files"]:
@@ -206,7 +253,7 @@ def delete_files(files_dict):
             deleted_count += 1
             deleted_items.append(str(f))
         except Exception as e:
-            print(f"  ⚠️  Error deleting {f}: {e}")
+            print(f"  [WARN]  Error deleting {f}: {e}")
     
     # Delete tournament folders
     for d in files_dict["tournament_folders"]:
@@ -214,11 +261,11 @@ def delete_files(files_dict):
             shutil.rmtree(d)
             deleted_count += 1
             deleted_items.append(str(d) + "/")
-            print(f"  ✅ Deleted folder: {d}/")
+            print(f"  [OK] Deleted folder: {d}/")
         except Exception as e:
-            print(f"  ⚠️  Error deleting {d}: {e}")
+            print(f"  [WARN]  Error deleting {d}: {e}")
     
-    print(f"\n✅ Cleanup complete! Deleted {deleted_count} items")
+    print(f"\n[OK] Cleanup complete! Deleted {deleted_count} items")
     
     return deleted_items
 
@@ -226,7 +273,7 @@ def delete_files(files_dict):
 def git_commit_and_push(deleted_items):
     """Commit deletions to git and push to remote."""
     print("\n" + "="*70)
-    print("📤 COMMITTING CHANGES TO GIT")
+    print("[PUSH] COMMITTING CHANGES TO GIT")
     print("="*70)
     
     try:
@@ -239,11 +286,11 @@ def git_commit_and_push(deleted_items):
         )
         
         if not result.stdout.strip():
-            print("✅ No changes to commit - repository already clean")
+            print("[OK] No changes to commit - repository already clean")
             return True
         
         # Stage all deletions
-        print("📝 Staging deletions...")
+        print("[TXT] Staging deletions...")
         subprocess.run(["git", "add", "-A"], check=True)
         
         # Create commit message
@@ -254,7 +301,7 @@ def git_commit_and_push(deleted_items):
         commit_msg += "- Preserved permanent_data/ and requirements.txt\n"
         
         # Commit changes
-        print("💾 Committing changes...")
+        print("[SAVE] Committing changes...")
         subprocess.run(
             ["git", "commit", "-m", commit_msg],
             check=True,
@@ -262,23 +309,23 @@ def git_commit_and_push(deleted_items):
         )
         
         # Push to remote
-        print("📤 Pushing to GitHub...")
+        print("[PUSH] Pushing to GitHub...")
         subprocess.run(["git", "push"], check=True)
         
-        print("✅ Changes committed and pushed successfully!")
+        print("[OK] Changes committed and pushed successfully!")
         print(f"   Commit message: Weekly data cleanup - {timestamp}")
         
         return True
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ Git error: {e}")
+        print(f"[ERR] Git error: {e}")
         print(f"   You may need to commit and push manually:")
         print(f"   git add -A")
         print(f"   git commit -m 'Weekly cleanup'")
         print(f"   git push")
         return False
     except Exception as e:
-        print(f"❌ Unexpected error during git commit: {e}")
+        print(f"[ERR] Unexpected error during git commit: {e}")
         return False
 
 
@@ -302,9 +349,9 @@ def main():
     args = parser.parse_args()
     
     print("\n" + "="*70)
-    print("🧹 AUTOMATED DATA CLEANUP SCRIPT")
+    print("[CLEANUP] AUTOMATED DATA CLEANUP SCRIPT")
     print("="*70)
-    print("⚠️  This will automatically delete files and commit changes!")
+    print("[WARN]  This will automatically delete files and commit changes!")
     print("="*70)
     
     # Get list of files to delete
@@ -313,17 +360,17 @@ def main():
     # Show summary
     print_summary(files_dict)
     
-    # Check if there's anything to delete
-    total_items = sum(len(v) for v in files_dict.values())
+    # Check if there's anything to delete (exclude skipped_today from count)
+    total_items = sum(len(v) for k, v in files_dict.items() if k != "skipped_today")
     if total_items == 0:
-        print("✅ Nothing to clean up! Repository is already clean.")
+        print("[OK] Nothing to clean up! Repository is already clean.")
         return
     
     # Create backup
     if not args.no_backup:
         create_backup(files_dict)
     else:
-        print("⚠️  Skipping backup (--no-backup flag used)")
+        print("[WARN]  Skipping backup (--no-backup flag used)")
     
     # Delete files
     deleted_items = delete_files(files_dict)
@@ -332,18 +379,18 @@ def main():
     if not args.no_commit and deleted_items:
         git_commit_and_push(deleted_items)
     elif args.no_commit:
-        print("\n💡 Skipping git commit (--no-commit flag used)")
+        print("\n[TIP] Skipping git commit (--no-commit flag used)")
         print("   Run these commands manually to commit:")
         print("   git add -A")
         print("   git commit -m 'Weekly cleanup'")
         print("   git push")
     
     print("\n" + "="*70)
-    print("✅ CLEANUP COMPLETE")
+    print("[OK] CLEANUP COMPLETE")
     print("="*70)
-    print("💡 Your repository is now clean!")
+    print("[TIP] Your repository is now clean!")
     if deleted_items and not args.no_commit:
-        print("💡 Changes have been committed and pushed to GitHub")
+        print("[TIP] Changes have been committed and pushed to GitHub")
     print("="*70 + "\n")
 
 
