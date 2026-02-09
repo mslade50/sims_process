@@ -182,6 +182,9 @@ cleanup_backup_*.tar.gz
 !.github/
 !.git/
 
+# Backup files
+backups/
+
 # Scraped sportsbook data (temporary)
 *_scraped_data.csv
 *_with_counts.csv

@@ -23,6 +23,20 @@ Sheet layout (tab: "round_config"):
         dew_calculation   Numeric. Dew effect factor. Falls back to sim_inputs if blank.
         wind_override     Numeric. 0 = use computed. Falls back to sim_inputs if blank.
 
+        # NEW fields for tournament sim:
+        course_codes      Comma-separated course codes from API (e.g. "TS" or "PB,SG").
+                          Auto-populated by update_sheet_courses.py.
+        course_pars       Comma-separated par values matching course_codes order.
+        expected_score_r2 Expected scoring avg for R2. Multi-course: comma-separated.
+        expected_score_r3 Expected scoring avg for R3.
+        expected_score_r4 Expected scoring avg for R4.
+        wind_r2           Hourly wind for R2 (blank = use 'wind').
+        wind_r3           Hourly wind for R3 (blank = use 'wind').
+        wind_r4           Hourly wind for R4 (blank = use 'wind').
+        dew_r2            Hourly dew for R2 (blank = use 'dew').
+        dew_r3            Hourly dew for R3 (blank = use 'dew').
+        dew_r4            Hourly dew for R4 (blank = use 'dew').
+
 Authentication:
     Place credentials.json (Google service account key) in the project root.
     Share the Google Sheet with the service account email from credentials.json.
@@ -33,6 +47,8 @@ Usage:
     # config['round_num'] → 2
     # config['wind'] → [5, 5, 5, 5, ...]
     # config['dew'] → [36, 36, 38, ...]
+    # config['course_codes'] → ['TS'] or ['PB', 'SG']
+    # config['course_pars'] → [72] or [72, 72]
 """
 
 import os
@@ -127,6 +143,29 @@ def _parse_numeric(value_str, default=None):
         return default
 
 
+def _parse_string_array(value_str):
+    """
+    Parse a comma-separated string into a list of strings.
+    Returns empty list if blank.
+    """
+    if not value_str or str(value_str).strip() == "":
+        return []
+    return [x.strip() for x in str(value_str).split(",") if x.strip()]
+
+
+def _parse_multi_numeric(value_str):
+    """
+    Parse a comma-separated string into a list of floats.
+    Returns empty list if blank, single value if one number.
+    """
+    if not value_str or str(value_str).strip() == "":
+        return []
+    try:
+        return [float(x.strip()) for x in str(value_str).split(",") if x.strip()]
+    except (ValueError, TypeError):
+        return []
+
+
 def load_config():
     """
     Read the round_config tab and return a config dictionary.
@@ -142,8 +181,21 @@ def load_config():
             dew_calculation:  float or None — overrides sim_inputs if set
             wind_override:    float or None — overrides sim_inputs if set
             pre_event:        bool — True if round_num is 0
+
+            # NEW for tournament sim:
+            course_codes:     list[str] — course codes from API (e.g. ['TS'] or ['PB','SG'])
+            course_pars:      list[float] — par values matching course_codes order
+            expected_score_r2: list[float] — expected scoring avg for R2 (per-course if multi)
+            expected_score_r3: list[float] — expected scoring avg for R3
+            expected_score_r4: list[float] — expected scoring avg for R4
+            wind_r2:          list[float] — hourly wind for R2 (empty = use 'wind')
+            wind_r3:          list[float] — hourly wind for R3
+            wind_r4:          list[float] — hourly wind for R4
+            dew_r2:           list[float] — hourly dew for R2 (empty = use 'dew')
+            dew_r3:           list[float] — hourly dew for R3
+            dew_r4:           list[float] — hourly dew for R4
     """
-    print("📊 Reading config from Google Sheet...")
+    print("Reading config from Google Sheet...")
     ws = _connect_sheet()
 
     # Read all rows from columns A and B
@@ -173,6 +225,23 @@ def load_config():
     dew_calculation = _parse_numeric(params.get("dew_calculation"), default=None)
     wind_override = _parse_numeric(params.get("wind_override"), default=None)
 
+    # --- NEW fields for tournament sim ---
+    course_codes = _parse_string_array(params.get("course_codes", ""))
+    course_pars = _parse_multi_numeric(params.get("course_pars", ""))
+
+    # Per-round expected scoring averages (can be multi-value for multi-course)
+    expected_score_r2 = _parse_multi_numeric(params.get("expected_score_r2", ""))
+    expected_score_r3 = _parse_multi_numeric(params.get("expected_score_r3", ""))
+    expected_score_r4 = _parse_multi_numeric(params.get("expected_score_r4", ""))
+
+    # Per-round wind/dew arrays (empty = use default 'wind'/'dew')
+    wind_r2 = _parse_array(params.get("wind_r2", ""))
+    wind_r3 = _parse_array(params.get("wind_r3", ""))
+    wind_r4 = _parse_array(params.get("wind_r4", ""))
+    dew_r2 = _parse_array(params.get("dew_r2", ""))
+    dew_r3 = _parse_array(params.get("dew_r3", ""))
+    dew_r4 = _parse_array(params.get("dew_r4", ""))
+
     config = {
         "round_num": round_num,
         "pre_event": round_num == 0,
@@ -183,15 +252,35 @@ def load_config():
         "expected_score_3": expected_score_3,
         "dew_calculation": dew_calculation,
         "wind_override": wind_override,
+        # NEW fields
+        "course_codes": course_codes,
+        "course_pars": course_pars,
+        "expected_score_r2": expected_score_r2,
+        "expected_score_r3": expected_score_r3,
+        "expected_score_r4": expected_score_r4,
+        "wind_r2": wind_r2,
+        "wind_r3": wind_r3,
+        "wind_r4": wind_r4,
+        "dew_r2": dew_r2,
+        "dew_r3": dew_r3,
+        "dew_r4": dew_r4,
     }
 
     # --- Print summary ---
     print(f"  Round:    {round_num} ({'pre-event' if round_num == 0 else f'R{round_num} complete'})")
-    print(f"  Wind:     {len(wind)} hours → {wind[:5]}{'...' if len(wind) > 5 else ''}")
-    print(f"  Dew:      {len(dew)} hours → {dew[:5]}{'...' if len(dew) > 5 else ''}")
+    print(f"  Wind:     {len(wind)} hours -> {wind[:5]}{'...' if len(wind) > 5 else ''}")
+    print(f"  Dew:      {len(dew)} hours -> {dew[:5]}{'...' if len(dew) > 5 else ''}")
     print(f"  Score adj: {expected_score_1}"
           + (f" / {expected_score_2}" if expected_score_2 is not None else "")
           + (f" / {expected_score_3}" if expected_score_3 is not None else ""))
+    if course_codes:
+        print(f"  Courses:  {course_codes} (pars: {course_pars})")
+    if expected_score_r2:
+        print(f"  Exp R2:   {expected_score_r2}")
+    if expected_score_r3:
+        print(f"  Exp R3:   {expected_score_r3}")
+    if expected_score_r4:
+        print(f"  Exp R4:   {expected_score_r4}")
 
     return config
 
