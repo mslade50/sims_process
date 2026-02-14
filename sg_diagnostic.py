@@ -95,26 +95,59 @@ def load_predictions(tourney_name):
 # ---------------------------------------------------------------------------
 # 2c. fetch_actuals
 # ---------------------------------------------------------------------------
-def fetch_actuals(event_id, year=None):
+def _fetch_actuals_from_db(event_id, year=None):
     """
-    Wrapper around fetch_historical_rounds(). Melts per-round SG columns to long.
+    Primary: pull ADJUSTED SG actuals from dg_historical.db.
+    Uses sg_*_adj columns which are field-strength adjusted -- comparable
+    to our predictions (which are built from adjusted historical SG dists).
 
-    Output cols: player_name, dg_id, round (1-4), category, actual_sg
-    Drops rows where actual_sg is NaN (non-ShotLink data).
+    Returns long-format DataFrame or empty DataFrame if event not in DB.
     """
-    df = fetch_historical_rounds(event_id, year=year)
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame(), False
+
+    if year is None:
+        year = datetime.now().year
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(
+            """
+            SELECT player_name, dg_id, round_num,
+                   sg_ott_adj, sg_app_adj, sg_arg_adj, sg_putt_adj, sg_total_adj
+            FROM player_rounds
+            WHERE event_id = ? AND year = ?
+              AND sg_ott_adj IS NOT NULL
+            ORDER BY player_name, round_num
+            """,
+            conn,
+            params=(int(event_id), int(year)),
+        )
+        conn.close()
+    except Exception as e:
+        print(f"  DB query error: {e}")
+        return pd.DataFrame(), False
+
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), False
 
-    sg_cols = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "sg_total"]
+    # Normalize names
+    df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
+    df["player_name"] = df["player_name"].replace(name_replacements)
 
+    # Melt to long format
     rows = []
     for _, row in df.iterrows():
-        for sg_col in sg_cols:
-            val = row.get(sg_col)
+        for adj_col, cat in [
+            ("sg_ott_adj", "ott"),
+            ("sg_app_adj", "app"),
+            ("sg_arg_adj", "arg"),
+            ("sg_putt_adj", "putt"),
+            ("sg_total_adj", "total"),
+        ]:
+            val = row.get(adj_col)
             if pd.isna(val):
                 continue
-            cat = sg_col.replace("sg_", "")
             rows.append(
                 {
                     "player_name": row["player_name"],
@@ -126,15 +159,130 @@ def fetch_actuals(event_id, year=None):
             )
 
     result = pd.DataFrame(rows)
-    if result.empty:
-        print("  No SG actual data available (non-ShotLink event?)")
-        return result
+    if not result.empty:
+        print(
+            f"  DB actuals (adjusted): {result['player_name'].nunique()} players, "
+            f"{result['round'].nunique()} rounds, {len(result)} rows"
+        )
+    return result, True
 
+
+def _fetch_actuals_live(max_round=4):
+    """
+    Fallback: fetch actuals from live-tournament-stats API (works mid-event).
+    WARNING: Returns RAW (unadjusted) SG -- not directly comparable to
+    predictions which are based on adjusted distributions. Absolute bias
+    values are NOT meaningful; only relative player/archetype differences
+    may be informative.
+
+    Returns long-format DataFrame matching fetch_actuals() output.
+    """
+    from api_utils import fetch_live_stats
+    api_key = os.getenv("DATAGOLF_API_KEY")
+
+    sg_cols = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "sg_total"]
+    rows = []
+
+    for rnd in range(1, max_round + 1):
+        df = fetch_live_stats(rnd, api_key)
+        if df is None or df.empty:
+            print(f"    R{rnd}: no data")
+            continue
+
+        # Check if SG data is present (not all NaN)
+        has_sg = any(col in df.columns and df[col].notna().any() for col in sg_cols)
+        if not has_sg:
+            print(f"    R{rnd}: no SG data")
+            continue
+
+        count = 0
+        for _, row in df.iterrows():
+            for sg_col in sg_cols:
+                val = row.get(sg_col)
+                if pd.isna(val):
+                    continue
+                cat = sg_col.replace("sg_", "")
+                rows.append(
+                    {
+                        "player_name": row["player_name"],
+                        "dg_id": row.get("dg_id"),
+                        "round": rnd,
+                        "category": cat,
+                        "actual_sg": float(val),
+                    }
+                )
+                count += 1
+        print(f"    R{rnd}: {count // len(sg_cols)} players with SG data")
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
     print(
-        f"  Actuals: {result['player_name'].nunique()} players with SG data, "
-        f"{len(result)} rows"
+        f"  Live actuals (RAW -- not field-adjusted): "
+        f"{result['player_name'].nunique()} players, "
+        f"{result['round'].nunique()} rounds, {len(result)} rows"
     )
     return result
+
+
+def fetch_actuals(event_id, year=None):
+    """
+    Fetch actual SG data for comparison against predictions.
+
+    Priority order:
+    1. dg_historical.db (adjusted SG) -- apples-to-apples with predictions
+    2. DataGolf historical-raw-data/rounds API (raw SG)
+    3. Live-tournament-stats API (raw SG, works mid-event)
+
+    Returns: (DataFrame, is_adjusted: bool)
+    """
+    # 1. Try database first (adjusted SG -- best for comparison)
+    db_result, used_db = _fetch_actuals_from_db(event_id, year=year)
+    if not db_result.empty:
+        return db_result, True
+
+    # 2. Try historical API (completed events, raw SG)
+    df = fetch_historical_rounds(event_id, year=year)
+    if not df.empty:
+        sg_cols = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "sg_total"]
+        rows = []
+        for _, row in df.iterrows():
+            for sg_col in sg_cols:
+                val = row.get(sg_col)
+                if pd.isna(val):
+                    continue
+                cat = sg_col.replace("sg_", "")
+                rows.append(
+                    {
+                        "player_name": row["player_name"],
+                        "dg_id": row.get("dg_id"),
+                        "round": int(row["round_num"]),
+                        "category": cat,
+                        "actual_sg": float(val),
+                    }
+                )
+
+        result = pd.DataFrame(rows)
+        if not result.empty:
+            print(
+                f"  API actuals (RAW -- not field-adjusted): "
+                f"{result['player_name'].nunique()} players, {len(result)} rows"
+            )
+            print(
+                "  WARNING: Raw SG actuals. Absolute bias reflects field-strength "
+                "adjustment gap, not model error."
+            )
+            return result, False
+
+    # 3. Fallback to live stats (mid-event)
+    print("  Historical sources unavailable -- trying live stats API...")
+    live_result = _fetch_actuals_live(max_round=4)
+    if not live_result.empty:
+        return live_result, False
+
+    print("  No SG actual data available")
+    return pd.DataFrame(), False
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +842,7 @@ def compute_recurring_misses(diagnostic_path=None):
 # ---------------------------------------------------------------------------
 # 2j. build_diagnostic_email_html
 # ---------------------------------------------------------------------------
-def build_diagnostic_email_html(event_name, analysis, recurring):
+def build_diagnostic_email_html(event_name, analysis, recurring, is_adjusted=True):
     """
     HTML email following round_sim.py table styling.
     5 sections: Summary, Category Bias, Biggest Misses, Archetype, Recurring.
@@ -712,6 +860,14 @@ def build_diagnostic_email_html(event_name, analysis, recurring):
     td_style = 'style="padding:6px 10px; font-size:13px; font-family:Arial,sans-serif; border-bottom:1px solid #dee2e6;"'
 
     # --- Section 1: Event Summary ---
+    sg_label = "Adjusted SG" if is_adjusted else "Raw SG (not field-adjusted)"
+    raw_warning = "" if is_adjusted else """
+        <p style="margin:4px 0; font-family:Arial,sans-serif; font-size:12px; color:#d35400; font-weight:600;">
+            Using raw SG actuals -- predictions are field-adjusted.
+            Absolute bias reflects adjustment gap, not model error.
+            Relative player/archetype differences are still meaningful.
+        </p>"""
+
     summary_html = f"""
     <div style="background:#e9ecef; border-radius:8px; padding:16px; margin-bottom:20px;">
         <h2 style="margin:0 0 8px 0; color:#343a40; font-family:Arial,sans-serif;">
@@ -720,8 +876,9 @@ def build_diagnostic_email_html(event_name, analysis, recurring):
         <p style="margin:4px 0; font-family:Arial,sans-serif; font-size:14px;">
             Players compared: <b>{summary.get('n_players', 0)}</b> |
             SG data availability: <b>{summary.get('sg_data_pct', 0)}%</b> |
-            Avg absolute miss: <b>{summary.get('avg_abs_miss', 0):.3f}</b>
-        </p>
+            Avg absolute miss: <b>{summary.get('avg_abs_miss', 0):.3f}</b> |
+            Data: <b>{sg_label}</b>
+        </p>{raw_warning}
         <p style="margin:2px 0; font-family:Arial,sans-serif; font-size:12px; color:#666;">
             Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} |
             Positive miss = underpredicted (player gained more than expected)
@@ -933,7 +1090,7 @@ def send_diagnostic_email(html, event_name):
 # ---------------------------------------------------------------------------
 # 2l. print_console_summary
 # ---------------------------------------------------------------------------
-def print_console_summary(analysis, recurring):
+def print_console_summary(analysis, recurring, is_adjusted=True):
     """Terminal output of key findings."""
     if not analysis:
         print("\n  No analysis results to display.")
@@ -944,9 +1101,17 @@ def print_console_summary(analysis, recurring):
     biggest = analysis.get("biggest_misses", pd.DataFrame())
     arch_pivot = analysis.get("archetype_pivot", pd.DataFrame())
 
+    sg_label = "Field-Adjusted SG" if is_adjusted else "Raw SG (unadjusted)"
+
     print("\n" + "=" * 60)
     print("  SG DIAGNOSTIC SUMMARY")
+    print(f"  Actuals source: {sg_label}")
     print("=" * 60)
+
+    if not is_adjusted:
+        print("\n  NOTE: Actuals are RAW SG (not field-adjusted).")
+        print("  Predictions use adjusted SG, so systematic negative bias")
+        print("  is EXPECTED and does NOT indicate model error.")
 
     print(f"\n  Players compared: {summary.get('n_players', 0)}")
     print(f"  SG data coverage: {summary.get('sg_data_pct', 0)}%")
@@ -1069,11 +1234,17 @@ def main():
         return
 
     # Step 2: Fetch actuals
-    print("\n  Fetching actuals from DataGolf...")
-    actuals = fetch_actuals(eid, year=year)
+    print("\n  Fetching actuals...")
+    actuals, is_adjusted = fetch_actuals(eid, year=year)
     if actuals.empty:
         print("  No SG data available for this event. Exiting.")
         return
+
+    if not is_adjusted:
+        print("\n  ** NOTE: Using RAW (unadjusted) SG actuals. **")
+        print("  ** Predictions are field-adjusted. Absolute bias reflects the **")
+        print("  ** adjustment gap, NOT model error. Relative differences      **")
+        print("  ** between players/archetypes are still informative.          **")
 
     # Step 3: Compute archetypes
     print("\n  Computing player archetypes...")
@@ -1094,6 +1265,10 @@ def main():
     print("\n  Building diagnostic records...")
     records = build_diagnostic_records(comparison, archetypes, event_name, year, eid)
     if not records.empty:
+        if not is_adjusted:
+            records["sg_type"] = "raw"
+        else:
+            records["sg_type"] = "adjusted"
         append_to_diagnostic(records)
 
     # Step 6: Compute analysis
@@ -1104,12 +1279,12 @@ def main():
     recurring = compute_recurring_misses()
 
     # Step 8: Print console summary
-    print_console_summary(analysis, recurring)
+    print_console_summary(analysis, recurring, is_adjusted=is_adjusted)
 
     # Step 9: Send email
     if not args.no_email and analysis:
         print("\n  Sending diagnostic email...")
-        html = build_diagnostic_email_html(event_name, analysis, recurring)
+        html = build_diagnostic_email_html(event_name, analysis, recurring, is_adjusted=is_adjusted)
         send_diagnostic_email(html, event_name)
     elif args.no_email:
         print("\n  Email skipped (--no-email)")
