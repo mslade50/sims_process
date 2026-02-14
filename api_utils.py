@@ -120,6 +120,24 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False)
 
     df = pd.DataFrame(data["field"])
 
+    # Extract round number from teetime_col (e.g. "r2_teetime" → 2)
+    round_num = int(teetime_col.replace("r", "").replace("_teetime", ""))
+
+    # The API returns a nested 'teetimes' list instead of flat r{N}_teetime columns.
+    # Parse it to extract the requested round's tee time and course code.
+    if "teetimes" in df.columns:
+        def _extract_teetime(teetimes):
+            if not isinstance(teetimes, list):
+                return pd.Series({teetime_col: None, "course": None})
+            for entry in teetimes:
+                if entry.get("round_num") == round_num:
+                    return pd.Series({teetime_col: entry.get("teetime"), "course": entry.get("course_code")})
+            return pd.Series({teetime_col: None, "course": None})
+
+        parsed = df["teetimes"].apply(_extract_teetime)
+        df[teetime_col] = parsed[teetime_col]
+        df["course"] = parsed["course"]
+
     # Build list of columns to keep
     keep = ["player_name"]
     if teetime_col in df.columns:
@@ -139,7 +157,6 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False)
         default_teetime = f"{today_str} 10:00"
         df[teetime_col] = default_teetime
         print(f"  ⚠️  {teetime_col} unavailable — defaulting to {default_teetime}")
-
 
     return df
 

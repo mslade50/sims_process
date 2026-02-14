@@ -340,6 +340,12 @@ Names must be lowercase and go through `name_replacements` dict. Both sides of a
 ### 10. Course Shape Adjustment File Naming
 Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has special characters or spaces, they must match.
 
+### 11. DataGolf Field-Updates API: Nested Tee Times
+**Symptom**: R2/R3 tee times reported as unavailable; all players default to 10:00 AM, zeroing out weather differentiation.
+**Cause**: The DataGolf `/field-updates` API does NOT return flat columns like `r1_teetime`, `r2_teetime`. Instead it returns a single `teetimes` column containing a nested list of dicts, each with `round_num`, `teetime`, `course_code`, `course_name`, etc.
+**Why R1 wasn't affected**: R1 tee times come from `model_predictions_r1.csv` (created pre-event), not from `fetch_field_updates`. R2/R3 depend on the API for tee times.
+**Fix**: `fetch_field_updates` in `api_utils.py` parses the nested `teetimes` list, filters by `round_num`, and extracts `teetime` → `r{N}_teetime` and `course_code` → `course`. Fixed Feb 2026.
+
 ---
 
 ## Weekly Operational Workflow
