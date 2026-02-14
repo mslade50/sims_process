@@ -36,6 +36,14 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `api_utils.py` | Shared DataGolf API functions: `fetch_live_stats()`, `fetch_field_updates()`, `calculate_average_wind()`, `compute_wind_factor()`, `clean_names()` |
 | `sheet_config.py` | Google Sheets config reader. Reads round number, weather forecasts, scoring adjustments from `golf_sims` sheet (`round_config` tab) so you can update from phone. |
 
+### Bet Storage & Analysis
+
+| File | Purpose | Key Outputs |
+|------|---------|-------------|
+| `sheets_storage.py` | Google Sheets write + local Parquet ledger. Connection-pooled (`get_spreadsheet()`). All `store_*` calls auto-write to both Sheets and `permanent_data/bet_ledger.parquet`. | Sheets tabs, `bet_ledger.parquet` |
+| `grade_bets.py` | Reads ungraded bets from Sheets, fetches results from DataGolf, grades with dead-heat adjustments, writes back. Also updates Parquet ledger grades via `update_ledger_grades()`. | Graded Sheets tabs, summary email, ledger updates |
+| `bet_query.py` | CLI for querying local Parquet ledger. Modes: terminal summary, `--export` CSV, `--plot` Plotly dashboard. Filters: `--event`, `--type`, `--book`, `--min-edge`, `--graded`. | Terminal output, CSV, HTML dashboard |
+
 ### Configuration & Infrastructure
 
 | File | Purpose |
@@ -46,7 +54,7 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `.github/workflows/test-env.yml` | Tests environment secrets are configured correctly |
 | `.github/workflows/weekly-cleanup.yml` | Runs Sunday midnight UTC — deletes transient CSVs, Excel files, tournament folders from repo root |
 | `requirements.txt` | Python dependencies for GitHub Actions |
-| `permanent_data/` | Reference data that survives weekly cleanup (correlation matrices, calibration data) |
+| `permanent_data/` | Reference data that survives weekly cleanup (correlation matrices, calibration data, bet ledger) |
 
 ---
 
@@ -106,6 +114,24 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
                               │
                               ▼
                      Email report (HTML tables + attachments)
+
+
+                     ╔══════════════════════════════════════╗
+                     ║     BET STORAGE & GRADING            ║
+                     ╚══════════════════════════════════════╝
+
+  new_sim.py / round_sim.py
+          │
+          ▼
+  sheets_storage.py ──► Google Sheets tabs (Tournament MU, Finish Pos, etc.)
+          │
+          └──► permanent_data/bet_ledger.parquet  (local Parquet write-through)
+                              │
+                              ▼
+  grade_bets.py ──► Sheets grades + update_ledger_grades() ──► ledger updated
+                              │
+                              ▼
+  bet_query.py ──► Terminal summary / CSV export / Plotly dashboard
 ```
 
 ---
@@ -192,6 +218,19 @@ Tournaments like AT&T Pebble Beach use multiple courses. Key patterns:
 +1 (bogey): -1.8 pts          +2 (double bogey+): -3.9 pts
 Bonuses: Bogey-free round +5, 3+ consecutive birdies +5 (single streak only)
 ```
+
+### 10. Bet Storage & Connection Pooling (`sheets_storage.py`)
+- **Connection pooling**: `get_spreadsheet()` caches a single gspread Spreadsheet object at module level. All `store_*` functions accept an optional `spreadsheet=` parameter; if None they call `get_spreadsheet()`. Callers (new_sim, round_sim) get one auth per run instead of N.
+- **Parquet write-through**: Every `store_*` call also writes to `permanent_data/bet_ledger.parquet` via `_append_to_ledger()`. Deduplication by `(event_id, bet_type, round, bet_on, opponent, bookmaker)` — first write wins. Atomic writes via `tempfile` + `os.replace()`.
+- **Ledger grading**: `update_ledger_grades(graded_bets)` matches on the same dedup key and updates `result`, `units_wagered`, `units_won`, `actual_finish`, `p1_round_score`, `p2_round_score`, `graded_at`.
+- **Querying**: `query_ledger(**filters)` returns a filtered DataFrame. Filters: `event`, `bet_type`, `book`, `min_edge`, `graded`, `year`.
+- **Auth DRY**: `grade_bets.py` imports `get_spreadsheet` from `sheets_storage` instead of defining its own duplicate `_get_credentials()` / `_connect_sheets()`.
+
+### 11. Bet Query CLI (`bet_query.py`)
+Three output modes:
+- **Terminal** (default): Overall W/L/P, ROI, breakdowns by bet type and edge bucket
+- **CSV** (`--export`): Saves `filtered_bets_{timestamp}.csv`
+- **Plotly** (`--plot`): 4-panel interactive HTML dashboard (cumulative P&L, ROI by book, edge buckets, scatter)
 
 ---
 
@@ -346,6 +385,19 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 **Why R1 wasn't affected**: R1 tee times come from `model_predictions_r1.csv` (created pre-event), not from `fetch_field_updates`. R2/R3 depend on the API for tee times.
 **Fix**: `fetch_field_updates` in `api_utils.py` parses the nested `teetimes` list, filters by `round_num`, and extracts `teetime` → `r{N}_teetime` and `course_code` → `course`. Fixed Feb 2026.
 
+### 12. Google Sheets Connection Pooling
+**Symptom**: Slow store operations — each `store_*` call takes 3-5 seconds for auth.
+**Cause**: Pre-Feb 2026 code called `_connect_sheets()` inside every `store_*` function, causing N separate OAuth round-trips per script run (4 in `new_sim.py`, 2 in `round_sim.py`).
+**Fix**: `get_spreadsheet()` caches at module level. All `store_*` functions accept `spreadsheet=None` — callers pass one object. Fully backward compatible (None triggers `get_spreadsheet()`).
+
+### 13. Parquet Ledger Dedup Key
+**Dedup key**: `(event_id, bet_type, round, bet_on, opponent, bookmaker)` — all lowercased/stripped.
+**Why this matters**: A bet stored via `store_tournament_matchups()` (raw) and then via `store_sharp_filtered()` should appear once. The dedup ensures first-write wins. If you add a new store function that writes the same bets, dedup handles it automatically.
+**Atomic writes**: `_append_to_ledger()` uses `tempfile.mkstemp()` + `os.replace()` to prevent corruption on crash.
+
+### 14. grade_bets.py Auth
+`grade_bets.py` imports `get_spreadsheet` from `sheets_storage` instead of defining its own `_get_credentials()` / `_connect_sheets()`. If you see duplicate auth code, it's a regression — DRY it through `sheets_storage`.
+
 ---
 
 ## Weekly Operational Workflow
@@ -354,6 +406,8 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 Sunday night:    Weekly cleanup runs (GitHub Action)
                  Deletes transient CSVs/Excel/tournament folders from repo root
                  permanent_data/ and .py files preserved
+                 Grade previous week: python grade_bets.py --event-id <id>
+                 Review results: python bet_query.py --summary --by-event
 
 Monday/Tuesday:  Update sim_inputs.py for new tournament
                  Run cat_dists_player.py (if new data available)
@@ -364,16 +418,20 @@ Wednesday:       Run rd_1_sd_multicourse_sim.py
 
 Thursday (R1):   Update Google Sheet: round=0, wind/dew for R1
                  Run live_stats_engine.py (pre-event → model_predictions_r1.csv)
+                 Run new_sim.py → bets auto-saved to Sheets + Parquet ledger
                  After R1 completes: set round=1, update weather for R2
-                 Run live_stats_engine.py (skill update → r1_live_model.csv + model_predictions_r2.csv)
-                 Run round_sim.py (matchup pricing for R2)
+                 Run live_stats_engine.py (skill update)
+                 Run round_sim.py → bets auto-saved to Sheets + Parquet ledger
 
 Friday (R2):     Set round=2, update weather
                  Run live_stats_engine.py
-                 Run round_sim.py
+                 Run round_sim.py → auto-saved
 
 Saturday-Sunday: Same pattern for R3/R4
+                 After Sunday: grade_bets.py grades all bet types + updates ledger
 ```
+
+> See `WEEKLY_PROCESS.md` for the full step-by-step operational guide with exact commands.
 
 ---
 
@@ -466,3 +524,7 @@ When simulation results seem wrong:
 - Maintain graceful degradation for missing files (especially multi-course)
 - Any new API calls should go through `api_utils.py`
 - Any new email reporting should follow the HTML table pattern with confidence thresholds
+- Any new `store_*` functions in `sheets_storage.py` should accept `spreadsheet=None` and call `get_spreadsheet()` as fallback
+- Any new bet storage should also write to the Parquet ledger (follow the `_ledger_write_*` pattern)
+- Auth code belongs in `sheets_storage.py` only — never duplicate `_get_credentials()` in other files
+- The Parquet ledger at `permanent_data/bet_ledger.parquet` is local-only (gitignored) — Sheets remains the authoritative store

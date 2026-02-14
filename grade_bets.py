@@ -34,12 +34,12 @@ import pandas as pd
 import numpy as np
 import requests
 import gspread
-from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from sim_inputs import name_replacements
+from sheets_storage import get_spreadsheet, update_ledger_grades
 
 # Email config
 EMAIL_FROM = os.getenv("EMAIL_USER")
@@ -52,18 +52,6 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 API_KEY = os.getenv("DATAGOLF_API_KEY")
 DATAGOLF_BASE = "https://feeds.datagolf.com"
-
-SHEET_NAME = "golf_sims"
-
-WRITE_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-CREDENTIALS_PATHS = [
-    "credentials.json",
-    os.path.join(os.path.dirname(__file__), "credentials.json"),
-]
 
 # Tab names - source bets
 TAB_TOURNAMENT_MU = "Tournament Matchups"
@@ -97,32 +85,6 @@ PRED_BUCKETS = [
     (-0.25, 0.25, "-0.25-0.25"),
     (float('-inf'), -0.25, "<-0.25"),
 ]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Auth & Connection
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _get_credentials():
-    """Build Google credentials from env var or file."""
-    import json
-    creds_json = os.getenv("GOOGLE_CREDS_JSON")
-    if creds_json:
-        creds_dict = json.loads(creds_json)
-        return Credentials.from_service_account_info(creds_dict, scopes=WRITE_SCOPES)
-
-    for path in CREDENTIALS_PATHS:
-        if os.path.exists(path):
-            return Credentials.from_service_account_file(path, scopes=WRITE_SCOPES)
-
-    raise FileNotFoundError("No Google credentials found.")
-
-
-def _connect_sheets():
-    """Authenticate and return the gspread Spreadsheet object."""
-    creds = _get_credentials()
-    client = gspread.authorize(creds)
-    return client.open(SHEET_NAME)
 
 
 def categorize_book(book_name):
@@ -1694,9 +1656,9 @@ def main():
     if "round_1" in results_df.columns:
         print(f"  Round 1 scores available: Yes")
 
-    # Connect to sheets
+    # Connect to sheets (uses cached connection from sheets_storage)
     print("\n  Connecting to Google Sheets...")
-    spreadsheet = _connect_sheets()
+    spreadsheet = get_spreadsheet()
 
     all_graded_bets = []
 
@@ -1870,6 +1832,14 @@ def main():
         write_results_tab(spreadsheet, TAB_FINISH_SHARP, finish_results["sharp"], FINISH_RESULTS_HEADERS, "sharp")
         write_results_tab(spreadsheet, TAB_FINISH_RETAIL, finish_results["retail"], FINISH_RESULTS_HEADERS, "retail")
         write_results_tab(spreadsheet, TAB_FINISH_OTHER, finish_results["other"], FINISH_RESULTS_HEADERS, "other")
+
+    # Update Parquet ledger with grades
+    if all_graded_bets and not args.dry_run:
+        print("\n  Updating Parquet ledger...")
+        # Enrich graded bets with event_id for ledger matching
+        for bet in all_graded_bets:
+            bet["event_id"] = str(event_id)
+        update_ledger_grades(all_graded_bets)
 
     # Calculate and write summary
     if all_graded_bets and not args.dry_run:

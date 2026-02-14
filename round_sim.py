@@ -215,7 +215,8 @@ def load_tournament_config(sheet_config):
                     course_map[code][f"expected_r{rnd}"] = exp_val
 
     # Default expected score fallback (use expected_score_1 from sheet or PAR)
-    default_expected = sheet_config.get("expected_score_1", 0) + PAR
+    es1 = sheet_config.get("expected_score_1", 0)
+    default_expected = es1 if abs(es1) > 50 else es1 + PAR
 
     # Wind arrays per round (fallback to generic 'wind')
     default_wind = sheet_config.get("wind", [])
@@ -441,6 +442,16 @@ def simulate_remaining_rounds(
     my_pred_base = np.array([player_preds_base.get(p, 0.0) for p in player_names])
     round_std = np.ones(n_players) * STD_DEV
 
+    # Per-player expected score for R2 (multi-course aware)
+    player_expected_r2 = np.full(n_players, default_par, dtype=float)
+    if model_preds is not None and 'course_score_adj' in model_preds.columns:
+        for i, p in enumerate(player_names):
+            row = model_preds[model_preds['player_name'] == p]
+            if not row.empty and pd.notna(row['course_score_adj'].iloc[0]):
+                player_expected_r2[i] = row['course_score_adj'].iloc[0]
+        if np.unique(player_expected_r2).size > 1:
+            print(f"    Multi-course R2: expected scores = {dict(zip(*np.unique(player_expected_r2, return_counts=True)))}")
+
     # Get updated predictions from model_preds if available
     if model_preds is not None and not model_preds.empty:
         for i, p in enumerate(player_names):
@@ -515,7 +526,7 @@ def simulate_remaining_rounds(
         cats_r2 = np.empty((n_players, num_sims, 4), dtype=float)
         for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
             cats_r2[i] = categories_given_total_for_player(mu, L, v, denom, sg_r2[i])
-        strokes_r2 = np.rint(default_par - sg_r2).astype(int)
+        strokes_r2 = np.rint(player_expected_r2[:, None] - sg_r2).astype(int)
 
     r1_r2_scores = strokes_r1 + strokes_r2
 
@@ -909,6 +920,165 @@ def build_finish_outputs(priced_markets, pred_lookup, sample_lookup):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Outright Win Edge CSVs
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
+    """
+    Fetch live outright win odds, merge with model win probabilities,
+    and save a CSV of the largest POSITIVE edges (players we think will win
+    more often than the market implies).
+
+    Saves: {out_dir}/outright_win_edges.csv
+    """
+    data = fetch_outright_odds('win')
+    if not data:
+        print("    No win market data available for positive edge CSV")
+        return pd.DataFrame(), None
+
+    df = extract_market_rows(data, odds_key='odds')
+    if df.empty:
+        print("    No win market rows extracted")
+        return pd.DataFrame(), None
+
+    df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
+
+    if 'simulated_win_prob' not in finish_probs.columns:
+        print("    No simulated_win_prob column in finish_probs")
+        return pd.DataFrame(), None
+
+    df = df.merge(
+        finish_probs[['player_name', 'simulated_win_prob']],
+        on='player_name', how='inner'
+    )
+    if df.empty:
+        return pd.DataFrame(), None
+
+    df['implied_prob'] = 1.0 / df['decimal_odds']
+    df['american_odds'] = df['decimal_odds'].apply(decimal_to_american)
+    p = df['simulated_win_prob'].astype(float)
+    b = df['decimal_odds'] - 1.0
+    q = 1.0 - p
+    df['edge'] = ((p * b) - q) * 100.0
+    f_star = (b * p - q) / b
+    df['kelly'] = (BANKROLL * KELLY_FRACTION * f_star.clip(lower=0)).astype(float)
+    df['my_fair'] = p.apply(lambda x: implied_to_american(x) if x > 0 else None)
+    df['my_pred'] = df['player_name'].map(pred_lookup)
+    df['sample'] = df['player_name'].map(sample_lookup)
+
+    # Keep only positive edges, sort by Kelly stake
+    pos = df[df['edge'] > 0].copy()
+    pos = pos.sort_values('kelly', ascending=False)
+
+    # Best price per player (highest Kelly across books)
+    pos = pos.drop_duplicates('player_name', keep='first')
+
+    cols = ['player_name', 'bookmaker', 'american_odds', 'implied_prob',
+            'simulated_win_prob', 'my_fair', 'edge', 'kelly', 'my_pred', 'sample']
+    pos = pos[[c for c in cols if c in pos.columns]]
+
+    path = os.path.join(out_dir, "outright_win_edges.csv")
+    pos.to_csv(path, index=False)
+    print(f"    Saved {path} ({len(pos)} positive win edges)")
+    return pos, path
+
+
+def build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
+    """
+    Fetch live outright win odds, isolate BetOnline, devig using the
+    multiplicative method (divide each implied prob by the total overround),
+    then compare to model win probabilities.
+
+    Players where the model gives a LOWER win probability than BetOnline's
+    devigged implied probability have negative edges — the market overrates
+    them, i.e., players we think WON'T win.
+
+    Saves: {out_dir}/betonline_devig_fades.csv
+    """
+    data = fetch_outright_odds('win')
+    if not data:
+        print("    No win market data available for BetOnline devig CSV")
+        return pd.DataFrame()
+
+    # Extract ALL books first so we can get BetOnline rows
+    entries = data.get('odds', [])
+    if not isinstance(entries, list):
+        print("    Unexpected win market format")
+        return pd.DataFrame()
+
+    rows = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        player = entry.get('player_name', '')
+        if not player:
+            continue
+        player = player.lower().strip()
+        odds = entry.get('betonline')
+        if odds is not None:
+            rows.append({
+                'player_name': player,
+                'decimal_odds': float(odds),
+            })
+
+    if not rows:
+        print("    No BetOnline win odds found")
+        return pd.DataFrame()
+
+    bol = pd.DataFrame(rows)
+    bol['player_name'] = bol['player_name'].str.lower().str.strip().replace(name_replacements)
+    bol['implied_prob'] = 1.0 / bol['decimal_odds']
+
+    # Devig: multiplicative method
+    total_overround = bol['implied_prob'].sum()
+    bol['devigged_prob'] = bol['implied_prob'] / total_overround
+    bol['devigged_decimal'] = 1.0 / bol['devigged_prob']
+    bol['devigged_american'] = bol['devigged_decimal'].apply(decimal_to_american)
+    bol['raw_american'] = bol['decimal_odds'].apply(decimal_to_american)
+
+    print(f"    BetOnline overround: {total_overround:.4f} "
+          f"({(total_overround - 1) * 100:.1f}% vig on {len(bol)} players)")
+
+    if 'simulated_win_prob' not in finish_probs.columns:
+        print("    No simulated_win_prob column in finish_probs")
+        return pd.DataFrame()
+
+    bol = bol.merge(
+        finish_probs[['player_name', 'simulated_win_prob']],
+        on='player_name', how='inner'
+    )
+    if bol.empty:
+        print("    No player overlap between BetOnline odds and model")
+        return pd.DataFrame()
+
+    # Edge vs devigged line: negative = model thinks player is WORSE than market
+    p = bol['simulated_win_prob'].astype(float)
+    b = bol['devigged_decimal'] - 1.0
+    q = 1.0 - p
+    bol['edge_vs_devig'] = ((p * b) - q) * 100.0
+
+    bol['model_fair_american'] = p.apply(
+        lambda x: implied_to_american(x) if x > 0 else None
+    )
+    bol['my_pred'] = bol['player_name'].map(pred_lookup)
+    bol['sample'] = bol['player_name'].map(sample_lookup)
+
+    # Sort by most negative edge (biggest fades first)
+    bol = bol.sort_values('edge_vs_devig', ascending=True)
+
+    cols = ['player_name', 'raw_american', 'implied_prob', 'devigged_prob',
+            'devigged_american', 'simulated_win_prob', 'model_fair_american',
+            'edge_vs_devig', 'my_pred', 'sample']
+    bol = bol[[c for c in cols if c in bol.columns]]
+
+    path = os.path.join(out_dir, "betonline_devig_fades.csv")
+    bol.to_csv(path, index=False)
+    print(f"    Saved {path} ({len(bol)} players, "
+          f"most negative edge: {bol['edge_vs_devig'].iloc[0]:.1f}%)")
+    return bol
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Odds Conversion Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1183,9 +1353,10 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
 
     # --- Sharp: pinnacle / betonline / betcris, deduplicate by highest edge ---
     sharp = combined[combined["Bookmaker"].str.lower().isin(SHARP_BOOKS)].copy()
-    sharp["matchup_key"] = sharp.apply(
-        lambda r: "-".join(sorted([r["Player 1"], r["Player 2"]])), axis=1
-    )
+    sharp["matchup_key"] = [
+        "-".join(sorted([p1, p2]))
+        for p1, p2 in zip(sharp["Player 1"], sharp["Player 2"])
+    ]
     sharp = sharp.sort_values("edge_on", ascending=False).drop_duplicates(
         "matchup_key", keep="first"
     )
@@ -1267,7 +1438,8 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def export_results(combined, sharp, score_card, sim_round,
-                   outrights_combined=None, outrights_sharp=None, finish_probs=None):
+                   outrights_combined=None, outrights_sharp=None, finish_probs=None,
+                   score_cards_by_course=None):
     """Save all outputs to an Excel workbook + CSV backup."""
     timestamp = datetime.now().strftime("%H%M")
     out_dir = f"./{tourney}"
@@ -1288,31 +1460,38 @@ def export_results(combined, sharp, score_card, sim_round,
             sharp.to_excel(writer, sheet_name="matchups_sharp", index=False)
             _format_matchup_sheet(writer, workbook, "matchups_sharp", sharp)
 
-        # --- Score Card ---
-        if not score_card.empty:
-            score_card.to_excel(writer, sheet_name="score_card", index=False)
-            ws = writer.sheets["score_card"]
-
-            # Format: highlight cells where fair odds are favorable (negative = under favorite)
+        # --- Score Card(s) ---
+        def _write_score_card_sheet(card_df, sheet_name):
+            """Write and format a single score card sheet."""
+            card_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            ws = writer.sheets[sheet_name]
             green = workbook.add_format({"bg_color": "#d4edda"})
             red = workbook.add_format({"bg_color": "#f8d7da"})
-            num_fmt = workbook.add_format({"num_format": "0"})
-
-            # Apply number format and conditional coloring to score columns
-            for col_idx in range(2, len(score_card.columns)):
-                col_letter = chr(65 + col_idx) if col_idx < 26 else f"A{chr(65 + col_idx - 26)}"
+            # Find first numeric column (skip Player, Pred, Course)
+            first_num = next(
+                (i for i, c in enumerate(card_df.columns)
+                 if c not in ("Player", "Pred", "Course")), 2
+            )
+            for col_idx in range(first_num, len(card_df.columns)):
                 ws.conditional_format(
-                    1, col_idx, len(score_card), col_idx,
+                    1, col_idx, len(card_df), col_idx,
                     {"type": "cell", "criteria": "<", "value": 0, "format": green},
                 )
                 ws.conditional_format(
-                    1, col_idx, len(score_card), col_idx,
+                    1, col_idx, len(card_df), col_idx,
                     {"type": "cell", "criteria": ">", "value": 0, "format": red},
                 )
-
-            # Auto-width
-            for i, col in enumerate(score_card.columns):
+            for i, col in enumerate(card_df.columns):
                 ws.set_column(i, i, max(len(str(col)) + 2, 8))
+
+        if score_cards_by_course:
+            # Multi-course: separate tab per course
+            for course_name, card_df in score_cards_by_course.items():
+                if not card_df.empty:
+                    sheet_name = f"card_{course_name}"[:31]
+                    _write_score_card_sheet(card_df, sheet_name)
+        elif not score_card.empty:
+            _write_score_card_sheet(score_card, "score_card")
 
         # --- Outrights: Combined ---
         if outrights_combined is not None and not outrights_combined.empty:
@@ -1333,10 +1512,21 @@ def export_results(combined, sharp, score_card, sim_round,
 
     print(f"\n  Saved {excel_path}")
 
-    # Also save score card as standalone CSV for easy reference
-    card_csv = os.path.join(out_dir, f"fair_card_r{sim_round}.csv")
-    score_card.to_csv(card_csv, index=False)
-    print(f"  Saved {card_csv}")
+    # Also save score card(s) as standalone CSV for easy reference
+    if score_cards_by_course:
+        for course_name, card_df in score_cards_by_course.items():
+            if not card_df.empty:
+                csv_path = os.path.join(out_dir, f"fair_card_r{sim_round}_{course_name}.csv")
+                card_df.to_csv(csv_path, index=False)
+                print(f"  Saved {csv_path}")
+        # Combined CSV with Course column
+        card_csv = os.path.join(out_dir, f"fair_card_r{sim_round}.csv")
+        score_card.to_csv(card_csv, index=False)
+        print(f"  Saved {card_csv} (combined)")
+    else:
+        card_csv = os.path.join(out_dir, f"fair_card_r{sim_round}.csv")
+        score_card.to_csv(card_csv, index=False)
+        print(f"  Saved {card_csv}")
 
     return excel_path, card_csv
 
@@ -1599,7 +1789,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
 
 def send_round_sim_email(sharp_df, sim_round, sample_lookup,
-                         excel_path=None, card_csv_path=None, outrights_sharp=None):
+                         excel_path=None, card_csv_path=None, outrights_sharp=None,
+                         win_edges_csv_path=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -1644,6 +1835,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                 att.add_header(
                     "Content-Disposition", "attachment",
                     filename=os.path.basename(excel_path),
+                )
+                msg.attach(att)
+
+        # Attach win edges CSV
+        if win_edges_csv_path and os.path.exists(win_edges_csv_path):
+            with open(win_edges_csv_path, "rb") as f:
+                att = MIMEApplication(f.read(), _subtype="csv")
+                att.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(win_edges_csv_path),
                 )
                 msg.attach(att)
 
@@ -1695,8 +1896,11 @@ def main():
             if expected_avg is None:
                 expected_avg = PAR
                 print(f"  Warning: No expected_score_1 in sheet, using PAR={PAR}")
+            elif abs(expected_avg) > 50:
+                # Full expected score entered (e.g. 68.7), use as-is
+                print(f"  Note: expected_score_1={expected_avg} detected as full score")
             else:
-                # expected_score_1 is an adjustment, add to PAR
+                # Small value = adjustment from par (e.g. -3.3)
                 expected_avg = PAR + expected_avg
         except Exception as e:
             print(f"\nWarning: Could not read Google Sheet: {e}")
@@ -1756,13 +1960,31 @@ def main():
         sharp = pd.DataFrame()
 
     # ── Step 3: Score card ───────────────────────────────────────────────
-    print(f"\n  Building fair score card (expected avg = {expected_avg})...")
-    score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
+    # Multi-course: build separate score cards per course
+    score_cards_by_course = {}
+    if ("course_score_adj" in model_preds.columns
+            and model_preds["course_score_adj"].nunique() > 1):
+        for course_adj in sorted(model_preds["course_score_adj"].unique()):
+            mask = model_preds["course_score_adj"] == course_adj
+            course_players = set(model_preds.loc[mask, "player_name"])
+            course_name = model_preds.loc[mask, "course_x"].iloc[0] if "course_x" in model_preds.columns else f"{course_adj}"
+            course_sim = {p: s for p, s in sim_dict.items() if p in course_players}
+            if course_sim:
+                print(f"\n  Building score card for {course_name} (expected = {course_adj})...")
+                card = build_score_card(course_sim, course_adj, pred_lookup)
+                card.insert(0, "Course", course_name)
+                score_cards_by_course[course_name] = card
+        # Combine for CSV / email; keep course column for identification
+        score_card = pd.concat(score_cards_by_course.values(), ignore_index=True) if score_cards_by_course else pd.DataFrame()
+    else:
+        print(f"\n  Building fair score card (expected avg = {expected_avg})...")
+        score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
 
     # ── Step 4: Tournament Simulation (NEW) ──────────────────────────────
     outrights_combined = pd.DataFrame()
     outrights_sharp = pd.DataFrame()
     finish_probs = pd.DataFrame()
+    win_edges_csv_path = None
 
     if not args.skip_tournament_sim and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
@@ -1835,6 +2057,13 @@ def main():
                 else:
                     print(f"    No outright edges above threshold")
 
+                # --- Win market edge CSVs ---
+                print(f"\n    Building outright win edge CSVs...")
+                out_dir = f"./{tourney}"
+                os.makedirs(out_dir, exist_ok=True)
+                _, win_edges_csv_path = build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
+                build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
+
             else:
                 print(f"    No player data found for tournament sim")
 
@@ -1853,6 +2082,7 @@ def main():
         outrights_combined=outrights_combined,
         outrights_sharp=outrights_sharp,
         finish_probs=finish_probs,
+        score_cards_by_course=score_cards_by_course if score_cards_by_course else None,
     )
 
     # ── Step 6: Email ────────────────────────────────────────────────────
@@ -1864,10 +2094,12 @@ def main():
         excel_path=excel_path,
         card_csv_path=card_csv,
         outrights_sharp=outrights_sharp,
+        win_edges_csv_path=win_edges_csv_path,
     )
     # ── Storage ──────────────────────────────────────────────────────────────
     from sheets_storage import (
         is_valid_run_time,
+        get_spreadsheet,
         store_round_matchups,
         store_sharp_filtered,
         load_dg_id_lookup,
@@ -1878,6 +2110,9 @@ def main():
         try:
             from sim_inputs import event_ids
 
+            # Single auth for all store calls
+            spreadsheet = get_spreadsheet()
+
             # Build dg_id lookup (may not have all round-sim players, but best effort)
             dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
 
@@ -1885,6 +2120,7 @@ def main():
             store_round_matchups(
                 combined, sim_round, tourney, event_ids[0],
                 dg_id_lookup=dg_id_lookup,
+                spreadsheet=spreadsheet,
             )
 
             # 2. Sharp filtered round matchups
@@ -1893,6 +2129,7 @@ def main():
                 event_id=event_ids[0],
                 sharp_rounds=sharp,
                 sim_round=sim_round,
+                spreadsheet=spreadsheet,
             )
 
             print("[storage] Done.")

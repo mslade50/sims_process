@@ -28,6 +28,8 @@ Usage:
 
 import os
 import json
+import uuid
+import tempfile
 from datetime import datetime
 
 import gspread
@@ -65,6 +67,12 @@ TAB_ALL_FILTERED = "All Filtered Bets"
 
 # Drive folder root
 DRIVE_ROOT_FOLDER = "golf_sim_outputs"
+
+# Parquet ledger (local-only, not committed to repo)
+LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
+
+# Dedup key columns for the ledger
+LEDGER_DEDUP_COLS = ["event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -148,6 +156,22 @@ def _connect_drive():
     from googleapiclient.discovery import build
     creds = _get_credentials()
     return build("drive", "v3", credentials=creds)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Connection Pooling
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SPREADSHEET_CACHE = None
+
+
+def get_spreadsheet():
+    """Return a cached gspread Spreadsheet object (single auth per process)."""
+    global _SPREADSHEET_CACHE
+    if _SPREADSHEET_CACHE is None:
+        _SPREADSHEET_CACHE = _connect_sheets()
+        print("  [storage] Authenticated with Google Sheets (cached)")
+    return _SPREADSHEET_CACHE
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -262,7 +286,7 @@ def _get(row, *col_names, default=""):
 # Store: Tournament Matchups
 # ══════════════════════════════════════════════════════════════════════════════
 
-def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None):
+def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None, spreadsheet=None):
     """
     Write tournament matchup rows to the "Tournament Matchups" tab.
 
@@ -319,10 +343,14 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None)
             "",                                         # units_won (grading)
         ])
 
-    spreadsheet = _connect_sheets()
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_TOURNAMENT_MU, TOURNAMENT_MU_HEADERS)
     _append_rows(ws, rows)
     print(f"  [storage] Wrote {len(rows)} tournament matchup rows to '{TAB_TOURNAMENT_MU}'")
+
+    # Parquet write-through
+    _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup, ts=ts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -346,7 +374,7 @@ def _extract_sim_prob(row):
     return None
 
 
-def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=None):
+def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=None, spreadsheet=None):
     """
     Write finish position bet rows to the "Finish Positions" tab.
 
@@ -395,17 +423,21 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
             "",                                                 # units_won (grading)
         ])
 
-    spreadsheet = _connect_sheets()
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_FINISH_POS, FINISH_POS_HEADERS)
     _append_rows(ws, rows)
     print(f"  [storage] Wrote {len(rows)} finish position rows to '{TAB_FINISH_POS}'")
+
+    # Parquet write-through
+    _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Store: Round Matchups
 # ══════════════════════════════════════════════════════════════════════════════
 
-def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup=None):
+def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup=None, spreadsheet=None):
     """
     Write round matchup rows to the "Round Matchups" tab.
 
@@ -464,10 +496,14 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             "",                                         # units_won (grading)
         ])
 
-    spreadsheet = _connect_sheets()
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
     _append_rows(ws, rows)
     print(f"  [storage] Wrote {len(rows)} R{sim_round} matchup rows to '{TAB_ROUND_MU}'")
+
+    # Parquet write-through
+    _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -477,7 +513,8 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
 def store_sharp_filtered(tourney, event_id,
                          sharp_matchups=None,
                          sharp_rounds=None, sim_round=None,
-                         sharp_finishes=None):
+                         sharp_finishes=None,
+                         spreadsheet=None):
     """
     Write sharp-filtered bets to the unified "Sharp Filtered Bets" tab.
     Accepts any combination of the three bet types.
@@ -611,7 +648,8 @@ def store_sharp_filtered(tourney, event_id,
         print("  [storage] No sharp filtered bets to store.")
         return
 
-    spreadsheet = _connect_sheets()
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_SHARP, SHARP_HEADERS)
     _append_rows(ws, rows)
 
@@ -626,7 +664,8 @@ def store_sharp_filtered(tourney, event_id,
 def store_all_filtered(tourney, event_id,
                        all_matchups=None,
                        all_rounds=None, sim_round=None,
-                       all_finishes=None):
+                       all_finishes=None,
+                       spreadsheet=None):
     """
     Write filtered bets from ALL books to the "All Filtered Bets" tab.
     Same schema as Sharp Filtered, but includes every bookmaker.
@@ -734,7 +773,8 @@ def store_all_filtered(tourney, event_id,
         print("  [storage] No all-book filtered bets to store.")
         return
 
-    spreadsheet = _connect_sheets()
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_ALL_FILTERED, SHARP_HEADERS)
     _append_rows(ws, rows)
 
@@ -851,3 +891,423 @@ def load_dg_id_lookup(tourney, name_replacements=None):
     except Exception as e:
         print(f"  [storage] Error loading dg_id from {path}: {e}")
         return {}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Parquet Bet Ledger — Local Write-Through
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Book categorization (duplicated from grade_bets for independence)
+_SHARP_BOOKS = ["pinnacle", "betonline", "betcris", "bet online", "bookmaker"]
+_RETAIL_BOOKS = ["fanduel", "draftkings", "caesars", "dk", "fd", "czr", "betmgm", "mgm"]
+
+
+def _categorize_book(book_name):
+    """Categorize a sportsbook as sharp, retail, or other."""
+    if not book_name:
+        return "other"
+    b = str(book_name).lower().strip()
+    for s in _SHARP_BOOKS:
+        if s in b:
+            return "sharp"
+    for r in _RETAIL_BOOKS:
+        if r in b:
+            return "retail"
+    return "other"
+
+
+def _empty_ledger_record():
+    """Return a dict with all ledger columns set to defaults."""
+    return {
+        "bet_id": "",
+        "run_timestamp": "",
+        "event_name": "",
+        "year": 0,
+        "event_id": "",
+        "bet_type": "",
+        "round": 0,
+        "bet_on": "",
+        "opponent": "",
+        "dg_id_bet_on": "",
+        "dg_id_opponent": "",
+        "bookmaker": "",
+        "book_odds": np.nan,
+        "fair_odds": np.nan,
+        "edge": np.nan,
+        "pred_on": np.nan,
+        "sample_on": np.nan,
+        "kelly_stake": np.nan,
+        "half_shot": np.nan,
+        "wind_on": np.nan,
+        "wind_diff": np.nan,
+        "book_category": "",
+        "result": "",
+        "actual_finish": "",
+        "p1_round_score": np.nan,
+        "p2_round_score": np.nan,
+        "units_wagered": np.nan,
+        "units_won": np.nan,
+        "graded_at": "",
+    }
+
+
+def _append_to_ledger(records):
+    """
+    Append records to the Parquet ledger, deduplicating by LEDGER_DEDUP_COLS.
+    Atomic write via temp file + os.replace().
+    """
+    if not records:
+        return
+
+    new_df = pd.DataFrame(records)
+
+    # Ensure permanent_data dir exists
+    ledger_dir = os.path.dirname(LEDGER_PATH)
+    os.makedirs(ledger_dir, exist_ok=True)
+
+    if os.path.exists(LEDGER_PATH):
+        try:
+            existing = pd.read_parquet(LEDGER_PATH)
+        except Exception:
+            existing = pd.DataFrame()
+    else:
+        existing = pd.DataFrame()
+
+    if existing.empty:
+        combined = new_df
+    else:
+        combined = pd.concat([existing, new_df], ignore_index=True)
+
+    # Normalize dedup columns for matching
+    for col in LEDGER_DEDUP_COLS:
+        if col in combined.columns:
+            combined[col] = combined[col].astype(str).str.lower().str.strip()
+
+    # Keep first occurrence (existing rows win over new)
+    combined = combined.drop_duplicates(subset=LEDGER_DEDUP_COLS, keep="first")
+
+    # Atomic write
+    fd, tmp_path = tempfile.mkstemp(suffix=".parquet", dir=ledger_dir)
+    os.close(fd)
+    try:
+        combined.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, LEDGER_PATH)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+    new_count = len(combined) - len(existing)
+    print(f"  [ledger] {new_count} new rows added ({len(combined)} total in ledger)")
+
+
+def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup, ts):
+    """Build ledger records from tournament matchup DataFrame and append."""
+    try:
+        if combined_df is None or combined_df.empty:
+            return
+        dg = dg_id_lookup or {}
+        year = datetime.now().year
+        records = []
+        for _, r in combined_df.iterrows():
+            p1 = str(_get(r, "Player 1")).lower().strip()
+            p2 = str(_get(r, "Player 2")).lower().strip()
+            bet_on = str(_get(r, "bet_on")).lower().strip()
+            opponent = p2 if bet_on == p1 else p1
+
+            if bet_on == p1:
+                book_odds = _get(r, "P1 Odds", default=np.nan)
+                fair_odds = _get(r, "Fair_p1", default=np.nan)
+                hs = _get(r, "half_shot_p1", default=np.nan)
+            else:
+                book_odds = _get(r, "P2 Odds", default=np.nan)
+                fair_odds = _get(r, "Fair_p2", default=np.nan)
+                hs = _get(r, "half_shot_p2", default=np.nan)
+
+            bookmaker = str(_get(r, "Bookmaker", default=""))
+
+            rec = _empty_ledger_record()
+            rec.update({
+                "bet_id": str(uuid.uuid4()),
+                "run_timestamp": ts,
+                "event_name": tourney,
+                "year": year,
+                "event_id": str(event_id),
+                "bet_type": "tournament_matchup",
+                "round": 0,
+                "bet_on": bet_on,
+                "opponent": opponent,
+                "dg_id_bet_on": str(dg.get(bet_on, "")),
+                "dg_id_opponent": str(dg.get(opponent, "")),
+                "bookmaker": bookmaker,
+                "book_odds": _safe_float(book_odds),
+                "fair_odds": _safe_float(fair_odds),
+                "edge": _safe_float(_get(r, "edge_on", default=np.nan)),
+                "pred_on": _safe_float(_get(r, "pred_on", default=np.nan)),
+                "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
+                "half_shot": _safe_float(hs),
+                "wind_on": _safe_float(_get(r, "wind_on", default=np.nan)),
+                "wind_diff": _safe_float(_get(r, "wind_diff", default=np.nan)),
+                "book_category": _categorize_book(bookmaker),
+            })
+            records.append(rec)
+
+        _append_to_ledger(records)
+    except Exception as e:
+        print(f"  [ledger] Warning: tournament matchup write failed: {e}")
+
+
+def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts):
+    """Build ledger records from finish position DataFrame and append."""
+    try:
+        if combined_finish_df is None or combined_finish_df.empty:
+            return
+        dg = dg_id_lookup or {}
+        year = datetime.now().year
+        records = []
+        for _, r in combined_finish_df.iterrows():
+            player = str(_get(r, "player_name")).lower().strip()
+            market = str(_get(r, "market_type", "market", default=""))
+            bookmaker = str(_get(r, "bookmaker", "book", "sportsbook", default=""))
+
+            rec = _empty_ledger_record()
+            rec.update({
+                "bet_id": str(uuid.uuid4()),
+                "run_timestamp": ts,
+                "event_name": tourney,
+                "year": year,
+                "event_id": str(event_id),
+                "bet_type": "finish_position",
+                "round": 0,
+                "bet_on": player,
+                "opponent": market,
+                "dg_id_bet_on": str(dg.get(player, "")),
+                "dg_id_opponent": "",
+                "bookmaker": bookmaker,
+                "book_odds": _safe_float(_get(r, "american_odds", default=np.nan)),
+                "fair_odds": _safe_float(_get(r, "my_fair", default=np.nan)),
+                "edge": _safe_float(_get(r, "edge", default=np.nan)),
+                "pred_on": _safe_float(_get(r, "my_pred", default=np.nan)),
+                "sample_on": _safe_float(_get(r, "sample", default=np.nan)),
+                "kelly_stake": _safe_float(_get(r, "stake", "kelly_stake", default=np.nan)),
+                "book_category": _categorize_book(bookmaker),
+            })
+            records.append(rec)
+
+        _append_to_ledger(records)
+    except Exception as e:
+        print(f"  [ledger] Warning: finish position write failed: {e}")
+
+
+def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts):
+    """Build ledger records from round matchup DataFrame and append."""
+    try:
+        if combined_df is None or combined_df.empty:
+            return
+        dg = dg_id_lookup or {}
+        year = datetime.now().year
+        records = []
+        for _, r in combined_df.iterrows():
+            p1 = str(_get(r, "Player 1")).lower().strip()
+            p2 = str(_get(r, "Player 2")).lower().strip()
+            bet_on = str(_get(r, "bet_on")).lower().strip()
+            opponent = p2 if bet_on == p1 else p1
+
+            if bet_on == p1:
+                book_odds = _get(r, "P1 Odds", default=np.nan)
+                fair_odds = _get(r, "Fair_p1", default=np.nan)
+                hs = _get(r, "half_shot_p1", default=np.nan)
+            else:
+                book_odds = _get(r, "P2 Odds", default=np.nan)
+                fair_odds = _get(r, "Fair_p2", default=np.nan)
+                hs = _get(r, "half_shot_p2", default=np.nan)
+
+            bookmaker = str(_get(r, "Bookmaker", default=""))
+
+            rec = _empty_ledger_record()
+            rec.update({
+                "bet_id": str(uuid.uuid4()),
+                "run_timestamp": ts,
+                "event_name": tourney,
+                "year": year,
+                "event_id": str(event_id),
+                "bet_type": "round_matchup",
+                "round": int(sim_round),
+                "bet_on": bet_on,
+                "opponent": opponent,
+                "dg_id_bet_on": str(dg.get(bet_on, "")),
+                "dg_id_opponent": str(dg.get(opponent, "")),
+                "bookmaker": bookmaker,
+                "book_odds": _safe_float(book_odds),
+                "fair_odds": _safe_float(fair_odds),
+                "edge": _safe_float(_get(r, "edge_on", default=np.nan)),
+                "pred_on": _safe_float(_get(r, "pred_on", "p1_pred", default=np.nan)),
+                "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
+                "half_shot": _safe_float(hs),
+                "book_category": _categorize_book(bookmaker),
+            })
+            records.append(rec)
+
+        _append_to_ledger(records)
+    except Exception as e:
+        print(f"  [ledger] Warning: round matchup write failed: {e}")
+
+
+def _safe_float(val):
+    """Convert value to float, returning NaN for failures."""
+    if val is None or val == "":
+        return np.nan
+    try:
+        f = float(val)
+        return f if not np.isinf(f) else np.nan
+    except (ValueError, TypeError):
+        return np.nan
+
+
+def update_ledger_grades(graded_bets):
+    """
+    Update the Parquet ledger with grading results.
+    Matches on LEDGER_DEDUP_COLS. Updates: result, units_wagered, units_won,
+    actual_finish, p1_round_score, p2_round_score, graded_at.
+
+    Args:
+        graded_bets: list of dicts from grade_bets.py, each with:
+            bet_type, bet_on, opponent (or player_1/player_2), bookmaker,
+            round, event_id, result, units_wagered, units_won, etc.
+    """
+    if not graded_bets or not os.path.exists(LEDGER_PATH):
+        if not os.path.exists(LEDGER_PATH):
+            print("  [ledger] No ledger file found — skipping grade update")
+        return
+
+    try:
+        ledger = pd.read_parquet(LEDGER_PATH)
+    except Exception as e:
+        print(f"  [ledger] Error reading ledger: {e}")
+        return
+
+    if ledger.empty:
+        print("  [ledger] Ledger is empty — nothing to grade")
+        return
+
+    # Normalize dedup cols in ledger
+    for col in LEDGER_DEDUP_COLS:
+        if col in ledger.columns:
+            ledger[col] = ledger[col].astype(str).str.lower().str.strip()
+
+    graded_ts = _now_est_iso()
+    updated = 0
+
+    for bet in graded_bets:
+        result = bet.get("result", "")
+        if not result or result in ("no_data", "unknown", "duplicate"):
+            continue
+
+        # Build match key from graded bet
+        bt = str(bet.get("bet_type", "")).lower().strip()
+        bet_on = str(bet.get("bet_on", bet.get("player_name", ""))).lower().strip()
+        bookmaker = str(bet.get("bookmaker", "")).lower().strip()
+        event_id = str(bet.get("event_id", "")).lower().strip()
+
+        # Determine round
+        rd = bet.get("round", "0")
+        if str(rd).lower() == "tournament":
+            rd = "0"
+        rd = str(rd).lower().strip()
+
+        # Determine opponent
+        if bt == "finish_position":
+            opponent = str(bet.get("market_type", bet.get("opponent", ""))).lower().strip()
+        else:
+            opponent = str(bet.get("opponent", "")).lower().strip()
+            if not opponent:
+                # Derive from player_1/player_2
+                p1 = str(bet.get("player_1", "")).lower().strip()
+                p2 = str(bet.get("player_2", "")).lower().strip()
+                opponent = p2 if bet_on == p1 else p1
+
+        # Find matching row(s)
+        mask = (
+            (ledger["event_id"] == event_id) &
+            (ledger["bet_type"] == bt) &
+            (ledger["bet_on"] == bet_on) &
+            (ledger["opponent"] == opponent) &
+            (ledger["bookmaker"] == bookmaker) &
+            (ledger["round"].astype(str) == rd)
+        )
+
+        matches = ledger.index[mask]
+        if len(matches) == 0:
+            continue
+
+        idx = matches[0]
+        ledger.at[idx, "result"] = result
+        ledger.at[idx, "units_wagered"] = _safe_float(bet.get("units_wagered"))
+        ledger.at[idx, "units_won"] = _safe_float(bet.get("units_won"))
+        ledger.at[idx, "graded_at"] = graded_ts
+
+        if "actual_finish" in bet:
+            ledger.at[idx, "actual_finish"] = str(bet["actual_finish"])
+        if "p1_score" in bet:
+            ledger.at[idx, "p1_round_score"] = _safe_float(bet["p1_score"])
+        if "p2_score" in bet:
+            ledger.at[idx, "p2_round_score"] = _safe_float(bet["p2_score"])
+
+        updated += 1
+
+    if updated > 0:
+        # Atomic write
+        ledger_dir = os.path.dirname(LEDGER_PATH)
+        fd, tmp_path = tempfile.mkstemp(suffix=".parquet", dir=ledger_dir)
+        os.close(fd)
+        try:
+            ledger.to_parquet(tmp_path, index=False)
+            os.replace(tmp_path, LEDGER_PATH)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+
+    print(f"  [ledger] Graded {updated} / {len(graded_bets)} bets in ledger")
+
+
+def query_ledger(**filters):
+    """
+    Query the Parquet ledger with optional filters.
+
+    Keyword args (all optional):
+        event: str — filter by event_name (substring match)
+        bet_type: str — exact match on bet_type
+        book: str — filter by bookmaker (substring match)
+        min_edge: float — minimum edge
+        graded: bool — if True, only graded (result != "")
+        year: int — filter by year
+
+    Returns:
+        pd.DataFrame (empty if no ledger or no matches)
+    """
+    if not os.path.exists(LEDGER_PATH):
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_parquet(LEDGER_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    if "event" in filters and filters["event"]:
+        df = df[df["event_name"].str.contains(str(filters["event"]), case=False, na=False)]
+    if "bet_type" in filters and filters["bet_type"]:
+        df = df[df["bet_type"] == filters["bet_type"]]
+    if "book" in filters and filters["book"]:
+        df = df[df["bookmaker"].str.contains(str(filters["book"]), case=False, na=False)]
+    if "min_edge" in filters and filters["min_edge"] is not None:
+        df = df[df["edge"] >= float(filters["min_edge"])]
+    if "graded" in filters and filters["graded"]:
+        df = df[df["result"].astype(str).str.strip() != ""]
+    if "year" in filters and filters["year"]:
+        df = df[df["year"] == int(filters["year"])]
+
+    return df

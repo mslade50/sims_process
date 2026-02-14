@@ -79,6 +79,10 @@ SCORE_ADJS = {1: score_adj_r1, 2: score_adj_r2, 3: score_adj_r3, 4: score_adj_r4
 # For single-course weeks, only index 0 is used.
 COURSE_SCORE_ADJS = None  # Set by _apply_sheet_overrides; None = use SCORE_ADJS
 
+# Name-keyed course score map: {api_course_code: expected_score}
+# Built from course_codes + expected_score_1/2/3 in _apply_sheet_overrides().
+COURSE_SCORE_MAP = {}  # e.g. {"PB": 68.7, "SG": 69.9}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Coefficient Routing
@@ -693,14 +697,12 @@ def create_next_round_predictions(round_num):
     if skill_col not in live_model.columns:
         raise ValueError(f"Column '{skill_col}' not found in r{round_num}_live_model.csv")
 
-    # Build predictions DataFrame
+    # Build predictions DataFrame — skill + std_dev only.
+    # Course assignment comes from the field updates API (next round's course),
+    # NOT from the live model (which has the current round's course).
     keep_cols = ["player_name", skill_col]
     if "std_dev" in live_model.columns:
         keep_cols.append("std_dev")
-    # Carry course_x through for multi-course sim support
-    course_col = "course" if "course" in live_model.columns else "course_x" if "course_x" in live_model.columns else None
-    if course_col:
-        keep_cols.append(course_col)
 
     preds = live_model[[c for c in keep_cols if c in live_model.columns]].copy()
 
@@ -712,7 +714,11 @@ def create_next_round_predictions(round_num):
     teetime_col = f"r{next_round}_teetime"
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=(next_round <= 3))
     if field is not None and teetime_col in field.columns:
-        preds = preds.merge(field[["player_name", teetime_col]], on="player_name", how="left")
+        # Merge tee time + course for next round from field updates API
+        merge_cols = ["player_name", teetime_col]
+        if "course" in field.columns:
+            merge_cols.append("course")
+        preds = preds.merge(field[[c for c in merge_cols if c in field.columns]], on="player_name", how="left")
 
         # Drop players without tee times (cut / withdrawn after this round)
         before = len(preds)
@@ -764,10 +770,56 @@ def create_next_round_predictions(round_num):
     print(f"  Avg skill R{next_round}: {preds[pred_name].mean():.4f}")
 
     # Per-course expected scoring (multi-course aware)
-    course_col = "course" if "course" in preds.columns else "course_x" if "course_x" in preds.columns else None
-    if course_col and preds[course_col].nunique() > 1 and COURSE_SCORE_ADJS and len(COURSE_SCORE_ADJS) > 1:
+    course_col = "course" if "course" in preds.columns else None
+
+    # Primary path: API gave us next-round course directly + we have COURSE_SCORE_MAP
+    if course_col and preds[course_col].nunique() > 1 and COURSE_SCORE_MAP:
+        preds["course_score_adj"] = np.nan
+        print(f"  Multi-course mapping:")
+        for code, adj in COURSE_SCORE_MAP.items():
+            mask = preds[course_col] == code
+            n = mask.sum()
+            if n > 0:
+                course_skill = preds.loc[mask, pred_name].mean()
+                course_wind = preds.loc[mask, wind_col].mean()
+                exp_score = round(adj - course_skill + course_wind, 2)
+                print(f"    {code} → adj={adj}, players={n}, avg_skill={course_skill:.3f}, expected scoring={exp_score}")
+                preds.loc[mask, "course_score_adj"] = adj
+        # Warn about unmapped players
+        unmapped = preds[course_col].notna() & preds["course_score_adj"].isna()
+        if unmapped.any():
+            unknown = preds.loc[unmapped, course_col].unique()
+            print(f"  Warning: Unmapped course codes: {list(unknown)} — using fallback")
+            preds.loc[unmapped, "course_score_adj"] = SCORE_ADJS.get(next_round, 0)
+
+    # Fallback: no course from API, but live model had one + exactly 2 courses → flip
+    elif len(COURSE_SCORE_MAP) == 2:
+        live_course_col = "course" if "course" in live_model.columns else "course_x" if "course_x" in live_model.columns else None
+        if live_course_col and live_course_col in live_model.columns:
+            codes = list(COURSE_SCORE_MAP.keys())
+            flip = {codes[0]: codes[1], codes[1]: codes[0]}
+            # Map live model's current-round course to preds, then flip for next round
+            course_lookup = live_model.set_index("player_name")[live_course_col]
+            preds["course"] = preds["player_name"].map(course_lookup).map(flip)
+            print(f"  Multi-course mapping (flipped from R{round_num}):")
+            for code, adj in COURSE_SCORE_MAP.items():
+                mask = preds["course"] == code
+                n = mask.sum()
+                if n > 0:
+                    course_skill = preds.loc[mask, pred_name].mean()
+                    print(f"    {code} → adj={adj}, players={n}, avg_skill={course_skill:.3f}")
+                    preds.loc[mask, "course_score_adj"] = adj
+            print(f"  Warning: No next-round course from API — flipped R{round_num} assignments for R{next_round}")
+        else:
+            score_adj = SCORE_ADJS.get(next_round, 0)
+            expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
+            print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
+
+    # Legacy fallback: positional COURSE_SCORE_ADJS (no COURSE_SCORE_MAP)
+    elif (course_col and preds[course_col].nunique() > 1
+          and COURSE_SCORE_ADJS and len(COURSE_SCORE_ADJS) > 1):
         courses_ordered = [c for c in preds[course_col].unique() if pd.notna(c)]
-        print(f"  Multi-course mapping (order of appearance):")
+        print(f"  Multi-course mapping (order of appearance, legacy):")
         for i, cid in enumerate(courses_ordered):
             adj = COURSE_SCORE_ADJS[i] if i < len(COURSE_SCORE_ADJS) else COURSE_SCORE_ADJS[0]
             course_players = preds[preds[course_col] == cid]
@@ -775,8 +827,8 @@ def create_next_round_predictions(round_num):
             course_wind = course_players[wind_col].mean()
             exp_score = round(adj - course_skill + course_wind, 2)
             print(f"    expected_score_{i+1} → {cid}: adj={adj}, expected scoring={exp_score}")
-            # Store the course_x → score_adj mapping on the DataFrame
             preds.loc[preds[course_col] == cid, "course_score_adj"] = adj
+
     else:
         score_adj = SCORE_ADJS.get(next_round, 0)
         expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
@@ -1267,7 +1319,7 @@ def _apply_sheet_overrides(config):
     NEXT round. This patches the module-level arrays so the rest of the
     engine uses the sheet values seamlessly.
     """
-    global WIND_ARRAYS, DEW_ARRAYS, SCORE_ADJS, COURSE_SCORE_ADJS, dew_calculation, wind_override
+    global WIND_ARRAYS, DEW_ARRAYS, SCORE_ADJS, COURSE_SCORE_ADJS, COURSE_SCORE_MAP, dew_calculation, wind_override
 
     round_num = config["round_num"]
     next_round = round_num + 1 if round_num < 4 else 4
@@ -1293,9 +1345,19 @@ def _apply_sheet_overrides(config):
         COURSE_SCORE_ADJS = course_adjs
         SCORE_ADJS[next_round] = course_adjs[0]  # Default/single-course fallback
         if len(course_adjs) > 1:
-            print(f"  → Multi-course score adjs: {course_adjs} (mapped to courses in order of appearance)")
+            print(f"  → Multi-course score adjs: {course_adjs}")
         else:
             print(f"  → Score adj R{next_round}: {course_adjs[0]}")
+
+    # Build name-keyed map: API course_code → expected_score
+    course_codes = config.get("course_codes", [])
+    COURSE_SCORE_MAP = {}
+    for i, code in enumerate(course_codes):
+        if i < len(course_adjs):
+            COURSE_SCORE_MAP[code] = course_adjs[i]
+
+    if COURSE_SCORE_MAP and len(COURSE_SCORE_MAP) > 1:
+        print(f"  → Course score map: {COURSE_SCORE_MAP}")
 
     # Override dew/wind calculation factors if set in sheet
     if config.get("dew_calculation") is not None:

@@ -41,8 +41,11 @@ DUMP_FILENAME  = f"sim_iter_0001_leaderboard_{tourney}.csv"
 # Master toggle: use OTT-based in-tournament adjustments or not
 USE_IN_TOURN_OTT = True  # set to False to zero all in-tournament OTT adjustments
 
-# Input predictions
-PRED_PATH = f"pre_course_fit_{tourney}.csv"
+# Input predictions (prefer final_predictions if available, fallback to pre_course_fit)
+_final_pred_path = f"final_predictions_{tourney}.csv"
+_pre_course_path = f"pre_course_fit_{tourney}.csv"
+PRED_PATH = _final_pred_path if os.path.exists(_final_pred_path) else _pre_course_path
+print(f"[info] Using predictions from: {PRED_PATH}")
 
 # Per-player category distribution file (course-shaped)
 DISTS_FILE = "this_week_dists_adjusted.csv"
@@ -1607,6 +1610,7 @@ if not df_match.empty:
         )
         from sheets_storage import (
             is_valid_run_time,
+            get_spreadsheet,
             store_tournament_matchups,
             store_finish_positions,
             store_sharp_filtered,
@@ -1619,6 +1623,9 @@ if not df_match.empty:
             try:
                 from sim_inputs import event_ids
 
+                # Single auth for all store calls
+                spreadsheet = get_spreadsheet()
+
                 # Build dg_id lookup from the predictions file
                 dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
 
@@ -1626,6 +1633,7 @@ if not df_match.empty:
                 store_tournament_matchups(
                     combined_df, tourney, event_ids[0],
                     dg_id_lookup=dg_id_lookup,
+                    spreadsheet=spreadsheet,
                 )
 
                 # 2. Finish position bets
@@ -1633,6 +1641,7 @@ if not df_match.empty:
                     store_finish_positions(
                         combined_finish_df, tourney, event_ids[0],
                         dg_id_lookup=dg_id_lookup,
+                        spreadsheet=spreadsheet,
                     )
 
                 # 3. Sharp filtered (tournament matchups + finish positions)
@@ -1641,12 +1650,14 @@ if not df_match.empty:
                     event_id=event_ids[0],
                     sharp_matchups=sharp_df if 'sharp_df' in dir() else None,
                     sharp_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
+                    spreadsheet=spreadsheet,
                 )
                 store_all_filtered(
                     tourney=tourney,
                     event_id=event_ids[0],
                     all_matchups=combined_df if 'combined_df' in dir() else None,
                     all_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
+                    spreadsheet=spreadsheet,
                 )
                 # 4. Drive CSV backups (disabled — service account lacks storage quota)
                 # storage_ts = datetime.now().strftime("%Y%m%d_%H%M")
