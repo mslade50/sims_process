@@ -210,8 +210,11 @@ this_week_dists_adjusted.csv
 # EXCEPTIONS: Files that SHOULD be committed
 # =============================================================================
 
-# Parquet ledger (local-only query store, not committed)
+# Parquet ledger and diagnostic store (local-only, not committed)
 permanent_data/*.parquet
+
+# SQLite databases (local-only)
+*.db
 
 # Permanent reference data (correlation matrices, calibration data)
 !permanent_data/**/*.csv

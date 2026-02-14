@@ -270,3 +270,97 @@ def clean_names(df):
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
     df["player_name"] = df["player_name"].replace(name_replacements)
     return df
+
+
+# --------------------------------------------------------------------------
+# Historical Round-Level SG Data
+# --------------------------------------------------------------------------
+
+def fetch_historical_rounds(event_id, year=None, api_key=None):
+    """
+    Fetch round-level SG category data from DataGolf.
+
+    Returns long-format DataFrame:
+        player_name, dg_id, round_num, sg_ott, sg_app, sg_arg, sg_putt, sg_total
+    """
+    import os
+    if api_key is None:
+        api_key = os.getenv("DATAGOLF_API_KEY")
+    if year is None:
+        from datetime import datetime as _dt
+        year = _dt.now().year
+
+    params = {
+        "tour": "pga",
+        "event_id": str(event_id),
+        "year": year,
+        "file_format": "json",
+        "key": api_key,
+    }
+
+    try:
+        resp = requests.get(
+            f"{DATAGOLF_BASE}/historical-raw-data/rounds",
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  Error fetching historical rounds: {e}")
+        return pd.DataFrame()
+
+    if not data:
+        print(f"  No historical round data for event {event_id}")
+        return pd.DataFrame()
+
+    # Handle nested structure
+    if isinstance(data, dict) and "scores" in data:
+        scores_data = data["scores"]
+        print(f"  Event: {data.get('event_name', 'Unknown')}")
+    else:
+        scores_data = data
+
+    if not scores_data:
+        return pd.DataFrame()
+
+    # Debug: print keys from first player's first round dict
+    first_player = scores_data[0] if scores_data else {}
+    for rnd_key in ["round_1", "round_2", "round_3", "round_4"]:
+        rnd_dict = first_player.get(rnd_key)
+        if isinstance(rnd_dict, dict):
+            print(f"  [debug] {rnd_key} keys: {list(rnd_dict.keys())}")
+            break
+
+    SG_FIELDS = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "sg_total"]
+
+    rows = []
+    for player in scores_data:
+        player_name = player.get("player_name", "")
+        dg_id = player.get("dg_id", None)
+
+        for rnd_num in range(1, 5):
+            rnd_key = f"round_{rnd_num}"
+            rnd_dict = player.get(rnd_key)
+            if not isinstance(rnd_dict, dict):
+                continue
+
+            row = {
+                "player_name": player_name,
+                "dg_id": dg_id,
+                "round_num": rnd_num,
+            }
+            for sg in SG_FIELDS:
+                val = rnd_dict.get(sg)
+                row[sg] = float(val) if val is not None else None
+
+            rows.append(row)
+
+    if not rows:
+        print("  No round-level data extracted")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df = clean_names(df)
+    print(f"  Fetched {len(df)} player-round rows ({df['player_name'].nunique()} players)")
+    return df

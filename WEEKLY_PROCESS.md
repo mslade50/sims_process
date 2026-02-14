@@ -442,6 +442,43 @@ python bet_query.py --graded --export
 
 ---
 
+## Phase 7: Post-Event SG Diagnostic
+
+### 7.1 When to Run
+After the tournament completes (Sunday evening or Monday), but **BEFORE the weekly cleanup** (which deletes `avg_expected_cat_sg_{tourney}.csv`).
+
+### 7.2 Run the Diagnostic
+```bash
+# Full run: fetch actuals, compare to predictions, store in Parquet, send email
+python sg_diagnostic.py
+
+# Override event ID (if sim_inputs.py already updated for next week)
+python sg_diagnostic.py --event-id 5
+
+# Local only (skip email)
+python sg_diagnostic.py --no-email
+```
+
+**What this does:**
+1. Reads `avg_expected_cat_sg_{tourney}.csv` (per-category SG predictions from the Monte Carlo sim)
+2. Fetches actual round-level SG from DataGolf `historical-raw-data/rounds` API
+3. Queries `dg_historical.db` for rolling player stats to classify archetypes (Long Bomber, Accurate Short, Ball Striker, etc.)
+4. Computes prediction miss (actual - predicted) by category and archetype
+5. Stores results in `permanent_data/sg_diagnostic.parquet` (persists across weeks)
+6. Sends diagnostic email with category bias, biggest misses, and archetype analysis
+
+**Note:** Only works for ShotLink-equipped events (~32/year). Non-ShotLink events will exit gracefully with a message.
+
+### 7.3 Accumulated Cross-Event Report
+After 2+ events, view trends across tournaments:
+```bash
+python sg_diagnostic.py --report
+```
+
+Shows overall category bias, players who are consistently mispredicted, and directional patterns.
+
+---
+
 ## Quick Reference: Google Sheet Parameters
 
 All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Column A = name, Column B = value).
@@ -496,6 +533,12 @@ python bet_query.py --summary --by-book          # Grouped by book
 python bet_query.py --export                     # Save to CSV
 python bet_query.py --plot                       # Plotly dashboard
 python bet_query.py --all-years                  # Include prior years
+
+# SG diagnostic
+python sg_diagnostic.py                          # Full diagnostic + email
+python sg_diagnostic.py --event-id 5             # Specific event
+python sg_diagnostic.py --no-email               # Local only
+python sg_diagnostic.py --report                 # Cross-event trends
 ```
 
 ---

@@ -33,7 +33,7 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 |------|---------|-------------|
 | `live_stats_engine.py` | Unified processor for rounds 0-4. Skill updates + next-round predictions. Replaces the old separate `live_stats.py`, `live_stats_r2.py`, `live_stats_r3.py`, `live_stats_r4.py` files. | `r{N}_live_model.csv`, `model_predictions_r{N+1}.csv` |
 | `round_sim.py` | Matchup pricing, score card generation, edge calculation for R2-R4. Uses normal distribution simulation (not hole-by-hole). | `matchups_r{N}.csv`, `fair_card_r{N}.csv`, Excel workbook |
-| `api_utils.py` | Shared DataGolf API functions: `fetch_live_stats()`, `fetch_field_updates()`, `calculate_average_wind()`, `compute_wind_factor()`, `clean_names()` |
+| `api_utils.py` | Shared DataGolf API functions: `fetch_live_stats()`, `fetch_field_updates()`, `fetch_historical_rounds()`, `calculate_average_wind()`, `compute_wind_factor()`, `clean_names()` |
 | `sheet_config.py` | Google Sheets config reader. Reads round number, weather forecasts, scoring adjustments from `golf_sims` sheet (`round_config` tab) so you can update from phone. |
 
 ### Bet Storage & Analysis
@@ -43,6 +43,7 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `sheets_storage.py` | Google Sheets write + local Parquet ledger. Connection-pooled (`get_spreadsheet()`). All `store_*` calls auto-write to both Sheets and `permanent_data/bet_ledger.parquet`. | Sheets tabs, `bet_ledger.parquet` |
 | `grade_bets.py` | Reads ungraded bets from Sheets, fetches results from DataGolf, grades with dead-heat adjustments, writes back. Also updates Parquet ledger grades via `update_ledger_grades()`. | Graded Sheets tabs, summary email, ledger updates |
 | `bet_query.py` | CLI for querying local Parquet ledger. Modes: terminal summary, `--export` CSV, `--plot` Plotly dashboard. Filters: `--event`, `--type`, `--book`, `--min-edge`, `--graded`. | Terminal output, CSV, HTML dashboard |
+| `sg_diagnostic.py` | Post-event SG prediction diagnostic with archetype analysis. Compares predicted vs actual per-category SG, classifies players into archetypes, stores in `permanent_data/sg_diagnostic.parquet`, emails diagnostic report. | `sg_diagnostic.parquet`, diagnostic email |
 
 ### Configuration & Infrastructure
 
@@ -232,6 +233,15 @@ Three output modes:
 - **CSV** (`--export`): Saves `filtered_bets_{timestamp}.csv`
 - **Plotly** (`--plot`): 4-panel interactive HTML dashboard (cumulative P&L, ROI by book, edge buckets, scatter)
 
+### 12. SG Diagnostic Archetype System (`sg_diagnostic.py`)
+Post-event comparison of predicted vs actual per-category strokes gained.
+- **Rolling stats**: Uses blended 50 SMA + 12 EMA (`blended = 0.5 * sma_50 + 0.5 * ema_12`). The 12 EMA captures recent form shifts while the 50 SMA provides stability.
+- **OTT split**: Archetypes split OTT by `driving_dist` vs `driving_acc` from `dg_historical.db` (Long Bomber, Accurate Short, Long Accurate), not just `sg_ott` alone.
+- **Archetype classification**: Mean-based (not variance-based like `archetype_diagnostics.py`). Uses percentile ranks within the event's field. First match wins from ordered rules.
+- **Pre-event data only**: Archetypes computed using rounds BEFORE the current event's start date.
+- **Persistent storage**: Results accumulate in `permanent_data/sg_diagnostic.parquet` (dedup key: `event_id, player_name, round, category`). Atomic writes.
+- **Recurring misses**: Cross-event analysis identifies players who are consistently over/underpredicted across 2+ events.
+
 ---
 
 ## sim_inputs.py Reference
@@ -398,16 +408,24 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 ### 14. grade_bets.py Auth
 `grade_bets.py` imports `get_spreadsheet` from `sheets_storage` instead of defining its own `_get_credentials()` / `_connect_sheets()`. If you see duplicate auth code, it's a regression — DRY it through `sheets_storage`.
 
+### 15. SG Diagnostic Data Availability
+**Symptom**: `sg_diagnostic.py` returns no SG data for an event.
+**Cause**: Only ShotLink-equipped PGA Tour events (~32/year) have per-category SG. Non-ShotLink events (international, some smaller events) return no data from the `historical-raw-data/rounds` endpoint.
+**Also**: The prediction file `avg_expected_cat_sg_{tourney}.csv` is transient — it gets cleaned up by the weekly cleanup GitHub Action. Must run the diagnostic BEFORE Sunday cleanup.
+**Database dependency**: Archetype classification requires `dg_historical.db` (local SQLite). If missing, archetypes default to "Unknown" but comparison still runs.
+
 ---
 
 ## Weekly Operational Workflow
 
 ```
+Sunday evening:  Run SG diagnostic BEFORE cleanup: python sg_diagnostic.py
+                 Grade previous week: python grade_bets.py --event-id <id>
+                 Review results: python bet_query.py --summary --by-event
+
 Sunday night:    Weekly cleanup runs (GitHub Action)
                  Deletes transient CSVs/Excel/tournament folders from repo root
                  permanent_data/ and .py files preserved
-                 Grade previous week: python grade_bets.py --event-id <id>
-                 Review results: python bet_query.py --summary --by-event
 
 Monday/Tuesday:  Update sim_inputs.py for new tournament
                  Run cat_dists_player.py (if new data available)
