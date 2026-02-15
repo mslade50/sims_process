@@ -70,7 +70,7 @@ EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
 
 # Matchup email filter thresholds
 EMAIL_MIN_PRED = 0.75
-EMAIL_MIN_SAMPLE = 30
+EMAIL_MIN_SAMPLE = 20
 
 # Outright market filter thresholds
 EDGE_THRESHOLD_WIN = 3.0
@@ -1392,6 +1392,44 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
     return combined, sharp
 
 
+def build_betonline_all_matchups_csv(matchup_df, sim_round, out_dir):
+    """
+    Extract ALL BetOnline matchup rows (no edge/sample/pred filters) and save as CSV.
+
+    Includes book odds, fair odds, edges, pred, and sample for every matchup
+    BetOnline prices — even negative edges and low-sample players.
+    Sorted by edge_on descending (highest edge first).
+    """
+    bol = matchup_df[matchup_df["Bookmaker"].str.lower() == "betonline"].copy()
+    if bol.empty:
+        print("  No BetOnline matchups found")
+        return None
+
+    # Round numeric columns for readability
+    for col in ["edge_p1", "edge_p2", "edge_on", "p1_pred", "p2_pred",
+                "pred_on", "half_shot_p1", "half_shot_p2"]:
+        if col in bol.columns:
+            bol[col] = bol[col].round(2)
+
+    display_cols = [
+        "Player 1", "Player 2", "Ties",
+        "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
+        "edge_p1", "edge_p2", "edge_on", "bet_on",
+        "p1_pred", "p2_pred", "pred_on",
+        "Sample_P1", "Sample_P2", "sample_on",
+        "half_shot_p1", "half_shot_p2",
+        "p1_+0.5", "p2_+0.5", "p1_-0.5", "p2_-0.5",
+    ]
+    bol = bol[[c for c in display_cols if c in bol.columns]]
+    bol = bol.sort_values("edge_on", ascending=False)
+
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"betonline_all_matchups_r{sim_round}.csv")
+    bol.to_csv(path, index=False)
+    print(f"  BetOnline all matchups: {len(bol)} rows -> {path}")
+    return path
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 3: Score Line Fair Card
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1791,12 +1829,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
 def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          excel_path=None, card_csv_path=None, outrights_sharp=None,
-                         win_edges_csv_path=None):
+                         win_edges_csv_path=None, bol_matchups_csv_path=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
         - Attachment 1: fair score card CSV
         - Attachment 2: full matchup + score card Excel workbook
+        - Attachment 3: BetOnline all matchups CSV (unfiltered)
 
     Non-blocking: prints warning on failure but doesn't crash.
     """
@@ -1846,6 +1885,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                 att.add_header(
                     "Content-Disposition", "attachment",
                     filename=os.path.basename(win_edges_csv_path),
+                )
+                msg.attach(att)
+
+        # Attach BetOnline all matchups CSV (unfiltered)
+        if bol_matchups_csv_path and os.path.exists(bol_matchups_csv_path):
+            with open(bol_matchups_csv_path, "rb") as f:
+                att = MIMEApplication(f.read(), _subtype="csv")
+                att.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(bol_matchups_csv_path),
                 )
                 msg.attach(att)
 
@@ -1955,10 +2004,16 @@ def main():
         combined, sharp = build_matchup_outputs(
             matchup_df, sim_round, pred_lookup, sample_lookup
         )
+        # Build unfiltered BetOnline matchup CSV (all edges, all samples)
+        out_dir = f"./{tourney}"
+        bol_matchups_csv = build_betonline_all_matchups_csv(
+            matchup_df, sim_round, out_dir
+        )
     except Exception as e:
         print(f"  Warning: Matchup pricing failed: {e}")
         combined = pd.DataFrame()
         sharp = pd.DataFrame()
+        bol_matchups_csv = None
 
     # ── Step 3: Score card ───────────────────────────────────────────────
     # Multi-course: build separate score cards per course
@@ -2096,6 +2151,7 @@ def main():
         card_csv_path=card_csv,
         outrights_sharp=outrights_sharp,
         win_edges_csv_path=win_edges_csv_path,
+        bol_matchups_csv_path=bol_matchups_csv,
     )
     # ── Storage ──────────────────────────────────────────────────────────────
     from sheets_storage import (
