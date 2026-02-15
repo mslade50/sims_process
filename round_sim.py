@@ -54,7 +54,7 @@ MATCHUPS_URL = "https://feeds.datagolf.com/betting-tools/matchups"
 OUTRIGHTS_URL = "https://feeds.datagolf.com/betting-tools/outrights"
 
 NUM_SIMULATIONS = 100_000        # For single-round matchup sim
-TOURNAMENT_SIMULATIONS = 50_000  # For tournament sim (R through R4)
+TOURNAMENT_SIMULATIONS = 100_000  # For tournament sim (R through R4)
 
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
@@ -474,7 +474,7 @@ def simulate_remaining_rounds(
         cats_r1 = np.empty((n_players, num_sims, 4), dtype=float)
         for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
             cats_r1[i] = categories_given_total_for_player(mu, L, v, denom, sg_r1[i])
-        strokes_r1 = np.rint(default_par - sg_r1).astype(int)
+        strokes_r1 = np.clip(np.rint(default_par - sg_r1), default_par - 12, default_par + 12).astype(int)
 
     # R1 -> R2 skill update
     if completed_round >= 1:
@@ -526,7 +526,7 @@ def simulate_remaining_rounds(
         cats_r2 = np.empty((n_players, num_sims, 4), dtype=float)
         for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
             cats_r2[i] = categories_given_total_for_player(mu, L, v, denom, sg_r2[i])
-        strokes_r2 = np.rint(player_expected_r2[:, None] - sg_r2).astype(int)
+        strokes_r2 = np.clip(np.rint(player_expected_r2[:, None] - sg_r2), (player_expected_r2 - 12)[:, None], (player_expected_r2 + 12)[:, None]).astype(int)
 
     r1_r2_scores = strokes_r1 + strokes_r2
 
@@ -635,7 +635,7 @@ def simulate_remaining_rounds(
         cats_r3 = np.empty((n_players, num_sims, 4), dtype=float)
         for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
             cats_r3[i] = categories_given_total_for_player(mu, L, v, denom, sg_r3[i])
-        strokes_r3 = np.rint(default_par - sg_r3).astype(int)
+        strokes_r3 = np.clip(np.rint(default_par - sg_r3), default_par - 12, default_par + 12).astype(int)
 
     r1_r3_scores = r1_r2_scores + strokes_r3
 
@@ -693,7 +693,7 @@ def simulate_remaining_rounds(
     # R4 simulation
     sg_r4_mean = updated_skill_r4
     sg_r4 = RNG.normal(loc=sg_r4_mean, scale=round_std[:, None], size=(n_players, num_sims))
-    strokes_r4 = np.rint(default_par - sg_r4).astype(int)
+    strokes_r4 = np.clip(np.rint(default_par - sg_r4), default_par - 12, default_par + 12).astype(int)
 
     # Missed-cut penalty
     r3_r4 = strokes_r3 + strokes_r4
@@ -1142,7 +1142,8 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
             player_avg = expected_avg
 
         raw = np.random.normal(loc=skill, scale=STD_DEV, size=num_sims)
-        sim_dict[player] = np.round(player_avg - raw).astype(int)
+        scores = np.round(player_avg - raw).astype(int)
+        sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12, int(round(player_avg)) + 12)
 
     print(f"  Simulated {len(sim_dict)} players × {num_sims:,} iterations")
     return sim_dict
