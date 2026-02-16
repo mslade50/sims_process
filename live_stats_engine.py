@@ -60,6 +60,7 @@ from sim_inputs import (
 from api_utils import (
     fetch_live_stats, fetch_field_updates,
     calculate_average_wind, compute_wind_factor, clean_names,
+    fetch_player_decompositions,
 )
 
 
@@ -868,6 +869,22 @@ def create_pre_event_predictions():
         preds = preds.drop(columns=["my_pred"], errors="ignore")
         preds = preds.merge(summary, on="player_name", how="left")
         preds = preds.rename(columns={"pred": "my_pred"})
+
+    # Replace low-confidence predictions with DG decomposition
+    dg_decomp = fetch_player_decompositions(API_KEY)
+    if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
+        preds = preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
+        mask = (preds['my_pred'].abs() < 0.5) & preds['dg_final_pred'].notna()
+        n_replaced = mask.sum()
+        if n_replaced > 0:
+            replaced = preds.loc[mask, ['player_name', 'my_pred', 'dg_final_pred']].copy()
+            preds.loc[mask, 'my_pred'] = preds.loc[mask, 'dg_final_pred']
+            print(f"  [DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
+            for _, r in replaced.iterrows():
+                print(f"    {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
+        else:
+            print("  [DG decomp] No predictions below threshold needed replacement")
+        preds = preds.drop(columns=['dg_final_pred'])
 
     # Load tee times
     teetime_col = "r1_teetime"

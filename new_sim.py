@@ -169,6 +169,23 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
+# --- Replace low-confidence predictions with DG decomposition ---
+from api_utils import fetch_player_decompositions
+dg_decomp = fetch_player_decompositions(API_KEY)
+if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
+    model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
+    mask = (model_preds['my_pred'].abs() < 0.5) & model_preds['dg_final_pred'].notna()
+    n_replaced = mask.sum()
+    if n_replaced > 0:
+        replaced = model_preds.loc[mask, ['player_name', 'my_pred', 'dg_final_pred']].copy()
+        model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
+        print(f"[DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
+        for _, r in replaced.iterrows():
+            print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
+    else:
+        print("[DG decomp] No predictions below threshold needed replacement")
+    model_preds = model_preds.drop(columns=['dg_final_pred'])
+
 # --- Weather for SIM (R1/R2 only; sim waves centered) ---
 wind_r1_sim, wind_r2_sim, dew_r1_sim, dew_r2_sim = [], [], [], []
 for _, row in model_preds.iterrows():
@@ -1136,7 +1153,11 @@ def norm_player(s: str) -> str:
     return name_replacements.get(x, x)
 
 rows = []
-for m in data_tournament.get('match_list', []):
+match_list = data_tournament.get('match_list', [])
+if not isinstance(match_list, list):
+    print(f"[info] No tournament matchups available: {match_list}")
+    match_list = []
+for m in match_list:
     p1 = norm_player(m.get('p1_player_name'))
     p2 = norm_player(m.get('p2_player_name'))
     ties_handling = m.get('ties', 'unknown')

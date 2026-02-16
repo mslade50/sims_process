@@ -272,6 +272,63 @@ def clean_names(df):
     return df
 
 
+def fetch_player_decompositions(api_key):
+    """
+    Fetch player skill decompositions from DataGolf.
+
+    Returns DataFrame with columns: player_name, dg_final_pred, dg_baseline_pred.
+    dg_final_pred is strokes gained per round vs PGA Tour average.
+    Returns empty DataFrame on failure.
+    """
+    params = {
+        "tour": "pga",
+        "file_format": "json",
+        "key": api_key,
+    }
+
+    try:
+        resp = requests.get(
+            f"{DATAGOLF_BASE}/preds/player-decompositions",
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  Warning: Failed to fetch player decompositions: {e}")
+        return pd.DataFrame()
+
+    players = data.get("players", [])
+    if not players:
+        print("  Warning: No players in decomposition response")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(players)
+
+    # Extract the columns we need
+    keep = {}
+    if "player_name" in df.columns:
+        keep["player_name"] = df["player_name"]
+    else:
+        print("  Warning: No player_name in decomposition data")
+        return pd.DataFrame()
+
+    if "final_pred" in df.columns:
+        keep["dg_final_pred"] = pd.to_numeric(df["final_pred"], errors="coerce")
+    if "baseline_pred" in df.columns:
+        keep["dg_baseline_pred"] = pd.to_numeric(df["baseline_pred"], errors="coerce")
+
+    result = pd.DataFrame(keep)
+    result = clean_names(result)
+
+    if "dg_final_pred" not in result.columns:
+        print("  Warning: No final_pred in decomposition data")
+        return pd.DataFrame()
+
+    print(f"  Fetched {len(result)} player decompositions from DataGolf")
+    return result
+
+
 # --------------------------------------------------------------------------
 # Historical Round-Level SG Data
 # --------------------------------------------------------------------------
