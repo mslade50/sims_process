@@ -33,7 +33,7 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 |------|---------|-------------|
 | `live_stats_engine.py` | Unified processor for rounds 0-4. Skill updates + next-round predictions. Replaces the old separate `live_stats.py`, `live_stats_r2.py`, `live_stats_r3.py`, `live_stats_r4.py` files. | `r{N}_live_model.csv`, `model_predictions_r{N+1}.csv` |
 | `round_sim.py` | Matchup pricing, score card generation, edge calculation for R2-R4. Uses normal distribution simulation (not hole-by-hole). | `matchups_r{N}.csv`, `fair_card_r{N}.csv`, Excel workbook |
-| `api_utils.py` | Shared DataGolf API functions: `fetch_live_stats()`, `fetch_field_updates()`, `fetch_historical_rounds()`, `calculate_average_wind()`, `compute_wind_factor()`, `clean_names()` |
+| `api_utils.py` | Shared DataGolf API functions: `fetch_live_stats()`, `fetch_field_updates()`, `fetch_historical_rounds()`, `fetch_player_decompositions()`, `calculate_average_wind()`, `compute_wind_factor()`, `clean_names()` |
 | `sheet_config.py` | Google Sheets config reader. Reads round number, weather forecasts, scoring adjustments from `golf_sims` sheet (`round_config` tab) so you can update from phone. |
 
 ### Bet Storage & Analysis
@@ -242,6 +242,14 @@ Post-event comparison of predicted vs actual per-category strokes gained.
 - **Persistent storage**: Results accumulate in `permanent_data/sg_diagnostic.parquet` (dedup key: `event_id, player_name, round, category`). Atomic writes.
 - **Recurring misses**: Cross-event analysis identifies players who are consistently over/underpredicted across 2+ events.
 
+### 13. DG Decomposition Replacement (`new_sim.py`, `live_stats_engine.py`)
+Before weather calculations, both `new_sim.py` (module level) and `live_stats_engine.py` (`create_pre_event_predictions()`) call `fetch_player_decompositions()` from `api_utils.py`.
+- **API endpoint**: `preds/player-decompositions` returns DataGolf's `final_pred` (SG per round vs PGA Tour average) for ~70 players.
+- **Replacement rule**: Players with `|my_pred| < 0.5` get `my_pred` overwritten by `dg_final_pred`. This targets "average-ish" players where our model has low differentiation but DG may have stronger signal.
+- **Graceful failure**: If the API call fails or returns no data, original predictions are used unchanged (no-op).
+- **Name matching**: DG names are normalized via `clean_names()` before the left-join merge. The `dg_final_pred` column is dropped after replacement to avoid polluting downstream DataFrames.
+- **Threshold**: 0.5 SG was chosen because it roughly corresponds to the boundary where our EMA-weighted distributions start to converge toward field average.
+
 ---
 
 ## sim_inputs.py Reference
@@ -408,7 +416,12 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 ### 14. grade_bets.py Auth
 `grade_bets.py` imports `get_spreadsheet` from `sheets_storage` instead of defining its own `_get_credentials()` / `_connect_sheets()`. If you see duplicate auth code, it's a regression — DRY it through `sheets_storage`.
 
-### 15. SG Diagnostic Data Availability
+### 15. Matchup API String Response
+**Symptom**: `new_sim.py` crashes with `AttributeError: 'str' object has no attribute 'get'` when iterating `match_list`.
+**Cause**: When no matchups are being offered (e.g., pre-tournament or between markets), the DataGolf `/betting-tools/matchups` API returns `match_list` as a string message (e.g., `"No tournament_matchups being offered right now."`) instead of a list of dicts.
+**Fix**: Check `isinstance(match_list, list)` before iterating. If it's a string, log the message and skip. Fixed Feb 2026.
+
+### 16. SG Diagnostic Data Availability
 **Symptom**: `sg_diagnostic.py` returns no SG data for an event.
 **Cause**: Only ShotLink-equipped PGA Tour events (~32/year) have per-category SG. Non-ShotLink events (international, some smaller events) return no data from the `historical-raw-data/rounds` endpoint.
 **Also**: The prediction file `avg_expected_cat_sg_{tourney}.csv` is transient — it gets cleaned up by the weekly cleanup GitHub Action. Must run the diagnostic BEFORE Sunday cleanup.
