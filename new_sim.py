@@ -1556,9 +1556,9 @@ if not df_match.empty:
             lambda r: r['Sample_P1'] if r.get('edge_p1', 0) > r.get('edge_p2', 0) else r['Sample_P2'], axis=1
         )
 
-        # Keep decent samples (>=30)
+        # Keep decent samples (>=20)
         if 'sample_on' in combined_df.columns:
-            combined_df = combined_df[combined_df['sample_on'].fillna(0) >= 30]
+            combined_df = combined_df[combined_df['sample_on'].fillna(0) >= 20]
 
         # Add my_pred lookup & edge_on, pred_on, bet_on
         combined_df['my_pred_p1'] = combined_df['Player 1'].str.lower().map(my_pred_lookup)
@@ -1592,26 +1592,31 @@ if not df_match.empty:
         sharp_books = ['betonline', 'betcris', 'pinnacle']
         sharp_df = combined_df[combined_df['Bookmaker'].str.lower().isin(sharp_books)].copy()
 
-        # Weather advantages for sides
-        wind_lookup = dict(zip(wx['player_name'].str.lower(), wx['wind_adv_r1_2']))
-        sharp_df['wind_on'] = sharp_df['bet_on'].str.lower().map(wind_lookup)
-        sharp_df['bet_against'] = sharp_df.apply(
-            lambda r: r['Player 2'] if r['bet_on'] == r['Player 1'] else r['Player 1'], axis=1
-        )
-        sharp_df['wind_against'] = sharp_df['bet_against'].str.lower().map(wind_lookup)
-        sharp_df['wind_diff'] = sharp_df['wind_on'] - sharp_df['wind_against']
+        if sharp_df.empty:
+            print("[warn] No sharp-book matchups found — skipping sharp filter output")
+            sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
+            sharp_df.to_csv(sharp_filename, index=False)
+        else:
+            # Weather advantages for sides
+            wind_lookup = dict(zip(wx['player_name'].str.lower(), wx['wind_adv_r1_2']))
+            sharp_df['wind_on'] = sharp_df['bet_on'].str.lower().map(wind_lookup)
+            sharp_df['bet_against'] = sharp_df.apply(
+                lambda r: r['Player 2'] if r['bet_on'] == r['Player 1'] else r['Player 1'], axis=1
+            )
+            sharp_df['wind_against'] = sharp_df['bet_against'].str.lower().map(wind_lookup)
+            sharp_df['wind_diff'] = sharp_df['wind_on'] - sharp_df['wind_against']
 
-        # Keep only highest edge per matchup_key (order-independent)
-        sharp_df['matchup_key'] = sharp_df.apply(
-            lambda r: '-'.join(sorted([r['Player 1'].lower(), r['Player 2'].lower()])),
-            axis=1
-        )
-        sharp_df = sharp_df.sort_values('edge_on', ascending=False).drop_duplicates('matchup_key', keep='first')
-        sharp_df = sharp_df.drop(columns=['matchup_key', 'Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
+            # Keep only highest edge per matchup_key (order-independent)
+            sharp_df['matchup_key'] = sharp_df.apply(
+                lambda r: '-'.join(sorted([r['Player 1'].lower(), r['Player 2'].lower()])),
+                axis=1
+            )
+            sharp_df = sharp_df.sort_values('edge_on', ascending=False).drop_duplicates('matchup_key', keep='first')
+            sharp_df = sharp_df.drop(columns=['matchup_key', 'Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
 
-        sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
-        sharp_df.to_csv(sharp_filename, index=False)
-        print(f"[ok] sharp filtered -> {sharp_filename}")
+            sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
+            sharp_df.to_csv(sharp_filename, index=False)
+            print(f"[ok] sharp filtered -> {sharp_filename}")
 
         # --- Send tournament email ---
         print("\n[email] Building tournament sim email...")
