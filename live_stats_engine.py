@@ -1263,7 +1263,7 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
 # Main Entry Points
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_skill_update(round_num):
+def run_skill_update(round_num, dry_run=False):
     """
     Process live stats for round N and update player skill.
     Outputs: r{N}_live_model.csv
@@ -1309,7 +1309,10 @@ def run_skill_update(round_num):
     df, spline_pdf_path = export_results(df, round_num)
 
     # Email summary
-    send_summary_email(df, round_num, spline_pdf_path=spline_pdf_path)
+    if not dry_run:
+        send_summary_email(df, round_num, spline_pdf_path=spline_pdf_path)
+    else:
+        print("  [dry-run] Skipping email")
 
     return df
 
@@ -1413,6 +1416,8 @@ def main():
                         help="Use CLI args instead of Google Sheet config")
     parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4],
                         help="Round that just completed (0 = pre-event)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Skip email sending (skill update still runs)")
 
     args = parser.parse_args()
 
@@ -1441,7 +1446,7 @@ def main():
         return
 
     # Step 1: Always run skill update
-    run_skill_update(round_num)
+    run_skill_update(round_num, dry_run=args.dry_run)
 
     # Step 2: Attempt weather/predictions for next round
     if round_num < 4:

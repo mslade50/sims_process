@@ -73,7 +73,7 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 # Tournament sim email filter thresholds
 EMAIL_MU_MIN_PRED = 0.75
-EMAIL_MU_MIN_SAMPLE = 30
+EMAIL_MU_MIN_SAMPLE = 20
 EMAIL_FP_MIN_PRED = 0.0  # finish positions: include all pred > 0
 
 # Sharp books for matchup filtering
@@ -168,6 +168,12 @@ model_preds['player_name'] = (
     .replace(name_replacements)
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
+
+# --- Pull sample sizes from pre_course_fit if missing (final_predictions doesn't include them) ---
+if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
+    pcf = pd.read_csv(_pre_course_path, usecols=['player_name', 'sample'])
+    pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
+    model_preds = model_preds.merge(pcf, on='player_name', how='left')
 
 # --- Replace low-confidence predictions with DG decomposition ---
 from api_utils import fetch_player_decompositions
@@ -1017,12 +1023,12 @@ if not combined_finish_df.empty:
     fb['player_name'] = (
         fb['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     )
-    sample_map = fb.set_index('player_name')['sample']
-
-    # map by a normalized key, but keep original names intact
-    _key = output_df['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
-    output_df['sample'] = _key.map(sample_map).combine_first(output_df['sample'])
-    del _key
+    if 'sample' in fb.columns:
+        sample_map = fb.set_index('player_name')['sample']
+        # map by a normalized key, but keep original names intact
+        _key = output_df['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
+        output_df['sample'] = _key.map(sample_map).combine_first(output_df['sample'])
+        del _key
 
 
     # Keep pre-filter copy for ALL workbook

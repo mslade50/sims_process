@@ -1343,7 +1343,7 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
 
     # --- Combined: basic filters ---
     combined = df[df["edge_on"] > 3].copy()
-    combined = combined[combined["sample_on"].fillna(0) >= 30]
+    combined = combined[combined["sample_on"].fillna(0) >= 20]
     combined = combined[
         ((combined["pred_on"] > 0) & (combined["edge_on"] > 7))
         | (combined["pred_on"] > 1)
@@ -1666,7 +1666,10 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         filtered = sharp_df.copy()
         filtered["sample_on"] = filtered["bet_on"].map(sample_lookup).fillna(0)
         filtered = filtered[
-            (filtered["pred_on"] > EMAIL_MIN_PRED)
+            (
+                (filtered["pred_on"] > EMAIL_MIN_PRED)
+                | ((filtered["pred_on"] > 0) & (filtered["edge_on"] > 7))
+            )
             & (filtered["sample_on"] >= EMAIL_MIN_SAMPLE)
         ]
 
@@ -1932,6 +1935,8 @@ def main():
                         help="Expected field scoring average for the round")
     parser.add_argument("--skip-tournament-sim", action="store_true",
                         help="Skip tournament simulation (matchups + score card only)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Skip email sending and bet storage")
     args = parser.parse_args()
 
     # ── Config ───────────────────────────────────────────────────────────
@@ -2142,59 +2147,66 @@ def main():
     )
 
     # ── Step 6: Email ────────────────────────────────────────────────────
-    print(f"\n  Sending email...")
-    send_round_sim_email(
-        sharp_df=sharp,
-        sim_round=sim_round,
-        sample_lookup=sample_lookup,
-        excel_path=excel_path,
-        card_csv_path=card_csv,
-        outrights_sharp=outrights_sharp,
-        win_edges_csv_path=win_edges_csv_path,
-        bol_matchups_csv_path=bol_matchups_csv,
-    )
-    # ── Storage ──────────────────────────────────────────────────────────────
-    from sheets_storage import (
-        is_valid_run_time,
-        get_spreadsheet,
-        store_round_matchups,
-        store_sharp_filtered,
-        load_dg_id_lookup,
-    )
-
-    if is_valid_run_time():
-        print("\n[storage] Saving round matchups to Google Sheets...")
-        try:
-            from sim_inputs import event_ids
-
-            # Single auth for all store calls
-            spreadsheet = get_spreadsheet()
-
-            # Build dg_id lookup (may not have all round-sim players, but best effort)
-            dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
-
-            # 1. All filtered round matchups
-            store_round_matchups(
-                combined, sim_round, tourney, event_ids[0],
-                dg_id_lookup=dg_id_lookup,
-                spreadsheet=spreadsheet,
-            )
-
-            # 2. Sharp filtered round matchups
-            store_sharp_filtered(
-                tourney=tourney,
-                event_id=event_ids[0],
-                sharp_rounds=sharp,
-                sim_round=sim_round,
-                spreadsheet=spreadsheet,
-            )
-
-            print("[storage] Done.")
-        except Exception as e:
-            print(f"[storage] Warning: Failed: {e}")
-            import traceback; traceback.print_exc()
+    if not args.dry_run:
+        print(f"\n  Sending email...")
+        send_round_sim_email(
+            sharp_df=sharp,
+            sim_round=sim_round,
+            sample_lookup=sample_lookup,
+            excel_path=excel_path,
+            card_csv_path=card_csv,
+            outrights_sharp=outrights_sharp,
+            win_edges_csv_path=win_edges_csv_path,
+            bol_matchups_csv_path=bol_matchups_csv,
+        )
     else:
-        print("[storage] Skipped - before Monday 3 PM EST cutoff.")
+        print(f"\n  [dry-run] Skipping email")
+
+    # ── Storage ──────────────────────────────────────────────────────────────
+    if not args.dry_run:
+        from sheets_storage import (
+            is_valid_run_time,
+            get_spreadsheet,
+            store_round_matchups,
+            store_sharp_filtered,
+            load_dg_id_lookup,
+        )
+
+        if is_valid_run_time():
+            print("\n[storage] Saving round matchups to Google Sheets...")
+            try:
+                from sim_inputs import event_ids
+
+                # Single auth for all store calls
+                spreadsheet = get_spreadsheet()
+
+                # Build dg_id lookup (may not have all round-sim players, but best effort)
+                dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
+
+                # 1. All filtered round matchups
+                store_round_matchups(
+                    combined, sim_round, tourney, event_ids[0],
+                    dg_id_lookup=dg_id_lookup,
+                    spreadsheet=spreadsheet,
+                )
+
+                # 2. Sharp filtered round matchups
+                store_sharp_filtered(
+                    tourney=tourney,
+                    event_id=event_ids[0],
+                    sharp_rounds=sharp,
+                    sim_round=sim_round,
+                    spreadsheet=spreadsheet,
+                )
+
+                print("[storage] Done.")
+            except Exception as e:
+                print(f"[storage] Warning: Failed: {e}")
+                import traceback; traceback.print_exc()
+        else:
+            print("[storage] Skipped - before Monday 3 PM EST cutoff.")
+    else:
+        print(f"  [dry-run] Skipping bet storage")
     print(f"\n{'='*60}")
     print(f"  Done.")
     print(f"{'='*60}")
