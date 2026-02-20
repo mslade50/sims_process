@@ -797,8 +797,8 @@ print(f"[ok] wrote weather_impact_{tourney}.csv")
 # ============================================================
 
 # --- Config for betting outputs ---
-EDGE_THRESHOLD_WIN   = 3.0     # minimum edge (%) for WIN market
-EDGE_THRESHOLD_TOPN  = 3.0     # minimum edge (%) for Top-N markets
+EDGE_THRESHOLD_WIN   = 2.0     # minimum edge (pp) for WIN market (sim_prob - implied_prob)
+EDGE_THRESHOLD_TOPN  = 2.0     # minimum edge (pp) for Top-N markets (sim_prob - implied_prob)
 BANKROLL             = 10000.0
 KELLY_FRACTION       = 0.25
 RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','pointsbet','wynnbet','unibet','betway','betfred','betrivers']
@@ -874,7 +874,7 @@ if not win_df.empty:
     p = win_merged['simulated_win_prob']
     b = win_merged['decimal_odds'] - 1.0
     q = 1.0 - p
-    win_merged['edge'] = ((p * b) - q) * 100.0
+    win_merged['edge'] = (p - win_merged['implied_prob']) * 100.0
 
     # Filter by edge
     win_filtered = win_merged[win_merged['edge'] > EDGE_THRESHOLD_WIN].copy()
@@ -914,7 +914,7 @@ def process_topn_market(market, prob_col):
     # edge & sizing
     b = df['decimal_odds'] - 1.0
     q = 1.0 - p
-    df['edge'] = ((p * b) - q) * 100.0
+    df['edge'] = (p - df['implied_prob']) * 100.0
     df = df[df['edge'] > EDGE_THRESHOLD_TOPN].copy()
     if df.empty:
         return df

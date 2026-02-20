@@ -73,8 +73,8 @@ EMAIL_MIN_PRED = 0.75
 EMAIL_MIN_SAMPLE = 20
 
 # Outright market filter thresholds
-EDGE_THRESHOLD_WIN = 3.0
-EDGE_THRESHOLD_TOPN = 3.0
+EDGE_THRESHOLD_WIN = 2.0     # minimum edge (pp) sim_prob - implied_prob
+EDGE_THRESHOLD_TOPN = 2.0   # minimum edge (pp) sim_prob - implied_prob
 BANKROLL = 10000.0
 KELLY_FRACTION = 0.25
 RETAIL_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'barstool', 'espn', 'pointsbet']
@@ -857,14 +857,14 @@ def price_outrights(finish_probs, pred_lookup, sample_lookup):
             results[market_name] = pd.DataFrame()
             continue
 
-        # Calculate edge
+        # Calculate edge (sim prob minus implied prob, in percentage points)
         df['implied_prob'] = 1.0 / df['decimal_odds']
         df['american_odds'] = df['decimal_odds'].apply(decimal_to_american)
 
         p = df[prob_col].astype(float)
         b = df['decimal_odds'] - 1.0
         q = 1.0 - p
-        df['edge'] = ((p * b) - q) * 100.0
+        df['edge'] = (p - df['implied_prob']) * 100.0
 
         # Filter by edge threshold
         df = df[df['edge'] > edge_threshold].copy()
