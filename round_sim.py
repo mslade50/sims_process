@@ -934,25 +934,25 @@ def build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
     data = fetch_outright_odds('win')
     if not data:
         print("    No win market data available for positive edge CSV")
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, pd.DataFrame()
 
     df = extract_market_rows(data, odds_key='odds')
     if df.empty:
         print("    No win market rows extracted")
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, pd.DataFrame()
 
     df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
 
     if 'simulated_win_prob' not in finish_probs.columns:
         print("    No simulated_win_prob column in finish_probs")
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, pd.DataFrame()
 
     df = df.merge(
         finish_probs[['player_name', 'simulated_win_prob']],
         on='player_name', how='inner'
     )
     if df.empty:
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, pd.DataFrame()
 
     df['implied_prob'] = 1.0 / df['decimal_odds']
     df['american_odds'] = df['decimal_odds'].apply(decimal_to_american)
@@ -980,7 +980,7 @@ def build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
     path = os.path.join(out_dir, "outright_win_edges.csv")
     pos.to_csv(path, index=False)
     print(f"    Saved {path} ({len(pos)} positive win edges)")
-    return pos, path
+    return pos, path, df
 
 
 def build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
@@ -1652,9 +1652,11 @@ def load_sample_data():
 # Email
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None):
+def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
+                             win_positive_top10=None, win_negative_top10=None):
     """
-    Build HTML email body with a table of sharp matchup picks and finish position edges.
+    Build HTML email body with a table of sharp matchup picks, finish position edges,
+    and outright win edge tables (top positive + top negative).
 
     Filters sharp_df to rows where:
         - bet_on player's pred > EMAIL_MIN_PRED
@@ -1807,6 +1809,102 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 {rows_html}
             </table>"""
 
+    # Build outright win — top positive edges table
+    win_pos_html = ""
+    if win_positive_top10 is not None and not win_positive_top10.empty:
+        rows_html = ""
+        for _, row in win_positive_top10.iterrows():
+            player = row['player_name'].title()
+            book = row.get('bookmaker', '')
+            odds = row.get('american_odds', '')
+            fair = row.get('my_fair', '')
+            edge = row.get('edge', 0)
+            sim_prob = row.get('simulated_win_prob', 0)
+            kelly = row.get('kelly', 0)
+
+            edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
+
+            odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
+            fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
+            sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
+            kelly_str = f"${kelly:.0f}" if pd.notna(kelly) and kelly > 0 else "$0"
+
+            rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{kelly_str}</td>
+                </tr>"""
+
+        win_pos_html = f"""
+            <h3 style="color:#2c5282; margin:30px 0 8px 0;">
+                Outright Win — Top Positive Edges (by Kelly)
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
+                    <th style="padding:6px 10px; text-align:center;">Kelly</th>
+                </tr>
+                {rows_html}
+            </table>"""
+
+    # Build outright win — top negative edges (fades) table
+    win_neg_html = ""
+    if win_negative_top10 is not None and not win_negative_top10.empty:
+        rows_html = ""
+        for _, row in win_negative_top10.iterrows():
+            player = row['player_name'].title()
+            book = row.get('bookmaker', '')
+            odds = row.get('american_odds', '')
+            fair = row.get('my_fair', '')
+            edge = row.get('edge', 0)
+            sim_prob = row.get('simulated_win_prob', 0)
+            implied = row.get('implied_prob', 0)
+
+            edge_color = "#f8d7da" if edge < -10 else "#fff3cd" if edge < -5 else "#ffffff"
+
+            odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
+            fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
+            sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
+            impl_str = f"{implied*100:.2f}%" if pd.notna(implied) else ""
+
+            rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{impl_str}</td>
+                </tr>"""
+
+        win_neg_html = f"""
+            <h3 style="color:#2c5282; margin:30px 0 8px 0;">
+                Outright Win — Top Fades (30:1+ odds, most overpriced)
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
+                    <th style="padding:6px 10px; text-align:center;">Mkt Implied%</th>
+                </tr>
+                {rows_html}
+            </table>"""
+
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
@@ -1816,6 +1914,10 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         {matchups_html}
 
         {outrights_html}
+
+        {win_pos_html}
+
+        {win_neg_html}
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price | Edge = expected return % |
@@ -1832,10 +1934,12 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
 def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          excel_path=None, card_csv_path=None, outrights_sharp=None,
-                         win_edges_csv_path=None, bol_matchups_csv_path=None):
+                         win_edges_csv_path=None, bol_matchups_csv_path=None,
+                         win_positive_top10=None, win_negative_top10=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
+                     + outright win positive/negative edge tables
         - Attachment 1: fair score card CSV
         - Attachment 2: full matchup + score card Excel workbook
         - Attachment 3: BetOnline all matchups CSV (unfiltered)
@@ -1848,7 +1952,9 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
         return
 
     try:
-        html = build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp)
+        html = build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp,
+                                        win_positive_top10=win_positive_top10,
+                                        win_negative_top10=win_negative_top10)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -2046,6 +2152,8 @@ def main():
     outrights_sharp = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
+    win_positive_top10 = pd.DataFrame()
+    win_negative_top10 = pd.DataFrame()
 
     if not args.skip_tournament_sim and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
@@ -2122,8 +2230,18 @@ def main():
                 print(f"\n    Building outright win edge CSVs...")
                 out_dir = f"./{tourney}"
                 os.makedirs(out_dir, exist_ok=True)
-                _, win_edges_csv_path = build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
+                _, win_edges_csv_path, win_all_edges = build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
                 build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
+
+                # Build top-10 positive and negative win edge tables for email
+                if not win_all_edges.empty:
+                    pos = win_all_edges[win_all_edges['edge'] > 0].copy()
+                    pos = pos.sort_values('kelly', ascending=False).drop_duplicates('player_name', keep='first').head(10)
+                    win_positive_top10 = pos
+
+                    neg = win_all_edges[(win_all_edges['edge'] < 0) & (win_all_edges['decimal_odds'] >= 31.0)].copy()
+                    neg = neg.sort_values('edge', ascending=True).drop_duplicates('player_name', keep='first').head(10)
+                    win_negative_top10 = neg
 
             else:
                 print(f"    No player data found for tournament sim")
@@ -2158,6 +2276,8 @@ def main():
             outrights_sharp=outrights_sharp,
             win_edges_csv_path=win_edges_csv_path,
             bol_matchups_csv_path=bol_matchups_csv,
+            win_positive_top10=win_positive_top10,
+            win_negative_top10=win_negative_top10,
         )
     else:
         print(f"\n  [dry-run] Skipping email")
