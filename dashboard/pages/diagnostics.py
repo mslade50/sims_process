@@ -93,16 +93,22 @@ def update_diagnostics(event_id):
         alert = dbc.Alert("No data for this event.", color="info")
         return empty_fig, empty_fig, alert, alert, []
 
+    # Field-center miss to remove systematic field-strength bias
+    if "miss_centered" not in df.columns and "miss" in df.columns:
+        df["miss_centered"] = df.groupby(["round", "category"])["miss"].transform(
+            lambda x: x - x.mean()
+        )
+
     # Player options
     players = sorted(df["player_name"].dropna().unique().tolist())
     player_options = [{"label": p.title(), "value": p} for p in players]
 
-    # ── Bias chart: avg miss per category ──
-    miss_col = "miss" if "miss" in df.columns else None
+    # ── Bias chart: avg miss per category (field-centered) ──
+    miss_col = "miss_centered" if "miss_centered" in df.columns else ("miss" if "miss" in df.columns else None)
     pred_col = next((c for c in ["predicted_sg", "predicted"] if c in df.columns), None)
     actual_col = next((c for c in ["actual_sg", "actual"] if c in df.columns), None)
 
-    bias_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Average Prediction Bias by Category"})
+    bias_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Prediction Bias by Category (Field-Centered)"})
 
     if miss_col and "category" in df.columns:
         bias = df.groupby("category")[miss_col].mean()
@@ -156,7 +162,7 @@ def update_diagnostics(event_id):
                 ))
                 arch_fig.update_layout(**PLOT_LAYOUT, title="Avg |Miss| by Archetype & Category")
 
-    # ── Biggest misses table ──
+    # ── Biggest misses table (field-centered) ──
     miss_source = miss_col or ("_miss" if "_miss" in df.columns else None)
     if miss_source and miss_source in df.columns:
         df["abs_miss"] = df[miss_source].abs()
@@ -171,12 +177,20 @@ def update_diagnostics(event_id):
     else:
         misses_content = dbc.Alert("Miss column not found in diagnostic data.", color="info")
 
-    # ── Recurring misses ──
+    # ── Recurring misses (field-centered) ──
     if miss_source and miss_source in df.columns and "event_id" in df.columns:
         all_diag = get_sg_diagnostics()  # unfiltered
+        # Compute field-centered miss for accumulated data
+        if "miss_centered" not in all_diag.columns and "miss" in all_diag.columns:
+            all_diag["miss_centered"] = all_diag.groupby(["round", "category"])["miss"].transform(
+                lambda x: x - x.mean()
+            )
         if miss_source not in all_diag.columns and pred_col and actual_col:
             all_diag["_miss"] = all_diag[pred_col] - all_diag[actual_col]
             miss_source = "_miss"
+        # Prefer centered miss for recurring analysis
+        if "miss_centered" in all_diag.columns:
+            miss_source = "miss_centered"
 
         if miss_source in all_diag.columns:
             player_event = (
@@ -230,6 +244,16 @@ def update_player_detail(player, event_id):
     if player_df.empty:
         return dbc.Alert(f"No data for {player}.", color="info")
 
+    # Field-center miss for player detail
+    if "miss_centered" not in player_df.columns and "miss" in player_df.columns:
+        full_df = get_sg_diagnostics()
+        if event_id:
+            full_df = full_df[full_df["event_id"] == event_id]
+        full_df["miss_centered"] = full_df.groupby(["round", "category"])["miss"].transform(
+            lambda x: x - x.mean()
+        )
+        player_df = full_df[full_df["player_name"] == player]
+
     # Show per-round, per-category predicted vs actual
     pred_col = next((c for c in ["predicted_sg", "predicted"] if c in player_df.columns), None)
     actual_col = next((c for c in ["actual_sg", "actual"] if c in player_df.columns), None)
@@ -239,7 +263,9 @@ def update_player_detail(player, event_id):
         display_cols.append(pred_col)
     if actual_col:
         display_cols.append(actual_col)
-    if "miss" in player_df.columns:
+    if "miss_centered" in player_df.columns:
+        display_cols.append("miss_centered")
+    elif "miss" in player_df.columns:
         display_cols.append("miss")
     if "archetype" in player_df.columns:
         display_cols.append("archetype")

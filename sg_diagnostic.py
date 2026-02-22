@@ -563,6 +563,13 @@ def compare_predictions_vs_actuals(predictions, actuals):
     )
     merged["miss"] = merged["actual_sg"] - merged["predicted_sg"]
 
+    # Field-centered miss: removes systematic field-strength bias
+    # Per (round, category), subtract the field-average miss so only
+    # relative prediction accuracy remains.
+    merged["miss_centered"] = merged.groupby(["round", "category"])["miss"].transform(
+        lambda x: x - x.mean()
+    )
+
     pred_players = predictions["player_name"].nunique()
     act_players = actuals["player_name"].nunique()
     match_players = merged["player_name"].nunique()
