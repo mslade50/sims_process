@@ -34,8 +34,9 @@ layout = dbc.Container([
     ], className="mb-3"),
 
     dbc.Row([
-        dbc.Col(dcc.Graph(id="diag-bias-chart"), md=6),
-        dbc.Col(dcc.Graph(id="diag-archetype-heatmap"), md=6),
+        dbc.Col(dcc.Graph(id="diag-bias-chart"), md=4),
+        dbc.Col(dcc.Graph(id="diag-directional-heatmap"), md=4),
+        dbc.Col(dcc.Graph(id="diag-archetype-heatmap"), md=4),
     ]),
 
     html.H5("Biggest Misses", className="mt-4 mb-2"),
@@ -72,6 +73,7 @@ def populate_events(_):
 
 @callback(
     Output("diag-bias-chart", "figure"),
+    Output("diag-directional-heatmap", "figure"),
     Output("diag-archetype-heatmap", "figure"),
     Output("diag-misses-table", "children"),
     Output("diag-recurring-table", "children"),
@@ -84,14 +86,14 @@ def update_diagnostics(event_id):
     df = get_sg_diagnostics()
     if df.empty:
         alert = dbc.Alert("No SG diagnostic data. Run sg_diagnostic.py after a ShotLink event.", color="warning")
-        return empty_fig, empty_fig, alert, alert, []
+        return empty_fig, empty_fig, empty_fig, alert, alert, []
 
     if event_id:
         df = df[df["event_id"] == event_id]
 
     if df.empty:
         alert = dbc.Alert("No data for this event.", color="info")
-        return empty_fig, empty_fig, alert, alert, []
+        return empty_fig, empty_fig, empty_fig, alert, alert, []
 
     # Field-center miss to remove systematic field-strength bias
     if "miss_centered" not in df.columns and "miss" in df.columns:
@@ -103,64 +105,69 @@ def update_diagnostics(event_id):
     players = sorted(df["player_name"].dropna().unique().tolist())
     player_options = [{"label": p.title(), "value": p} for p in players]
 
-    # ── Bias chart: avg miss per category (field-centered) ──
     miss_col = "miss_centered" if "miss_centered" in df.columns else ("miss" if "miss" in df.columns else None)
-    pred_col = next((c for c in ["predicted_sg", "predicted"] if c in df.columns), None)
-    actual_col = next((c for c in ["actual_sg", "actual"] if c in df.columns), None)
 
-    bias_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Prediction Bias by Category (Field-Centered)"})
+    # ── Archetype bias bar chart (field-centered total miss by archetype) ──
+    bias_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Avg Bias by Archetype", "height": 350})
 
-    if miss_col and "category" in df.columns:
-        bias = df.groupby("category")[miss_col].mean()
-        cats = [c for c in SG_CATEGORIES if c in bias.index]
-        if cats:
-            values = [bias[c] for c in cats]
+    if miss_col and "archetype" in df.columns and "category" in df.columns:
+        total_df = df[df["category"] == "total"]
+        if not total_df.empty:
+            arch_bias = total_df.groupby("archetype")[miss_col].mean().sort_values()
+            archetypes = arch_bias.index.tolist()
+            values = arch_bias.values.tolist()
             colors = ["#2e7d32" if v >= 0 else "#b71c1c" for v in values]
             bias_fig.add_trace(go.Bar(
-                x=[c.upper() for c in cats],
+                x=archetypes,
                 y=values,
                 marker_color=colors,
                 text=[f"{v:+.3f}" for v in values],
                 textposition="outside",
             ))
-            bias_fig.update_yaxes(title_text="Avg Miss (Predicted - Actual)")
-    elif pred_col and actual_col and "category" in df.columns:
-        df["_miss"] = df[pred_col] - df[actual_col]
-        bias = df.groupby("category")["_miss"].mean()
-        cats = [c for c in SG_CATEGORIES if c in bias.index]
-        if cats:
-            values = [bias[c] for c in cats]
-            colors = ["#2e7d32" if v >= 0 else "#b71c1c" for v in values]
-            bias_fig.add_trace(go.Bar(
-                x=[c.upper() for c in cats],
-                y=values,
-                marker_color=colors,
-                text=[f"{v:+.3f}" for v in values],
-                textposition="outside",
-            ))
-            bias_fig.update_yaxes(title_text="Avg Miss (Predicted - Actual)")
+            bias_fig.update_yaxes(title_text="Avg Centered Miss (Total SG)")
+            bias_fig.update_xaxes(tickangle=-30)
 
-    # ── Archetype heatmap ──
-    arch_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Miss Magnitude by Archetype"})
-    if "archetype" in df.columns and "category" in df.columns:
-        miss_source = miss_col or "_miss"
-        if miss_source in df.columns:
-            arch_pivot = df.pivot_table(
-                values=miss_source, index="archetype", columns="category",
-                aggfunc=lambda x: np.mean(np.abs(x)),
-            )
-            cats_available = [c for c in SG_CATEGORIES if c in arch_pivot.columns]
-            if cats_available and not arch_pivot.empty:
-                arch_fig = go.Figure(data=go.Heatmap(
-                    z=arch_pivot[cats_available].values,
-                    x=[c.upper() for c in cats_available],
-                    y=arch_pivot.index.tolist(),
-                    colorscale="YlOrRd",
-                    text=np.round(arch_pivot[cats_available].values, 3),
-                    texttemplate="%{text}",
-                    hovertemplate="<b>%{y}</b><br>%{x}: %{z:.3f}<extra></extra>",
-                ))
-                arch_fig.update_layout(**PLOT_LAYOUT, title="Avg |Miss| by Archetype & Category")
+    # ── Directional heatmap (avg miss — shows systematic over/under by archetype x category) ──
+    dir_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Directional Bias by Archetype", "height": 350})
+    if miss_col and "archetype" in df.columns and "category" in df.columns:
+        dir_pivot = df.pivot_table(
+            values=miss_col, index="archetype", columns="category",
+            aggfunc="mean",
+        )
+        cats_available = [c for c in SG_CATEGORIES if c in dir_pivot.columns]
+        if cats_available and not dir_pivot.empty:
+            z_vals = dir_pivot[cats_available].values
+            dir_fig = go.Figure(data=go.Heatmap(
+                z=z_vals,
+                x=[c.upper() for c in cats_available],
+                y=dir_pivot.index.tolist(),
+                colorscale="RdBu",
+                zmid=0,
+                text=np.round(z_vals, 3),
+                texttemplate="%{text}",
+                hovertemplate="<b>%{y}</b><br>%{x}: %{z:+.3f}<extra></extra>",
+            ))
+            dir_fig.update_layout(**PLOT_LAYOUT, title="Avg Miss by Archetype (+ = under, - = over)")
+
+    # ── Absolute heatmap (avg |miss| — shows magnitude regardless of direction) ──
+    abs_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Miss Magnitude by Archetype", "height": 350})
+    if miss_col and "archetype" in df.columns and "category" in df.columns:
+        abs_pivot = df.pivot_table(
+            values=miss_col, index="archetype", columns="category",
+            aggfunc=lambda x: np.mean(np.abs(x)),
+        )
+        cats_available = [c for c in SG_CATEGORIES if c in abs_pivot.columns]
+        if cats_available and not abs_pivot.empty:
+            abs_fig = go.Figure(data=go.Heatmap(
+                z=abs_pivot[cats_available].values,
+                x=[c.upper() for c in cats_available],
+                y=abs_pivot.index.tolist(),
+                colorscale="YlOrRd",
+                text=np.round(abs_pivot[cats_available].values, 3),
+                texttemplate="%{text}",
+                hovertemplate="<b>%{y}</b><br>%{x}: %{z:.3f}<extra></extra>",
+            ))
+            abs_fig.update_layout(**PLOT_LAYOUT, title="Avg |Miss| by Archetype & Category")
 
     # ── Biggest misses table (field-centered) ──
     miss_source = miss_col or ("_miss" if "_miss" in df.columns else None)
@@ -221,7 +228,7 @@ def update_diagnostics(event_id):
     else:
         recurring_content = dbc.Alert("Insufficient data for recurring miss analysis.", color="info")
 
-    return bias_fig, arch_fig, misses_content, recurring_content, player_options
+    return bias_fig, dir_fig, abs_fig, misses_content, recurring_content, player_options
 
 
 @callback(
