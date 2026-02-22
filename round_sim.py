@@ -1375,7 +1375,8 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
         "Player 1", "Player 2", "Round", "Bookmaker", "Ties",
         "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
         "edge_p1", "edge_p2", "edge_on", "bet_on",
-        "p1_pred", "p2_pred", "pred_on",
+        "p1_pred", "p2_pred", "pred_on", "pred_against",
+        "Sample_P1", "Sample_P2", "sample_on",
         "half_shot_p1", "half_shot_p2",
     ]
     # Add spread columns if they exist
@@ -2330,6 +2331,23 @@ def main():
     print(f"\n{'='*60}")
     print(f"  Done.")
     print(f"{'='*60}")
+
+    # Push dashboard data to Render (skip on dry-run)
+    if not args.dry_run:
+        try:
+            from push_dashboard_data import copy_files, git_push
+            print(f"\n{'='*60}")
+            print("  Pushing dashboard data to Render...")
+            copied, skipped = copy_files()
+            if copied:
+                print(f"  Copied {len(copied)} files to dashboard_data/")
+                git_push()
+                print("  Render deploy triggered.")
+            else:
+                print("  No files to push.")
+            print(f"{'='*60}")
+        except Exception as e:
+            print(f"  [dashboard push] Warning: {e}")
 
 
 if __name__ == "__main__":
