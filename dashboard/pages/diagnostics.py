@@ -39,7 +39,17 @@ layout = dbc.Container([
         dbc.Col(dcc.Graph(id="diag-archetype-heatmap"), md=4),
     ]),
 
-    html.H5("Biggest Misses", className="mt-4 mb-2"),
+    html.H5("Player Explorer", className="mt-4 mb-2"),
+    dbc.Row([
+        dbc.Col([
+            html.Label("View", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="diag-archetype-filter",
+                placeholder="Biggest Misses (default)",
+                className="dash-dropdown-dark",
+            ),
+        ], md=3),
+    ], className="mb-2"),
     html.Div(id="diag-misses-table"),
 
     html.H5("Recurring Misses (Cross-Event)", className="mt-4 mb-2"),
@@ -75,7 +85,7 @@ def populate_events(_):
     Output("diag-bias-chart", "figure"),
     Output("diag-directional-heatmap", "figure"),
     Output("diag-archetype-heatmap", "figure"),
-    Output("diag-misses-table", "children"),
+    Output("diag-archetype-filter", "options"),
     Output("diag-recurring-table", "children"),
     Output("diag-player-dropdown", "options"),
     Input("diag-event-filter", "value"),
@@ -86,14 +96,14 @@ def update_diagnostics(event_id):
     df = get_sg_diagnostics()
     if df.empty:
         alert = dbc.Alert("No SG diagnostic data. Run sg_diagnostic.py after a ShotLink event.", color="warning")
-        return empty_fig, empty_fig, empty_fig, alert, alert, []
+        return empty_fig, empty_fig, empty_fig, [], alert, []
 
     if event_id:
         df = df[df["event_id"] == event_id]
 
     if df.empty:
         alert = dbc.Alert("No data for this event.", color="info")
-        return empty_fig, empty_fig, empty_fig, alert, alert, []
+        return empty_fig, empty_fig, empty_fig, [], alert, []
 
     # Field-center miss to remove systematic field-strength bias
     if "miss_centered" not in df.columns and "miss" in df.columns:
@@ -169,20 +179,13 @@ def update_diagnostics(event_id):
             ))
             abs_fig.update_layout(**PLOT_LAYOUT, title="Avg |Miss| by Archetype & Category")
 
-    # ── Biggest misses table (field-centered) ──
-    miss_source = miss_col or ("_miss" if "_miss" in df.columns else None)
-    if miss_source and miss_source in df.columns:
-        df["abs_miss"] = df[miss_source].abs()
-        top_misses = df.nlargest(15, "abs_miss")
-        miss_display_cols = ["player_name", "category", miss_source, "abs_miss"]
-        if "round" in top_misses.columns:
-            miss_display_cols.insert(1, "round")
-        if "archetype" in top_misses.columns:
-            miss_display_cols.append("archetype")
-        available = [c for c in miss_display_cols if c in top_misses.columns]
-        misses_content = make_grid(top_misses[available], id_suffix="misses", height=400)
-    else:
-        misses_content = dbc.Alert("Miss column not found in diagnostic data.", color="info")
+    # ── Archetype filter options for player explorer ──
+    archetype_options = [{"label": "Biggest Misses", "value": "__biggest__"}]
+    if "archetype" in df.columns:
+        archs = sorted(df["archetype"].dropna().unique().tolist())
+        for a in archs:
+            count = df[df["archetype"] == a]["player_name"].nunique()
+            archetype_options.append({"label": f"{a} ({count})", "value": a})
 
     # ── Recurring misses (field-centered) ──
     if miss_source and miss_source in df.columns and "event_id" in df.columns:
@@ -228,7 +231,65 @@ def update_diagnostics(event_id):
     else:
         recurring_content = dbc.Alert("Insufficient data for recurring miss analysis.", color="info")
 
-    return bias_fig, dir_fig, abs_fig, misses_content, recurring_content, player_options
+    return bias_fig, dir_fig, abs_fig, archetype_options, recurring_content, player_options
+
+
+@callback(
+    Output("diag-misses-table", "children"),
+    Input("diag-archetype-filter", "value"),
+    Input("diag-event-filter", "value"),
+)
+def update_player_explorer(archetype, event_id):
+    df = get_sg_diagnostics()
+    if df.empty:
+        return dbc.Alert("No SG diagnostic data.", color="warning")
+
+    if event_id:
+        df = df[df["event_id"] == event_id]
+    if df.empty:
+        return dbc.Alert("No data for this event.", color="info")
+
+    # Field-center
+    if "miss_centered" not in df.columns and "miss" in df.columns:
+        df["miss_centered"] = df.groupby(["round", "category"])["miss"].transform(
+            lambda x: x - x.mean()
+        )
+
+    miss_col = "miss_centered" if "miss_centered" in df.columns else ("miss" if "miss" in df.columns else None)
+    if not miss_col or miss_col not in df.columns:
+        return dbc.Alert("Miss column not found.", color="info")
+
+    if not archetype or archetype == "__biggest__":
+        # Default: biggest misses (top 20 by absolute centered miss)
+        df["abs_miss"] = df[miss_col].abs()
+        top = df.nlargest(20, "abs_miss")
+        display_cols = ["player_name", "round", "category", miss_col, "abs_miss", "archetype"]
+    else:
+        # Filter to selected archetype — summarize per player
+        arch_df = df[df["archetype"] == archetype]
+        if arch_df.empty:
+            return dbc.Alert(f"No players classified as {archetype}.", color="info")
+
+        # Pivot: one row per player, avg centered miss per category
+        total_miss = (
+            arch_df[arch_df["category"] == "total"]
+            .groupby("player_name")[miss_col].mean()
+            .reset_index()
+            .rename(columns={miss_col: "total_miss"})
+        )
+        cat_misses = arch_df[arch_df["category"].isin(SG_CATEGORIES)].pivot_table(
+            values=miss_col, index="player_name", columns="category", aggfunc="mean"
+        ).reset_index()
+        # Rename category columns for clarity
+        cat_misses.columns = [f"{c}_miss" if c in SG_CATEGORIES else c for c in cat_misses.columns]
+
+        top = total_miss.merge(cat_misses, on="player_name", how="left")
+        top["abs_total"] = top["total_miss"].abs()
+        top = top.sort_values("abs_total", ascending=False).drop(columns=["abs_total"])
+        display_cols = ["player_name", "total_miss"] + [f"{c}_miss" for c in SG_CATEGORIES if f"{c}_miss" in top.columns]
+
+    available = [c for c in display_cols if c in top.columns]
+    return make_grid(top[available], id_suffix="misses", height=400)
 
 
 @callback(
