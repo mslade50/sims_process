@@ -3,10 +3,10 @@ import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
-STD_DEV       = 3.02
-PAR           = 72
-CUT_LINE      = 80
-USE_10_SHOT_RULE = False
+STD_DEV       = 2.85
+PAR           = 71
+CUT_LINE      = 50
+USE_10_SHOT_RULE = True
 WIND_FACTOR_SIM  = 0.15  # must match your main script
 TOP_K = 20 
 
@@ -24,10 +24,10 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [5]
-course_id = 5
-tourney = 'att'
-course_par = 72
+event_ids = [7]
+course_id = 500
+tourney = 'genesis'
+course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Spyglass Hill Golf Course"
 
@@ -35,27 +35,27 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=5
+course_id_1=500
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
 cutline = CUT_LINE
-shot_rule=0
+shot_rule=10
 
 #for players who we don't have a birthday (monday q guys etc.)
 default_birthday = datetime(1995, 1, 1)
 
 #wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
 
-dewpoint_1 = [16.0, 17.4, 16.9, 15.2, 15.4, 16.1, 16.7, 17.4, 17.6, 17.2, 15.9, 13.7, 13.7, 12.5, 7.4]
-dewpoint_2 = [16.6, 19.4, 26.2, 27.1, 25.4, 25.0, 27.2, 24.9, 24.5, 24.6, 25.5, 27.2, 28.5, 29.4, 29.9]
-dewpoint_3 = [32.1, 33.0, 33.3, 33.3, 33.5, 33.4, 33.3, 33.9, 34.0, 33.8, 33.7, 33.7, 34.0, 33.8, 34.0]
-dewpoint_4 = [31.6, 31.5, 31.9, 32.9, 32.9, 33.3, 32.2, 32.1, 31.9, 31.0, 31.1, 29.1, 27.8, 27.5, 28.9]
+dewpoint_1 = [32.6, 37.4, 39.7, 40.7, 41.3, 42.8, 44.1, 48.5, 48.8, 48.1, 45.4, 46.1, 43.9, 42.4, 37.3]
+dewpoint_2 = [31.8, 30.0, 30.0, 30.0, 30.6, 32.0, 32.4, 31.1, 29.7, 29.5, 30.1, 30.2, 31.3, 31.6, 32.6]
+dewpoint_3 = [34.0, 33.7, 33.6, 32.8, 31.9, 30.4, 28.3, 27.7, 27.5, 26.6, 26.4, 27.6, 29.6, 32.2, 34.9]
+dewpoint_4 = [39.2, 38.1, 36.8, 34.9, 33.4, 32.5, 30.2, 30.1, 31.3, 32.5, 34.3, 37.4, 39.2, 41.4, 44.4]
+wind_1 = [3,4,6,7,7,8,8,9,10,12,13,14,15,15,14,13]
+wind_2 = [3,3,3,3,3,4,5,6,6,6,5,4,3,3,3]
+wind_3 = [3,3,3,3,3,4,5,6,6,6,5,4,3,3,3]
+wind_4 = [3,3,3,3,3,4,5,6,6,6,5,4,3,3,3]
 
-wind_1 = [13,12,11,11,11,11,11,11,10,9,8,8,7,6,5]
-wind_2 = [8,7,7,7,7,6,6,6,6,6,5,4,3,3,3]
-wind_3 = [2.9, 3.8, 4.0, 4.3, 4.1, 3.5, 3.4, 3.4, 3.0, 3.2, 3.4, 3.4, 3.7, 4.5, 5.0]
-wind_4 = [2.9, 2.8, 4.2, 5.1, 5.4, 4.8, 3.4, 1.9, 0.6, 3.4, 5.8, 7.6, 8.8, 9.1, 8.1]
 # wind = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] to gauge length of list
 # wind = [1,1,1,1,1,1,1,1,10,10,10,10,10,10,10] 8 single 7 double
 # wind = [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10] all double
