@@ -45,6 +45,28 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `bet_query.py` | CLI for querying local Parquet ledger. Modes: terminal summary, `--export` CSV, `--plot` Plotly dashboard. Filters: `--event`, `--type`, `--book`, `--min-edge`, `--graded`. | Terminal output, CSV, HTML dashboard |
 | `sg_diagnostic.py` | Post-event SG prediction diagnostic with archetype analysis. Compares predicted vs actual per-category SG, classifies players into archetypes, stores in `permanent_data/sg_diagnostic.parquet`, emails diagnostic report. | `sg_diagnostic.parquet`, diagnostic email |
 
+### Dashboard
+
+| File | Purpose |
+|------|---------|
+| `dashboard/app.py` | Dash app factory, multi-page routing, navbar. `server = app.server` for gunicorn. |
+| `dashboard/config.py` | Paths, sportsbook lists (mirrored from `round_sim.py`), color constants, cache TTL. |
+| `dashboard/data_layer.py` | Abstracted data access. Reads from Google Sheets (primary) with 5-min caching, Parquet fallback. |
+| `dashboard/components/nav.py` | Top navbar with links to all 8 pages. |
+| `dashboard/components/stat_cards.py` | Reusable KPI card components. |
+| `dashboard/components/tables.py` | AG Grid wrappers with edge/result cell coloring. |
+| `dashboard/components/filters.py` | Reusable filter dropdowns/sliders (sportsbook, round, edge, pred, sample). |
+| `dashboard/pages/home.py` | `/` — Tournament overview, KPI cards, weather sparklines, data freshness. |
+| `dashboard/pages/matchups.py` | `/matchups` — Round & tournament matchup edges from Google Sheets. |
+| `dashboard/pages/outrights.py` | `/outrights` — Win market edges, finish position equities, probability heatmap. |
+| `dashboard/pages/pricer.py` | `/pricer` — Interactive over/under score calculator using normal CDF. |
+| `dashboard/pages/active_bets.py` | `/bets` — Current tournament bets by type with status badges. |
+| `dashboard/pages/performance.py` | `/performance` — Historical P&L, ROI breakdowns, 5 charts from Sheets graded data. |
+| `dashboard/pages/skill_tracking.py` | `/skill` — Live model table, prediction waterfall, weather scatter. |
+| `dashboard/pages/diagnostics.py` | `/diagnostics` — SG prediction bias, archetype heatmap, recurring misses. |
+| `dashboard/assets/style.css` | Dark theme (SLATE base), AG Grid colors, dropdown readability overrides. |
+| `Procfile` | `web: gunicorn dashboard.app:server` for Render.com deployment. |
+
 ### Configuration & Infrastructure
 
 | File | Purpose |
@@ -133,6 +155,28 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
                               │
                               ▼
   bet_query.py ──► Terminal summary / CSV export / Plotly dashboard
+
+
+                     ╔══════════════════════════════════════╗
+                     ║     INTERACTIVE DASHBOARD             ║
+                     ╚══════════════════════════════════════╝
+
+  Google Sheets ──► dashboard/data_layer.py (5-min cache)
+      │                     │
+      ├─ Round Matchups ──► /matchups (latest timestamp rows, multi-book)
+      ├─ Tournament MU ──► /matchups (tournament option in round selector)
+      ├─ Tournament MU ─┐
+      ├─ Round MU ──────┼► /performance (graded results → P&L, ROI, charts)
+      ├─ Finish Pos ────┘
+      └─ All tabs ──────► /bets (active bet tracker)
+
+  Local files ──► dashboard/data_layer.py
+      │
+      ├─ sim_inputs.py ──────► /home (tournament config, weather arrays)
+      ├─ model_predictions_r{N} ► /pricer, /skill (scoring params, live model)
+      ├─ simulated_probs_live ──► /outrights (probability heatmap)
+      ├─ outright_win_edges ────► /outrights (win market edges)
+      └─ sg_diagnostic.parquet ► /diagnostics (SG bias, archetypes)
 ```
 
 ---
@@ -249,6 +293,24 @@ Before weather calculations, both `new_sim.py` (module level) and `live_stats_en
 - **Graceful failure**: If the API call fails or returns no data, original predictions are used unchanged (no-op).
 - **Name matching**: DG names are normalized via `clean_names()` before the left-join merge. The `dg_final_pred` column is dropped after replacement to avoid polluting downstream DataFrames.
 - **Threshold**: 0.5 SG was chosen because it roughly corresponds to the boundary where our EMA-weighted distributions start to converge toward field average.
+
+### 14. Dashboard Data Layer (`dashboard/data_layer.py`)
+The dashboard reads from Google Sheets as the primary data source (not local CSVs/Parquet).
+
+**Data sources by page:**
+- **Matchups** (`/matchups`): Reads from `Round Matchups` and `Tournament Matchups` Sheets tabs. Filters to the latest `run_timestamp` rows for the current event. Shows all bookmakers.
+- **Performance** (`/performance`): Reads from individual Sheets tabs (`Tournament Matchups`, `Round Matchups`, `Finish Positions`) which contain graded results from `grade_bets.py`. The filtered tabs (`All Filtered Bets`, `Sharp Filtered Bets`) do NOT have graded results — never use them for performance data.
+- **Active Bets** (`/bets`): Same Sheets source as Performance, filtered to current event.
+- **Outrights, Pricer, Skill, Diagnostics**: Read from local CSV/Parquet files (these don't have Sheets equivalents).
+- **Home**: Reads `sim_inputs.py` for tournament config + local file mtimes for freshness.
+
+**Caching**: All Sheets reads use a 5-minute in-memory cache (`_SHEETS_CACHE`, `_MATCHUP_CACHE`) to avoid hitting Google's 60 reads/minute rate limit. Cache keys include the tab type.
+
+**Column normalization**: Each Sheets tab has different column names. `_normalize_tab()` maps them to a common schema for the performance/bets pages. Key mappings:
+- Matchups: `player_1` → `Player 1`, `bookmaker` → `Bookmaker`, `ties_rule` → `Ties`, `p1_odds` → `P1 Odds`
+- Finish Positions: `player_name` → `bet_on`, `sportsbook` → `bookmaker`, `market_type` → `opponent`
+
+**Units wagered**: Finish position bets use kelly-stake-based sizing (wagers of 3-43+ units). `units_wagered` is derived from `kelly_stake` when available, defaulting to 1.0 for flat matchup bets. This is critical for correct ROI calculation.
 
 ---
 
@@ -427,6 +489,35 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 **Also**: The prediction file `avg_expected_cat_sg_{tourney}.csv` is transient — it gets cleaned up by the weekly cleanup GitHub Action. Must run the diagnostic BEFORE Sunday cleanup.
 **Database dependency**: Archetype classification requires `dg_historical.db` (local SQLite). If missing, archetypes default to "Unknown" but comparison still runs.
 
+### 17. Dashboard: Graded Results Live in Individual Tabs
+**Symptom**: Performance page shows 0 graded bets, everything appears pending.
+**Cause**: `grade_bets.py` writes grades (result, units_won) back to the individual tabs (Tournament Matchups, Round Matchups, Finish Positions). The filtered tabs (All Filtered Bets, Sharp Filtered Bets) do NOT get graded — they retain empty result/units_won columns.
+**Fix**: Dashboard `data_layer.py` reads from individual tabs, not filtered tabs. Fixed Feb 2026.
+
+### 18. Dashboard: Dash `use_pages=True` Requires Absolute Imports
+**Symptom**: `ImportError: attempted relative import beyond top-level package`.
+**Cause**: Dash's `use_pages=True` imports page files as standalone modules, breaking `from ..data_layer`. All dashboard imports must use absolute paths: `from dashboard.data_layer import ...`.
+
+### 19. Dashboard: `scores_r{N}` Is Strokes Gained, Not Absolute Score
+**Symptom**: Score pricer shows expected scores of ~0.83 instead of ~70.
+**Cause**: `model_predictions_r{N}.csv` column `scores_r{N}` contains strokes gained (SG per round vs PGA Tour average), not the actual expected score.
+**Fix**: `expected_score = course_par - scores_r{N}`. A player with `scores_r2 = 0.83` at a par-72 course has an expected score of 71.17.
+
+### 20. Dashboard: Google Sheets API Rate Limit
+**Symptom**: Dashboard returns empty data, logs show `RESOURCE_EXHAUSTED` / `429`.
+**Cause**: Google Sheets API allows 60 read requests per minute per user.
+**Fix**: All Sheets reads go through caches with 5-minute TTL (`_SHEETS_CACHE`, `_MATCHUP_CACHE`). Each filter change serves from cache, not from the API. If rate-limited, data gracefully falls back to empty with a log message.
+
+### 21. Dashboard: dbc 2.0 Breaking Changes
+**Symptom**: `TypeError: unexpected keyword argument: 'dark'` on `dbc.Table`.
+**Cause**: dash-bootstrap-components 2.0 removed the `dark=True` parameter from `dbc.Table`.
+**Fix**: Use `color="dark"` instead.
+
+### 22. Dashboard: SG Diagnostic Categories Are `ott`, Not `sg_ott`
+**Symptom**: Diagnostics page shows no data in bias chart or heatmap.
+**Cause**: The `sg_diagnostic.parquet` stores categories as `ott`, `app`, `arg`, `putt` — not `sg_ott`, `sg_app`, etc.
+**Fix**: `SG_CATEGORIES = ["ott", "app", "arg", "putt"]` in diagnostics page.
+
 ---
 
 ## Weekly Operational Workflow
@@ -559,3 +650,16 @@ When simulation results seem wrong:
 - Any new bet storage should also write to the Parquet ledger (follow the `_ledger_write_*` pattern)
 - Auth code belongs in `sheets_storage.py` only — never duplicate `_get_credentials()` in other files
 - The Parquet ledger at `permanent_data/bet_ledger.parquet` is local-only (gitignored) — Sheets remains the authoritative store
+
+**When modifying the dashboard:**
+- Google Sheets is the primary data source for betting data — never read from local CSVs/Parquet for matchups, performance, or active bets
+- All Sheets reads must go through cached functions in `data_layer.py` (5-min TTL) to avoid rate limiting (60 reads/min)
+- Graded bet results are ONLY in the individual tabs (Tournament MU, Round MU, Finish Pos), NOT in the filtered tabs
+- Matchups display uses the latest `run_timestamp` rows to show current pricing
+- Use absolute imports (`from dashboard.data_layer import ...`), never relative imports — Dash's `use_pages=True` breaks relative imports
+- `dash-bootstrap-components` 2.0: use `color="dark"` not `dark=True` for `dbc.Table`
+- SG diagnostic categories are `ott`, `app`, `arg`, `putt` (not `sg_ott`)
+- `scores_r{N}` is strokes gained, not absolute score — convert with `course_par - scores_r{N}`
+- Finish position bets use kelly-stake sizing — derive `units_wagered` from `kelly_stake`, not flat 1.0
+- Run locally: `python -m dashboard.app` → `localhost:8050`
+- All pages must handle empty data gracefully (show alerts, not crash)

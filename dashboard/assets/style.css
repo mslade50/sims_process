@@ -1,0 +1,225 @@
+/* Golf Sim Dashboard — Dark theme overrides */
+
+body {
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+}
+
+/* Navbar */
+.navbar {
+    border-bottom: 2px solid #16213e;
+}
+
+.navbar-brand {
+    color: #4ecca3 !important;
+    font-size: 1.2rem;
+}
+
+.nav-link {
+    color: #b0b0b0 !important;
+    transition: color 0.2s;
+}
+
+.nav-link:hover, .nav-link.active {
+    color: #4ecca3 !important;
+}
+
+/* Cards */
+.card {
+    background-color: #16213e;
+    border-color: #2a2a4a;
+}
+
+.card-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* AG Grid dark mode adjustments */
+.ag-theme-alpine-dark {
+    --ag-background-color: #16213e;
+    --ag-header-background-color: #0f3460;
+    --ag-odd-row-background-color: #1a1a2e;
+    --ag-row-hover-color: #2a2a4a;
+    --ag-border-color: #2a2a4a;
+    --ag-header-foreground-color: #4ecca3;
+    --ag-foreground-color: #e0e0e0;
+}
+
+/* ── Dropdowns — Dash 4.x (react-select v5) ──
+   Force black text on white background for readability on dark theme.
+   Uses [class*=] attribute selectors to match dynamically-generated css-* classes. */
+
+/* Control bar (the visible dropdown box) */
+.dash-dropdown .Select-control,
+.dash-dropdown-dark .Select-control,
+div[class*="-control"] {
+    background-color: #ffffff !important;
+    border-color: #cccccc !important;
+    color: #000000 !important;
+}
+
+/* All text inside dropdowns: values, placeholders, inputs */
+.dash-dropdown div[class*="-singleValue"],
+.dash-dropdown div[class*="-placeholder"],
+.dash-dropdown div[class*="-Input"] input,
+.dash-dropdown input {
+    color: #000000 !important;
+}
+
+/* Dropdown menu container */
+.dash-dropdown div[class*="-menu"],
+div[class*="-MenuList"],
+div[class*="-menu"] {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* Individual options */
+.dash-dropdown div[class*="-option"],
+div[class*="-option"] {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* Hovered/focused option */
+div[class*="-option"]:hover,
+div[class*="-option"][class*="is-focused"],
+div[class*="-option"][class*="focused"] {
+    background-color: #e8f5e9 !important;
+    color: #000000 !important;
+}
+
+/* Selected option */
+div[class*="-option"][class*="is-selected"],
+div[class*="-option"][class*="selected"] {
+    background-color: #4ecca3 !important;
+    color: #000000 !important;
+}
+
+/* Multi-value tags */
+.dash-dropdown div[class*="-multiValue"] {
+    background-color: #4ecca3 !important;
+    color: #000000 !important;
+}
+
+.dash-dropdown div[class*="-multiValue"] div {
+    color: #000000 !important;
+}
+
+/* Multi-value remove button */
+.dash-dropdown div[class*="-multiValue"] div[role="button"],
+.dash-dropdown div[class*="-multiValue"] div[class*="Remove"] {
+    color: #000000 !important;
+}
+
+.dash-dropdown div[class*="-multiValue"] div[role="button"]:hover {
+    background-color: #3da88a !important;
+    color: #000000 !important;
+}
+
+/* Dropdown indicator arrow */
+.dash-dropdown div[class*="-indicatorContainer"] svg,
+.dash-dropdown span[class*="-indicatorSeparator"] {
+    color: #666666 !important;
+}
+
+/* Placeholder */
+.dash-dropdown div[class*="-placeholder"] {
+    color: #666666 !important;
+}
+
+/* Clear indicator */
+.dash-dropdown div[class*="-clearIndicator"] svg {
+    color: #666666 !important;
+}
+
+/* Fallback: legacy react-select (Select-*) classes for any components still using them */
+.Select-control { background-color: #ffffff !important; color: #000000 !important; }
+.Select-value-label, .Select-placeholder { color: #000000 !important; }
+.Select-menu-outer, .Select-option { background-color: #ffffff !important; color: #000000 !important; }
+.Select-option.is-focused { background-color: #e8f5e9 !important; }
+.Select-option.is-selected { background-color: #4ecca3 !important; }
+.Select--multi .Select-value { background-color: #4ecca3 !important; color: #000000 !important; }
+.Select--multi .Select-value-icon { color: #000000 !important; }
+.Select-input > input { color: #000000 !important; background-color: #ffffff !important; }
+
+/* Tabs */
+.nav-tabs .nav-link {
+    color: #b0b0b0 !important;
+    border-color: transparent;
+}
+
+.nav-tabs .nav-link.active {
+    color: #4ecca3 !important;
+    background-color: #16213e !important;
+    border-color: #2a2a4a #2a2a4a #16213e !important;
+}
+
+/* Plotly chart backgrounds */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
+}
+
+/* Sliders */
+.rc-slider-track {
+    background-color: #4ecca3;
+}
+
+.rc-slider-handle {
+    border-color: #4ecca3;
+}
+
+/* Status badges */
+.badge-win {
+    background-color: #1b5e20;
+    color: white;
+}
+
+.badge-loss {
+    background-color: #b71c1c;
+    color: white;
+}
+
+.badge-push {
+    background-color: #616161;
+    color: white;
+}
+
+.badge-pending {
+    background-color: #f57f17;
+    color: white;
+}
+
+/* Page headers */
+.page-header {
+    border-bottom: 2px solid #4ecca3;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #2a2a4a;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #4ecca3;
+}
+
+/* Alert boxes for no-data states */
+.alert-dark {
+    background-color: #16213e;
+    border-color: #2a2a4a;
+    color: #b0b0b0;
+}

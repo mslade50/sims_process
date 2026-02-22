@@ -181,6 +181,8 @@ cleanup_backup_*.tar.gz
 !permanent_data/
 !.github/
 !.git/
+!dashboard/
+!dashboard_data/
 
 # Backup files
 backups/

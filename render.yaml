@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: golf-sim-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn dashboard.app:server
+    envVars:
+      - key: GOOGLE_CREDS_JSON
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.10.12"
