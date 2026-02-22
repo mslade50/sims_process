@@ -147,17 +147,21 @@ def update_home(_):
 
     pnl = resolved["units_won"].sum() if not resolved.empty else 0
 
-    # Field size from latest model predictions
-    field_size = 0
+    # Field size from latest model predictions, fall back to unique players in bets
+    field_size = None
     if avail_rounds:
         pred_df = get_model_predictions(avail_rounds[-1])
-        field_size = len(pred_df) if not pred_df.empty else 0
+        if not pred_df.empty:
+            field_size = len(pred_df)
+    if field_size is None and not df.empty and "bet_on" in df.columns:
+        field_size = df["bet_on"].nunique()
+    field_str = str(field_size) if field_size else "—"
 
     kpi = stat_card_row([
         {"title": "Bets This Week", "value": str(total_bets)},
         {"title": "Avg Edge", "value": f"{avg_edge:.1f}%"},
         {"title": "P&L", "value": f"{pnl:+.2f}u", "color": "success" if pnl >= 0 else "danger"},
-        {"title": "Field Size", "value": str(field_size)},
+        {"title": "Field Size", "value": field_str},
     ])
 
     # Wind sparklines
