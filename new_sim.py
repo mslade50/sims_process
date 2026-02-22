@@ -1619,6 +1619,12 @@ if not df_match.empty:
             )
             sharp_df = sharp_df.sort_values('edge_on', ascending=False).drop_duplicates('matchup_key', keep='first')
             sharp_df = sharp_df.drop(columns=['matchup_key', 'Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
+            # Ensure sample_on survives for Sheets storage
+            if 'sample_on' not in sharp_df.columns and 'sample_on' in combined_df.columns:
+                sharp_df = sharp_df.merge(
+                    combined_df[['Player 1', 'Player 2', 'Bookmaker', 'sample_on']],
+                    on=['Player 1', 'Player 2', 'Bookmaker'], how='left'
+                )
 
             sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
             sharp_df.to_csv(sharp_filename, index=False)
@@ -1724,3 +1730,19 @@ if not df_match.empty:
         print("[note] no bookmaker CSVs found to combine; skipping combined/sharp outputs.")
 else:
     print("[warn] No valid tournament matchups found.")
+
+# Push dashboard data to Render
+try:
+    from push_dashboard_data import copy_files, git_push
+    print(f"\n{'='*60}")
+    print("  Pushing dashboard data to Render...")
+    copied, skipped = copy_files()
+    if copied:
+        print(f"  Copied {len(copied)} files to dashboard_data/")
+        git_push()
+        print("  Render deploy triggered.")
+    else:
+        print("  No files to push.")
+    print(f"{'='*60}")
+except Exception as e:
+    print(f"  [dashboard push] Warning: {e}")
