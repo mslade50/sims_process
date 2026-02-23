@@ -15,6 +15,7 @@ def make_navbar():
                     dbc.NavItem(dbc.NavLink("Matchups", href="/matchups")),
                     dbc.NavItem(dbc.NavLink("Outrights (Pre)", href="/outrights-pre")),
                     dbc.NavItem(dbc.NavLink("Outrights (Live)", href="/outrights-live")),
+                    dbc.NavItem(dbc.NavLink("Distributions", href="/distributions")),
                     dbc.NavItem(dbc.NavLink("Pricer", href="/pricer")),
                     dbc.NavItem(dbc.NavLink("Bets", href="/bets")),
                     dbc.NavItem(dbc.NavLink("Performance", href="/performance")),

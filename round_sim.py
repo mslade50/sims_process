@@ -748,7 +748,12 @@ def compute_finish_probabilities(final_scores, player_names, made_cut_mask, num_
     # Merge win probs and top-N
     finish_probs = pd.merge(sim_win_probs, topn_df, on="player_name", how="outer").fillna(0)
 
-    return finish_probs
+    # Per-player, per-position rank probabilities (for distribution dashboard)
+    rank_probs = (long_df.groupby(['player_name', 'rank']).size()
+                  .div(num_sims).rename('prob_u').reset_index())
+    rank_probs['rank'] = rank_probs['rank'].astype(int)
+
+    return finish_probs, rank_probs
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2202,7 +2207,7 @@ def main():
 
                 # Compute finish probabilities
                 print(f"    Computing finish probabilities...")
-                finish_probs = compute_finish_probabilities(
+                finish_probs, rank_probs = compute_finish_probabilities(
                     final_scores, player_names, made_cut_mask, TOURNAMENT_SIMULATIONS
                 )
 
@@ -2210,6 +2215,10 @@ def main():
                 finish_probs.to_csv("simulated_probs_live.csv", index=False)
                 finish_probs.to_csv(f"top_finish_probs_live_{tourney}.csv", index=False)
                 print(f"    Saved simulated_probs_live.csv")
+
+                # Save rank probabilities for distribution dashboard
+                rank_probs.to_parquet(f"rank_probs_live_{tourney}.parquet", index=False)
+                print(f"    Saved rank_probs_live_{tourney}.parquet")
 
                 # Price outrights against market
                 print(f"    Fetching outright odds and calculating edges...")

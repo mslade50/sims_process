@@ -478,6 +478,34 @@ def get_simulated_probs_pre():
     return _read_csv_safe(path)
 
 
+def get_rank_probs_pre(tourney=None):
+    """Read rank_probs_updated_{tourney}.parquet (pre-tournament finish distributions)."""
+    if tourney is None:
+        config = get_tournament_config()
+        tourney = config.get("tourney", "")
+    if not tourney:
+        return pd.DataFrame()
+    # Local: rank_probs_updated_{tourney}.parquet; Render: rank_probs_pre.parquet
+    path = os.path.join(PROJECT_ROOT, f"rank_probs_updated_{tourney}.parquet")
+    if os.path.exists(path):
+        return _read_parquet_safe(path)
+    return _read_parquet_safe(os.path.join(DASHBOARD_DATA, "rank_probs_pre.parquet"))
+
+
+def get_rank_probs_live(tourney=None):
+    """Read rank_probs_live_{tourney}.parquet (live finish distributions)."""
+    if tourney is None:
+        config = get_tournament_config()
+        tourney = config.get("tourney", "")
+    if not tourney:
+        return pd.DataFrame()
+    # Local: rank_probs_live_{tourney}.parquet; Render: rank_probs_live.parquet
+    path = os.path.join(PROJECT_ROOT, f"rank_probs_live_{tourney}.parquet")
+    if os.path.exists(path):
+        return _read_parquet_safe(path)
+    return _read_parquet_safe(os.path.join(DASHBOARD_DATA, "rank_probs_live.parquet"))
+
+
 def get_finish_equity_pre(tourney=None):
     """Read finish_equity_{tourney}.csv (pre-tournament, no _live suffix)."""
     if tourney is None:

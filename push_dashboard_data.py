@@ -44,6 +44,8 @@ TOURNEY_RENAMED = [
     # (source_template, dest_name) — {tourney} substituted in source
     ("finish_equity_live_{tourney}.csv", "finish_equity_live.csv"),
     ("finish_equity_{tourney}.csv", "finish_equity_pre.csv"),
+    ("rank_probs_updated_{tourney}.parquet", "rank_probs_pre.parquet"),
+    ("rank_probs_live_{tourney}.parquet", "rank_probs_live.parquet"),
 ]
 
 # Parquet from permanent_data/
