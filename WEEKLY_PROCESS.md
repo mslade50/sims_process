@@ -278,6 +278,7 @@ python new_sim.py
 - Sends email report with filtered bets
 - **Auto-saves to Google Sheets** (Tournament Matchups, Finish Positions, Sharp Filtered, All Filtered tabs)
 - **Auto-writes to Parquet ledger** (`permanent_data/bet_ledger.parquet`)
+- Stores all tournament matchups with edge > 3% (no pred/sample gate). Low-confidence bets are visible on the `/fragility` dashboard page. Email filters still apply (pred > 0.75, sample >= 20).
 - Uses single Google auth via `get_spreadsheet()` (1 connection, not 4)
 
 **Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
@@ -438,6 +439,11 @@ python bet_query.py --plot
 
 # Export for spreadsheet analysis
 python bet_query.py --graded --export
+
+# Web dashboard (includes fragility + performance round filter)
+python -m dashboard.app   # → localhost:8050
+# /fragility — review low-confidence bets
+# /performance — filter by round (R1-R4) for round matchup analysis
 ```
 
 ---
@@ -533,6 +539,13 @@ python bet_query.py --summary --by-book          # Grouped by book
 python bet_query.py --export                     # Save to CSV
 python bet_query.py --plot                       # Plotly dashboard
 python bet_query.py --all-years                  # Include prior years
+
+# Dashboard deploy (copies local outputs to dashboard_data/ and pushes)
+python push_dashboard_data.py                    # Copy + commit + push to Render
+python push_dashboard_data.py --dry-run          # Preview only
+
+# Dashboard (local)
+python -m dashboard.app                          # localhost:8050
 
 # SG diagnostic
 python sg_diagnostic.py                          # Full diagnostic + email

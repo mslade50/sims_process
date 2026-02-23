@@ -52,16 +52,18 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `dashboard/app.py` | Dash app factory, multi-page routing, navbar. `server = app.server` for gunicorn. |
 | `dashboard/config.py` | Paths, sportsbook lists (mirrored from `round_sim.py`), color constants, cache TTL. |
 | `dashboard/data_layer.py` | Abstracted data access. Reads from Google Sheets (primary) with 5-min caching, Parquet fallback. |
-| `dashboard/components/nav.py` | Top navbar with links to all 8 pages. |
+| `dashboard/components/nav.py` | Top navbar with links to all 10 pages. |
 | `dashboard/components/stat_cards.py` | Reusable KPI card components. |
 | `dashboard/components/tables.py` | AG Grid wrappers with edge/result cell coloring. |
 | `dashboard/components/filters.py` | Reusable filter dropdowns/sliders (sportsbook, round, edge, pred, sample). |
 | `dashboard/pages/home.py` | `/` — Tournament overview, KPI cards, weather sparklines, data freshness. |
-| `dashboard/pages/matchups.py` | `/matchups` — Round & tournament matchup edges from Google Sheets. |
-| `dashboard/pages/outrights.py` | `/outrights` — Win market edges, finish position equities, probability heatmap. |
+| `dashboard/pages/matchups.py` | `/matchups` — Round & tournament matchup edges from Google Sheets. Default pred/sample sliders hide fragile bets (pred<0.75, sample<20). |
+| `dashboard/pages/outrights_pre.py` | `/outrights-pre` — Pre-tournament finish position equities and probability heatmap from `new_sim.py`. |
+| `dashboard/pages/outrights_live.py` | `/outrights-live` — Live win market edges, finish position equities, probability heatmap from `round_sim.py`. |
 | `dashboard/pages/pricer.py` | `/pricer` — Interactive over/under score calculator using normal CDF. |
 | `dashboard/pages/active_bets.py` | `/bets` — Current tournament bets by type with status badges. |
-| `dashboard/pages/performance.py` | `/performance` — Historical P&L, ROI breakdowns, 5 charts from Sheets graded data. |
+| `dashboard/pages/performance.py` | `/performance` — Historical P&L, ROI breakdowns, 5 charts from Sheets graded data. Includes round filter (R1-R4). |
+| `dashboard/pages/fragility.py` | `/fragility` — Flags bets on players with low pred (<0.75) or low sample (<20). KPI cards + accordion by bet type. |
 | `dashboard/pages/skill_tracking.py` | `/skill` — Live model table, prediction waterfall, weather scatter. |
 | `dashboard/pages/diagnostics.py` | `/diagnostics` — SG prediction bias, archetype heatmap, recurring misses. |
 | `dashboard/assets/style.css` | Dark theme (SLATE base), AG Grid colors, dropdown readability overrides. |
@@ -76,6 +78,7 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
 | `.github/workflows/run-sim.yml` | GitHub Actions workflow for running round_sim.py |
 | `.github/workflows/test-env.yml` | Tests environment secrets are configured correctly |
 | `.github/workflows/weekly-cleanup.yml` | Runs Sunday midnight UTC — deletes transient CSVs, Excel files, tournament folders from repo root |
+| `push_dashboard_data.py` | Copies pipeline outputs to `dashboard_data/`, commits, and pushes to trigger Render deploy. Handles root files, tournament folder files, renamed files, and permanent data. |
 | `requirements.txt` | Python dependencies for GitHub Actions |
 | `permanent_data/` | Reference data that survives weekly cleanup (correlation matrices, calibration data, bet ledger) |
 
@@ -166,16 +169,20 @@ The system supports both **pre-tournament prediction** (R1 hole-by-hole simulati
       ├─ Round Matchups ──► /matchups (latest timestamp rows, multi-book)
       ├─ Tournament MU ──► /matchups (tournament option in round selector)
       ├─ Tournament MU ─┐
-      ├─ Round MU ──────┼► /performance (graded results → P&L, ROI, charts)
+      ├─ Round MU ──────┼► /performance (graded results → P&L, ROI, charts + round filter)
       ├─ Finish Pos ────┘
-      └─ All tabs ──────► /bets (active bet tracker)
+      ├─ All tabs ──────► /bets (active bet tracker)
+      └─ All tabs ──────► /fragility (low pred/sample flagging)
 
   Local files ──► dashboard/data_layer.py
       │
       ├─ sim_inputs.py ──────► /home (tournament config, weather arrays)
       ├─ model_predictions_r{N} ► /pricer, /skill (scoring params, live model)
-      ├─ simulated_probs_live ──► /outrights (probability heatmap)
-      ├─ outright_win_edges ────► /outrights (win market edges)
+      ├─ simulated_probs_live ──► /outrights-live (probability heatmap)
+      ├─ simulated_probs ────────► /outrights-pre (pre-tournament heatmap)
+      ├─ outright_win_edges ────► /outrights-live (win market edges)
+      ├─ finish_equity_live ────► /outrights-live (finish position equities)
+      ├─ finish_equity_{tourney} ► /outrights-pre (pre-tournament equities)
       └─ sg_diagnostic.parquet ► /diagnostics (SG bias, archetypes)
 ```
 
@@ -298,10 +305,13 @@ Before weather calculations, both `new_sim.py` (module level) and `live_stats_en
 The dashboard reads from Google Sheets as the primary data source (not local CSVs/Parquet).
 
 **Data sources by page:**
-- **Matchups** (`/matchups`): Reads from `Round Matchups` and `Tournament Matchups` Sheets tabs. Filters to the latest `run_timestamp` rows for the current event. Shows all bookmakers.
-- **Performance** (`/performance`): Reads from individual Sheets tabs (`Tournament Matchups`, `Round Matchups`, `Finish Positions`) which contain graded results from `grade_bets.py`. The filtered tabs (`All Filtered Bets`, `Sharp Filtered Bets`) do NOT have graded results — never use them for performance data.
+- **Matchups** (`/matchups`): Reads from `Round Matchups` and `Tournament Matchups` Sheets tabs. Filters to the latest `run_timestamp` rows for the current event. Shows all bookmakers. Default slider filters hide fragile bets (pred < 0.75, sample < 20).
+- **Performance** (`/performance`): Reads from individual Sheets tabs (`Tournament Matchups`, `Round Matchups`, `Finish Positions`) which contain graded results from `grade_bets.py`. The filtered tabs (`All Filtered Bets`, `Sharp Filtered Bets`) do NOT have graded results — never use them for performance data. Includes round filter (R1-R4) for round matchup analysis.
 - **Active Bets** (`/bets`): Same Sheets source as Performance, filtered to current event.
-- **Outrights, Pricer, Skill, Diagnostics**: Read from local CSV/Parquet files (these don't have Sheets equivalents).
+- **Outrights Pre** (`/outrights-pre`): Reads local `simulated_probs.csv` and `finish_equity_{tourney}.csv` for pre-tournament finish positions and probability heatmap.
+- **Outrights Live** (`/outrights-live`): Reads local `simulated_probs_live.csv`, `outright_win_edges.csv`, and `finish_equity_live_{tourney}.csv` for live win market edges and finish positions.
+- **Fragility** (`/fragility`): Same Sheets source as Performance. Classifies bets by low pred (< 0.75) and/or low sample (< 20). Shows flagged bets by default; toggle to show all.
+- **Pricer, Skill, Diagnostics**: Read from local CSV/Parquet files (these don't have Sheets equivalents).
 - **Home**: Reads `sim_inputs.py` for tournament config + local file mtimes for freshness.
 
 **Caching**: All Sheets reads use a 5-minute in-memory cache (`_SHEETS_CACHE`, `_MATCHUP_CACHE`) to avoid hitting Google's 60 reads/minute rate limit. Cache keys include the tab type.
@@ -518,6 +528,11 @@ Must match exactly: `course_shape_adjustments_{course_id}.csv`. If course_id has
 **Cause**: The `sg_diagnostic.parquet` stores categories as `ott`, `app`, `arg`, `putt` — not `sg_ott`, `sg_app`, etc.
 **Fix**: `SG_CATEGORIES = ["ott", "app", "arg", "putt"]` in diagnostics page.
 
+### 23. Tournament Matchup Storage Is Relaxed
+**Prior behavior**: `new_sim.py` filtered tournament matchups by `sample_on >= 20` and a pred gate (`pred_on > 0 & edge > 7` or `pred_on > 1`) before storing to Sheets/Parquet.
+**Current behavior**: All tournament matchups with `edge_on > 3` are stored regardless of pred/sample. This feeds the `/fragility` dashboard page which flags low-confidence bets. Email filters (pred > 0.75, sample >= 20) remain untouched — emails stay clean.
+**Dashboard impact**: The `/matchups` page defaults pred slider to 0.75 and sample slider to 20, so fragile bets are hidden by default. Users can lower sliders to see everything.
+
 ---
 
 ## Weekly Operational Workflow
@@ -655,7 +670,10 @@ When simulation results seem wrong:
 - Google Sheets is the primary data source for betting data — never read from local CSVs/Parquet for matchups, performance, or active bets
 - All Sheets reads must go through cached functions in `data_layer.py` (5-min TTL) to avoid rate limiting (60 reads/min)
 - Graded bet results are ONLY in the individual tabs (Tournament MU, Round MU, Finish Pos), NOT in the filtered tabs
-- Matchups display uses the latest `run_timestamp` rows to show current pricing
+- Matchups display uses the latest `run_timestamp` rows to show current pricing. Default pred/sample sliders hide fragile bets (pred<0.75, sample<20)
+- Outrights are split: `/outrights-pre` (pre-tournament from `new_sim.py`) and `/outrights-live` (live from `round_sim.py`). Use `outpre-` and `outlive-` ID prefixes respectively
+- Fragility page (`/fragility`) uses `frag-` ID prefix, classifies via `np.select` with thresholds from `config.py` (`EMAIL_MIN_PRED`, `EMAIL_MIN_SAMPLE`)
+- Performance page has a round filter dropdown — filters on the `round` column from the normalized bet data
 - Use absolute imports (`from dashboard.data_layer import ...`), never relative imports — Dash's `use_pages=True` breaks relative imports
 - `dash-bootstrap-components` 2.0: use `color="dark"` not `dark=True` for `dbc.Table`
 - SG diagnostic categories are `ott`, `app`, `arg`, `putt` (not `sg_ott`)
