@@ -56,10 +56,21 @@ jobs:
         echo "🗑️  Deleting Excel files..."
         find . -maxdepth 1 -name "*.xlsx" -type f -delete
         
-        # Delete text files (scraped sportsbook data)
+        # Delete text files (scraped sportsbook data) — protect requirements.txt
         echo "🗑️  Deleting text files..."
-        find . -maxdepth 1 -name "*.txt" -type f -delete
-        
+        find . -maxdepth 1 -name "*.txt" ! -name "requirements.txt" -type f -delete
+
+        # Delete Parquet files in root (not permanent_data/)
+        echo "🗑️  Deleting root Parquet files..."
+        find . -maxdepth 1 -name "*.parquet" -type f -delete
+
+        # Delete PDF files in root
+        echo "🗑️  Deleting PDF files..."
+        find . -maxdepth 1 -name "*.pdf" -type f -delete
+
+        # Delete stale artifacts (Windows nul file, etc.)
+        rm -f ./nul 2>/dev/null || true
+
         # Delete tournament folders (but preserve system folders)
         echo "🗑️  Deleting tournament folders..."
         find . -maxdepth 1 -type d \
