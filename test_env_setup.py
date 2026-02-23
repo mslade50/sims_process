@@ -8,8 +8,13 @@ Usage:
 """
 
 import os
+import sys
 import json
 from dotenv import load_dotenv
+
+# Fix Windows cp1252 console encoding
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # Load environment variables
 load_dotenv()
