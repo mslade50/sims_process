@@ -1884,6 +1884,23 @@ def main():
             print(f"  ROI:            {metrics['roi']:+.1f}%")
             print("  [DRY RUN] Would write summary, results tabs, and send email")
 
+    # Push dashboard data to Render
+    if not args.dry_run:
+        try:
+            from push_dashboard_data import copy_files, git_push
+            print(f"\n{'='*60}")
+            print("  Pushing dashboard data to Render...")
+            copied, skipped = copy_files()
+            if copied:
+                print(f"  Copied {len(copied)} files to dashboard_data/")
+                git_push()
+                print("  Render deploy triggered.")
+            else:
+                print("  No files to push.")
+            print(f"{'='*60}")
+        except Exception as e:
+            print(f"  [warn] Dashboard push failed: {e}")
+
     print("\n" + "="*60)
     print("  Done.")
     print("="*60 + "\n")
