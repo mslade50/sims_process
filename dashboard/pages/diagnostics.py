@@ -105,9 +105,9 @@ def update_diagnostics(event_id):
         alert = dbc.Alert("No data for this event.", color="info")
         return empty_fig, empty_fig, empty_fig, [], alert, []
 
-    # Field-center miss to remove systematic field-strength bias
-    if "miss_centered" not in df.columns and "miss" in df.columns:
-        df["miss_centered"] = df.groupby(["round", "category"])["miss"].transform(
+    # Always recompute field-centered miss (stored column may have NaN for older events)
+    if "miss" in df.columns:
+        df["miss_centered"] = df.groupby(["event_id", "round", "category"])["miss"].transform(
             lambda x: x - x.mean()
         )
 
@@ -190,9 +190,9 @@ def update_diagnostics(event_id):
     # ── Recurring misses (field-centered) ──
     if miss_col and miss_col in df.columns and "event_id" in df.columns:
         all_diag = get_sg_diagnostics()  # unfiltered
-        # Compute field-centered miss for accumulated data
-        if "miss_centered" not in all_diag.columns and "miss" in all_diag.columns:
-            all_diag["miss_centered"] = all_diag.groupby(["round", "category"])["miss"].transform(
+        # Always recompute field-centered miss
+        if "miss" in all_diag.columns:
+            all_diag["miss_centered"] = all_diag.groupby(["event_id", "round", "category"])["miss"].transform(
                 lambda x: x - x.mean()
             )
         # Prefer centered miss for recurring analysis
@@ -245,9 +245,9 @@ def update_player_explorer(archetype, event_id):
     if df.empty:
         return dbc.Alert("No data for this event.", color="info")
 
-    # Field-center
-    if "miss_centered" not in df.columns and "miss" in df.columns:
-        df["miss_centered"] = df.groupby(["round", "category"])["miss"].transform(
+    # Always recompute field-centered miss
+    if "miss" in df.columns:
+        df["miss_centered"] = df.groupby(["event_id", "round", "category"])["miss"].transform(
             lambda x: x - x.mean()
         )
 
@@ -308,15 +308,15 @@ def update_player_detail(player, event_id):
     if player_df.empty:
         return dbc.Alert(f"No data for {player}.", color="info")
 
-    # Field-center miss for player detail
-    if "miss_centered" not in player_df.columns and "miss" in player_df.columns:
-        full_df = get_sg_diagnostics()
-        if event_id:
-            full_df = full_df[full_df["event_id"] == event_id]
-        full_df["miss_centered"] = full_df.groupby(["round", "category"])["miss"].transform(
+    # Always recompute field-centered miss for player detail
+    full_df = get_sg_diagnostics()
+    if event_id:
+        full_df = full_df[full_df["event_id"] == event_id]
+    if "miss" in full_df.columns:
+        full_df["miss_centered"] = full_df.groupby(["event_id", "round", "category"])["miss"].transform(
             lambda x: x - x.mean()
         )
-        player_df = full_df[full_df["player_name"] == player]
+    player_df = full_df[full_df["player_name"] == player]
 
     # Show per-round, per-category predicted vs actual
     pred_col = next((c for c in ["predicted_sg", "predicted"] if c in player_df.columns), None)
