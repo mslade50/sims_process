@@ -383,7 +383,7 @@ name_replacements = {
 - `pip install pandas numpy scipy requests python-dotenv gspread google-auth xlsxwriter statsmodels patsy scikit-learn matplotlib`
 - `credentials.json` for Google Sheets (service account)
 - `.env` file with: `DATAGOLF_API_KEY`, `EMAIL_USER`, `EMAIL_PASSWORD`, `GMAIL_APP_PASSWORD`
-- Database: `C:/Users/mckin/OneDrive/dg_historical.db` (sqlite3, used by cat_dists_player.py as fallback; CSV is primary)
+- Database: `~/OneDrive/dg_historical.db` (sqlite3, canonical location — shared across repos, used by `sg_diagnostic.py` for adjusted SG actuals and archetype classification)
 
 ### GitHub Actions
 Secrets configured at `github.com/mslade50/sims_process/settings/secrets/actions`:
