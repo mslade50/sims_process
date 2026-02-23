@@ -35,7 +35,7 @@ from api_utils import fetch_historical_rounds, clean_names
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DB_PATH = os.path.join(os.path.dirname(__file__), "dg_historical.db")
+DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 DIAGNOSTIC_PATH = os.path.join(
     os.path.dirname(__file__), "permanent_data", "sg_diagnostic.parquet"
 )
