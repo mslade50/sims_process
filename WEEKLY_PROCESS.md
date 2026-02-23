@@ -462,7 +462,7 @@ python sg_diagnostic.py --no-email
 **What this does:**
 1. Reads `avg_expected_cat_sg_{tourney}.csv` (per-category SG predictions from the Monte Carlo sim)
 2. Fetches actual round-level SG from DataGolf `historical-raw-data/rounds` API
-3. Queries `dg_historical.db` for rolling player stats to classify archetypes (Long Bomber, Accurate Short, Ball Striker, etc.)
+3. Queries `dg_historical.db` (canonical location: `~/OneDrive/dg_historical.db`) for rolling player stats to classify archetypes (Long Bomber, Accurate Short, Ball Striker, etc.)
 4. Computes prediction miss (actual - predicted) by category and archetype
 5. Stores results in `permanent_data/sg_diagnostic.parquet` (persists across weeks)
 6. Sends diagnostic email with category bias, biggest misses, and archetype analysis

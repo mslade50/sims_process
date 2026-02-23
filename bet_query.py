@@ -71,9 +71,9 @@ def _print_overall(df):
     print(f"  ROI:       {roi:+.1f}%")
 
     # By bet type
-    print(f"\n  {'─'*50}")
+    print(f"\n  {'-'*50}")
     print(f"  {'Bet Type':<22} {'Bets':>5} {'Won':>8} {'ROI':>7}")
-    print(f"  {'─'*50}")
+    print(f"  {'-'*50}")
     for bt in ["tournament_matchup", "round_matchup", "finish_position"]:
         sub = df[df["bet_type"] == bt]
         if sub.empty:
@@ -85,9 +85,9 @@ def _print_overall(df):
         print(f"  {bt:<22} {n:>5} {w:>+8.2f} {r:>+6.1f}%")
 
     # By edge bucket
-    print(f"\n  {'─'*50}")
+    print(f"\n  {'-'*50}")
     print(f"  {'Edge Bucket':<22} {'Bets':>5} {'Won':>8} {'ROI':>7}")
-    print(f"  {'─'*50}")
+    print(f"  {'-'*50}")
     for lo, hi, label in [(3, 5, "3-5%"), (5, 8, "5-8%"), (8, 100, "8%+")]:
         sub = df[(df["edge"] >= lo) & (df["edge"] < hi)]
         if sub.empty:
@@ -101,9 +101,9 @@ def _print_overall(df):
 
 def _print_grouped(df, group_col):
     """Print performance summary grouped by a column."""
-    print(f"\n  {'─'*60}")
+    print(f"\n  {'-'*60}")
     print(f"  {group_col.title():<25} {'Bets':>5} {'W':>4} {'L':>4} {'Won':>8} {'ROI':>7}")
-    print(f"  {'─'*60}")
+    print(f"  {'-'*60}")
 
     groups = df.groupby(group_col)
     rows = []
@@ -159,7 +159,7 @@ def generate_dashboard(df):
         horizontal_spacing=0.10,
     )
 
-    # ── Panel 1: Cumulative P&L by event ─────────────────────────────────
+    # -- Panel 1: Cumulative P&L by event ---------------------------------
     for bt, name, color in [
         ("tournament_matchup", "Tournament MU", "#1f77b4"),
         ("round_matchup", "Round MU", "#ff7f0e"),
@@ -183,7 +183,7 @@ def generate_dashboard(df):
             row=1, col=1,
         )
 
-    # ── Panel 2: ROI by bookmaker ────────────────────────────────────────
+    # -- Panel 2: ROI by bookmaker ----------------------------------------
     book_stats = (
         resolved.groupby("bookmaker")
         .agg(wagered=("units_wagered", "sum"), won=("units_won", "sum"), count=("bet_id", "count"))
@@ -215,7 +215,7 @@ def generate_dashboard(df):
         row=1, col=2,
     )
 
-    # ── Panel 3: W/L by edge bucket ──────────────────────────────────────
+    # -- Panel 3: W/L by edge bucket --------------------------------------
     buckets = [(3, 5, "3-5%"), (5, 8, "5-8%"), (8, 100, "8%+")]
     bucket_labels = []
     win_rates = []
@@ -245,7 +245,7 @@ def generate_dashboard(df):
         row=2, col=1,
     )
 
-    # ── Panel 4: Results scatter ─────────────────────────────────────────
+    # -- Panel 4: Results scatter -----------------------------------------
     color_map = {"win": "#2ca02c", "win_dh": "#98df8a", "loss": "#d62728", "push": "#7f7f7f"}
     for result_val, color in color_map.items():
         sub = resolved[resolved["result"] == result_val]
