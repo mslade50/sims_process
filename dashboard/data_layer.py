@@ -470,6 +470,28 @@ def get_finish_equity(tourney=None):
     return _read_csv_safe(_resolve_path("finish_equity_live.csv"))
 
 
+# ── Pre-Tournament Outrights ────────────────────────────────────────────────
+
+def get_simulated_probs_pre():
+    """Read simulated_probs.csv (pre-tournament, no _live suffix)."""
+    path = _resolve_path("simulated_probs.csv")
+    return _read_csv_safe(path)
+
+
+def get_finish_equity_pre(tourney=None):
+    """Read finish_equity_{tourney}.csv (pre-tournament, no _live suffix)."""
+    if tourney is None:
+        config = get_tournament_config()
+        tourney = config.get("tourney", "")
+    if not tourney:
+        return pd.DataFrame()
+    # Local: finish_equity_{tourney}.csv; Render: finish_equity_pre.csv
+    path = os.path.join(PROJECT_ROOT, f"finish_equity_{tourney}.csv")
+    if os.path.exists(path):
+        return _read_csv_safe(path)
+    return _read_csv_safe(_resolve_path("finish_equity_pre.csv"))
+
+
 def get_fair_card(round_num, tourney=None):
     """Read fair_card_r{N}.csv from tournament folder or dashboard_data/."""
     if tourney is None:

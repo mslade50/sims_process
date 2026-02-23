@@ -27,6 +27,7 @@ ROOT_FILES = [
     "r3_live_model.csv",
     "r4_live_model.csv",
     "simulated_probs_live.csv",
+    "simulated_probs.csv",
 ]
 
 # Files in the tournament folder → flattened into dashboard_data/
@@ -42,6 +43,7 @@ TOURNEY_FILES = [
 TOURNEY_RENAMED = [
     # (source_template, dest_name) — {tourney} substituted in source
     ("finish_equity_live_{tourney}.csv", "finish_equity_live.csv"),
+    ("finish_equity_{tourney}.csv", "finish_equity_pre.csv"),
 ]
 
 # Parquet from permanent_data/

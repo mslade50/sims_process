@@ -1,4 +1,4 @@
-"""Outrights page — Win market edges, finish positions, probability heatmap."""
+"""Outrights (Live) — Win market edges, finish positions, probability heatmap from round_sim.py."""
 
 import dash
 from dash import html, dcc, callback, Input, Output
@@ -14,7 +14,7 @@ from dashboard.data_layer import (
 from dashboard.components.tables import make_grid
 from dashboard.components.filters import sportsbook_filter
 
-dash.register_page(__name__, path="/outrights", title="Outrights", order=3)
+dash.register_page(__name__, path="/outrights-live", title="Outrights (Live)", order=4)
 
 PLOT_LAYOUT = dict(
     template="plotly_dark",
@@ -26,33 +26,33 @@ PLOT_LAYOUT = dict(
 
 
 layout = dbc.Container([
-    html.H4("Outrights & Finish Positions", className="page-header"),
+    html.H4("Outrights & Finish Positions (Live)", className="page-header"),
 
     dbc.Row([
-        sportsbook_filter("out"),
+        sportsbook_filter("outlive"),
     ], className="mb-3"),
 
     dbc.Tabs([
-        dbc.Tab(label="Win Market", tab_id="win-tab", children=[
-            html.Div(id="out-win-content", className="mt-3"),
+        dbc.Tab(label="Win Market", tab_id="outlive-win-tab", children=[
+            html.Div(id="outlive-win-content", className="mt-3"),
         ]),
-        dbc.Tab(label="Finish Positions", tab_id="finish-tab", children=[
-            html.Div(id="out-finish-content", className="mt-3"),
+        dbc.Tab(label="Finish Positions", tab_id="outlive-finish-tab", children=[
+            html.Div(id="outlive-finish-content", className="mt-3"),
         ]),
-        dbc.Tab(label="Probability Heatmap", tab_id="heatmap-tab", children=[
-            html.Div(id="out-heatmap-content", className="mt-3"),
+        dbc.Tab(label="Probability Heatmap", tab_id="outlive-heatmap-tab", children=[
+            html.Div(id="outlive-heatmap-content", className="mt-3"),
         ]),
-    ], id="out-tabs", active_tab="win-tab"),
+    ], id="outlive-tabs", active_tab="outlive-win-tab"),
 ], fluid=True)
 
 
 @callback(
-    Output("out-win-content", "children"),
-    Input("out-tabs", "active_tab"),
-    Input("out-book-filter", "value"),
+    Output("outlive-win-content", "children"),
+    Input("outlive-tabs", "active_tab"),
+    Input("outlive-book-filter", "value"),
 )
 def update_win_tab(active_tab, books):
-    if active_tab != "win-tab":
+    if active_tab != "outlive-win-tab":
         return dash.no_update
 
     config = get_tournament_config()
@@ -74,13 +74,13 @@ def update_win_tab(active_tab, books):
     sections = []
 
     # Positive edges table
-    sections.append(html.H5("Positive Edge — Win Market", className="mt-3 mb-2"))
+    sections.append(html.H5("Positive Edge -- Win Market", className="mt-3 mb-2"))
     if edges_df.empty:
         sections.append(dbc.Alert("No outright win edge data available.", color="info"))
     else:
         if "edge" in edges_df.columns:
             edges_df = edges_df.sort_values("edge", ascending=False)
-        sections.append(make_grid(edges_df, id_suffix="win-edges", height=400))
+        sections.append(make_grid(edges_df, id_suffix="live-win-edges", height=400))
 
     # Fades table
     sections.append(html.H5("Fades (Negative Edge)", className="mt-4 mb-2"))
@@ -89,18 +89,18 @@ def update_win_tab(active_tab, books):
     else:
         if "edge_vs_devig" in fades_df.columns:
             fades_df = fades_df.sort_values("edge_vs_devig", ascending=True)
-        sections.append(make_grid(fades_df, id_suffix="fades", height=400))
+        sections.append(make_grid(fades_df, id_suffix="live-fades", height=400))
 
     return sections
 
 
 @callback(
-    Output("out-finish-content", "children"),
-    Input("out-tabs", "active_tab"),
-    Input("out-book-filter", "value"),
+    Output("outlive-finish-content", "children"),
+    Input("outlive-tabs", "active_tab"),
+    Input("outlive-book-filter", "value"),
 )
 def update_finish_tab(active_tab, books):
-    if active_tab != "finish-tab":
+    if active_tab != "outlive-finish-tab":
         return dash.no_update
 
     config = get_tournament_config()
@@ -108,7 +108,7 @@ def update_finish_tab(active_tab, books):
     eq_df = get_finish_equity(tourney)
 
     if eq_df.empty:
-        return dbc.Alert("No finish equity data available.", color="warning")
+        return dbc.Alert("No live finish equity data available.", color="warning")
 
     if books:
         books_lower = [b.lower() for b in books]
@@ -130,26 +130,26 @@ def update_finish_tab(active_tab, books):
             if "edge" in sub.columns:
                 sub = sub.sort_values("edge", ascending=False)
             sections.append(html.H5(f"{market.replace('_', ' ').title()} Market", className="mt-3 mb-2"))
-            sections.append(make_grid(sub, id_suffix=f"finish-{market}", height=350))
+            sections.append(make_grid(sub, id_suffix=f"live-finish-{market}", height=350))
     else:
         if "edge" in eq_df.columns:
             eq_df = eq_df.sort_values("edge", ascending=False)
-        sections.append(make_grid(eq_df, id_suffix="finish-all", height=500))
+        sections.append(make_grid(eq_df, id_suffix="live-finish-all", height=500))
 
     return sections
 
 
 @callback(
-    Output("out-heatmap-content", "children"),
-    Input("out-tabs", "active_tab"),
+    Output("outlive-heatmap-content", "children"),
+    Input("outlive-tabs", "active_tab"),
 )
 def update_heatmap(active_tab):
-    if active_tab != "heatmap-tab":
+    if active_tab != "outlive-heatmap-tab":
         return dash.no_update
 
     probs_df = get_simulated_probs()
     if probs_df.empty:
-        return dbc.Alert("No simulated probability data available.", color="warning")
+        return dbc.Alert("No live simulated probability data available.", color="warning")
 
     # Build heatmap
     prob_cols = [c for c in ["simulated_win_prob", "top_5", "top_10", "top_20"] if c in probs_df.columns]
@@ -179,7 +179,7 @@ def update_heatmap(active_tab):
 
     fig.update_layout(
         **PLOT_LAYOUT,
-        title="Simulated Finish Probabilities (Top 40)",
+        title="Simulated Finish Probabilities — Live (Top 40)",
         height=max(600, len(players) * 22),
         yaxis=dict(autorange="reversed"),
     )
