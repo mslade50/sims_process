@@ -10,7 +10,7 @@ import numpy as np
 
 from dashboard.data_layer import get_bet_ledger
 from dashboard.components.stat_cards import stat_card_row
-from dashboard.components.filters import sportsbook_filter, bet_type_selector, edge_slider, event_selector
+from dashboard.components.filters import sportsbook_filter, bet_type_selector, edge_slider, event_selector, round_selector
 from dashboard.config import SHARP_BOOKS, COLOR_WIN, COLOR_LOSS, COLOR_PUSH, COLOR_SHARP, COLOR_RETAIL
 
 dash.register_page(__name__, path="/performance", title="Performance", order=6)
@@ -45,8 +45,24 @@ layout = dbc.Container([
         edge_slider("perf", default=0),
     ], className="mb-2"),
 
-    # Filters — Row 2: Sample & Pred ranges
+    # Filters — Row 2: Round, Sample & Pred ranges
     dbc.Row([
+        dbc.Col([
+            html.Label("Round", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-round-filter",
+                options=[
+                    {"label": "All Rounds", "value": "all"},
+                    {"label": "R1", "value": "1"},
+                    {"label": "R2", "value": "2"},
+                    {"label": "R3", "value": "3"},
+                    {"label": "R4", "value": "4"},
+                ],
+                value="all",
+                clearable=False,
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
         dbc.Col([
             html.Label("Sample Size", className="form-label small text-muted"),
             dbc.InputGroup([
@@ -126,12 +142,13 @@ def _convert_to_units(df):
     Input("perf-type-filter", "value"),
     Input("perf-book-filter", "value"),
     Input("perf-edge-slider", "value"),
+    Input("perf-round-filter", "value"),
     Input("perf-sample-min", "value"),
     Input("perf-sample-max", "value"),
     Input("perf-pred-min", "value"),
     Input("perf-pred-max", "value"),
 )
-def update_performance(event, bet_type, books, min_edge,
+def update_performance(event, bet_type, books, min_edge, round_filter,
                        sample_min, sample_max, pred_min, pred_max):
     filters = {}
     if event:
@@ -144,6 +161,10 @@ def update_performance(event, bet_type, books, min_edge,
         filters["books"] = books
 
     df = get_bet_ledger(**filters)
+
+    # Apply round filter
+    if round_filter and round_filter != "all" and "round" in df.columns:
+        df = df[df["round"].astype(str).str.strip() == str(round_filter)]
 
     # Apply sample_on range filter
     if (sample_min is not None or sample_max is not None) and "sample_on" in df.columns:

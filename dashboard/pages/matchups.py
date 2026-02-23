@@ -34,8 +34,8 @@ layout = dbc.Container([
                         default=_default_round(_get_rounds() or [2, 3, 4])),
         sportsbook_filter("mu"),
         edge_slider("mu", default=0),
-        pred_slider("mu", default=0),
-        sample_slider("mu", default=0),
+        pred_slider("mu", default=0.75),
+        sample_slider("mu", default=20),
     ], className="mb-3"),
 
     # Summary stats

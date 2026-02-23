@@ -1562,10 +1562,6 @@ if not df_match.empty:
             lambda r: r['Sample_P1'] if r.get('edge_p1', 0) > r.get('edge_p2', 0) else r['Sample_P2'], axis=1
         )
 
-        # Keep decent samples (>=20)
-        if 'sample_on' in combined_df.columns:
-            combined_df = combined_df[combined_df['sample_on'].fillna(0) >= 20]
-
         # Add my_pred lookup & edge_on, pred_on, bet_on
         combined_df['my_pred_p1'] = combined_df['Player 1'].str.lower().map(my_pred_lookup)
         combined_df['my_pred_p2'] = combined_df['Player 2'].str.lower().map(my_pred_lookup)
@@ -1582,10 +1578,6 @@ if not df_match.empty:
             axis=1
         )
 
-        combined_df = combined_df[
-            ((combined_df['pred_on'] > 0) & (combined_df['edge_on'] > 7)) |
-            (combined_df['pred_on'] > 1)
-        ]
         combined_df['bet_on'] = combined_df.apply(
             lambda r: r['Player 1'] if r['edge_p1'] > r['edge_p2'] else r['Player 2'], axis=1
         )
