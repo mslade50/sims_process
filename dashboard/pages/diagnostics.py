@@ -188,31 +188,27 @@ def update_diagnostics(event_id):
             archetype_options.append({"label": f"{a} ({count})", "value": a})
 
     # ── Recurring misses (field-centered) ──
-    if miss_source and miss_source in df.columns and "event_id" in df.columns:
+    if miss_col and miss_col in df.columns and "event_id" in df.columns:
         all_diag = get_sg_diagnostics()  # unfiltered
         # Compute field-centered miss for accumulated data
         if "miss_centered" not in all_diag.columns and "miss" in all_diag.columns:
             all_diag["miss_centered"] = all_diag.groupby(["round", "category"])["miss"].transform(
                 lambda x: x - x.mean()
             )
-        if miss_source not in all_diag.columns and pred_col and actual_col:
-            all_diag["_miss"] = all_diag[pred_col] - all_diag[actual_col]
-            miss_source = "_miss"
         # Prefer centered miss for recurring analysis
-        if "miss_centered" in all_diag.columns:
-            miss_source = "miss_centered"
+        recur_col = "miss_centered" if "miss_centered" in all_diag.columns else miss_col
 
-        if miss_source in all_diag.columns:
+        if recur_col in all_diag.columns:
             player_event = (
-                all_diag.groupby(["player_name", "event_id"])[miss_source]
+                all_diag.groupby(["player_name", "event_id"])[recur_col]
                 .mean().reset_index()
             )
             # Players with consistent direction across 2+ events
             player_events = player_event.groupby("player_name").agg(
                 n_events=("event_id", "nunique"),
-                avg_miss=(miss_source, "mean"),
-                all_positive=(miss_source, lambda x: (x > 0).all()),
-                all_negative=(miss_source, lambda x: (x < 0).all()),
+                avg_miss=(recur_col, "mean"),
+                all_positive=(recur_col, lambda x: (x > 0).all()),
+                all_negative=(recur_col, lambda x: (x < 0).all()),
             ).reset_index()
             recurring = player_events[
                 (player_events["n_events"] >= 2) &
