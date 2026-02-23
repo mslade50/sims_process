@@ -60,7 +60,8 @@ def get_files_to_delete():
         "requirements.txt",
         "LICENSE.txt",
         "CMakeLists.txt",
-        "robots.txt"
+        "robots.txt",
+        "Procfile",
     }
 
     # Track files skipped because they were modified today
@@ -94,10 +95,49 @@ def get_files_to_delete():
             continue
         txt_files.append(f)
 
+    # Parquet files in root (excluding permanent_data/ and files modified today)
+    parquet_files = []
+    for f in root_dir.glob("*.parquet"):
+        if str(f).startswith("permanent_data"):
+            continue
+        if was_modified_today(f):
+            skipped_today.append(f)
+            continue
+        parquet_files.append(f)
+
+    # PDF files in root (excluding files modified today)
+    pdf_files = []
+    for f in root_dir.glob("*.pdf"):
+        if was_modified_today(f):
+            skipped_today.append(f)
+            continue
+        pdf_files.append(f)
+
+    # Stale artifacts (e.g., Windows 'nul' file)
+    # Note: 'nul' is a Windows reserved device name so is_file() returns False.
+    # We handle it specially via os.remove in delete_files().
+    misc_files = []
+    for name in ["nul"]:
+        f = root_dir / name
+        if f.exists():
+            misc_files.append(f)
+
+    # dashboard_data/ contents (keep folder, delete files inside)
+    dashboard_data_files = []
+    dd_dir = root_dir / "dashboard_data"
+    if dd_dir.is_dir():
+        for f in dd_dir.iterdir():
+            if f.is_file() and f.name != ".gitkeep":
+                if was_modified_today(f):
+                    skipped_today.append(f)
+                    continue
+                dashboard_data_files.append(f)
+
     # Tournament folders (exclude system folders and folders modified today)
     protected_dirs = {
         ".", "..", ".git", ".github", "permanent_data",
-        "__pycache__", ".venv", "venv", "env", "backups", ".claude"
+        "__pycache__", ".venv", "venv", "env", "backups", ".claude",
+        "dashboard", "dashboard_data",
     }
     tournament_folders = []
     for d in root_dir.iterdir():
@@ -114,6 +154,10 @@ def get_files_to_delete():
         "csv_files": csv_files,
         "xlsx_files": xlsx_files,
         "txt_files": txt_files,
+        "parquet_files": parquet_files,
+        "pdf_files": pdf_files,
+        "misc_files": misc_files,
+        "dashboard_data_files": dashboard_data_files,
         "tournament_folders": tournament_folders,
         "skipped_today": skipped_today,
     }
@@ -125,7 +169,7 @@ def print_summary(files_dict):
     print("[LIST] CLEANUP SUMMARY - Files to be deleted:")
     print("="*70)
     
-    total_files = sum(len(v) for k, v in files_dict.items() if k != "tournament_folders")
+    total_files = sum(len(v) for k, v in files_dict.items() if k not in ("tournament_folders", "skipped_today"))
     total_folders = len(files_dict["tournament_folders"])
     
     print(f"\n[EXCEL] Total: {total_files} files + {total_folders} folders\n")
@@ -163,6 +207,42 @@ def print_summary(files_dict):
     else:
         print("  (none found)")
     
+    # Parquet files
+    parquet_files = files_dict.get("parquet_files", [])
+    print(f"\n[PARQ] Parquet files ({len(parquet_files)}):")
+    if parquet_files:
+        for f in sorted(parquet_files):
+            print(f"  - {f}")
+    else:
+        print("  (none found)")
+
+    # PDF files
+    pdf_files = files_dict.get("pdf_files", [])
+    print(f"\n[PDF] PDF files ({len(pdf_files)}):")
+    if pdf_files:
+        for f in sorted(pdf_files):
+            print(f"  - {f}")
+    else:
+        print("  (none found)")
+
+    # Misc files
+    misc_files = files_dict.get("misc_files", [])
+    if misc_files:
+        print(f"\n[MISC] Misc files ({len(misc_files)}):")
+        for f in sorted(misc_files):
+            print(f"  - {f}")
+
+    # dashboard_data/ contents
+    dd_files = files_dict.get("dashboard_data_files", [])
+    print(f"\n[DASH] dashboard_data/ files ({len(dd_files)}):")
+    if dd_files:
+        for f in sorted(dd_files)[:10]:
+            print(f"  - {f}")
+        if len(dd_files) > 10:
+            print(f"  ... and {len(dd_files) - 10} more")
+    else:
+        print("  (none found)")
+
     # Tournament folders
     folders = files_dict["tournament_folders"]
     print(f"\n[FOLDER] Tournament folders ({len(folders)}):")
@@ -188,8 +268,10 @@ def print_summary(files_dict):
     print("="*70)
     print("  - permanent_data/ folder and all contents")
     print("  - backups/ folder and all contents")
+    print("  - dashboard/ folder (app code)")
+    print("  - dashboard_data/ folder (contents cleared, folder kept)")
     print("  - Files/folders modified today")
-    print("  - requirements.txt")
+    print("  - requirements.txt, Procfile")
     print("  - All .py Python scripts")
     print("  - .env and .gitignore files")
     print("  - .git/, .github/, .claude/ folders")
@@ -254,7 +336,43 @@ def delete_files(files_dict):
             deleted_items.append(str(f))
         except Exception as e:
             print(f"  [WARN]  Error deleting {f}: {e}")
-    
+
+    # Delete Parquet files
+    for f in files_dict.get("parquet_files", []):
+        try:
+            f.unlink()
+            deleted_count += 1
+            deleted_items.append(str(f))
+        except Exception as e:
+            print(f"  [WARN]  Error deleting {f}: {e}")
+
+    # Delete PDF files
+    for f in files_dict.get("pdf_files", []):
+        try:
+            f.unlink()
+            deleted_count += 1
+            deleted_items.append(str(f))
+        except Exception as e:
+            print(f"  [WARN]  Error deleting {f}: {e}")
+
+    # Delete misc files (nul artifact, etc.)
+    for f in files_dict.get("misc_files", []):
+        try:
+            os.remove(str(f))
+            deleted_count += 1
+            deleted_items.append(str(f))
+        except Exception as e:
+            print(f"  [WARN]  Error deleting {f}: {e}")
+
+    # Delete dashboard_data/ contents (keep folder)
+    for f in files_dict.get("dashboard_data_files", []):
+        try:
+            f.unlink()
+            deleted_count += 1
+            deleted_items.append(str(f))
+        except Exception as e:
+            print(f"  [WARN]  Error deleting {f}: {e}")
+
     # Delete tournament folders
     for d in files_dict["tournament_folders"]:
         try:
