@@ -85,12 +85,16 @@ HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 def parse_time(teetime):
     if pd.isnull(teetime):
         return None
+    if isinstance(teetime, pd.Timestamp):
+        return teetime.to_pydatetime()
+    if isinstance(teetime, datetime):
+        return teetime
     if isinstance(teetime, (int, float)) and (pd.isna(teetime) or teetime == 0):
         return None
     s = str(teetime).strip()
     if s == "":
         return None
-    for fmt in ["%Y-%m-%d %H:%M", "%I:%M%p", "%m/%d/%Y %H:%M"]:
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%I:%M%p", "%m/%d/%Y %H:%M"]:
         try:
             return datetime.strptime(s, fmt)
         except ValueError:
@@ -108,7 +112,7 @@ def calculate_avg_wind(teetime, wind_data):
     return float(np.mean(np.interp(minutes, np.arange(len(wind_data)), wind_data)))
 
 def prob_to_american(p):
-    if p <= 0: return None
+    if pd.isna(p) or p <= 0: return None
     if p >= 1: return -100
     return int(round(-100 * p / (1 - p))) if p > 0.5 else int(round(100 * (1 - p) / p))
 
@@ -766,8 +770,8 @@ fig.show()
 # MATCHUPS PRICING (weather impact CSV only; sim already done)
 # ============================================================
 wx = model_preds[['player_name', 'r1_teetime', 'r2_teetime', 'my_pred']].copy()
-wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], errors='coerce')
-wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], errors='coerce')
+wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], format='mixed', errors='coerce')
+wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], format='mixed', errors='coerce')
 
 wind_r1_rep, wind_r2_rep, dew_r1_rep, dew_r2_rep = [], [], [], []
 for _, row in wx.iterrows():
@@ -876,28 +880,34 @@ if not win_df.empty:
     q = 1.0 - p
     win_merged['edge'] = (p - win_merged['implied_prob']) * 100.0
 
-    # Filter by edge
-    win_filtered = win_merged[win_merged['edge'] > EDGE_THRESHOLD_WIN].copy()
+    # Keep all positive-edge bets for storage; email applies its own stricter filter
+    win_filtered = win_merged[win_merged['edge'] > 0].copy()
     f_star = (b * p - q) / b
     win_filtered['stake'] = (BANKROLL * KELLY_FRACTION * f_star.clip(lower=0)).astype(float)
     win_filtered['eg'] = f_star * win_filtered['edge'] / 2.0
     win_filtered['market_type'] = 'win'
+    n_email = (win_filtered['edge'] > EDGE_THRESHOLD_WIN).sum()
+    print(f"[finish-pos] WIN: checked {len(win_merged)} player-book lines, "
+          f"best edge {win_merged['edge'].max():.1f}pp -> {len(win_filtered)} saved, {n_email} email-worthy (>{EDGE_THRESHOLD_WIN}pp)")
 else:
     win_filtered = pd.DataFrame()
+    print("[finish-pos] WIN: no market data returned from API")
 
 # --- Top-N helper ---
 def process_topn_market(market, prob_col):
     data = fetch_market_data(market)
     if not data:
+        print(f"[finish-pos] {market.upper()}: no market data returned from API")
         return pd.DataFrame()
-        
+
     df = extract_market_rows(data, odds_key='odds')
     if df.empty:
+        print(f"[finish-pos] {market.upper()}: API returned data but no parseable odds rows")
         return pd.DataFrame()
 
     # merge model probs
     if prob_col not in topn_df.columns:
-        print(f"[warn] {prob_col} not found in topn_df")
+        print(f"[finish-pos] {market.upper()}: '{prob_col}' column not found in topn_df")
         return pd.DataFrame()
 
     df = df.merge(topn_df[['player_name', prob_col]], on='player_name', how='inner')
@@ -915,7 +925,13 @@ def process_topn_market(market, prob_col):
     b = df['decimal_odds'] - 1.0
     q = 1.0 - p
     df['edge'] = (p - df['implied_prob']) * 100.0
-    df = df[df['edge'] > EDGE_THRESHOLD_TOPN].copy()
+    n_checked = len(df)
+    best_edge = df['edge'].max() if not df.empty else 0.0
+    # Keep all positive-edge bets for storage; email applies its own stricter filter
+    df = df[df['edge'] > 0].copy()
+    n_email = (df['edge'] > EDGE_THRESHOLD_TOPN).sum()
+    print(f"[finish-pos] {market.upper()}: checked {n_checked} player-book lines, "
+          f"best edge {best_edge:.1f}pp -> {len(df)} saved, {n_email} email-worthy (>{EDGE_THRESHOLD_TOPN}pp)")
     if df.empty:
         return df
 
@@ -937,8 +953,12 @@ top20_bets = process_topn_market('top_20', 'top_20')
 frames_to_concat = [df for df in [win_filtered, top5_bets, top10_bets, top20_bets] if not df.empty]
 if frames_to_concat:
     combined_finish_df = pd.concat(frames_to_concat, ignore_index=True)
+    n_email_worthy = (combined_finish_df['edge'] > EDGE_THRESHOLD_WIN).sum()
+    print(f"\n[finish-pos] TOTAL: {len(combined_finish_df)} +EV bets saved to Sheets, "
+          f"{n_email_worthy} email-worthy (>{EDGE_THRESHOLD_WIN}pp)")
 else:
     combined_finish_df = pd.DataFrame()
+    print("\n[finish-pos] TOTAL: 0 +EV bets found across all 4 finish position markets")
 
 combined_finish_df.to_csv('finish_test.csv')
 
@@ -1110,8 +1130,8 @@ print(f"[ok] wrote {out_avg_file}")
 # --- Weather impact report (independent of sim waves) ---
 # We recompute wind/dew with report factors (wind_calculation_report, dew_calculation)
 wx = model_preds[['player_name', 'r1_teetime', 'r2_teetime', 'my_pred']].copy()
-wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], errors='coerce')
-wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], errors='coerce')
+wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], format='mixed', errors='coerce')
+wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], format='mixed', errors='coerce')
 
 wind_r1_rep, wind_r2_rep, dew_r1_rep, dew_r2_rep = [], [], [], []
 for _, row in wx.iterrows():
@@ -1285,7 +1305,10 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
     # ── Section 2: Finish Positions ──
     fp_html = ""
     if finish_df is not None and not finish_df.empty:
-        fp_filtered = finish_df[finish_df['my_pred'].fillna(0) > EMAIL_FP_MIN_PRED].copy()
+        fp_filtered = finish_df[
+            (finish_df['my_pred'].fillna(0) > EMAIL_FP_MIN_PRED) &
+            (finish_df['edge'] > EDGE_THRESHOLD_WIN)
+        ].copy()
         if not fp_filtered.empty:
             fp_filtered = fp_filtered.sort_values('edge', ascending=False)
             fp_rows = ""
@@ -1331,7 +1354,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 {fp_rows}
             </table>"""
         else:
-            fp_html = "<p>No finish position edges passed pred filter.</p>"
+            fp_html = f"<p>No finish position edges passed email filters (edge &gt; {EDGE_THRESHOLD_WIN}pp, pred &gt; {EMAIL_FP_MIN_PRED}).</p>"
     else:
         fp_html = "<p>No finish position data available.</p>"
 
@@ -1360,10 +1383,10 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
     Non-blocking: prints warning on failure but doesn't crash.
     """
     if not EMAIL_PASSWORD:
-        print("  ⚠️  EMAIL_PASSWORD not set. Skipping email.")
+        print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
         return
     if not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
-        print("  ⚠️  EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
+        print("  [warn] EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
         return
 
     try:
@@ -1393,10 +1416,10 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
             server.login(EMAIL_FROM, EMAIL_PASSWORD)
             server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
 
-        print("  ✓ Tournament sim email sent")
+        print("  [ok] Tournament sim email sent")
 
     except Exception as e:
-        print(f"  ⚠️  Email failed: {e}")
+        print(f"  [warn] Email failed: {e}")
         print("    (Sim outputs still saved — email is non-blocking)")
 
 df_match = pd.DataFrame(rows).drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first')
@@ -1638,74 +1661,6 @@ if not df_match.empty:
             my_pred_lookup=my_pred_lookup,
             attachment_paths=_attachments,
         )
-        from sheets_storage import (
-            is_valid_run_time,
-            get_spreadsheet,
-            store_tournament_matchups,
-            store_finish_positions,
-            store_sharp_filtered,
-            store_all_filtered,
-            load_dg_id_lookup,
-        )
-
-        if is_valid_run_time():
-            print("\n[storage] Saving to Google Sheets...")
-            try:
-                from sim_inputs import event_ids
-
-                # Single auth for all store calls
-                spreadsheet = get_spreadsheet()
-
-                # Build dg_id lookup from the predictions file
-                dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
-
-                # 1. Tournament matchups (all filtered, all books)
-                store_tournament_matchups(
-                    combined_df, tourney, event_ids[0],
-                    dg_id_lookup=dg_id_lookup,
-                    spreadsheet=spreadsheet,
-                )
-
-                # 2. Finish position bets
-                if 'combined_finish_df' in dir() and not combined_finish_df.empty:
-                    store_finish_positions(
-                        combined_finish_df, tourney, event_ids[0],
-                        dg_id_lookup=dg_id_lookup,
-                        spreadsheet=spreadsheet,
-                    )
-
-                # 3. Sharp filtered (tournament matchups + finish positions)
-                store_sharp_filtered(
-                    tourney=tourney,
-                    event_id=event_ids[0],
-                    sharp_matchups=sharp_df if 'sharp_df' in dir() else None,
-                    sharp_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
-                    spreadsheet=spreadsheet,
-                )
-                store_all_filtered(
-                    tourney=tourney,
-                    event_id=event_ids[0],
-                    all_matchups=combined_df if 'combined_df' in dir() else None,
-                    all_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
-                    spreadsheet=spreadsheet,
-                )
-                # 4. Drive CSV backups (disabled — service account lacks storage quota)
-                # storage_ts = datetime.now().strftime("%Y%m%d_%H%M")
-                # folder = f"{tourney}_{datetime.now().year}"
-                # if 'sim_win_probs' in dir() and not sim_win_probs.empty:
-                #     upload_csv_to_drive(sim_win_probs, f"simulated_probs_{storage_ts}.csv", folder)
-                # if 'finish_equity_df' in dir() and not finish_equity_df.empty:
-                #     upload_csv_to_drive(finish_equity_df, f"finish_equity_{storage_ts}.csv", folder)
-                # if 'combined_df_raw' in dir() and not combined_df_raw.empty:
-                #     upload_csv_to_drive(combined_df_raw, f"matchups_all_{storage_ts}.csv", folder)
-
-                print("[storage] Done.")
-            except Exception as e:
-                print(f"[storage] ⚠️ Failed: {e}")
-                import traceback; traceback.print_exc()
-        else:
-            print("[storage] Skipped — before Monday 3 PM EST cutoff.")
-
         # rename a couple files to {book}_{tourney}.csv (compat)
         for bk in ['betcris','betonline']:
             oldf = f"{bk}_odds_with_my_odds_tu.csv"
@@ -1720,8 +1675,70 @@ if not df_match.empty:
                     print(f"[warn] rename {oldf} -> {newf}: {e}")
     else:
         print("[note] no bookmaker CSVs found to combine; skipping combined/sharp outputs.")
+
 else:
     print("[warn] No valid tournament matchups found.")
+
+# --- Storage: always attempt (finish positions don't depend on matchups) ---
+from sheets_storage import (
+    is_valid_run_time,
+    get_spreadsheet,
+    store_tournament_matchups,
+    store_finish_positions,
+    store_sharp_filtered,
+    store_all_filtered,
+    load_dg_id_lookup,
+)
+
+if is_valid_run_time():
+    print("\n[storage] Saving to Google Sheets...")
+    try:
+        from sim_inputs import event_ids
+
+        # Single auth for all store calls
+        spreadsheet = get_spreadsheet()
+
+        # Build dg_id lookup from the predictions file
+        dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
+
+        # 1. Tournament matchups (only if matchup data exists)
+        if 'combined_df' in dir() and not combined_df.empty:
+            store_tournament_matchups(
+                combined_df, tourney, event_ids[0],
+                dg_id_lookup=dg_id_lookup,
+                spreadsheet=spreadsheet,
+            )
+
+        # 2. Finish position bets
+        if 'combined_finish_df' in dir() and not combined_finish_df.empty:
+            store_finish_positions(
+                combined_finish_df, tourney, event_ids[0],
+                dg_id_lookup=dg_id_lookup,
+                spreadsheet=spreadsheet,
+            )
+
+        # 3. Sharp filtered (tournament matchups + finish positions)
+        store_sharp_filtered(
+            tourney=tourney,
+            event_id=event_ids[0],
+            sharp_matchups=sharp_df if 'sharp_df' in dir() else None,
+            sharp_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
+            spreadsheet=spreadsheet,
+        )
+        store_all_filtered(
+            tourney=tourney,
+            event_id=event_ids[0],
+            all_matchups=combined_df if 'combined_df' in dir() else None,
+            all_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
+            spreadsheet=spreadsheet,
+        )
+
+        print("[storage] Done.")
+    except Exception as e:
+        print(f"[storage] FAILED: {e}")
+        import traceback; traceback.print_exc()
+else:
+    print("[storage] Skipped — before Monday 3 PM EST cutoff.")
 
 # Push dashboard data to Render
 try:
