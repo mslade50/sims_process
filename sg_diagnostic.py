@@ -536,11 +536,9 @@ def _classify_archetypes(df):
             return "Short Game Specialist"
         if putt >= 80:
             return "Elite Putter"
-        if all(35 <= v <= 75 for v in [ott, app, arg, putt]):
-            return "All-Around"
         if sum(v < 50 for v in [ott, app, arg, putt]) >= 3:
             return "Low Skill"
-        return "Neutral"
+        return "Balanced"
 
     df["archetype"] = df.apply(classify, axis=1)
 
