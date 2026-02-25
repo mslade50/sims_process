@@ -4,7 +4,6 @@
 # ============================
 
 import os
-import json
 import numpy as np
 import pandas as pd
 import requests
@@ -489,7 +488,6 @@ for k in all_keys_r3:
     adj_sum_r3[k] = adj_lt6_r3.get(k, 0.0) + adj_6_20_r3.get(k, 0.0) + adj_20up_r3.get(k, 0.0)
 
 shape3 = (n_players, SIMULATIONS)
-tot_resid_adj_r3 = np.zeros(shape3, dtype=float)  # no residual terms at R3
 tot_sg_adj_r3 = (
     ensure_array(adj_sum_r3.get('sg_ott_avg_adj_r3', 0.0),  shape3) +
     ensure_array(adj_sum_r3.get('sg_putt_avg_adj_r3', 0.0), shape3) +
@@ -994,37 +992,6 @@ else:
     print("[warn] No valid finish positions bets found to process.")
 
 
-# ======================
-# Per-player expected SG summaries (categories + total, per-round averages only)
-# ======================
-COLS = ["ott", "app", "arg", "putt"]
-r1m = cats_r1.mean(axis=1); r2m = cats_r2.mean(axis=1); r3m = cats_r3.mean(axis=1); r4m = cats_r4.mean(axis=1)
-r1_total_mean = sg_r1.mean(axis=1); r2_total_mean = sg_r2.mean(axis=1)
-r3_total_mean = sg_r3.mean(axis=1); r4_total_mean = sg_r4.mean(axis=1)
-per_round_avg_cat = ((cats_r1 + cats_r2 + cats_r3 + cats_r4) / 4.0).mean(axis=1)
-tourn_total_per_round_mean = ((sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0).mean(axis=1)
-
-rows = []
-for i, p in enumerate(player_names):
-    row = {"player_name": p}
-    for k, col in enumerate(COLS):
-        row[f"r1_{col}_mean"] = float(r1m[i, k])
-        row[f"r2_{col}_mean"] = float(r2m[i, k])
-        row[f"r3_{col}_mean"] = float(r3m[i, k])
-        row[f"r4_{col}_mean"] = float(r4m[i, k])
-        row[f"tourn_{col}_per_round_mean"] = float(per_round_avg_cat[i, k])
-    row["r1_total_mean"] = float(r1_total_mean[i])
-    row["r2_total_mean"] = float(r2_total_mean[i])
-    row["r3_total_mean"] = float(r3_total_mean[i])
-    row["r4_total_mean"] = float(r4_total_mean[i])
-    row["tourn_total_sg_per_round_mean"] = float(tourn_total_per_round_mean[i])
-    rows.append(row)
-
-df_avg = pd.DataFrame(rows)
-out_avg_file = f"avg_expected_cat_sg_{tourney}.csv"
-df_avg.to_csv(out_avg_file, index=False)
-print(f"[ok] wrote {out_avg_file}")
-
 # ============================================================
 # MATCHUPS PRICING (tournament matchups) + weather impact CSV
 # ============================================================
@@ -1412,18 +1379,6 @@ if not df_match.empty:
 
     round_var = 'tourn'  # label column header
 
-    # optional: sample & my_pred lookups (for later filters)
-    pre_sim_path = f'pre_sim_summary_{tourney}.csv'
-    sample_lookup = {}
-    if os.path.exists(pre_sim_path):
-        try:
-            smpl = pd.read_csv(pre_sim_path)
-            sample_lookup = dict(zip(smpl['player_name'].str.lower(), smpl['sample']))
-        except Exception as e:
-            print(f"[warn] could not read {pre_sim_path}: {e}")
-
-    my_pred_lookup = dict(zip(model_preds['player_name'].str.lower(), model_preds['my_pred']))
-
     # write each bookmaker file similar to your previous script
     for bookmaker, dfb in dfs_by_book.items():
         dfb = dfb.copy()
@@ -1480,7 +1435,6 @@ if not df_match.empty:
 
     if dfs_list:
         combined_df = pd.concat(dfs_list, ignore_index=True)
-        combined_df_raw = combined_df.copy()
         # Add sample sizes (if available)
         combined_df['Sample_P1'] = combined_df['Player 1'].str.lower().map(sample_lookup)
         combined_df['Sample_P2'] = combined_df['Player 2'].str.lower().map(sample_lookup)
