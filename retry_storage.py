@@ -80,8 +80,15 @@ def load_finish_positions():
                 df["sample"] = df["sample"].fillna(df["sample_pred"])
                 df.drop(columns=["sample_pred"], inplace=True)
 
-        if "pred" in preds.columns:
-            pred_join = preds[["player_name", "pred"]].rename(columns={"pred": "my_pred_file"})
+        # Look for prediction column: "my_pred" (final_predictions) or "pred" (pre_course_fit)
+        pred_col = None
+        if "my_pred" in preds.columns:
+            pred_col = "my_pred"
+        elif "pred" in preds.columns:
+            pred_col = "pred"
+
+        if pred_col:
+            pred_join = preds[["player_name", pred_col]].rename(columns={pred_col: "my_pred_file"})
             pred_join = pred_join.drop_duplicates("player_name")
             df = df.merge(pred_join, on="player_name", how="left")
             if "my_pred" not in df.columns or df["my_pred"].isna().all():

@@ -494,7 +494,17 @@ def _classify_archetypes(df):
     df["ball_striking_pct"] = df["ball_striking"].rank(pct=True) * 100
     df["short_game_pct"] = df["short_game"].rank(pct=True) * 100
 
+    # Manual overrides for players with insufficient data.
+    # Remove entries once a player accumulates 20+ rounds in dg_historical.db.
+    MANUAL_ARCHETYPE_OVERRIDES = {
+        "penge, marco": "Bomber",
+    }
+
     def classify(row):
+        player = str(row.get("player_name", "")).lower().strip()
+        if player in MANUAL_ARCHETYPE_OVERRIDES:
+            return MANUAL_ARCHETYPE_OVERRIDES[player]
+
         if row.get("archetype") == "Unknown":
             return "Unknown"
 
@@ -512,20 +522,22 @@ def _classify_archetypes(df):
             return "Unknown"
 
         # First match wins
-        if dd >= 70 and da < 50:
-            return "Long Bomber"
-        if da >= 70 and dd < 50:
-            return "Accurate Short"
-        if dd >= 60 and da >= 60:
-            return "Long Accurate"
+        if all(v > 70 for v in [ott, app, arg, putt]):
+            return "Stud"
+        if dd >= 80 and da < 40:
+            return "Bomber"
+        if dd >= 66 and da >= 66:
+            return "Elite OTT"
         if bs >= 70 and sg < 50:
             return "Ball Striker"
         if sg >= 70 and bs < 50:
             return "Short Game Specialist"
         if putt >= 80:
             return "Elite Putter"
-        if all(30 <= v <= 70 for v in [ott, app, arg, putt] if not pd.isna(v)):
+        if all(35 <= v <= 75 for v in [ott, app, arg, putt]):
             return "All-Around"
+        if sum(v < 50 for v in [ott, app, arg, putt]) >= 3:
+            return "Low Skill"
         return "Neutral"
 
     df["archetype"] = df.apply(classify, axis=1)
