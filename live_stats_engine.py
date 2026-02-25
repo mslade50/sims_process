@@ -258,7 +258,7 @@ def _merge_r2(df):
         df["r2_teetime"] = pd.to_datetime(df["r2_teetime"], errors="coerce")
         df["teetime_numeric"] = df["r2_teetime"].astype(np.int64)
     else:
-        print("  ⚠️  r2_teetime not found in model_predictions_r2.csv — spline will use index order")
+        print("  [warn] r2_teetime not found in model_predictions_r2.csv -- spline will use index order")
 
     return df
 
@@ -784,7 +784,7 @@ def create_next_round_predictions(round_num):
                 course_skill = preds.loc[mask, pred_name].mean()
                 course_wind = preds.loc[mask, wind_col].mean()
                 exp_score = round(adj - course_skill + course_wind, 2)
-                print(f"    {code} → adj={adj}, players={n}, avg_skill={course_skill:.3f}, expected scoring={exp_score}")
+                print(f"    {code} -> adj={adj}, players={n}, avg_skill={course_skill:.3f}, expected scoring={exp_score}")
                 preds.loc[mask, "course_score_adj"] = adj
         # Warn about unmapped players
         unmapped = preds[course_col].notna() & preds["course_score_adj"].isna()
@@ -808,7 +808,7 @@ def create_next_round_predictions(round_num):
                 n = mask.sum()
                 if n > 0:
                     course_skill = preds.loc[mask, pred_name].mean()
-                    print(f"    {code} → adj={adj}, players={n}, avg_skill={course_skill:.3f}")
+                    print(f"    {code} -> adj={adj}, players={n}, avg_skill={course_skill:.3f}")
                     preds.loc[mask, "course_score_adj"] = adj
             print(f"  Warning: No next-round course from API — flipped R{round_num} assignments for R{next_round}")
         else:
@@ -827,7 +827,7 @@ def create_next_round_predictions(round_num):
             course_skill = course_players[pred_name].mean()
             course_wind = course_players[wind_col].mean()
             exp_score = round(adj - course_skill + course_wind, 2)
-            print(f"    expected_score_{i+1} → {cid}: adj={adj}, expected scoring={exp_score}")
+            print(f"    expected_score_{i+1} -> {cid}: adj={adj}, expected scoring={exp_score}")
             preds.loc[preds[course_col] == cid, "course_score_adj"] = adj
 
     else:
@@ -842,7 +842,7 @@ def _save_predictions(preds, next_round):
     """Save prediction file with standard naming."""
     filename = f"model_predictions_r{next_round}.csv"
     preds.to_csv(filename, index=False)
-    print(f"  ✓ Saved {filename} ({len(preds)} players)")
+    print(f"  [ok] Saved {filename} ({len(preds)} players)")
 
 
 def create_pre_event_predictions():
@@ -932,7 +932,7 @@ def create_pre_event_predictions():
     print(f"  Lowest wind adj:  {lo['player_name']} ({lo['wind_adj1']:.3f})")
 
     preds.to_csv("model_predictions_r1.csv", index=False)
-    print(f"  ✓ Saved model_predictions_r1.csv")
+    print(f"  [ok] Saved model_predictions_r1.csv")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -946,7 +946,7 @@ def export_results(df, round_num):
     model_file = f"r{round_num}_live_model.csv"
     df.to_csv(model_file, index=False)
     df.to_csv(f"r{round_num}_live_model_{tourney}.csv", index=False)
-    print(f"  ✓ Saved {model_file}")
+    print(f"  [ok] Saved {model_file}")
 
     # --- Summary (round-specific columns) ---
     if round_num == 1:
@@ -973,7 +973,7 @@ def export_results(df, round_num):
     existing = [c for c in summary_cols if c in df.columns]
     summary_file = f"r{round_num}_live_summary.csv"
     df[existing].to_csv(summary_file, index=False)
-    print(f"  ✓ Saved {summary_file}")
+    print(f"  [ok] Saved {summary_file}")
 
     # --- Residual summary (appended across rounds) ---
     valid = df.dropna(subset=["sg_total_adj", "residual"])
@@ -1036,7 +1036,7 @@ def export_results(df, round_num):
                 spline_pdf_path = f"r{round_num}_weather_spline.pdf"
                 fig.savefig(spline_pdf_path, format="pdf", dpi=150, bbox_inches="tight")
                 plt.close(fig)
-                print(f"  ✓ Saved {spline_pdf_path}")
+                print(f"  [ok] Saved {spline_pdf_path}")
         except Exception as e:
             print(f"  Plot failed: {e}")
 
@@ -1221,7 +1221,7 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
     """
     password = os.environ.get("EMAIL_PASSWORD")
     if not password:
-        print("  ⚠️  GMAIL_APP_PASSWORD not set. Skipping email.")
+        print("  [warn] GMAIL_APP_PASSWORD not set. Skipping email.")
         return
 
     try:
@@ -1252,10 +1252,10 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
             server.login(EMAIL_FROM, password)
             server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
 
-        print("  ✓ Summary email sent")
+        print("  [ok] Summary email sent")
 
     except Exception as e:
-        print(f"  ⚠️  Email failed: {e}")
+        print(f"  [warn] Email failed: {e}")
         print("    (Skill update still saved — email is non-blocking)")
 
 
@@ -1347,11 +1347,11 @@ def _apply_sheet_overrides(config):
     # Override wind/dew arrays for the next round
     if config.get("wind"):
         WIND_ARRAYS[next_round] = config["wind"]
-        print(f"  → Wind array for R{next_round} loaded from sheet ({len(config['wind'])} hours)")
+        print(f"  Wind array for R{next_round} loaded from sheet ({len(config['wind'])} hours)")
 
     if config.get("dew"):
         DEW_ARRAYS[next_round] = config["dew"]
-        print(f"  → Dew array for R{next_round} loaded from sheet ({len(config['dew'])} hours)")
+        print(f"  Dew array for R{next_round} loaded from sheet ({len(config['dew'])} hours)")
 
     # Build per-course scoring adjustments list
     # expected_score_1 = first course_x encountered in API data, etc.
@@ -1365,9 +1365,9 @@ def _apply_sheet_overrides(config):
         COURSE_SCORE_ADJS = course_adjs
         SCORE_ADJS[next_round] = course_adjs[0]  # Default/single-course fallback
         if len(course_adjs) > 1:
-            print(f"  → Multi-course score adjs: {course_adjs}")
+            print(f"  Multi-course score adjs: {course_adjs}")
         else:
-            print(f"  → Score adj R{next_round}: {course_adjs[0]}")
+            print(f"  Score adj R{next_round}: {course_adjs[0]}")
 
     # Build name-keyed map: API course_code → expected_score
     course_codes = config.get("course_codes", [])
@@ -1377,19 +1377,19 @@ def _apply_sheet_overrides(config):
             COURSE_SCORE_MAP[code] = course_adjs[i]
 
     if COURSE_SCORE_MAP and len(COURSE_SCORE_MAP) > 1:
-        print(f"  → Course score map: {COURSE_SCORE_MAP}")
+        print(f"  Course score map: {COURSE_SCORE_MAP}")
 
     # Override dew/wind calculation factors if set in sheet
     if config.get("dew_calculation") is not None:
         # Patch the imported value
         import sim_inputs
         sim_inputs.dew_calculation = config["dew_calculation"]
-        print(f"  → Dew calculation factor: {config['dew_calculation']}")
+        print(f"  Dew calculation factor: {config['dew_calculation']}")
 
     if config.get("wind_override") is not None:
         import sim_inputs
         sim_inputs.wind_override = config["wind_override"]
-        print(f"  → Wind override: {config['wind_override']}")
+        print(f"  Wind override: {config['wind_override']}")
 
 
 def main():
@@ -1429,7 +1429,7 @@ def main():
             _apply_sheet_overrides(config)
             round_num = config["round_num"]
         except Exception as e:
-            print(f"\n⚠️  Could not read Google Sheet: {e}")
+            print(f"\n[warn] Could not read Google Sheet: {e}")
             print("   Falling back to CLI args. Use --cli flag to suppress this.\n")
             if args.round is None:
                 parser.error("Sheet unavailable and no --round provided.")
@@ -1454,7 +1454,7 @@ def main():
         try:
             run_weather_update(round_num)
         except Exception as e:
-            print(f"\n⚠️  Weather update could not complete: {e}")
+            print(f"\n[warn] Weather update could not complete: {e}")
             print(f"   Skill update is saved. Run again once R{round_num + 1} tee times are available.")
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")
