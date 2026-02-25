@@ -27,19 +27,12 @@ PLOT_LAYOUT = dict(
 UNIT_SIZE = 200.0
 
 
-def _get_events():
-    df = get_bet_ledger()
-    if df.empty:
-        return []
-    return sorted(df["event_name"].dropna().unique().tolist())
-
-
 layout = dbc.Container([
     html.H4("Performance", className="page-header"),
 
-    # Filters — Row 1
+    # Filters — Row 1 (event dropdown populated by callback on page load)
     dbc.Row([
-        event_selector("perf", events=_get_events()),
+        event_selector("perf", events=[]),
         bet_type_selector("perf"),
         sportsbook_filter("perf"),
         edge_slider("perf", default=0),
@@ -109,6 +102,18 @@ layout = dbc.Container([
     html.H5("Event Summary", className="mt-4 mb-2"),
     html.Div(id="perf-summary-table"),
 ], fluid=True)
+
+
+@callback(
+    Output("perf-event-filter", "options"),
+    Input("perf-event-filter", "id"),  # on load trigger
+)
+def populate_events(_):
+    df = get_bet_ledger()
+    if df.empty:
+        return []
+    events = sorted(df["event_name"].dropna().unique().tolist())
+    return [{"label": e.title(), "value": e} for e in events]
 
 
 def _convert_to_units(df):

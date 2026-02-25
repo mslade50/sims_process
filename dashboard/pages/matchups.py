@@ -15,23 +15,12 @@ from dashboard.config import SHARP_BOOKS
 dash.register_page(__name__, path="/matchups", title="Matchups", order=2)
 
 
-def _get_rounds():
-    return get_available_matchup_rounds()
-
-
-def _default_round(rounds):
-    """Pick the highest numeric round as default."""
-    numeric = [r for r in rounds if isinstance(r, int)]
-    return max(numeric) if numeric else (rounds[-1] if rounds else None)
-
-
 layout = dbc.Container([
     html.H4("Matchup Edges", className="page-header"),
 
-    # Filters
+    # Filters (round dropdown populated by callback on page load)
     dbc.Row([
-        round_selector("mu", available_rounds=_get_rounds() or [2, 3, 4],
-                        default=_default_round(_get_rounds() or [2, 3, 4])),
+        round_selector("mu", available_rounds=[2, 3, 4], default=None),
         sportsbook_filter("mu"),
         edge_slider("mu", default=0),
         pred_slider("mu", default=0.75),
@@ -44,6 +33,24 @@ layout = dbc.Container([
     # Table
     html.Div(id="mu-table"),
 ], fluid=True)
+
+
+@callback(
+    Output("mu-round-filter", "options"),
+    Output("mu-round-filter", "value"),
+    Input("mu-round-filter", "id"),  # on load trigger
+)
+def populate_rounds(_):
+    rounds = get_available_matchup_rounds() or [2, 3, 4]
+    options = []
+    for r in rounds:
+        if r == "tourn":
+            options.append({"label": "Tournament", "value": "tourn"})
+        else:
+            options.append({"label": f"Round {r}", "value": r})
+    numeric = [r for r in rounds if isinstance(r, int)]
+    default = max(numeric) if numeric else (rounds[-1] if rounds else None)
+    return options, default
 
 
 @callback(
