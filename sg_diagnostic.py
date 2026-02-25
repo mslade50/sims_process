@@ -528,6 +528,8 @@ def _classify_archetypes(df):
             return "Bomber"
         if dd >= 66 and da >= 66:
             return "Elite OTT"
+        if dd < 35 and da >= 70:
+            return "Short Accurate"
         if bs >= 70 and sg < 50:
             return "Ball Striker"
         if sg >= 70 and bs < 50:
