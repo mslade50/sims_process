@@ -699,36 +699,6 @@ print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
 
 
 # ============================================================
-# MATCHUPS PRICING (weather impact CSV only; sim already done)
-# ============================================================
-wx = model_preds[['player_name', 'r1_teetime', 'r2_teetime', 'my_pred']].copy()
-wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], format='mixed', errors='coerce')
-wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], format='mixed', errors='coerce')
-
-wind_r1_rep, wind_r2_rep, dew_r1_rep, dew_r2_rep = [], [], [], []
-for _, row in wx.iterrows():
-    wind_r1_rep.append(calculate_avg_wind(row['r1_teetime'], wind_1))
-    dew_r1_rep.append(calculate_avg_wind(row['r1_teetime'], dewpoint_1))
-    wind_r2_rep.append(calculate_avg_wind(row['r2_teetime'], wind_2))
-    dew_r2_rep.append(calculate_avg_wind(row['r2_teetime'], dewpoint_2))
-
-wx['wind_adj_r1'] = np.array(wind_r1_rep) * wind_calculation_report
-wx['wind_adj_r2'] = np.array(wind_r2_rep) * wind_calculation_report
-wx['dew_adj_r1']  = np.array(dew_r1_rep) * dew_calculation
-wx['dew_adj_r2']  = np.array(dew_r2_rep) * dew_calculation
-
-# center field means (so waves sum to ~0; individual - mean matches rd_1_sd pattern)
-for c in ['wind_adj_r1','wind_adj_r2','dew_adj_r1','dew_adj_r2']:
-    wx[c] = wx[c] - wx[c].mean()
-
-wx['wind_adv_r1_2'] = wx['wind_adj_r1'] + wx['wind_adj_r2']
-wx['dew_adv_r1_2']  = wx['dew_adj_r1']  + wx['dew_adj_r2']
-
-wx_out = wx[['player_name','dew_adj_r1','wind_adj_r1','dew_adj_r2','wind_adj_r2','dew_adv_r1_2','wind_adv_r1_2']].copy()
-wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
-print(f"[ok] wrote weather_impact_{tourney}.csv")
-
-# ============================================================
 # OUTRIGHTS & TOP-N PRICING VS MARKET + BET SHEETS (same outputs as old flow)
 # ============================================================
 
@@ -1085,6 +1055,7 @@ wx['wind_adv_r1_2'] = wx['wind_adj_r1'] + wx['wind_adj_r2']
 wx['dew_adv_r1_2']  = wx['dew_adj_r1']  + wx['dew_adj_r2']
 
 wx_out = wx[['player_name','dew_adj_r1','wind_adj_r1','dew_adj_r2','wind_adj_r2','dew_adv_r1_2','wind_adv_r1_2']].copy()
+wx_out = wx_out.round(2)
 wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
 print(f"[ok] wrote weather_impact_{tourney}.csv")
 
