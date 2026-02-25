@@ -1,19 +1,15 @@
 """
-sheets_storage.py — Google Sheets + Drive storage for golf sim bet records.
+sheets_storage.py — Google Sheets storage for golf sim bet records.
 
-Writes bet records to four tabs in the "golf_sims" spreadsheet:
+Writes bet records to three tabs in the "golf_sims" spreadsheet:
   - Tournament Matchups   (from new_sim.py → combined_df)
   - Finish Positions       (from new_sim.py → combined_finish_df)
   - Round Matchups         (from round_sim.py → combined df)
-  - Sharp Filtered Bets    (from both scripts, sharp-only, deduped)
-
-Also uploads raw sim CSVs to a Google Drive folder.
 
 Auth:
   Uses the same credential pattern as sheet_config.py:
   - GOOGLE_CREDS_JSON env var (for GitHub Actions / CI)
   - credentials.json file (for local dev)
-  Scopes are widened to read/write (spreadsheets + drive.file).
 
 Usage:
   from sheets_storage import (
@@ -21,14 +17,13 @@ Usage:
       store_tournament_matchups,
       store_finish_positions,
       store_round_matchups,
-      store_sharp_filtered,
-      upload_csv_to_drive,
   )
 """
 
 import os
 import json
 import uuid
+import time
 import tempfile
 from datetime import datetime
 
@@ -62,11 +57,6 @@ CREDENTIALS_PATHS = [
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
-TAB_SHARP = "Sharp Filtered Bets"
-TAB_ALL_FILTERED = "All Filtered Bets"
-
-# Drive folder root
-DRIVE_ROOT_FOLDER = "golf_sim_outputs"
 
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
@@ -112,16 +102,6 @@ ROUND_MU_HEADERS = [
     "result", "p1_round_score", "p2_round_score", "units_won",
 ]
 
-SHARP_HEADERS = [
-    "run_timestamp", "event_name", "year", "event_id",
-    "bet_type", "round",
-    "bet_on", "opponent", "bookmaker",
-    "book_odds", "fair_odds", "edge",
-    "pred_on", "sample_on",
-    "kelly_stake", "half_shot",
-    "result", "units_won",
-]
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Auth & Connection
@@ -144,18 +124,25 @@ def _get_credentials():
     )
 
 
-def _connect_sheets():
-    """Authenticate and return the gspread Spreadsheet object."""
+def _connect_sheets(max_retries=3, base_delay=5):
+    """Authenticate and return the gspread Spreadsheet object.
+
+    Retries on transient errors (503, 429, network) with exponential backoff.
+    """
     creds = _get_credentials()
     client = gspread.authorize(creds)
-    return client.open(SHEET_NAME)
+    for attempt in range(1, max_retries + 1):
+        try:
+            return client.open(SHEET_NAME)
+        except gspread.exceptions.APIError as e:
+            code = e.response.status_code if hasattr(e, 'response') else None
+            if code in (503, 429, 500) and attempt < max_retries:
+                wait = base_delay * (2 ** (attempt - 1))
+                print(f"  [storage] Google API {code}, retrying in {wait}s ({attempt}/{max_retries})...")
+                time.sleep(wait)
+            else:
+                raise
 
-
-def _connect_drive():
-    """Build a Google Drive API service for CSV uploads."""
-    from googleapiclient.discovery import build
-    creds = _get_credentials()
-    return build("drive", "v3", credentials=creds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -506,355 +493,7 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
     _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Store: Sharp Filtered Bets (unified across bet types)
-# ══════════════════════════════════════════════════════════════════════════════
 
-def store_sharp_filtered(tourney, event_id,
-                         sharp_matchups=None,
-                         sharp_rounds=None, sim_round=None,
-                         sharp_finishes=None,
-                         spreadsheet=None):
-    """
-    Write sharp-filtered bets to the unified "Sharp Filtered Bets" tab.
-    Accepts any combination of the three bet types.
-
-    Args:
-        tourney:          Tournament name
-        event_id:         DataGolf event ID
-        sharp_matchups:   Sharp tournament matchup DataFrame (new_sim.py → sharp_df)
-        sharp_rounds:     Sharp round matchup DataFrame (round_sim.py → sharp)
-        sim_round:        Round number for round matchups (1-4)
-        sharp_finishes:   Finish position DataFrame (new_sim.py → combined_finish_df
-                          or a sharp-filtered subset)
-    """
-    year = datetime.now().year
-    ts = _now_est_iso()
-    rows = []
-
-    # --- Tournament matchups ---
-    # --- Tournament matchups (pred > 0.75 and sample > 20 only) ---
-    if sharp_matchups is not None and not sharp_matchups.empty:
-        for _, r in sharp_matchups.iterrows():
-            pred_val = float(_get(r, "pred_on") or 0)
-            sample_val = float(_get(r, "sample_on") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            bet_player = _safe(_get(r, "bet_on"))
-            p1 = str(_get(r, "Player 1")).lower().strip()
-            p2 = str(_get(r, "Player 2")).lower().strip()
-            opponent = p2 if str(bet_player).lower().strip() == p1 else p1
-
-            # Book odds for the bet side
-            if str(bet_player).lower().strip() == p1:
-                book_odds = _safe(_get(r, "P1 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p1"))
-                hs = _safe(_get(r, "half_shot_p1"), round_digits=1)
-            else:
-                book_odds = _safe(_get(r, "P2 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p2"))
-                hs = _safe(_get(r, "half_shot_p2"), round_digits=1)
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "tournament_matchup",                       # bet_type
-                0,                                          # round (0 = tournament)
-                _safe(bet_player),                          # bet_on
-                opponent,                                   # opponent
-                _safe(_get(r, "Bookmaker")),                # bookmaker
-                book_odds,                                  # book_odds
-                fair_odds,                                  # fair_odds
-                _safe(_get(r, "edge_on"), round_digits=1),  # edge
-                _safe(_get(r, "pred_on"), round_digits=2),  # pred_on
-                _safe(_get(r, "sample_on")),                # sample_on
-                "",                                         # kelly_stake (flat bet for MU)
-                hs,                                         # half_shot
-                "",                                         # result (grading)
-                "",                                         # units_won (grading)
-            ])
-
-    # --- Round matchups (pred > 0.75 and sample > 20 only) ---
-    if sharp_rounds is not None and not sharp_rounds.empty:
-        rd = sim_round or 0
-        for _, r in sharp_rounds.iterrows():
-            pred_val = float(_get(r, "pred_on") or 0)
-            sample_val = float(_get(r, "sample_on") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            bet_player = _safe(_get(r, "bet_on"))
-            p1 = str(_get(r, "Player 1")).lower().strip()
-            p2 = str(_get(r, "Player 2")).lower().strip()
-            opponent = p2 if str(bet_player).lower().strip() == p1 else p1
-
-            if str(bet_player).lower().strip() == p1:
-                book_odds = _safe(_get(r, "P1 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p1"))
-                hs = _safe(_get(r, "half_shot_p1"), round_digits=1)
-            else:
-                book_odds = _safe(_get(r, "P2 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p2"))
-                hs = _safe(_get(r, "half_shot_p2"), round_digits=1)
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "round_matchup",                            # bet_type
-                int(rd),                                    # round
-                _safe(bet_player),                          # bet_on
-                opponent,                                   # opponent
-                _safe(_get(r, "Bookmaker")),                # bookmaker
-                book_odds,                                  # book_odds
-                fair_odds,                                  # fair_odds
-                _safe(_get(r, "edge_on"), round_digits=1),  # edge
-                _safe(_get(r, "pred_on"), round_digits=2),  # pred_on
-                _safe(_get(r, "sample_on")),                # sample_on
-                "",                                         # kelly_stake (flat bet)
-                hs,                                         # half_shot
-                "",                                         # result (grading)
-                "",                                         # units_won (grading)
-            ])
-
-    # --- Finish positions (pred > 0.75 and sample > 20 only) ---
-    if sharp_finishes is not None and not sharp_finishes.empty:
-        for _, r in sharp_finishes.iterrows():
-            pred_val = float(_get(r, "my_pred") or 0)
-            sample_val = float(_get(r, "sample") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            player = str(_get(r, "player_name")).lower().strip()
-            market = _safe(_get(r, "market_type", "market"))
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "finish_position",                                   # bet_type
-                0,                                                   # round (0 = tournament)
-                player,                                              # bet_on
-                market,                                              # opponent (market_type)
-                _safe(_get(r, "bookmaker", "book", "sportsbook")),   # bookmaker
-                _safe(_get(r, "american_odds")),                     # book_odds
-                _safe(_get(r, "my_fair")),                           # fair_odds
-                _safe(_get(r, "edge"), round_digits=1),              # edge
-                _safe(_get(r, "my_pred"), round_digits=2),           # pred_on
-                _safe(_get(r, "sample")),                            # sample_on
-                _safe(_get(r, "stake", "kelly_stake"), round_digits=2),  # kelly_stake
-                "",                                                  # half_shot (N/A)
-                "",                                                  # result (grading)
-                "",                                                  # units_won (grading)
-            ])
-
-    if not rows:
-        print("  [storage] No sharp filtered bets to store.")
-        return
-
-    if spreadsheet is None:
-        spreadsheet = get_spreadsheet()
-    ws = _get_or_create_tab(spreadsheet, TAB_SHARP, SHARP_HEADERS)
-    _append_rows(ws, rows)
-
-    # Summary counts by type
-    type_counts = {}
-    for row in rows:
-        bt = row[4]  # bet_type column
-        type_counts[bt] = type_counts.get(bt, 0) + 1
-    summary = ", ".join(f"{k}: {v}" for k, v in type_counts.items())
-    print(f"  [storage] Wrote {len(rows)} sharp filtered rows ({summary}) to '{TAB_SHARP}'")
-
-def store_all_filtered(tourney, event_id,
-                       all_matchups=None,
-                       all_rounds=None, sim_round=None,
-                       all_finishes=None,
-                       spreadsheet=None):
-    """
-    Write filtered bets from ALL books to the "All Filtered Bets" tab.
-    Same schema as Sharp Filtered, but includes every bookmaker.
-    Gate: pred > 0.75 and sample > 20.
-    """
-    year = datetime.now().year
-    ts = _now_est_iso()
-    rows = []
-
-    # --- Tournament matchups (all books, pred > 0.75 and sample > 20) ---
-    if all_matchups is not None and not all_matchups.empty:
-        for _, r in all_matchups.iterrows():
-            pred_val = float(_get(r, "pred_on") or 0)
-            sample_val = float(_get(r, "sample_on") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            bet_player = _safe(_get(r, "bet_on"))
-            p1 = str(_get(r, "Player 1")).lower().strip()
-            p2 = str(_get(r, "Player 2")).lower().strip()
-            opponent = p2 if str(bet_player).lower().strip() == p1 else p1
-
-            if str(bet_player).lower().strip() == p1:
-                book_odds = _safe(_get(r, "P1 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p1"))
-                hs = _safe(_get(r, "half_shot_p1"), round_digits=1)
-            else:
-                book_odds = _safe(_get(r, "P2 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p2"))
-                hs = _safe(_get(r, "half_shot_p2"), round_digits=1)
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "tournament_matchup", 0,
-                _safe(bet_player), opponent,
-                _safe(_get(r, "Bookmaker")),
-                book_odds, fair_odds,
-                _safe(_get(r, "edge_on"), round_digits=1),
-                _safe(_get(r, "pred_on"), round_digits=2),
-                _safe(_get(r, "sample_on")),
-                "", hs, "", "",
-            ])
-
-    # --- Round matchups (all books, pred > 0.75 and sample > 20) ---
-    if all_rounds is not None and not all_rounds.empty:
-        rd = sim_round or 0
-        for _, r in all_rounds.iterrows():
-            pred_val = float(_get(r, "pred_on") or 0)
-            sample_val = float(_get(r, "sample_on") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            bet_player = _safe(_get(r, "bet_on"))
-            p1 = str(_get(r, "Player 1")).lower().strip()
-            p2 = str(_get(r, "Player 2")).lower().strip()
-            opponent = p2 if str(bet_player).lower().strip() == p1 else p1
-
-            if str(bet_player).lower().strip() == p1:
-                book_odds = _safe(_get(r, "P1 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p1"))
-                hs = _safe(_get(r, "half_shot_p1"), round_digits=1)
-            else:
-                book_odds = _safe(_get(r, "P2 Odds"))
-                fair_odds = _safe(_get(r, "Fair_p2"))
-                hs = _safe(_get(r, "half_shot_p2"), round_digits=1)
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "round_matchup", int(rd),
-                _safe(bet_player), opponent,
-                _safe(_get(r, "Bookmaker")),
-                book_odds, fair_odds,
-                _safe(_get(r, "edge_on"), round_digits=1),
-                _safe(_get(r, "pred_on"), round_digits=2),
-                _safe(_get(r, "sample_on")),
-                "", hs, "", "",
-            ])
-
-    # --- Finish positions (all books, pred > 0.75 and sample > 20) ---
-    if all_finishes is not None and not all_finishes.empty:
-        for _, r in all_finishes.iterrows():
-            pred_val = float(_get(r, "my_pred") or 0)
-            sample_val = float(_get(r, "sample") or 0)
-            if pred_val <= 0.75 or sample_val <= 20:
-                continue
-
-            player = str(_get(r, "player_name")).lower().strip()
-            market = _safe(_get(r, "market_type", "market"))
-
-            rows.append([
-                ts, tourney, year, str(event_id),
-                "finish_position", 0,
-                player, market,
-                _safe(_get(r, "bookmaker", "book", "sportsbook")),
-                _safe(_get(r, "american_odds")),
-                _safe(_get(r, "my_fair")),
-                _safe(_get(r, "edge"), round_digits=1),
-                _safe(_get(r, "my_pred"), round_digits=2),
-                _safe(_get(r, "sample")),
-                _safe(_get(r, "stake", "kelly_stake"), round_digits=2),
-                "", "", "",
-            ])
-
-    if not rows:
-        print("  [storage] No all-book filtered bets to store.")
-        return
-
-    if spreadsheet is None:
-        spreadsheet = get_spreadsheet()
-    ws = _get_or_create_tab(spreadsheet, TAB_ALL_FILTERED, SHARP_HEADERS)
-    _append_rows(ws, rows)
-
-    type_counts = {}
-    for row in rows:
-        bt = row[4]
-        type_counts[bt] = type_counts.get(bt, 0) + 1
-    summary = ", ".join(f"{k}: {v}" for k, v in type_counts.items())
-    print(f"  [storage] Wrote {len(rows)} all-book filtered rows ({summary}) to '{TAB_ALL_FILTERED}'")
-    
-# ══════════════════════════════════════════════════════════════════════════════
-# Google Drive: CSV Upload
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _find_or_create_drive_folder(service, folder_name, parent_name=DRIVE_ROOT_FOLDER):
-    """
-    Find or create a folder in Drive. Creates parent if needed.
-    Returns the folder ID.
-    """
-    def _find_folder(name, parent_id=None):
-        q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        if parent_id:
-            q += f" and '{parent_id}' in parents"
-        results = service.files().list(q=q, spaces="drive", fields="files(id, name)").execute()
-        files = results.get("files", [])
-        return files[0]["id"] if files else None
-
-    def _create_folder(name, parent_id=None):
-        body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-        if parent_id:
-            body["parents"] = [parent_id]
-        folder = service.files().create(body=body, fields="id").execute()
-        return folder["id"]
-
-    # Find or create root folder
-    root_id = _find_folder(parent_name)
-    if not root_id:
-        root_id = _create_folder(parent_name)
-        print(f"  [storage] Created Drive folder: {parent_name}")
-
-    # Find or create event subfolder
-    event_id = _find_folder(folder_name, parent_id=root_id)
-    if not event_id:
-        event_id = _create_folder(folder_name, parent_id=root_id)
-        print(f"  [storage] Created Drive folder: {parent_name}/{folder_name}")
-
-    return event_id
-
-
-def upload_csv_to_drive(df, filename, folder_name):
-    """
-    Upload a DataFrame as a CSV to a Google Drive folder.
-
-    Args:
-        df:          DataFrame to upload
-        filename:    Target filename (e.g. 'simulated_probs_1430.csv')
-        folder_name: Subfolder name under golf_sim_outputs/ (e.g. 'farmers_2026')
-    """
-    from googleapiclient.http import MediaInMemoryUpload
-
-    if df is None or df.empty:
-        print(f"  [storage] Skipping empty upload: {filename}")
-        return
-
-    service = _connect_drive()
-    folder_id = _find_or_create_drive_folder(service, folder_name)
-
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    media = MediaInMemoryUpload(csv_bytes, mimetype="text/csv")
-
-    service.files().create(
-        body={
-            "name": filename,
-            "parents": [folder_id],
-            "mimeType": "text/csv",
-        },
-        media_body=media,
-    ).execute()
-
-    print(f"  [storage] Uploaded {filename} to Drive ({len(csv_bytes):,} bytes)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
