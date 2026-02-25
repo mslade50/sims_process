@@ -414,8 +414,6 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
             continue
 
         matched += 1
-        # Take most recent 50 rounds (already sorted DESC)
-        recent = player_data.head(50)
 
         rec = {"player_name": player, "dg_id": dg_id_map.get(player)}
 
@@ -427,26 +425,25 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
             ("driving_dist", "driving_dist_rolling"),
             ("driving_acc", "driving_acc_rolling"),
         ]:
-            vals = recent[col].dropna()
-            if len(vals) < 20:
+            vals = player_data[col].dropna()
+            n = len(vals)
+            if n < 20:
                 rec[out_col] = np.nan
                 continue
 
-            sma_50 = vals.mean()
-
-            # EMA with span=12
-            alpha = 2.0 / (12 + 1)
-            ema = vals.iloc[0]  # most recent (DESC order)
-            for v in vals.iloc[1:12]:  # use up to 12
-                ema = alpha * v + (1 - alpha) * ema
-            # Wait -- EMA from oldest to newest is the standard.
-            # Since data is DESC (newest first), reverse for EMA calc.
-            vals_asc = vals.iloc[:12].iloc[::-1]
-            ema = vals_asc.iloc[0]
-            for v in vals_asc.iloc[1:]:
-                ema = alpha * v + (1 - alpha) * ema
-
-            rec[out_col] = 0.5 * sma_50 + 0.5 * ema
+            # Data is sorted DESC (newest first).
+            # Tiered SMA to capture stable archetype, not recent form:
+            #   100+ rounds → avg of 50-round SMA and 100-round SMA
+            #   50-99 rounds → 50-round SMA only
+            #   <50 rounds  → mean of all available rounds
+            if n >= 100:
+                sma_50 = vals.head(50).mean()
+                sma_100 = vals.head(100).mean()
+                rec[out_col] = 0.5 * sma_50 + 0.5 * sma_100
+            elif n >= 50:
+                rec[out_col] = vals.head(50).mean()
+            else:
+                rec[out_col] = vals.mean()
 
         records.append(rec)
 
@@ -1184,7 +1181,75 @@ def main():
         action="store_true",
         help="Show accumulated cross-event report from Parquet",
     )
+    parser.add_argument(
+        "--reclassify",
+        action="store_true",
+        help="Re-run archetype classification on all stored diagnostic data",
+    )
     args = parser.parse_args()
+
+    # --- Reclassify mode: update archetypes in existing parquet ---
+    if args.reclassify:
+        print("\n  Reclassifying Archetypes (Tiered SMA)")
+        print("  " + "=" * 40)
+        if not os.path.exists(DIAGNOSTIC_PATH):
+            print("  No diagnostic data found. Nothing to reclassify.")
+            return
+
+        df = pd.read_parquet(DIAGNOSTIC_PATH)
+        print(f"  Loaded {len(df)} rows, {df['event_id'].nunique()} events")
+
+        # Get unique event_ids
+        event_ids_in_parquet = df["event_id"].dropna().unique().tolist()
+
+        # Drop old archetype and rolling columns — will be replaced
+        rolling_cols = [
+            "archetype", "sg_ott_rolling", "sg_app_rolling",
+            "sg_arg_rolling", "sg_putt_rolling",
+            "driving_dist_rolling", "driving_acc_rolling",
+        ]
+        drop_cols = [c for c in rolling_cols if c in df.columns]
+        df = df.drop(columns=drop_cols)
+
+        all_archetypes = []
+        for eid in event_ids_in_parquet:
+            event_df = df[df["event_id"] == eid]
+            field_players = event_df["player_name"].dropna().unique().tolist()
+            print(f"\n  Event {eid}: {len(field_players)} players")
+            archetypes = compute_rolling_archetypes(eid, field_players)
+            all_archetypes.append(archetypes)
+
+        if all_archetypes:
+            arch_df = pd.concat(all_archetypes, ignore_index=True)
+            arch_cols = [c for c in rolling_cols if c in arch_df.columns]
+            arch_cols.append("player_name")
+            # Deduplicate — same player may appear in multiple events with same archetype
+            arch_lookup = arch_df[arch_cols].drop_duplicates("player_name")
+
+            df = df.merge(arch_lookup, on="player_name", how="left")
+            df["archetype"] = df["archetype"].fillna("Unknown")
+
+            # Atomic write back
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".parquet", dir=os.path.dirname(DIAGNOSTIC_PATH)
+            )
+            os.close(fd)
+            try:
+                df.to_parquet(tmp_path, index=False)
+                os.replace(tmp_path, DIAGNOSTIC_PATH)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+
+            counts = df["archetype"].value_counts()
+            print(f"\n  Reclassification complete. {len(df)} rows updated.")
+            print("  New archetype distribution:")
+            for arch, cnt in counts.items():
+                print(f"    {arch}: {cnt}")
+        else:
+            print("  No archetypes computed.")
+        return
 
     # --- Report mode: cross-event analysis ---
     if args.report:

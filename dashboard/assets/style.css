@@ -62,14 +62,19 @@ div[class*="-control"] {
 
 /* All text inside dropdowns: values, placeholders, inputs */
 .dash-dropdown div[class*="-singleValue"],
+.dash-dropdown-dark div[class*="-singleValue"],
 .dash-dropdown div[class*="-placeholder"],
+.dash-dropdown-dark div[class*="-placeholder"],
 .dash-dropdown div[class*="-Input"] input,
-.dash-dropdown input {
+.dash-dropdown-dark div[class*="-Input"] input,
+.dash-dropdown input,
+.dash-dropdown-dark input {
     color: #000000 !important;
 }
 
 /* Dropdown menu container */
 .dash-dropdown div[class*="-menu"],
+.dash-dropdown-dark div[class*="-menu"],
 div[class*="-MenuList"],
 div[class*="-menu"] {
     background-color: #ffffff !important;
@@ -78,6 +83,7 @@ div[class*="-menu"] {
 
 /* Individual options */
 .dash-dropdown div[class*="-option"],
+.dash-dropdown-dark div[class*="-option"],
 div[class*="-option"] {
     background-color: #ffffff !important;
     color: #000000 !important;
@@ -99,39 +105,48 @@ div[class*="-option"][class*="selected"] {
 }
 
 /* Multi-value tags */
-.dash-dropdown div[class*="-multiValue"] {
+.dash-dropdown div[class*="-multiValue"],
+.dash-dropdown-dark div[class*="-multiValue"] {
     background-color: #4ecca3 !important;
     color: #000000 !important;
 }
 
-.dash-dropdown div[class*="-multiValue"] div {
+.dash-dropdown div[class*="-multiValue"] div,
+.dash-dropdown-dark div[class*="-multiValue"] div {
     color: #000000 !important;
 }
 
 /* Multi-value remove button */
 .dash-dropdown div[class*="-multiValue"] div[role="button"],
-.dash-dropdown div[class*="-multiValue"] div[class*="Remove"] {
+.dash-dropdown-dark div[class*="-multiValue"] div[role="button"],
+.dash-dropdown div[class*="-multiValue"] div[class*="Remove"],
+.dash-dropdown-dark div[class*="-multiValue"] div[class*="Remove"] {
     color: #000000 !important;
 }
 
-.dash-dropdown div[class*="-multiValue"] div[role="button"]:hover {
+.dash-dropdown div[class*="-multiValue"] div[role="button"]:hover,
+.dash-dropdown-dark div[class*="-multiValue"] div[role="button"]:hover {
     background-color: #3da88a !important;
     color: #000000 !important;
 }
 
 /* Dropdown indicator arrow */
 .dash-dropdown div[class*="-indicatorContainer"] svg,
-.dash-dropdown span[class*="-indicatorSeparator"] {
+.dash-dropdown-dark div[class*="-indicatorContainer"] svg,
+.dash-dropdown span[class*="-indicatorSeparator"],
+.dash-dropdown-dark span[class*="-indicatorSeparator"] {
     color: #666666 !important;
 }
 
 /* Placeholder */
-.dash-dropdown div[class*="-placeholder"] {
+.dash-dropdown div[class*="-placeholder"],
+.dash-dropdown-dark div[class*="-placeholder"] {
     color: #666666 !important;
 }
 
 /* Clear indicator */
-.dash-dropdown div[class*="-clearIndicator"] svg {
+.dash-dropdown div[class*="-clearIndicator"] svg,
+.dash-dropdown-dark div[class*="-clearIndicator"] svg {
     color: #666666 !important;
 }
 
@@ -167,8 +182,40 @@ div[class*="-option"][class*="selected"] {
     background-color: #4ecca3;
 }
 
+.rc-slider-rail {
+    background-color: #2a2a4a;
+}
+
 .rc-slider-handle {
     border-color: #4ecca3;
+    background-color: #4ecca3;
+}
+
+.rc-slider-dot {
+    border-color: #2a2a4a;
+    background-color: #2a2a4a;
+}
+
+.rc-slider-dot-active {
+    border-color: #4ecca3;
+}
+
+.rc-slider-mark-text {
+    color: #e0e0e0 !important;
+}
+
+.rc-slider-mark-text-active {
+    color: #ffffff !important;
+}
+
+.rc-slider-tooltip-inner {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 1px solid #2a2a4a;
+}
+
+.rc-slider-tooltip-arrow {
+    border-top-color: #16213e;
 }
 
 /* Status badges */

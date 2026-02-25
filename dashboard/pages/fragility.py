@@ -155,9 +155,19 @@ def update_fragility(event, show_all):
 
     display_df = df if show_all else flagged
 
+    # Finish positions: keep only the highest edge bet per player
+    finish_mask = display_df["bet_type"] == "finish_position"
+    finish_df = display_df[finish_mask].copy()
+    other_df = display_df[~finish_mask]
+    if not finish_df.empty:
+        finish_df["_edge_num"] = pd.to_numeric(finish_df["edge"], errors="coerce")
+        finish_df = finish_df.sort_values("_edge_num", ascending=False)
+        finish_df = finish_df.drop_duplicates(subset=["bet_on"], keep="first")
+        finish_df = finish_df.drop(columns=["_edge_num"])
+    display_df = pd.concat([other_df, finish_df], ignore_index=True)
+
     sections = [
         ("Tournament MU", "tournament_matchup", "tourn"),
-        ("Round MU", "round_matchup", "round"),
         ("Finish Positions", "finish_position", "finish"),
     ]
 

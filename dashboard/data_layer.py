@@ -169,9 +169,15 @@ def _normalize_tab(tab_df, bet_type):
     # bet_on: matchup tabs have "bet_on", finish pos has "player_name"
     n["bet_on"] = tab_df.get("bet_on", tab_df.get("player_name", ""))
 
-    # opponent: matchups have player_2, finish pos has market_type
-    if "player_2" in tab_df.columns:
-        n["opponent"] = tab_df["player_2"]
+    # opponent: for matchups, opponent is the other player (not bet_on)
+    if "player_1" in tab_df.columns and "player_2" in tab_df.columns:
+        bet_on_col = tab_df.get("bet_on", pd.Series(dtype=str))
+        n["opponent"] = np.where(
+            bet_on_col.astype(str).str.strip().str.lower()
+            == tab_df["player_2"].astype(str).str.strip().str.lower(),
+            tab_df["player_1"],
+            tab_df["player_2"],
+        )
     elif "market_type" in tab_df.columns:
         n["opponent"] = tab_df["market_type"]
     else:
@@ -408,20 +414,30 @@ def get_matchups(round_num, tourney=None):
     if "bookmaker" in df.columns and "Bookmaker" not in df.columns:
         df = df.rename(columns={"bookmaker": "Bookmaker"})
 
-    # Rename columns to match display expectations
-    rename_map = {}
-    if "player_1" in df.columns:
-        rename_map["player_1"] = "Player 1"
-    if "player_2" in df.columns:
-        rename_map["player_2"] = "Player 2"
     if "ties_rule" in df.columns:
-        rename_map["ties_rule"] = "Ties"
-    if "p1_odds" in df.columns:
-        rename_map["p1_odds"] = "P1 Odds"
-    if "p2_odds" in df.columns:
-        rename_map["p2_odds"] = "P2 Odds"
-    if rename_map:
-        df = df.rename(columns=rename_map)
+        df = df.rename(columns={"ties_rule": "Ties"})
+
+    # Build bet_against, bet_on_odds, bet_against_odds, fair from player perspective
+    if "player_1" in df.columns and "player_2" in df.columns and "bet_on" in df.columns:
+        is_p2 = (
+            df["bet_on"].astype(str).str.strip().str.lower()
+            == df["player_2"].astype(str).str.strip().str.lower()
+        )
+        df["bet_against"] = np.where(is_p2, df["player_1"], df["player_2"])
+
+        if "p1_odds" in df.columns and "p2_odds" in df.columns:
+            df["bet_on_odds"] = np.where(is_p2, df["p2_odds"], df["p1_odds"])
+            df["bet_against_odds"] = np.where(is_p2, df["p1_odds"], df["p2_odds"])
+
+        if "fair_p1" in df.columns and "fair_p2" in df.columns:
+            df["fair"] = np.where(is_p2, df["fair_p2"], df["fair_p1"])
+
+    # Drop raw columns no longer needed for display
+    drop_cols = [
+        "player_1", "player_2", "p1_odds", "p2_odds",
+        "fair_p1", "fair_p2", "half_shot_p1", "half_shot_p2",
+    ]
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns])
 
     return df
 

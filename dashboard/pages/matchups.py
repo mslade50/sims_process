@@ -92,12 +92,11 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
         dbc.Col(html.Span(f"Avg Edge: {avg_edge:.1f}%"), width="auto"),
     ], className="mb-2 g-3")
 
-    # Display columns — Book before Ties, stop after half_shot_p2
+    # Display columns
     display_cols = [
-        "bet_on", "Player 1", "Player 2", "Bookmaker", "Ties",
-        "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
+        "bet_on", "bet_against", "Bookmaker", "Ties",
+        "fair", "bet_on_odds", "bet_against_odds",
         "edge_on", "pred_on", "sample_on",
-        "half_shot_p1", "half_shot_p2",
     ]
 
     available = [c for c in display_cols if c in df.columns]
@@ -107,7 +106,7 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
     if "edge_on" in show_df.columns:
         show_df = show_df.sort_values("edge_on", ascending=False)
 
-    # Custom column defs for edge coloring and header labels
+    # Custom column defs
     col_defs = []
     for col in available:
         d = {
@@ -117,8 +116,21 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
             "filter": True,
             "resizable": True,
         }
-        if col == "Bookmaker":
+        if col == "bet_on":
+            d["headerName"] = "Bet On"
+        elif col == "bet_against":
+            d["headerName"] = "Bet Against"
+        elif col == "Bookmaker":
             d["headerName"] = "Book"
+        elif col == "fair":
+            d["headerName"] = "Fair"
+            d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}
+        elif col == "bet_on_odds":
+            d["headerName"] = "Bet On Odds"
+            d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}
+        elif col == "bet_against_odds":
+            d["headerName"] = "Bet Against Odds"
+            d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}
         elif col == "edge_on":
             d["headerName"] = "Edge"
             d["valueFormatter"] = {"function": "d3.format('.1f')(params.value) + '%'"}
@@ -133,10 +145,6 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
         elif col == "pred_on":
             d["headerName"] = "Pred"
             d["valueFormatter"] = {"function": "d3.format('.2f')(params.value)"}
-        elif col in ("P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2"):
-            d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}
-        elif "half_shot" in col:
-            d["valueFormatter"] = {"function": "d3.format('.1f')(params.value)"}
         col_defs.append(d)
 
     grid = make_grid(show_df, column_defs=col_defs, id_suffix="matchups", height=650, page_size=30)
