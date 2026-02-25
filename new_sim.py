@@ -683,8 +683,6 @@ out_avg_file = f"avg_expected_cat_sg_{tourney}.csv"
 df_avg.to_csv(out_avg_file, index=False)
 print(f"[ok] wrote {out_avg_file}")
 
-import plotly.graph_objects as go
-
 rank_probs = (
     long_df.groupby(['player_name', 'rank'])
             .size()
@@ -693,77 +691,11 @@ rank_probs = (
             .reset_index()
 )
 
-# === SAVE UPDATED-SIM RANK DISTRIBUTIONS (for later overlay) ===
+# === SAVE UPDATED-SIM RANK DISTRIBUTIONS (for dashboard overlay) ===
 rank_probs_updated = rank_probs.rename(columns={'prob': 'prob_u'}).copy()
 rank_probs_updated['rank'] = rank_probs_updated['rank'].astype(int)
 rank_probs_updated.to_parquet(f"rank_probs_updated_{tourney}.parquet", index=False)
 print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
-
-
-if TOP_K is not None and not sim_win_probs.empty:
-    top_players = (
-        sim_win_probs.sort_values('simulated_win_prob', ascending=False)
-                      .head(TOP_K)['player_name'].tolist()
-    )
-    rank_probs_plot = rank_probs[rank_probs['player_name'].isin(top_players)].copy()
-else:
-    top_players = rank_probs['player_name'].unique().tolist()
-    rank_probs_plot = rank_probs.copy()
-
-n_positions = len(player_names)
-full_index = pd.MultiIndex.from_product(
-    [top_players, np.arange(1, n_positions + 1)],
-    names=['player_name', 'rank']
-)
-rank_probs_plot = (
-    rank_probs_plot.set_index(['player_name', 'rank'])
-                    .reindex(full_index, fill_value=0.0)
-                    .reset_index()
-)
-
-players = list(dict.fromkeys(top_players))
-traces = []
-for i, p in enumerate(players):
-    dfp = rank_probs_plot[rank_probs_plot['player_name'] == p]
-    traces.append(
-        go.Bar(
-            x=dfp['rank'].astype(int),
-            y=(dfp['prob'] * 100.0),
-            name=p,
-            visible=(i == 0),
-            hovertemplate="Pos %{x}<br>Prob %{y:.2f}%<extra></extra>"
-        )
-    )
-
-buttons = []
-for i, p in enumerate(players):
-    vis = [False] * len(players)
-    vis[i] = True
-    buttons.append(dict(
-        label=p,
-        method="update",
-        args=[{"visible": vis},
-              {"title": f"Finish-position distribution: {p}"}]
-    ))
-
-fig = go.Figure(data=traces)
-fig.update_layout(
-    title=f"Finish-position distribution: {players[0]}",
-    xaxis_title="Finish position (1 = winner)",
-    yaxis_title="Probability (%)",
-    template="plotly_white",
-    bargap=0,
-    updatemenus=[dict(
-        type="dropdown",
-        x=1.02, y=1.0, xanchor="left", yanchor="top",
-        showactive=True,
-        buttons=buttons
-    )],
-    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="left", x=0)
-)
-fig.update_xaxes(rangemode='tozero', dtick=1, tickmode='auto')
-fig.update_yaxes(rangemode='tozero', ticksuffix="%")
-fig.show()
 
 
 # ============================================================
@@ -1685,8 +1617,7 @@ from sheets_storage import (
     get_spreadsheet,
     store_tournament_matchups,
     store_finish_positions,
-    store_sharp_filtered,
-    store_all_filtered,
+
     load_dg_id_lookup,
 )
 
@@ -1716,22 +1647,6 @@ if is_valid_run_time():
                 dg_id_lookup=dg_id_lookup,
                 spreadsheet=spreadsheet,
             )
-
-        # 3. Sharp filtered (tournament matchups + finish positions)
-        store_sharp_filtered(
-            tourney=tourney,
-            event_id=event_ids[0],
-            sharp_matchups=sharp_df if 'sharp_df' in dir() else None,
-            sharp_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
-            spreadsheet=spreadsheet,
-        )
-        store_all_filtered(
-            tourney=tourney,
-            event_id=event_ids[0],
-            all_matchups=combined_df if 'combined_df' in dir() else None,
-            all_finishes=combined_finish_df if 'combined_finish_df' in dir() else None,
-            spreadsheet=spreadsheet,
-        )
 
         print("[storage] Done.")
     except Exception as e:
