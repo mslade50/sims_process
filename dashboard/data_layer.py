@@ -92,22 +92,9 @@ _SHEETS_CACHE = {"data": None, "timestamp": 0}
 _SHEETS_CACHE_TTL = 300  # 5 minutes
 
 # Tab names (same as sheets_storage.py)
-_TAB_SHARP = "Sharp Filtered Bets"
-_TAB_ALL_FILTERED = "All Filtered Bets"
 _TAB_TOURNAMENT_MU = "Tournament Matchups"
 _TAB_ROUND_MU = "Round Matchups"
 _TAB_FINISH_POS = "Finish Positions"
-
-# Headers for each tab (must match sheets_storage.py)
-_SHARP_HEADERS = [
-    "run_timestamp", "event_name", "year", "event_id",
-    "bet_type", "round",
-    "bet_on", "opponent", "bookmaker",
-    "book_odds", "fair_odds", "edge",
-    "pred_on", "sample_on",
-    "kelly_stake", "half_shot",
-    "result", "units_won",
-]
 
 _TOURNAMENT_MU_HEADERS = [
     "run_timestamp", "event_name", "year", "event_id",
@@ -186,9 +173,18 @@ def _normalize_tab(tab_df, bet_type):
     # bookmaker: matchups have "bookmaker", finish pos has "sportsbook"
     n["bookmaker"] = tab_df.get("bookmaker", tab_df.get("sportsbook", ""))
 
-    # odds: matchups have p1/p2_odds, finish pos has american_odds
-    n["book_odds"] = tab_df.get("p1_odds", tab_df.get("american_odds", ""))
-    n["fair_odds"] = tab_df.get("fair_p1", tab_df.get("my_fair", ""))
+    # odds: matchups have p1/p2_odds (pick the side matching bet_on), finish pos has american_odds
+    if "p1_odds" in tab_df.columns and "player_1" in tab_df.columns:
+        bet_on_col = tab_df.get("bet_on", pd.Series(dtype=str))
+        is_p1 = (
+            bet_on_col.astype(str).str.strip().str.lower()
+            == tab_df["player_1"].astype(str).str.strip().str.lower()
+        )
+        n["book_odds"] = np.where(is_p1, tab_df["p1_odds"], tab_df.get("p2_odds", ""))
+        n["fair_odds"] = np.where(is_p1, tab_df.get("fair_p1", ""), tab_df.get("fair_p2", ""))
+    else:
+        n["book_odds"] = tab_df.get("american_odds", "")
+        n["fair_odds"] = tab_df.get("my_fair", "")
 
     # edge: matchups have edge_on, finish pos has edge
     n["edge"] = tab_df.get("edge_on", tab_df.get("edge", ""))

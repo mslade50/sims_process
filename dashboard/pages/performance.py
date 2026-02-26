@@ -89,13 +89,14 @@ layout = dbc.Container([
 
     # Charts
     dbc.Row([
-        dbc.Col(dcc.Graph(id="perf-cumulative-chart"), md=6),
-        dbc.Col(dcc.Graph(id="perf-book-roi-chart"), md=6),
+        dbc.Col(dcc.Graph(id="perf-cumulative-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-book-roi-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-pnl-chart"), md=4),
     ]),
     dbc.Row([
+        dbc.Col(dcc.Graph(id="perf-raw-edge-bucket-chart"), md=4),
         dbc.Col(dcc.Graph(id="perf-edge-bucket-chart"), md=4),
         dbc.Col(dcc.Graph(id="perf-scatter-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-pnl-chart"), md=4),
     ]),
 
     # Summary table
@@ -139,9 +140,10 @@ def _convert_to_units(df):
     Output("perf-kpi-row", "children"),
     Output("perf-cumulative-chart", "figure"),
     Output("perf-book-roi-chart", "figure"),
+    Output("perf-pnl-chart", "figure"),
+    Output("perf-raw-edge-bucket-chart", "figure"),
     Output("perf-edge-bucket-chart", "figure"),
     Output("perf-scatter-chart", "figure"),
-    Output("perf-pnl-chart", "figure"),
     Output("perf-summary-table", "children"),
     Input("perf-event-filter", "value"),
     Input("perf-type-filter", "value"),
@@ -188,7 +190,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     if df.empty:
         empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
         alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-        return alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert
+        return alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert
 
     # Derive units_wagered from kelly_stake for finish pos, default 1.0 for matchups
     if "units_wagered" not in df.columns:
@@ -313,6 +315,46 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         fig3.add_trace(go.Bar(x=labels, y=rois_list, name="ROI %", marker_color="#d62728"))
         fig3.update_layout(barmode="group")
 
+    # ── Chart 3b: Performance by Raw % Edge Bucket ──
+    # Raw edge = my_probability - market_implied_probability (percentage points)
+    fig3b = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Raw % Edge"})
+    if not resolved.empty and "book_odds" in resolved.columns and "fair_odds" in resolved.columns:
+        res = resolved.copy()
+
+        # Convert American odds to implied probabilities
+        def _american_to_prob(odds):
+            prob = pd.Series(np.nan, index=odds.index)
+            pos = odds >= 0
+            prob[pos] = 100.0 / (odds[pos] + 100.0)
+            neg = odds < 0
+            prob[neg] = odds[neg].abs() / (odds[neg].abs() + 100.0)
+            return prob
+
+        market_prob = _american_to_prob(res["book_odds"])
+        my_prob = _american_to_prob(res["fair_odds"])
+        res["raw_edge"] = (my_prob - market_prob) * 100  # percentage points
+
+        raw_valid = res.dropna(subset=["raw_edge"])
+        if not raw_valid.empty:
+            buckets = [(0, 2, "0-2%"), (2, 4, "2-4%"), (4, 6, "4-6%"), (6, 100, "6%+")]
+            labels, wrs, rois_list = [], [], []
+            for lo, hi, label in buckets:
+                sub = raw_valid[(raw_valid["raw_edge"] >= lo) & (raw_valid["raw_edge"] < hi)]
+                w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
+                l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
+                wr = w / (w + l) * 100 if (w + l) > 0 else 0
+                wag = sub["units_wagered"].sum() if not sub.empty else 0
+                r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
+                labels.append(label)
+                wrs.append(wr)
+                rois_list.append(r)
+
+            fig3b.add_trace(go.Bar(x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN))
+            fig3b.add_trace(go.Bar(x=labels, y=rois_list, name="ROI %", marker_color="#d62728"))
+            fig3b.update_layout(barmode="group")
+            fig3b.update_xaxes(title_text="Raw Prob Edge (pp)")
+            fig3b.update_yaxes(title_text="%")
+
     # ── Chart 4: Performance by Odds Bucket ──
     fig4 = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Odds Bucket"})
     if not resolved.empty and "book_odds" in resolved.columns:
@@ -397,4 +439,4 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             striped=True, bordered=True, hover=True, color="dark", size="sm",
         )
 
-    return kpi, fig1, fig2, fig3, fig4, fig5, summary_content
+    return kpi, fig1, fig2, fig5, fig3b, fig3, fig4, summary_content
