@@ -195,8 +195,8 @@ def _append_rows(ws, rows):
 def is_valid_run_time():
     """
     Only store runs executed after 3 PM EST on Monday of tournament week.
-    Sunday is too early (previous week). Monday before 3 PM is pre-field.
-    All other times are valid.
+    Monday before 3 PM is pre-field — too early for reliable odds.
+    All other times (Tue-Sun) are valid, including Sunday for R4 storage.
     """
     try:
         import pytz
@@ -209,9 +209,6 @@ def is_valid_run_time():
 
     # Monday (weekday 0) before 3 PM → too early
     if now.weekday() == 0 and now.hour < 15:
-        return False
-    # Sunday (weekday 6) → previous week's tournament
-    if now.weekday() == 6:
         return False
     return True
 
@@ -378,6 +375,24 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     if combined_finish_df is None or combined_finish_df.empty:
         print("  [storage] No finish position bets to store.")
         return
+
+    # Filter out tiny stakes (< $1) before writing
+    stake_col = None
+    for c in ["stake", "kelly_stake"]:
+        if c in combined_finish_df.columns:
+            stake_col = c
+            break
+    if stake_col:
+        before = len(combined_finish_df)
+        combined_finish_df = combined_finish_df[
+            pd.to_numeric(combined_finish_df[stake_col], errors="coerce").fillna(0) >= 1.0
+        ]
+        dropped = before - len(combined_finish_df)
+        if dropped:
+            print(f"  [storage] Filtered out {dropped} finish position rows with stake < $1.00")
+        if combined_finish_df.empty:
+            print("  [storage] No finish position bets remaining after stake filter.")
+            return
 
     year = datetime.now().year
     ts = _now_est_iso()
@@ -950,3 +965,48 @@ def query_ledger(**filters):
         df = df[df["year"] == int(filters["year"])]
 
     return df
+
+
+def cleanup_small_finish_bets(min_stake=1.0):
+    """One-time cleanup: delete Finish Positions rows with kelly_stake < min_stake.
+
+    Deletes rows bottom-to-top to preserve row indices.
+    Rate-limited at 0.5s per delete to avoid Google API quota issues.
+    """
+    spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet(TAB_FINISH_POS)
+    rows = ws.get_all_values()
+
+    if len(rows) <= 1:
+        print("  [cleanup] No data rows in Finish Positions tab.")
+        return
+
+    headers = rows[0]
+    try:
+        stake_idx = headers.index("kelly_stake")
+    except ValueError:
+        print("  [cleanup] 'kelly_stake' column not found in headers.")
+        return
+
+    # Find rows to delete (1-indexed, header is row 1)
+    to_delete = []
+    for i, row in enumerate(rows[1:], start=2):  # start=2 because row 1 is header
+        try:
+            stake = float(row[stake_idx]) if row[stake_idx] else 0.0
+        except (ValueError, IndexError):
+            continue
+        if stake < min_stake:
+            to_delete.append(i)
+
+    if not to_delete:
+        print(f"  [cleanup] No rows with kelly_stake < ${min_stake:.2f}")
+        return
+
+    print(f"  [cleanup] Deleting {len(to_delete)} rows with kelly_stake < ${min_stake:.2f} ...")
+
+    # Delete bottom-to-top to preserve indices
+    for row_idx in reversed(to_delete):
+        ws.delete_rows(row_idx)
+        time.sleep(0.5)
+
+    print(f"  [cleanup] Done. Removed {len(to_delete)} rows.")

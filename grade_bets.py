@@ -57,17 +57,9 @@ DATAGOLF_BASE = "https://feeds.datagolf.com"
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
-TAB_SHARP = "Sharp Filtered Bets"
-TAB_ALL_FILTERED = "All Filtered Bets"
 
 # Tab names - results output
 TAB_RESULTS_SUMMARY = "Bet Results Summary"
-TAB_MATCHUPS_SHARP = "Matchups Results - Sharp"
-TAB_MATCHUPS_RETAIL = "Matchups Results - Retail"
-TAB_MATCHUPS_OTHER = "Matchups Results - Other"
-TAB_FINISH_SHARP = "Finish Results - Sharp"
-TAB_FINISH_RETAIL = "Finish Results - Retail"
-TAB_FINISH_OTHER = "Finish Results - Other"
 
 # Book categorization
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris", "bet online", "bookmaker"]
@@ -617,7 +609,33 @@ def grade_tournament_matchup(row, results_df):
     p2_fin_text = p2_data["fin_text"].iloc[0] if "fin_text" in p2_data.columns else str(p2_fin)
 
     # Determine winner (lower finish position wins)
-    if p1_fin < p2_fin:
+    # WD (998) = auto-loss: player who withdrew loses to anyone who didn't
+    # Both WD = push
+    # Both MC (999) = compare R1+R2 strokes; lower total wins, tie = push
+    if p1_fin == 998 and p2_fin == 998:
+        winner = "tie"
+    elif p1_fin == 998 and p2_fin != 998:
+        winner = p2
+    elif p2_fin == 998 and p1_fin != 998:
+        winner = p1
+    elif p1_fin == 999 and p2_fin == 999:
+        # Both missed cut — compare R1+R2 scores (lower total wins)
+        p1_r1 = pd.to_numeric(p1_data["round_1"].iloc[0], errors="coerce") if "round_1" in p1_data.columns else np.nan
+        p1_r2 = pd.to_numeric(p1_data["round_2"].iloc[0], errors="coerce") if "round_2" in p1_data.columns else np.nan
+        p2_r1 = pd.to_numeric(p2_data["round_1"].iloc[0], errors="coerce") if "round_1" in p2_data.columns else np.nan
+        p2_r2 = pd.to_numeric(p2_data["round_2"].iloc[0], errors="coerce") if "round_2" in p2_data.columns else np.nan
+        p1_total = (p1_r1 if not np.isnan(p1_r1) else 0) + (p1_r2 if not np.isnan(p1_r2) else 0)
+        p2_total = (p2_r1 if not np.isnan(p2_r1) else 0) + (p2_r2 if not np.isnan(p2_r2) else 0)
+        has_scores = not (np.isnan(p1_r1) and np.isnan(p1_r2)) and not (np.isnan(p2_r1) and np.isnan(p2_r2))
+        if not has_scores:
+            winner = "tie"  # no round data → push
+        elif p1_total < p2_total:
+            winner = p1
+        elif p2_total < p1_total:
+            winner = p2
+        else:
+            winner = "tie"
+    elif p1_fin < p2_fin:
         winner = p1
     elif p2_fin < p1_fin:
         winner = p2
@@ -896,50 +914,6 @@ def write_grades_to_sheet(spreadsheet, tab_name, grades, headers_list):
         print(f"  Error writing to {tab_name}: {e}")
 
 
-# Results tab headers
-MATCHUP_RESULTS_HEADERS = [
-    "event_name", "event_id", "round", "player_1", "player_2", "bet_on",
-    "book_odds", "bookmaker", "p1_score", "p2_score",
-    "result", "units_wagered", "units_won", "edge", "pred_on", "sample_on"
-]
-
-FINISH_RESULTS_HEADERS = [
-    "event_name", "event_id", "player_name", "market_type",
-    "book_odds", "sportsbook", "actual_finish", "num_tied", "dead_heat_factor",
-    "result", "dollars_wagered", "dollars_won", "edge", "my_pred", "sample"
-]
-
-
-def write_results_tab(spreadsheet, tab_name, results, headers, bet_category):
-    """
-    Write detailed results to a results tab.
-
-    Creates the tab if it doesn't exist.
-    """
-    try:
-        # Try to get existing worksheet
-        try:
-            ws = spreadsheet.worksheet(tab_name)
-        except gspread.exceptions.WorksheetNotFound:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=len(headers))
-            ws.append_row(headers, value_input_option="RAW")
-            print(f"  Created '{tab_name}' tab")
-
-        if not results:
-            return
-
-        # Build rows
-        rows_to_add = []
-        for r in results:
-            row = [r.get(h, "") for h in headers]
-            rows_to_add.append(row)
-
-        if rows_to_add:
-            ws.append_rows(rows_to_add, value_input_option="USER_ENTERED")
-            print(f"  Added {len(rows_to_add)} rows to '{tab_name}'")
-
-    except Exception as e:
-        print(f"  Error writing to {tab_name}: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1143,7 +1117,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
     if not resolved.empty:
         matchups = resolved[resolved["bet_type"].isin(["round_matchup", "tournament_matchup"])]
         for round_val, label in [("1", "R1"), ("2", "R2"), ("3", "R3"), ("4", "R4"), ("tournament", "Tournament")]:
-            subset = matchups[matchups.get("round", "").astype(str) == round_val] if "round" in matchups.columns else pd.DataFrame()
+            subset = matchups[matchups["round"].astype(str) == round_val] if "round" in matchups.columns else pd.DataFrame()
             if len(subset) > 0:
                 bets = len(subset)
                 won = subset["units_won_num"].sum()
@@ -1163,7 +1137,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
     if not resolved.empty:
         finish = resolved[resolved["bet_type"] == "finish_position"]
         for market, label in [("win", "Outright"), ("top_5", "Top 5"), ("top_10", "Top 10"), ("top_20", "Top 20")]:
-            subset = finish[finish.get("market_type", "").astype(str).str.lower().str.replace(" ", "_") == market] if "market_type" in finish.columns else pd.DataFrame()
+            subset = finish[finish["market_type"].astype(str).str.lower().str.replace(" ", "_") == market] if "market_type" in finish.columns else pd.DataFrame()
             if len(subset) > 0:
                 bets = len(subset)
                 won = subset["units_won_num"].sum()
@@ -1197,7 +1171,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
             total_wagered = 0
 
             for round_val in ["1", "2", "3", "4", "tournament"]:
-                subset = book_data[book_data.get("round", "").astype(str) == round_val] if "round" in book_data.columns else pd.DataFrame()
+                subset = book_data[book_data["round"].astype(str) == round_val] if "round" in book_data.columns else pd.DataFrame()
                 if len(subset) > 0:
                     won = subset["units_won_num"].sum()
                     total_won += won
@@ -1233,7 +1207,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
             total_wagered = 0
 
             for market in ["win", "top_5", "top_10", "top_20"]:
-                subset = book_data[book_data.get("market_type", "").astype(str).str.lower().str.replace(" ", "_") == market] if "market_type" in book_data.columns else pd.DataFrame()
+                subset = book_data[book_data["market_type"].astype(str).str.lower().str.replace(" ", "_") == market] if "market_type" in book_data.columns else pd.DataFrame()
                 if len(subset) > 0:
                     won = subset["units_won_num"].sum()
                     total_won += won
@@ -1287,11 +1261,17 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
 
             for bet_type, market_val, _ in markets:
                 if bet_type == "finish_position":
-                    subset = bucket_subset[(bucket_subset["bet_type"] == bet_type) &
-                                          (bucket_subset.get("market_type", "").astype(str).str.lower().str.replace(" ", "_") == market_val)]
+                    if "market_type" in bucket_subset.columns:
+                        subset = bucket_subset[(bucket_subset["bet_type"] == bet_type) &
+                                              (bucket_subset["market_type"].astype(str).str.lower().str.replace(" ", "_") == market_val)]
+                    else:
+                        subset = pd.DataFrame()
                 else:
-                    subset = bucket_subset[(bucket_subset["bet_type"] == bet_type) &
-                                          (bucket_subset.get("round", "").astype(str) == market_val)]
+                    if "round" in bucket_subset.columns:
+                        subset = bucket_subset[(bucket_subset["bet_type"] == bet_type) &
+                                              (bucket_subset["round"].astype(str) == market_val)]
+                    else:
+                        subset = pd.DataFrame()
 
                 if len(subset) > 0:
                     won = subset["units_won_num"].sum()
@@ -1662,10 +1642,6 @@ def main():
 
     all_graded_bets = []
 
-    # Collect results for each book category
-    matchup_results = {"sharp": [], "retail": [], "other": []}
-    finish_results = {"sharp": [], "retail": [], "other": []}
-
     # Process each bet tab
     tabs_to_process = [
         (TAB_ROUND_MU, "round_matchup", grade_round_matchup),
@@ -1733,26 +1709,6 @@ def main():
                 grade["player_2"] = row_dict.get("player_2", "")
                 grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
 
-                # Add to results for export
-                matchup_results[book_category].append({
-                    "event_name": event_name,
-                    "event_id": event_id,
-                    "round": row_dict.get("round", ""),
-                    "player_1": row_dict.get("player_1", ""),
-                    "player_2": row_dict.get("player_2", ""),
-                    "bet_on": row_dict.get("bet_on", ""),
-                    "book_odds": grade["book_odds"],
-                    "bookmaker": bookmaker,
-                    "p1_score": grade_result.get("p1_score", ""),
-                    "p2_score": grade_result.get("p2_score", ""),
-                    "result": grade_result["result"],
-                    "units_wagered": grade_result.get("units_wagered", FLAT_BET_SIZE),
-                    "units_won": grade_result.get("units_won", 0),
-                    "edge": row_dict.get("edge_on", row_dict.get("edge", "")),
-                    "pred_on": pred_value,
-                    "sample_on": row_dict.get("sample_on", row_dict.get("sample", "")),
-                })
-
             elif bet_type == "tournament_matchup":
                 grade["round"] = "tournament"
                 grade["p1_finish"] = grade_result.get("p1_finish", "")
@@ -1762,49 +1718,12 @@ def main():
                 grade["player_2"] = row_dict.get("player_2", "")
                 grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
 
-                matchup_results[book_category].append({
-                    "event_name": event_name,
-                    "event_id": event_id,
-                    "round": "tournament",
-                    "player_1": row_dict.get("player_1", ""),
-                    "player_2": row_dict.get("player_2", ""),
-                    "bet_on": row_dict.get("bet_on", ""),
-                    "book_odds": grade["book_odds"],
-                    "bookmaker": bookmaker,
-                    "p1_score": grade_result.get("p1_finish", ""),
-                    "p2_score": grade_result.get("p2_finish", ""),
-                    "result": grade_result["result"],
-                    "units_wagered": grade_result.get("units_wagered", FLAT_BET_SIZE),
-                    "units_won": grade_result.get("units_won", 0),
-                    "edge": row_dict.get("edge_on", row_dict.get("edge", "")),
-                    "pred_on": pred_value,
-                    "sample_on": row_dict.get("sample_on", row_dict.get("sample", "")),
-                })
-
             elif bet_type == "finish_position":
                 grade["market_type"] = row_dict.get("market_type", "")
                 grade["actual_finish"] = grade_result.get("actual_finish", "")
                 grade["num_tied"] = grade_result.get("num_tied", "")
                 grade["dead_heat_factor"] = grade_result.get("dead_heat_factor", "")
                 grade["player_name"] = row_dict.get("player_name", "")
-
-                finish_results[book_category].append({
-                    "event_name": event_name,
-                    "event_id": event_id,
-                    "player_name": row_dict.get("player_name", ""),
-                    "market_type": row_dict.get("market_type", ""),
-                    "book_odds": row_dict.get("decimal_odds", row_dict.get("american_odds", "")),
-                    "sportsbook": bookmaker,
-                    "actual_finish": grade_result.get("actual_finish", ""),
-                    "num_tied": grade_result.get("num_tied", ""),
-                    "dead_heat_factor": grade_result.get("dead_heat_factor", ""),
-                    "result": grade_result["result"],
-                    "dollars_wagered": grade_result.get("units_wagered", FLAT_BET_SIZE),
-                    "dollars_won": grade_result.get("units_won", 0),
-                    "edge": row_dict.get("edge", ""),
-                    "my_pred": pred_value,
-                    "sample": sample,
-                })
 
             grades.append(grade)
             all_graded_bets.append(grade)
@@ -1818,20 +1737,6 @@ def main():
             write_grades_to_sheet(spreadsheet, tab_name, grades, [])
         elif args.dry_run:
             print(f"    [DRY RUN] Would update {len(grades)} rows")
-
-    # Write to results tabs
-    if not args.dry_run:
-        print("\n  Writing to detailed results tabs...")
-
-        # Matchups
-        write_results_tab(spreadsheet, TAB_MATCHUPS_SHARP, matchup_results["sharp"], MATCHUP_RESULTS_HEADERS, "sharp")
-        write_results_tab(spreadsheet, TAB_MATCHUPS_RETAIL, matchup_results["retail"], MATCHUP_RESULTS_HEADERS, "retail")
-        write_results_tab(spreadsheet, TAB_MATCHUPS_OTHER, matchup_results["other"], MATCHUP_RESULTS_HEADERS, "other")
-
-        # Finish positions
-        write_results_tab(spreadsheet, TAB_FINISH_SHARP, finish_results["sharp"], FINISH_RESULTS_HEADERS, "sharp")
-        write_results_tab(spreadsheet, TAB_FINISH_RETAIL, finish_results["retail"], FINISH_RESULTS_HEADERS, "retail")
-        write_results_tab(spreadsheet, TAB_FINISH_OTHER, finish_results["other"], FINISH_RESULTS_HEADERS, "other")
 
     # Update Parquet ledger with grades
     if all_graded_bets and not args.dry_run:

@@ -888,10 +888,8 @@ def price_outrights(finish_probs, pred_lookup, sample_lookup):
         df['my_pred'] = df['player_name'].map(pred_lookup)
         df['sample'] = df['player_name'].map(sample_lookup)
 
-        # Fair odds
-        df['my_fair'] = df[prob_col].apply(
-            lambda x: implied_to_american(x) if x > 0 else None
-        )
+        # Fair odds (clip to avoid None from 0/1 boundary)
+        df['my_fair'] = df[prob_col].clip(1e-4, 1 - 1e-4).apply(implied_to_american)
 
         results[market_name] = df
 
@@ -964,10 +962,10 @@ def build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir):
     p = df['simulated_win_prob'].astype(float)
     b = df['decimal_odds'] - 1.0
     q = 1.0 - p
-    df['edge'] = ((p * b) - q) * 100.0
+    df['edge'] = (p - df['implied_prob']) * 100.0  # probability edge in pp
     f_star = (b * p - q) / b
     df['kelly'] = (BANKROLL * KELLY_FRACTION * f_star.clip(lower=0)).astype(float)
-    df['my_fair'] = p.apply(lambda x: implied_to_american(x) if x > 0 else None)
+    df['my_fair'] = p.clip(1e-4, 1 - 1e-4).apply(implied_to_american)
     df['my_pred'] = df['player_name'].map(pred_lookup)
     df['sample'] = df['player_name'].map(sample_lookup)
 
@@ -1058,13 +1056,9 @@ def build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup,
 
     # Edge vs devigged line: negative = model thinks player is WORSE than market
     p = bol['simulated_win_prob'].astype(float)
-    b = bol['devigged_decimal'] - 1.0
-    q = 1.0 - p
-    bol['edge_vs_devig'] = ((p * b) - q) * 100.0
+    bol['edge_vs_devig'] = (p - bol['devigged_prob']) * 100.0  # probability edge in pp
 
-    bol['model_fair_american'] = p.apply(
-        lambda x: implied_to_american(x) if x > 0 else None
-    )
+    bol['model_fair_american'] = p.clip(1e-4, 1 - 1e-4).apply(implied_to_american)
     bol['my_pred'] = bol['player_name'].map(pred_lookup)
     bol['sample'] = bol['player_name'].map(sample_lookup)
 
@@ -1946,9 +1940,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
                      + outright win positive/negative edge tables
-        - Attachment 1: fair score card CSV
-        - Attachment 2: full matchup + score card Excel workbook
-        - Attachment 3: BetOnline all matchups CSV (unfiltered)
+        - Attachment 1: full matchup + score card Excel workbook
+        - Attachment 2: BetOnline all matchups CSV (unfiltered)
 
     Non-blocking: prints warning on failure but doesn't crash.
     """
@@ -1969,16 +1962,6 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         # HTML body
         msg.attach(MIMEText(html, "html"))
-
-        # Attach fair card CSV
-        if card_csv_path and os.path.exists(card_csv_path):
-            with open(card_csv_path, "rb") as f:
-                att = MIMEApplication(f.read(), _subtype="csv")
-                att.add_header(
-                    "Content-Disposition", "attachment",
-                    filename=os.path.basename(card_csv_path),
-                )
-                msg.attach(att)
 
         # Attach Excel workbook
         if excel_path and os.path.exists(excel_path):
@@ -2298,7 +2281,7 @@ def main():
             is_valid_run_time,
             get_spreadsheet,
             store_round_matchups,
-            store_sharp_filtered,
+
             load_dg_id_lookup,
         )
 
@@ -2317,15 +2300,6 @@ def main():
                 store_round_matchups(
                     combined, sim_round, tourney, event_ids[0],
                     dg_id_lookup=dg_id_lookup,
-                    spreadsheet=spreadsheet,
-                )
-
-                # 2. Sharp filtered round matchups
-                store_sharp_filtered(
-                    tourney=tourney,
-                    event_id=event_ids[0],
-                    sharp_rounds=sharp,
-                    sim_round=sim_round,
                     spreadsheet=spreadsheet,
                 )
 

@@ -255,6 +255,14 @@ def _load_all_bets_from_sheets():
     if "year" in df.columns:
         df["year"] = pd.to_numeric(df["year"], errors="coerce").fillna(0).astype(int)
 
+    # Filter out tiny finish position bets (kelly_stake < $1)
+    if "kelly_stake" in df.columns:
+        small_finish = (df["bet_type"] == "finish_position") & (df["kelly_stake"] < 1.0)
+        n_dropped = small_finish.sum()
+        if n_dropped > 0:
+            df = df[~small_finish]
+            print(f"  [dashboard] Filtered out {n_dropped} finish position bets with kelly_stake < $1")
+
     _SHEETS_CACHE["data"] = df
     _SHEETS_CACHE["timestamp"] = now
     print(f"  [dashboard] Loaded {len(df)} bets from Google Sheets ({len(df[df['result'].astype(str).str.strip() != ''])} graded)")

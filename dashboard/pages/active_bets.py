@@ -4,6 +4,7 @@ import dash
 from dash import html, dcc, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 import pandas as pd
+import numpy as np
 
 from dashboard.data_layer import get_bet_ledger, get_tournament_config
 from dashboard.components.stat_cards import stat_card_row
@@ -11,6 +12,24 @@ from dashboard.components.filters import sportsbook_filter
 from dashboard.components.tables import make_grid
 
 dash.register_page(__name__, path="/bets", title="Active Bets", order=5)
+
+# 1 unit = $200 — finish position bets store dollar amounts, convert to units
+UNIT_SIZE = 200.0
+
+
+def _convert_to_units(df):
+    """Convert finish position dollar amounts to units ($200 = 1 unit).
+
+    Matchup bets are already in unit terms (flat 1-unit wagers).
+    Finish position bets store raw dollar amounts from kelly-stake sizing.
+    """
+    df = df.copy()
+    is_finish = df["bet_type"] == "finish_position"
+    if "units_won" in df.columns:
+        df.loc[is_finish, "units_won"] = df.loc[is_finish, "units_won"] / UNIT_SIZE
+    if "units_wagered" in df.columns:
+        df.loc[is_finish, "units_wagered"] = df.loc[is_finish, "units_wagered"] / UNIT_SIZE
+    return df
 
 
 def _result_badge(result):
@@ -128,6 +147,18 @@ def update_bets(event, books):
         alert = dbc.Alert("No bets found for this event.", color="warning")
         return alert, alert, "", alert, "", alert, ""
 
+    # Derive units_wagered from kelly_stake for finish pos, default 1.0 for matchups
+    if "units_wagered" not in df.columns:
+        if "kelly_stake" in df.columns:
+            df["units_wagered"] = df["kelly_stake"].fillna(1.0)
+        else:
+            df["units_wagered"] = 1.0
+    if "units_won" not in df.columns:
+        df["units_won"] = np.nan
+
+    # Convert finish position dollar amounts to units ($200 = 1 unit)
+    df = _convert_to_units(df)
+
     # KPI
     total = len(df)
     avg_edge = df["edge"].mean() if "edge" in df.columns else 0
@@ -142,7 +173,7 @@ def update_bets(event, books):
     ])
 
     # Split by type
-    display_cols = ["bet_on", "opponent", "bookmaker", "edge", "pred_on", "book_odds", "fair_odds", "result", "units_won"]
+    display_cols = ["bet_on", "opponent", "bookmaker", "edge", "pred_on", "book_odds", "fair_odds", "units_wagered", "result", "units_won"]
 
     tourney_mu = df[df["bet_type"] == "tournament_matchup"]
     round_mu = df[df["bet_type"] == "round_matchup"]

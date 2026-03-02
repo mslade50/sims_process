@@ -11,6 +11,7 @@ import numpy as np
 from dashboard.data_layer import get_bet_ledger
 from dashboard.components.stat_cards import stat_card_row
 from dashboard.components.filters import sportsbook_filter, bet_type_selector, edge_slider, event_selector, round_selector
+from dashboard.components.tables import make_grid
 from dashboard.config import SHARP_BOOKS, COLOR_WIN, COLOR_LOSS, COLOR_PUSH, COLOR_SHARP, COLOR_RETAIL
 
 dash.register_page(__name__, path="/performance", title="Performance", order=6)
@@ -25,6 +26,26 @@ PLOT_LAYOUT = dict(
 
 # 1 unit = $200 — finish position bets store dollar amounts, convert to units
 UNIT_SIZE = 200.0
+
+
+def _american_to_prob(odds):
+    """Convert American odds Series to implied probabilities."""
+    prob = pd.Series(np.nan, index=odds.index)
+    pos = odds >= 0
+    prob[pos] = 100.0 / (odds[pos] + 100.0)
+    neg = odds < 0
+    prob[neg] = odds[neg].abs() / (odds[neg].abs() + 100.0)
+    return prob
+
+
+def _american_to_decimal(odds):
+    """Convert American odds Series to decimal odds."""
+    dec = pd.Series(np.nan, index=odds.index)
+    pos = odds >= 0
+    dec[pos] = odds[pos] / 100.0 + 1.0
+    neg = odds < 0
+    dec[neg] = 100.0 / odds[neg].abs() + 1.0
+    return dec
 
 
 layout = dbc.Container([
@@ -82,6 +103,47 @@ layout = dbc.Container([
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
         ], md=4),
+    ], className="mb-2"),
+
+    # Filters — Row 3: Raw Edge, Decimal Odds, Player
+    dbc.Row([
+        dbc.Col([
+            html.Label("Raw % Edge", className="form-label small text-muted"),
+            dbc.InputGroup([
+                dbc.InputGroupText("Min", className="bg-dark text-light border-secondary"),
+                dbc.Input(id="perf-raw-edge-min", type="number", placeholder="0",
+                          value=None, step=0.5,
+                          className="bg-dark text-light border-secondary"),
+                dbc.InputGroupText("Max", className="bg-dark text-light border-secondary"),
+                dbc.Input(id="perf-raw-edge-max", type="number", placeholder="any",
+                          value=None, step=0.5,
+                          className="bg-dark text-light border-secondary"),
+            ], size="sm"),
+        ], md=3),
+        dbc.Col([
+            html.Label("Decimal Odds", className="form-label small text-muted"),
+            dbc.InputGroup([
+                dbc.InputGroupText("Min", className="bg-dark text-light border-secondary"),
+                dbc.Input(id="perf-dec-odds-min", type="number", placeholder="1.0",
+                          value=None, min=1.0, step=0.1,
+                          className="bg-dark text-light border-secondary"),
+                dbc.InputGroupText("Max", className="bg-dark text-light border-secondary"),
+                dbc.Input(id="perf-dec-odds-max", type="number", placeholder="any",
+                          value=None, min=1.0, step=0.1,
+                          className="bg-dark text-light border-secondary"),
+            ], size="sm"),
+        ], md=3),
+        dbc.Col([
+            html.Label("Player", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-player-filter",
+                options=[],
+                value=None,
+                multi=True,
+                placeholder="All players",
+                className="dash-dropdown-dark",
+            ),
+        ], md=4),
     ], className="mb-3"),
 
     # KPI cards
@@ -102,6 +164,10 @@ layout = dbc.Container([
     # Summary table
     html.H5("Event Summary", className="mt-4 mb-2"),
     html.Div(id="perf-summary-table"),
+
+    # Filtered bets detail table
+    html.H5("Filtered Bets", className="mt-4 mb-2"),
+    html.Div(id="perf-remaining-table"),
 ], fluid=True)
 
 
@@ -145,6 +211,8 @@ def _convert_to_units(df):
     Output("perf-edge-bucket-chart", "figure"),
     Output("perf-scatter-chart", "figure"),
     Output("perf-summary-table", "children"),
+    Output("perf-remaining-table", "children"),
+    Output("perf-player-filter", "options"),
     Input("perf-event-filter", "value"),
     Input("perf-type-filter", "value"),
     Input("perf-book-filter", "value"),
@@ -154,9 +222,21 @@ def _convert_to_units(df):
     Input("perf-sample-max", "value"),
     Input("perf-pred-min", "value"),
     Input("perf-pred-max", "value"),
+    Input("perf-raw-edge-min", "value"),
+    Input("perf-raw-edge-max", "value"),
+    Input("perf-dec-odds-min", "value"),
+    Input("perf-dec-odds-max", "value"),
+    Input("perf-player-filter", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter,
-                       sample_min, sample_max, pred_min, pred_max):
+                       sample_min, sample_max, pred_min, pred_max,
+                       raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
+                       player_filter):
+    empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
+    alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
+    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig,
+                    empty_fig, alert, "", [])
+
     filters = {}
     if event:
         filters["event"] = event
@@ -188,9 +268,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             df = df[df["pred_on"].fillna(0) <= pred_max]
 
     if df.empty:
-        empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
-        alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-        return alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert
+        return empty_return
 
     # Derive units_wagered from kelly_stake for finish pos, default 1.0 for matchups
     if "units_wagered" not in df.columns:
@@ -203,6 +281,35 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
 
     # Convert finish position dollar amounts to units ($200 = 1 unit)
     df = _convert_to_units(df)
+
+    # Pre-compute raw_edge and dec_odds on full df (before new filters)
+    if "book_odds" in df.columns and "fair_odds" in df.columns:
+        market_prob = _american_to_prob(df["book_odds"])
+        my_prob = _american_to_prob(df["fair_odds"])
+        df["raw_edge"] = (my_prob - market_prob) * 100
+        df["dec_odds"] = _american_to_decimal(df["book_odds"])
+    else:
+        df["raw_edge"] = np.nan
+        df["dec_odds"] = np.nan
+
+    # Build player options BEFORE player filter is applied
+    players = sorted(df["bet_on"].dropna().unique().tolist())
+    player_options = [{"label": p.title(), "value": p} for p in players]
+
+    # Apply new filters (raw_edge, dec_odds, player)
+    if raw_edge_min is not None:
+        df = df[df["raw_edge"].fillna(0) >= raw_edge_min]
+    if raw_edge_max is not None:
+        df = df[df["raw_edge"].fillna(0) <= raw_edge_max]
+    if dec_odds_min is not None:
+        df = df[df["dec_odds"].fillna(0) >= dec_odds_min]
+    if dec_odds_max is not None:
+        df = df[df["dec_odds"].fillna(999) <= dec_odds_max]
+    if player_filter:
+        df = df[df["bet_on"].isin(player_filter)]
+
+    if df.empty:
+        return empty_return[:-1] + (player_options,)
 
     # Separate graded vs all
     graded = df[df["result"].astype(str).str.strip() != ""].copy()
@@ -316,25 +423,9 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         fig3.update_layout(barmode="group")
 
     # ── Chart 3b: Performance by Raw % Edge Bucket ──
-    # Raw edge = my_probability - market_implied_probability (percentage points)
     fig3b = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Raw % Edge"})
-    if not resolved.empty and "book_odds" in resolved.columns and "fair_odds" in resolved.columns:
-        res = resolved.copy()
-
-        # Convert American odds to implied probabilities
-        def _american_to_prob(odds):
-            prob = pd.Series(np.nan, index=odds.index)
-            pos = odds >= 0
-            prob[pos] = 100.0 / (odds[pos] + 100.0)
-            neg = odds < 0
-            prob[neg] = odds[neg].abs() / (odds[neg].abs() + 100.0)
-            return prob
-
-        market_prob = _american_to_prob(res["book_odds"])
-        my_prob = _american_to_prob(res["fair_odds"])
-        res["raw_edge"] = (my_prob - market_prob) * 100  # percentage points
-
-        raw_valid = res.dropna(subset=["raw_edge"])
+    if not resolved.empty and "raw_edge" in resolved.columns:
+        raw_valid = resolved.dropna(subset=["raw_edge"])
         if not raw_valid.empty:
             buckets = [(0, 2, "0-2%"), (2, 4, "2-4%"), (4, 6, "4-6%"), (6, 100, "6%+")]
             labels, wrs, rois_list = [], [], []
@@ -357,48 +448,40 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
 
     # ── Chart 4: Performance by Odds Bucket ──
     fig4 = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Odds Bucket"})
-    if not resolved.empty and "book_odds" in resolved.columns:
-        # Convert American odds to decimal
-        amer = resolved["book_odds"].copy()
-        dec_odds = pd.Series(np.nan, index=amer.index)
-        pos = amer >= 0
-        dec_odds[pos] = amer[pos] / 100.0 + 1.0
-        neg = amer < 0
-        dec_odds[neg] = 100.0 / amer[neg].abs() + 1.0
-        resolved = resolved.copy()
-        resolved["dec_odds"] = dec_odds
+    if not resolved.empty and "dec_odds" in resolved.columns:
+        odds_valid = resolved.dropna(subset=["dec_odds"])
+        if not odds_valid.empty:
+            buckets = [
+                (0, 2.0, "< 2.0"),
+                (2.0, 2.5, "2.0–2.5"),
+                (2.5, 3.5, "2.5–3.5"),
+                (3.5, 8.0, "3.5–8.0"),
+                (8.0, 999, "8.0+"),
+            ]
+            labels, wrs, rois_list, counts = [], [], [], []
+            for lo, hi, label in buckets:
+                sub = odds_valid[(odds_valid["dec_odds"] >= lo) & (odds_valid["dec_odds"] < hi)]
+                w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
+                l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
+                wr = w / (w + l) * 100 if (w + l) > 0 else 0
+                wag = sub["units_wagered"].sum() if not sub.empty else 0
+                r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
+                labels.append(label)
+                wrs.append(wr)
+                rois_list.append(r)
+                counts.append(w + l)
 
-        buckets = [
-            (0, 2.0, "< 2.0"),
-            (2.0, 2.5, "2.0–2.5"),
-            (2.5, 3.5, "2.5–3.5"),
-            (3.5, 8.0, "3.5–8.0"),
-            (8.0, 999, "8.0+"),
-        ]
-        labels, wrs, rois_list, counts = [], [], [], []
-        for lo, hi, label in buckets:
-            sub = resolved[(resolved["dec_odds"] >= lo) & (resolved["dec_odds"] < hi)]
-            w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
-            l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
-            wr = w / (w + l) * 100 if (w + l) > 0 else 0
-            wag = sub["units_wagered"].sum() if not sub.empty else 0
-            r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
-            labels.append(label)
-            wrs.append(wr)
-            rois_list.append(r)
-            counts.append(w + l)
-
-        fig4.add_trace(go.Bar(
-            x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN,
-            text=[f"{v:.0f}%" for v in wrs], textposition="auto",
-        ))
-        fig4.add_trace(go.Bar(
-            x=labels, y=rois_list, name="ROI %", marker_color="#d62728",
-            text=[f"{v:+.0f}%" for v in rois_list], textposition="auto",
-        ))
-        fig4.update_layout(barmode="group")
-        fig4.update_xaxes(title_text="Decimal Odds")
-        fig4.update_yaxes(title_text="%")
+            fig4.add_trace(go.Bar(
+                x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN,
+                text=[f"{v:.0f}%" for v in wrs], textposition="auto",
+            ))
+            fig4.add_trace(go.Bar(
+                x=labels, y=rois_list, name="ROI %", marker_color="#d62728",
+                text=[f"{v:+.0f}%" for v in rois_list], textposition="auto",
+            ))
+            fig4.update_layout(barmode="group")
+            fig4.update_xaxes(title_text="Decimal Odds")
+            fig4.update_yaxes(title_text="%")
 
     # ── Chart 5: Cumulative P&L ──
     fig5 = go.Figure(layout={**PLOT_LAYOUT, "title": "Cumulative P&L"})
@@ -439,4 +522,14 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             striped=True, bordered=True, hover=True, color="dark", size="sm",
         )
 
-    return kpi, fig1, fig2, fig5, fig3b, fig3, fig4, summary_content
+    # ── Filtered bets detail table ──
+    detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round",
+                   "edge", "raw_edge", "dec_odds", "pred_on", "result", "units_wagered", "units_won"]
+    available_cols = [c for c in detail_cols if c in df.columns]
+    detail_df = df[available_cols].copy()
+    for col in ["edge", "raw_edge", "dec_odds", "pred_on", "units_wagered", "units_won"]:
+        if col in detail_df.columns:
+            detail_df[col] = detail_df[col].round(2)
+    remaining_table = make_grid(detail_df, id_suffix="perf-remaining", height=500)
+
+    return kpi, fig1, fig2, fig5, fig3b, fig3, fig4, summary_content, remaining_table, player_options
