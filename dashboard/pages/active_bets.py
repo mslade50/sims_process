@@ -18,15 +18,14 @@ UNIT_SIZE = 200.0
 
 
 def _convert_to_units(df):
-    """Convert finish position dollar amounts to units ($200 = 1 unit).
+    """Convert finish position kelly_stake dollars to units ($200 = 1 unit).
 
     Matchup bets are already in unit terms (flat 1-unit wagers).
-    Finish position bets store raw dollar amounts from kelly-stake sizing.
+    units_wagered is derived from kelly_stake (raw dollars) so needs conversion.
+    units_won is already in units from grade_bets.py.
     """
     df = df.copy()
     is_finish = df["bet_type"] == "finish_position"
-    if "units_won" in df.columns:
-        df.loc[is_finish, "units_won"] = df.loc[is_finish, "units_won"] / UNIT_SIZE
     if "units_wagered" in df.columns:
         df.loc[is_finish, "units_wagered"] = df.loc[is_finish, "units_wagered"] / UNIT_SIZE
     return df
