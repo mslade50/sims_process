@@ -261,26 +261,38 @@ def get_last_completed_event():
 # Read Ungraded Bets from Sheets
 # ══════════════════════════════════════════════════════════════════════════════
 
-def read_sheet_as_df(spreadsheet, tab_name):
-    """Read a sheet tab into a DataFrame."""
-    try:
-        ws = spreadsheet.worksheet(tab_name)
-        data = ws.get_all_values()
-        if len(data) < 2:
+def read_sheet_as_df(spreadsheet, tab_name, max_retries=3):
+    """Read a sheet tab into a DataFrame with rate-limit retry."""
+    import time
+    for attempt in range(max_retries):
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+            data = ws.get_all_values()
+            if len(data) < 2:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(data[1:], columns=data[0])
+            return df
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"  Tab '{tab_name}' not found")
             return pd.DataFrame()
+        except gspread.exceptions.APIError as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                wait = 30 * (attempt + 1)
+                print(f"  Rate limited reading '{tab_name}', waiting {wait}s (attempt {attempt+1}/{max_retries})...")
+                time.sleep(wait)
+            else:
+                raise
+    print(f"  Failed to read '{tab_name}' after {max_retries} retries")
+    return pd.DataFrame()
 
-        df = pd.DataFrame(data[1:], columns=data[0])
-        return df
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"  Tab '{tab_name}' not found")
-        return pd.DataFrame()
 
-
-def get_ungraded_bets(spreadsheet, tab_name, event_id=None):
+def get_ungraded_bets(spreadsheet, tab_name, event_id=None, regrade=False):
     """
     Get ungraded bets from a sheet tab.
 
     Ungraded = result column is empty.
+    If regrade=True, returns ALL bets (including already-graded) for re-grading.
     Optionally filter by event_id.
 
     Returns DataFrame with row indices for updating.
@@ -301,8 +313,12 @@ def get_ungraded_bets(spreadsheet, tab_name, event_id=None):
         print(f"  Warning: No 'result' column in {tab_name}")
         return pd.DataFrame()
 
-    # Filter to ungraded (empty result)
-    ungraded = df[df[result_col].astype(str).str.strip() == ""].copy()
+    if regrade:
+        # Return all bets (skip duplicates from prior grading)
+        ungraded = df[df[result_col].astype(str).str.strip() != "duplicate"].copy()
+    else:
+        # Filter to ungraded (empty result)
+        ungraded = df[df[result_col].astype(str).str.strip() == ""].copy()
 
     # Filter by event_id if specified
     if event_id is not None:
@@ -319,6 +335,22 @@ def get_ungraded_bets(spreadsheet, tab_name, event_id=None):
     ungraded["_sheet_row"] = ungraded.index + 2
 
     return ungraded
+
+
+def get_all_event_ids(spreadsheet):
+    """Get all unique event IDs and names from bet tabs."""
+    events = {}
+    for tab_name in [TAB_TOURNAMENT_MU, TAB_ROUND_MU, TAB_FINISH_POS]:
+        df = read_sheet_as_df(spreadsheet, tab_name)
+        if df.empty:
+            continue
+        if "event_id" in df.columns and "event_name" in df.columns:
+            for _, row in df[["event_id", "event_name"]].drop_duplicates().iterrows():
+                eid = str(row["event_id"]).strip()
+                ename = str(row["event_name"]).strip()
+                if eid and eid != "":
+                    events[eid] = ename
+    return events
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1598,196 +1630,226 @@ def main():
     parser.add_argument("--event-name", type=str, help="Event name (for display)")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     parser.add_argument("--no-email", action="store_true", help="Skip sending email report")
+    parser.add_argument("--regrade", action="store_true", help="Re-grade already-graded bets (overwrites existing grades)")
+    parser.add_argument("--all-events", action="store_true", help="Grade all events in sheets (use with --regrade to re-grade everything)")
     args = parser.parse_args()
 
     print("\n" + "="*60)
     print("  BET RESULTS GRADER")
     print("="*60)
 
-    # Determine event to grade
-    if args.event_id:
+    if args.regrade:
+        print("  MODE: Re-grade (overwriting existing grades)")
+
+    # Connect to sheets early (needed for --all-events discovery)
+    print("\n  Connecting to Google Sheets...")
+    spreadsheet = get_spreadsheet()
+
+    # Build list of (event_id, event_name, year) to process
+    events_to_grade = []
+    if args.all_events:
+        print("\n  Discovering all events from sheets...")
+        all_events = get_all_event_ids(spreadsheet)
+        if not all_events:
+            print("  No events found in sheets.")
+            return
+        for eid, ename in sorted(all_events.items()):
+            events_to_grade.append((eid, ename, datetime.now().year))
+        print(f"  Found {len(events_to_grade)} events: {[e[1] for e in events_to_grade]}")
+    elif args.event_id:
         event_id = args.event_id
         event_name = args.event_name or f"Event {event_id}"
         year = datetime.now().year
+        events_to_grade.append((event_id, event_name, year))
     else:
         print("\n  Auto-detecting last completed event...")
         event_id, event_name, year = get_last_completed_event()
         if not event_id:
             print("  Could not find last completed event. Use --event-id to specify.")
             return
+        events_to_grade.append((event_id, event_name, year))
 
-    print(f"\n  Event: {event_name}")
-    print(f"  Event ID: {event_id}")
-    print(f"  Year: {year}")
+    grand_total_graded = []
 
-    # Fetch results using historical endpoint
-    print("\n  Fetching tournament results from historical-raw-data/rounds...")
-    results_df = fetch_historical_results(event_id, year)
+    for evt_idx, (event_id, event_name, year) in enumerate(events_to_grade):
+        if evt_idx > 0:
+            import time; time.sleep(15)  # throttle between events for Sheets rate limit
+        print(f"\n{'='*60}")
+        print(f"  Event: {event_name}")
+        print(f"  Event ID: {event_id}")
+        print(f"  Year: {year}")
 
-    if results_df.empty:
-        print("  No results data available. Exiting.")
-        return
+        # Fetch results using historical endpoint
+        print("\n  Fetching tournament results from historical-raw-data/rounds...")
+        results_df = fetch_historical_results(event_id, year)
 
-    print(f"  Loaded {len(results_df)} players from results")
-
-    # Debug: show sample of data
-    if "fin_text" in results_df.columns:
-        print(f"  Sample finishes: {results_df['fin_text'].head(10).tolist()}")
-    if "round_1" in results_df.columns:
-        print(f"  Round 1 scores available: Yes")
-
-    # Connect to sheets (uses cached connection from sheets_storage)
-    print("\n  Connecting to Google Sheets...")
-    spreadsheet = get_spreadsheet()
-
-    all_graded_bets = []
-
-    # Process each bet tab
-    tabs_to_process = [
-        (TAB_ROUND_MU, "round_matchup", grade_round_matchup),
-        (TAB_TOURNAMENT_MU, "tournament_matchup", grade_tournament_matchup),
-        (TAB_FINISH_POS, "finish_position", grade_finish_position),
-    ]
-
-    for tab_name, bet_type, grade_fn in tabs_to_process:
-        print(f"\n  Processing {tab_name}...")
-
-        ungraded = get_ungraded_bets(spreadsheet, tab_name, event_id)
-
-        if ungraded.empty:
-            print(f"    No ungraded bets found")
+        if results_df.empty:
+            print("  No results data available. Skipping.")
             continue
 
-        print(f"    Found {len(ungraded)} ungraded bets")
+        print(f"  Loaded {len(results_df)} players from results")
 
-        unique, duplicates = deduplicate_bets(ungraded, bet_type)
+        # Debug: show sample of data
+        if "fin_text" in results_df.columns:
+            print(f"  Sample finishes: {results_df['fin_text'].head(10).tolist()}")
+        if "round_1" in results_df.columns:
+            print(f"  Round 1 scores available: Yes")
 
-        if duplicates:
-            print(f"    Marking {len(duplicates)} duplicates")
+        all_graded_bets = []
 
-        print(f"    Grading {len(unique)} unique bets")
+        # Process each bet tab
+        tabs_to_process = [
+            (TAB_ROUND_MU, "round_matchup", grade_round_matchup),
+            (TAB_TOURNAMENT_MU, "tournament_matchup", grade_tournament_matchup),
+            (TAB_FINISH_POS, "finish_position", grade_finish_position),
+        ]
 
-        grades = []
-        for _, row in unique.iterrows():
-            row_dict = row.to_dict()
-            sheet_row = row_dict["_sheet_row"]
+        for tab_idx, (tab_name, bet_type, grade_fn) in enumerate(tabs_to_process):
+            if tab_idx > 0:
+                import time; time.sleep(5)  # avoid Sheets rate limit
+            print(f"\n  Processing {tab_name}...")
 
-            grade_result = grade_fn(row_dict, results_df)
+            ungraded = get_ungraded_bets(spreadsheet, tab_name, event_id, regrade=args.regrade)
 
-            # Get bookmaker for categorization
-            bookmaker = row_dict.get("bookmaker", row_dict.get("sportsbook", ""))
-            book_category = categorize_book(bookmaker)
+            if ungraded.empty:
+                print(f"    No {'bets' if args.regrade else 'ungraded bets'} found")
+                continue
 
-            # Get pred value
-            if bet_type == "finish_position":
-                pred_value = row_dict.get("my_pred", "")
-                sample = row_dict.get("sample", "")
-            else:
-                pred_value = row_dict.get("pred_on", "")
-                sample = row_dict.get("sample_on", "")
+            label = "bets to re-grade" if args.regrade else "ungraded bets"
+            print(f"    Found {len(ungraded)} {label}")
 
-            grade = {
-                "row": sheet_row,
-                "result": grade_result["result"],
-                "units_wagered": grade_result.get("units_wagered", FLAT_BET_SIZE),
-                "units_won": grade_result.get("units_won", 0),
-                "bet_type": bet_type,
-                "edge": row_dict.get("edge_on", row_dict.get("edge", "")),
-                "bookmaker": bookmaker,
-                "book_category": book_category,
-                "pred_value": pred_value,
-                "sample": sample,
-            }
+            unique, duplicates = deduplicate_bets(ungraded, bet_type)
 
-            # Add type-specific fields
-            if bet_type == "round_matchup":
-                grade["round"] = row_dict.get("round", "")
-                grade["p1_score"] = grade_result.get("p1_score", "")
-                grade["p2_score"] = grade_result.get("p2_score", "")
-                grade["bet_on"] = row_dict.get("bet_on", "")
-                grade["player_1"] = row_dict.get("player_1", "")
-                grade["player_2"] = row_dict.get("player_2", "")
-                grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
+            if duplicates:
+                print(f"    Marking {len(duplicates)} duplicates")
 
-            elif bet_type == "tournament_matchup":
-                grade["round"] = "tournament"
-                grade["p1_finish"] = grade_result.get("p1_finish", "")
-                grade["p2_finish"] = grade_result.get("p2_finish", "")
-                grade["bet_on"] = row_dict.get("bet_on", "")
-                grade["player_1"] = row_dict.get("player_1", "")
-                grade["player_2"] = row_dict.get("player_2", "")
-                grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
+            print(f"    Grading {len(unique)} unique bets")
 
-            elif bet_type == "finish_position":
-                grade["market_type"] = row_dict.get("market_type", "")
-                grade["actual_finish"] = grade_result.get("actual_finish", "")
-                grade["num_tied"] = grade_result.get("num_tied", "")
-                grade["dead_heat_factor"] = grade_result.get("dead_heat_factor", "")
-                grade["player_name"] = row_dict.get("player_name", "")
+            grades = []
+            for _, row in unique.iterrows():
+                row_dict = row.to_dict()
+                sheet_row = row_dict["_sheet_row"]
 
-            grades.append(grade)
-            all_graded_bets.append(grade)
+                grade_result = grade_fn(row_dict, results_df)
 
-        # Mark duplicates
-        for dup_row in duplicates:
-            grades.append({"row": dup_row, "result": "duplicate", "units_won": 0})
+                # Get bookmaker for categorization
+                bookmaker = row_dict.get("bookmaker", row_dict.get("sportsbook", ""))
+                book_category = categorize_book(bookmaker)
 
-        # Write grades back to source sheet
-        if not args.dry_run and grades:
-            write_grades_to_sheet(spreadsheet, tab_name, grades, [])
-        elif args.dry_run:
-            print(f"    [DRY RUN] Would update {len(grades)} rows")
+                # Get pred value
+                if bet_type == "finish_position":
+                    pred_value = row_dict.get("my_pred", "")
+                    sample = row_dict.get("sample", "")
+                else:
+                    pred_value = row_dict.get("pred_on", "")
+                    sample = row_dict.get("sample_on", "")
 
-    # Update Parquet ledger with grades
-    if all_graded_bets and not args.dry_run:
-        print("\n  Updating Parquet ledger...")
-        # Enrich graded bets with event_id for ledger matching
-        for bet in all_graded_bets:
-            bet["event_id"] = str(event_id)
-        update_ledger_grades(all_graded_bets)
+                grade = {
+                    "row": sheet_row,
+                    "result": grade_result["result"],
+                    "units_wagered": grade_result.get("units_wagered", FLAT_BET_SIZE),
+                    "units_won": grade_result.get("units_won", 0),
+                    "bet_type": bet_type,
+                    "edge": row_dict.get("edge_on", row_dict.get("edge", "")),
+                    "bookmaker": bookmaker,
+                    "book_category": book_category,
+                    "pred_value": pred_value,
+                    "sample": sample,
+                }
 
-    # Calculate and write summary
-    if all_graded_bets and not args.dry_run:
-        print("\n  Calculating performance metrics...")
-        metrics = calculate_performance_metrics(all_graded_bets, event_name, event_id, year)
-        if metrics:
-            write_summary_row(spreadsheet, metrics)
+                # Add type-specific fields
+                if bet_type == "round_matchup":
+                    grade["round"] = row_dict.get("round", "")
+                    grade["p1_score"] = grade_result.get("p1_score", "")
+                    grade["p2_score"] = grade_result.get("p2_score", "")
+                    grade["bet_on"] = row_dict.get("bet_on", "")
+                    grade["player_1"] = row_dict.get("player_1", "")
+                    grade["player_2"] = row_dict.get("player_2", "")
+                    grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
 
-            print("\n  RESULTS SUMMARY")
-            print("  " + "-"*40)
-            print(f"  Total bets:     {metrics['total_bets']}")
-            print(f"  Graded:         {metrics['wins'] + metrics['losses'] + metrics['pushes']}")
-            print(f"  No data:        {metrics['no_data']}")
-            print(f"  Record:         {metrics['wins']}-{metrics['losses']}-{metrics['pushes']}")
-            print(f"  Win rate:       {metrics['win_rate']}%")
-            print(f"  Units wagered:  {metrics['units_wagered']:.2f}")
-            print(f"  Units won:      {metrics['units_won']:+.2f}")
-            print(f"  ROI:            {metrics['roi']:+.1f}%")
+                elif bet_type == "tournament_matchup":
+                    grade["round"] = "tournament"
+                    grade["p1_finish"] = grade_result.get("p1_finish", "")
+                    grade["p2_finish"] = grade_result.get("p2_finish", "")
+                    grade["bet_on"] = row_dict.get("bet_on", "")
+                    grade["player_1"] = row_dict.get("player_1", "")
+                    grade["player_2"] = row_dict.get("player_2", "")
+                    grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
 
-            if not args.no_email:
-                print("\n  Sending email reports...")
-                # Send full results email
-                send_results_email(metrics, all_graded_bets, event_name)
-                # Send filtered email (pred > 0.75)
-                send_filtered_results_email(all_graded_bets, event_name, event_id, year, pred_threshold=0.75)
-            else:
-                print("\n  Email report skipped (--no-email)")
+                elif bet_type == "finish_position":
+                    grade["market_type"] = row_dict.get("market_type", "")
+                    grade["actual_finish"] = grade_result.get("actual_finish", "")
+                    grade["num_tied"] = grade_result.get("num_tied", "")
+                    grade["dead_heat_factor"] = grade_result.get("dead_heat_factor", "")
+                    grade["player_name"] = row_dict.get("player_name", "")
 
-    elif args.dry_run and all_graded_bets:
-        print("\n  Calculating performance metrics (dry run)...")
-        metrics = calculate_performance_metrics(all_graded_bets, event_name, event_id, year)
-        if metrics:
-            print("\n  PREVIEW RESULTS SUMMARY")
-            print("  " + "-"*40)
-            print(f"  Total bets:     {metrics['total_bets']}")
-            print(f"  Graded:         {metrics['wins'] + metrics['losses'] + metrics['pushes']}")
-            print(f"  No data:        {metrics['no_data']}")
-            print(f"  Record:         {metrics['wins']}-{metrics['losses']}-{metrics['pushes']}")
-            print(f"  Win rate:       {metrics['win_rate']}%")
-            print(f"  Units wagered:  {metrics['units_wagered']:.2f}")
-            print(f"  Units won:      {metrics['units_won']:+.2f}")
-            print(f"  ROI:            {metrics['roi']:+.1f}%")
-            print("  [DRY RUN] Would write summary, results tabs, and send email")
+                grades.append(grade)
+                all_graded_bets.append(grade)
+
+            # Mark duplicates (skip on regrade — they're already marked)
+            if not args.regrade:
+                for dup_row in duplicates:
+                    grades.append({"row": dup_row, "result": "duplicate", "units_won": 0})
+
+            # Write grades back to source sheet
+            if not args.dry_run and grades:
+                write_grades_to_sheet(spreadsheet, tab_name, grades, [])
+            elif args.dry_run:
+                print(f"    [DRY RUN] Would update {len(grades)} rows")
+
+        # Update Parquet ledger with grades
+        if all_graded_bets and not args.dry_run:
+            print("\n  Updating Parquet ledger...")
+            for bet in all_graded_bets:
+                bet["event_id"] = str(event_id)
+            update_ledger_grades(all_graded_bets)
+
+        # Calculate and write summary
+        if all_graded_bets and not args.dry_run:
+            print("\n  Calculating performance metrics...")
+            metrics = calculate_performance_metrics(all_graded_bets, event_name, event_id, year)
+            if metrics:
+                write_summary_row(spreadsheet, metrics)
+
+                print("\n  RESULTS SUMMARY")
+                print("  " + "-"*40)
+                print(f"  Total bets:     {metrics['total_bets']}")
+                print(f"  Graded:         {metrics['wins'] + metrics['losses'] + metrics['pushes']}")
+                print(f"  No data:        {metrics['no_data']}")
+                print(f"  Record:         {metrics['wins']}-{metrics['losses']}-{metrics['pushes']}")
+                print(f"  Win rate:       {metrics['win_rate']}%")
+                print(f"  Units wagered:  {metrics['units_wagered']:.2f}")
+                print(f"  Units won:      {metrics['units_won']:+.2f}")
+                print(f"  ROI:            {metrics['roi']:+.1f}%")
+
+        elif args.dry_run and all_graded_bets:
+            print("\n  Calculating performance metrics (dry run)...")
+            metrics = calculate_performance_metrics(all_graded_bets, event_name, event_id, year)
+            if metrics:
+                print("\n  PREVIEW RESULTS SUMMARY")
+                print("  " + "-"*40)
+                print(f"  Total bets:     {metrics['total_bets']}")
+                print(f"  Graded:         {metrics['wins'] + metrics['losses'] + metrics['pushes']}")
+                print(f"  No data:        {metrics['no_data']}")
+                print(f"  Record:         {metrics['wins']}-{metrics['losses']}-{metrics['pushes']}")
+                print(f"  Win rate:       {metrics['win_rate']}%")
+                print(f"  Units wagered:  {metrics['units_wagered']:.2f}")
+                print(f"  Units won:      {metrics['units_won']:+.2f}")
+                print(f"  ROI:            {metrics['roi']:+.1f}%")
+                print("  [DRY RUN] Would write summary, results tabs, and send email")
+
+        grand_total_graded.extend(all_graded_bets)
+
+    # Skip email for multi-event re-grades
+    if len(events_to_grade) == 1 and grand_total_graded and not args.dry_run:
+        if not args.no_email:
+            print("\n  Sending email reports...")
+            send_results_email(metrics, grand_total_graded, event_name)
+            send_filtered_results_email(grand_total_graded, event_name, event_id, year, pred_threshold=0.75)
+        else:
+            print("\n  Email report skipped (--no-email)")
+    elif len(events_to_grade) > 1:
+        print(f"\n  Re-graded {len(grand_total_graded)} bets across {len(events_to_grade)} events (email skipped for bulk re-grade)")
 
     # Push dashboard data to Render
     if not args.dry_run:
