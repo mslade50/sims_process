@@ -67,6 +67,7 @@ RETAIL_BOOKS = ["fanduel", "draftkings", "caesars", "dk", "fd", "czr", "betmgm",
 
 # Bet sizing assumptions
 FLAT_BET_SIZE = 1.0  # 1 unit for matchups (flat betting)
+UNIT_SIZE = 200.0    # $200 = 1 unit for finish position sizing
 
 # Pred value buckets
 PRED_BUCKETS = [
@@ -764,11 +765,12 @@ def grade_finish_position(row, results_df):
 
     threshold = market_thresholds.get(market, 1)
 
-    # Get kelly stake
+    # Get kelly stake (stored as raw dollars, convert to units: $200 = 1 unit)
     kelly_stake = row.get("kelly_stake", "")
     if kelly_stake and str(kelly_stake).strip():
         try:
-            stake = float(kelly_stake)
+            stake_dollars = float(kelly_stake)
+            stake = stake_dollars / UNIT_SIZE
         except:
             stake = FLAT_BET_SIZE
     else:
@@ -1126,11 +1128,10 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
         df["pred_num"] = pd.to_numeric(df.get("pred_value", ""), errors="coerce")
         resolved = df[~df["result"].isin(["no_data", "unknown", "duplicate"])]
 
-        # Calculate aggregate $ PnL: matchups use $200/unit, finish positions already in $
-        MATCHUP_UNIT_SIZE = 200  # $200 per unit for matchups
+        # Calculate aggregate $ PnL: all bet types now in units, multiply by $200/unit
         matchup_types = ["round_matchup", "tournament_matchup"]
-        matchup_pnl = resolved[resolved["bet_type"].isin(matchup_types)]["units_won_num"].sum() * MATCHUP_UNIT_SIZE
-        finish_pnl = resolved[resolved["bet_type"] == "finish_position"]["units_won_num"].sum()
+        matchup_pnl = resolved[resolved["bet_type"].isin(matchup_types)]["units_won_num"].sum() * UNIT_SIZE
+        finish_pnl = resolved[resolved["bet_type"] == "finish_position"]["units_won_num"].sum() * UNIT_SIZE
         aggregate_pnl = matchup_pnl + finish_pnl
     else:
         df = pd.DataFrame()
