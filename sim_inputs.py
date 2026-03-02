@@ -3,8 +3,8 @@ import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
-STD_DEV       = 2.66
-PAR           = 71
+STD_DEV       = 3.02
+PAR           = 72
 CUT_LINE      = 50
 USE_10_SHOT_RULE = True
 WIND_FACTOR_SIM  = 0.15  # must match your main script
