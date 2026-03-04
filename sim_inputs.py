@@ -37,10 +37,17 @@ links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 # Course-specific SG category variance multipliers (for new_sim_v2.py)
 # actual_category_std / field_expected_category_std from scoring_baseline analysis
 COURSE_CAT_MULTS = {
-    'sg_ott': 1.24,
-    'sg_app': 1.09,
-    'sg_arg': 1.10,
-    'sg_putt': 1.01,
+    'sg_ott': 1.27,
+    'sg_app': 1.12,
+    'sg_arg': 1.14,
+    'sg_putt': 1.02,
+}
+
+COURSE_CAT_SKEW = {
+    'sg_ott': -1.14,
+    'sg_app': -0.38,
+    'sg_arg': -0.18,
+    'sg_putt': -0.04,
 }
 
 #for multiple course setups in the showdown sim
