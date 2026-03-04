@@ -34,6 +34,15 @@ course_name = "" #this is for the multi course showdown sims to id proper course
 major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
+# Course-specific SG category variance multipliers (for new_sim_v2.py)
+# actual_category_std / field_expected_category_std from scoring_baseline analysis
+COURSE_CAT_MULTS = {
+    'sg_ott': 1.24,
+    'sg_app': 1.09,
+    'sg_arg': 1.10,
+    'sg_putt': 1.01,
+}
+
 #for multiple course setups in the showdown sim
 course_id_1=9
 course_id_2=0
