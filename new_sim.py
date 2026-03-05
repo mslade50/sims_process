@@ -681,12 +681,33 @@ out_avg_file = f"avg_expected_cat_sg_{tourney}.csv"
 df_avg.to_csv(out_avg_file, index=False)
 print(f"[ok] wrote {out_avg_file}")
 
+# Dead-heat adjusted rank probabilities (ties split fractional credit across positions)
+long_df['tie_count'] = long_df.groupby(['simulation_id', 'rank'])['player_name'].transform('count')
+
+no_tie = long_df[long_df['tie_count'] == 1][['player_name', 'rank']].copy()
+no_tie['weight'] = 1.0
+
+ties = long_df[long_df['tie_count'] > 1].copy()
+if not ties.empty:
+    expanded_parts = []
+    for tc_val in ties['tie_count'].unique():
+        tc_int = int(tc_val)
+        sub = ties[ties['tie_count'] == tc_val][['player_name', 'rank']].copy()
+        for offset in range(tc_int):
+            part = sub.copy()
+            part['rank'] = sub['rank'].astype(int) + offset
+            part['weight'] = 1.0 / tc_int
+            expanded_parts.append(part)
+    all_rank_rows = pd.concat([no_tie] + expanded_parts, ignore_index=True)
+else:
+    all_rank_rows = no_tie
+
 rank_probs = (
-    long_df.groupby(['player_name', 'rank'])
-            .size()
-            .div(SIMULATIONS)
-            .rename('prob')
-            .reset_index()
+    all_rank_rows.groupby(['player_name', 'rank'])['weight']
+    .sum()
+    .div(SIMULATIONS)
+    .rename('prob')
+    .reset_index()
 )
 
 # === SAVE UPDATED-SIM RANK DISTRIBUTIONS (for dashboard overlay) ===
