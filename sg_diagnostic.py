@@ -19,7 +19,7 @@ import argparse
 import tempfile
 import smtplib
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -288,7 +288,7 @@ def fetch_actuals(event_id, year=None):
 # ---------------------------------------------------------------------------
 # 2d. compute_rolling_archetypes
 # ---------------------------------------------------------------------------
-def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
+def compute_rolling_archetypes(event_id, field_players, actuals_df=None, year=None):
     """
     Query dg_historical.db for rolling stats BEFORE the current event.
     Classify each player into an archetype based on blended rolling averages.
@@ -306,38 +306,27 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
         print(f"  Database connection error: {e} -- skipping archetypes")
         return _unknown_archetypes(field_players)
 
-    # Get the earliest round_date for this event IN THE CURRENT YEAR
+    # Get the earliest round_date for this event in the target year
     # (event_ids recur annually, so we must filter by year)
+    # If event not yet in DB for that year, use today as cutoff so we
+    # capture all available data up to now.
+    if year is None:
+        year = datetime.now().year
     try:
-        cutoff_query = """
-            SELECT MIN(round_date) FROM player_rounds
-            WHERE event_id = ? AND round_date IS NOT NULL
-            ORDER BY round_date DESC
-        """
-        # Try current year first, then most recent occurrence
         cutoff_date = None
         cutoff_row = conn.execute(
             "SELECT MIN(round_date) FROM player_rounds "
             "WHERE event_id = ? AND year = ? AND round_date IS NOT NULL",
-            (int(event_id), datetime.now().year),
+            (int(event_id), int(year)),
         ).fetchone()
         if cutoff_row and cutoff_row[0]:
             cutoff_date = cutoff_row[0]
         else:
-            # Fallback: most recent year's occurrence
-            cutoff_row = conn.execute(
-                "SELECT MAX(round_date) FROM player_rounds "
-                "WHERE event_id = ? AND round_date IS NOT NULL",
-                (int(event_id),),
-            ).fetchone()
-            if cutoff_row and cutoff_row[0]:
-                cutoff_date = cutoff_row[0]
+            # Event not in DB for current year — use today minus 5 days
+            # to capture all pre-tournament data without leaking current week.
+            cutoff_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
 
-        if not cutoff_date:
-            cutoff_date = datetime.now().strftime("%Y-%m-%d")
-            print(f"  No event dates in DB for event {event_id}, using today as cutoff")
-        else:
-            print(f"  Using cutoff date: {cutoff_date}")
+        print(f"  Using cutoff date: {cutoff_date}")
     except Exception as e:
         print(f"  Error finding event date: {e}")
         cutoff_date = datetime.now().strftime("%Y-%m-%d")
@@ -345,7 +334,7 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
     query = """
         SELECT player_name, dg_id, round_date,
                sg_ott_adj, sg_app_adj, sg_arg_adj, sg_putt_adj,
-               driving_dist, driving_acc
+               sg_total_adj, driving_dist, driving_acc, rel_dd
         FROM player_rounds
         WHERE sg_ott_adj IS NOT NULL
           AND round_date < ?
@@ -388,6 +377,7 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
 
     records = []
     matched = 0
+    partial = 0
     for player in field_players:
         # Try name match first
         player_data = db_df[db_df["player_name"] == player]
@@ -397,7 +387,9 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
             pid = dg_id_map[player]
             player_data = db_df[db_df["dg_id"] == pid]
 
-        if len(player_data) < 20:
+        n_rounds = len(player_data)
+
+        if n_rounds == 0:
             records.append(
                 {
                     "player_name": player,
@@ -409,25 +401,36 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
                     "sg_putt_rolling": np.nan,
                     "driving_dist_rolling": np.nan,
                     "driving_acc_rolling": np.nan,
+                    "sg_total_rolling": np.nan,
                 }
             )
             continue
 
-        matched += 1
+        if n_rounds >= 20:
+            matched += 1
+        else:
+            partial += 1
 
-        rec = {"player_name": player, "dg_id": dg_id_map.get(player)}
+        # Mark as Unknown if <20 rounds (gets Low Skill default or manual override),
+        # but still compute stats so they participate in the percentile ranking pool.
+        rec = {
+            "player_name": player,
+            "dg_id": dg_id_map.get(player),
+        }
+        if n_rounds < 20:
+            rec["archetype"] = "Unknown"
 
         for col, out_col in [
             ("sg_ott_adj", "sg_ott_rolling"),
             ("sg_app_adj", "sg_app_rolling"),
             ("sg_arg_adj", "sg_arg_rolling"),
             ("sg_putt_adj", "sg_putt_rolling"),
-            ("driving_dist", "driving_dist_rolling"),
+            ("rel_dd", "driving_dist_rolling"),
             ("driving_acc", "driving_acc_rolling"),
         ]:
             vals = player_data[col].dropna()
             n = len(vals)
-            if n < 20:
+            if n == 0:
                 rec[out_col] = np.nan
                 continue
 
@@ -445,10 +448,22 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None):
             else:
                 rec[out_col] = vals.mean()
 
+        # sg_total_adj: 50-round SMA only (recent form gate for Stud check)
+        total_vals = player_data["sg_total_adj"].dropna()
+        n_total = len(total_vals)
+        if n_total == 0:
+            rec["sg_total_rolling"] = np.nan
+        elif n_total >= 50:
+            rec["sg_total_rolling"] = total_vals.head(50).mean()
+        else:
+            rec["sg_total_rolling"] = total_vals.mean()
+
         records.append(rec)
 
     result = pd.DataFrame(records)
-    print(f"  Archetypes: {matched}/{len(field_players)} players matched in DB")
+    no_data = len(field_players) - matched - partial
+    print(f"  Archetypes: {matched}/{len(field_players)} players matched in DB"
+          f" ({partial} partial, {no_data} no data)")
 
     # Classify archetypes using percentile ranks within this field
     result = _classify_archetypes(result)
@@ -468,6 +483,7 @@ def _unknown_archetypes(field_players):
             "sg_putt_rolling": [np.nan] * len(field_players),
             "driving_dist_rolling": [np.nan] * len(field_players),
             "driving_acc_rolling": [np.nan] * len(field_players),
+            "sg_total_rolling": [np.nan] * len(field_players),
         }
     )
 
@@ -483,6 +499,7 @@ def _classify_archetypes(df):
         "sg_app_rolling",
         "sg_arg_rolling",
         "sg_putt_rolling",
+        "sg_total_rolling",
         "driving_dist_rolling",
         "driving_acc_rolling",
     ]:
@@ -498,6 +515,17 @@ def _classify_archetypes(df):
     # Remove entries once a player accumulates 20+ rounds in dg_historical.db.
     MANUAL_ARCHETYPE_OVERRIDES = {
         "penge, marco": "Bomber",
+        "lamprecht, christo": "Bomber",
+        "nyholm, pontus": "Bomber",
+        "sargent, gordon": "Bomber",
+        "brennan, michael": "Bomber",
+        "mouw, william": "Balanced",
+        "castillo, ricky": "Balanced",
+        "chatfield, davis": "Short Accurate",
+        "ford, david": "Short Accurate",
+        "keefer, johnny": "Ball Striker",
+        "neergaard-petersen, rasmus": "Ball Striker",
+        "reitan, kristoffer": "Bomber",
     }
 
     def classify(row):
@@ -506,7 +534,7 @@ def _classify_archetypes(df):
             return MANUAL_ARCHETYPE_OVERRIDES[player]
 
         if row.get("archetype") == "Unknown":
-            return "Unknown"
+            return "Low Skill"
 
         dd = row.get("driving_dist_rolling_pct", np.nan)
         da = row.get("driving_acc_rolling_pct", np.nan)
@@ -516,13 +544,15 @@ def _classify_archetypes(df):
         ott = row.get("sg_ott_rolling_pct", np.nan)
         app = row.get("sg_app_rolling_pct", np.nan)
         arg = row.get("sg_arg_rolling_pct", np.nan)
+        sg_total = row.get("sg_total_rolling_pct", np.nan)
 
         # Check for NaN -- can't classify without data
         if any(pd.isna(v) for v in [dd, da, bs, sg, putt]):
             return "Unknown"
 
         # First match wins
-        if all(v > 70 for v in [ott, app, arg, putt]):
+        # Stud: all categories > 70th pct AND recent total SG (50-SMA) > 70th pct
+        if all(v > 70 for v in [ott, app, arg, putt]) and (not pd.isna(sg_total) and sg_total > 70):
             return "Stud"
         if dd >= 80 and da < 40:
             return "Bomber"
@@ -612,6 +642,7 @@ def build_diagnostic_records(comparison, archetypes, event_name, year, event_id)
         "sg_app_rolling",
         "sg_arg_rolling",
         "sg_putt_rolling",
+        "sg_total_rolling",
         "driving_dist_rolling",
         "driving_acc_rolling",
     ]
@@ -706,9 +737,12 @@ def compute_analysis(comparison, archetypes):
         merged["archetype"] = "Unknown"
     merged["archetype"] = merged["archetype"].fillna("Unknown")
 
+    # Use miss_centered to remove systematic field-strength bias
+    miss_col = "miss_centered" if "miss_centered" in merged.columns else "miss"
+
     # 1. Category Bias
     cat_bias = (
-        merged.groupby("category")["miss"]
+        merged.groupby("category")[miss_col]
         .agg(["mean", "std", "count"])
         .reset_index()
     )
@@ -719,7 +753,7 @@ def compute_analysis(comparison, archetypes):
     if not total_rows.empty:
         player_total = (
             total_rows.groupby("player_name")
-            .agg(total_miss=("miss", "mean"), n_rounds=("miss", "count"))
+            .agg(total_miss=(miss_col, "mean"), n_rounds=(miss_col, "count"))
             .reset_index()
         )
     else:
@@ -732,10 +766,10 @@ def compute_analysis(comparison, archetypes):
         cat_rows = merged[merged["category"] == cat]
         if not cat_rows.empty:
             cat_avg = (
-                cat_rows.groupby("player_name")["miss"]
+                cat_rows.groupby("player_name")[miss_col]
                 .mean()
                 .reset_index()
-                .rename(columns={"miss": f"{cat}_miss"})
+                .rename(columns={miss_col: f"{cat}_miss"})
             )
             player_total = player_total.merge(cat_avg, on="player_name", how="left")
 
@@ -752,7 +786,7 @@ def compute_analysis(comparison, archetypes):
 
     # 3. Archetype Analysis -- pivot
     arch_agg = (
-        merged.groupby(["archetype", "category"])["miss"]
+        merged.groupby(["archetype", "category"])[miss_col]
         .agg(["mean", "count"])
         .reset_index()
     )
@@ -768,7 +802,7 @@ def compute_analysis(comparison, archetypes):
     total_possible = n_players * 4  # 4 rounds
     actual_rounds = len(merged[merged["category"] == "total"])
     sg_data_pct = actual_rounds / total_possible * 100 if total_possible > 0 else 0
-    avg_abs_miss = merged[merged["category"] == "total"]["miss"].abs().mean()
+    avg_abs_miss = merged[merged["category"] == "total"][miss_col].abs().mean()
 
     event_summary = {
         "n_players": n_players,
@@ -805,6 +839,9 @@ def compute_recurring_misses(diagnostic_path=None):
     if df.empty:
         return pd.DataFrame()
 
+    # Use miss_centered to remove systematic field-strength bias
+    miss_col = "miss_centered" if "miss_centered" in df.columns else "miss"
+
     total_rows = df[df["category"] == "total"]
     if total_rows.empty:
         return pd.DataFrame()
@@ -821,7 +858,7 @@ def compute_recurring_misses(diagnostic_path=None):
         pdata = df[df["player_name"] == player]
         n_events = pdata["event_id"].nunique()
 
-        total_miss = pdata[pdata["category"] == "total"]["miss"].mean()
+        total_miss = pdata[pdata["category"] == "total"][miss_col].mean()
         direction = "UNDER" if total_miss > 0 else "OVER"
 
         # Check which categories are consistently in the same direction
@@ -831,7 +868,7 @@ def compute_recurring_misses(diagnostic_path=None):
             if len(cat_data) < 2:
                 continue
             # Check if avg miss by event is consistently same sign
-            event_avgs = cat_data.groupby("event_id")["miss"].mean()
+            event_avgs = cat_data.groupby("event_id")[miss_col].mean()
             if len(event_avgs) >= 2:
                 if (event_avgs > 0).all():
                     consistent.append(f"{cat}(+)")
@@ -1215,28 +1252,30 @@ def main():
         # Drop old archetype and rolling columns — will be replaced
         rolling_cols = [
             "archetype", "sg_ott_rolling", "sg_app_rolling",
-            "sg_arg_rolling", "sg_putt_rolling",
+            "sg_arg_rolling", "sg_putt_rolling", "sg_total_rolling",
             "driving_dist_rolling", "driving_acc_rolling",
         ]
         drop_cols = [c for c in rolling_cols if c in df.columns]
         df = df.drop(columns=drop_cols)
 
-        all_archetypes = []
+        # Classify per-event: each event has its own field, so percentile
+        # ranks (and therefore archetypes) must be computed independently.
+        event_arch_frames = []
         for eid in event_ids_in_parquet:
             event_df = df[df["event_id"] == eid]
             field_players = event_df["player_name"].dropna().unique().tolist()
-            print(f"\n  Event {eid}: {len(field_players)} players")
-            archetypes = compute_rolling_archetypes(eid, field_players)
-            all_archetypes.append(archetypes)
+            event_year = event_df["year"].dropna().iloc[0] if "year" in event_df.columns else datetime.now().year
+            print(f"\n  Event {eid}: {len(field_players)} players (year={event_year})")
+            archetypes = compute_rolling_archetypes(eid, field_players, year=event_year)
+            archetypes["event_id"] = str(eid)
+            event_arch_frames.append(archetypes)
 
-        if all_archetypes:
-            arch_df = pd.concat(all_archetypes, ignore_index=True)
+        if event_arch_frames:
+            arch_df = pd.concat(event_arch_frames, ignore_index=True)
             arch_cols = [c for c in rolling_cols if c in arch_df.columns]
-            arch_cols.append("player_name")
-            # Deduplicate — same player may appear in multiple events with same archetype
-            arch_lookup = arch_df[arch_cols].drop_duplicates("player_name")
+            arch_cols.extend(["player_name", "event_id"])
 
-            df = df.merge(arch_lookup, on="player_name", how="left")
+            df = df.merge(arch_df[arch_cols], on=["player_name", "event_id"], how="left")
             df["archetype"] = df["archetype"].fillna("Unknown")
 
             # Atomic write back
@@ -1334,7 +1373,7 @@ def main():
         set(predictions["player_name"].unique())
         | set(actuals["player_name"].unique())
     )
-    archetypes = compute_rolling_archetypes(eid, field_players, actuals_df=actuals)
+    archetypes = compute_rolling_archetypes(eid, field_players, actuals_df=actuals, year=year)
 
     # Step 4: Compare predictions vs actuals
     print("\n  Comparing predictions vs actuals...")

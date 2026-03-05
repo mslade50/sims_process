@@ -4,7 +4,7 @@ Complete operational playbook for running the golf simulation system from Sunday
 
 ---
 
-## Phase 0: Sunday Night Cleanup & Prior Week Grading
+## Phase 0: Sunday Night Cleanup & Monday Grading
 
 ### 0.1 Automatic Cleanup (GitHub Action)
 The `weekly-cleanup.yml` workflow runs Sunday at midnight UTC. It deletes:
@@ -17,35 +17,39 @@ git pull
 ls *.csv *.xlsx  # should return nothing
 ```
 
-### 0.2 Grade Previous Week's Bets
-After the Sunday tournament finishes, grade all bets from the week.
+### 0.2 Automatic Monday Grading (GitHub Action)
+The `monday-grading.yml` workflow runs the full grading pipeline automatically:
+- **Monday 9 AM EST** (14:00 UTC) — primary run
+- **Monday 10 AM EST** (15:00 UTC) — retry if DataGolf data wasn't ready
 
-**Auto-detect last event:**
+**What it does** (`monday_grading.py`):
+1. Detects last completed event from DataGolf API
+2. Checks if grading already done (idempotent — safe for retry)
+3. Runs `grade_bets.py` (grades bets, writes to Sheets + Parquet, sends email)
+4. Verifies all bets graded
+5. Runs `sg_diagnostic.py --no-email` (stores SG diagnostic to Parquet)
+6. Runs `push_dashboard_data.py` (deploys dashboard to Render)
+
+**Manual trigger** (if you don't want to wait for schedule):
 ```bash
-python grade_bets.py
+# Run locally
+python monday_grading.py
+
+# Or trigger via GitHub Actions
+gh workflow run monday-grading.yml
 ```
 
-**Specific event (if auto-detect fails):**
+### 0.2b Manual Grading (edge cases only)
+For re-grading, specific events, or dry-run preview:
+
 ```bash
 python grade_bets.py --event-id 5 --event-name "AT&T Pebble Beach"
-```
-
-**What this does:**
-1. Connects to Google Sheets (single auth via `get_spreadsheet()`)
-2. Reads ungraded bets from Tournament Matchups, Round Matchups, Finish Positions tabs
-3. Deduplicates bets (keeps first occurrence per key)
-4. Fetches tournament results from DataGolf `historical-raw-data/rounds` API
-5. Grades each bet (win/loss/push with dead-heat adjustments for finish positions)
-6. Writes results back to source Sheets tabs
-7. Writes detailed results to Sharp/Retail/Other results tabs
-8. **Updates the Parquet ledger** (`permanent_data/bet_ledger.parquet`) with grades
-9. Calculates performance metrics and writes to Bet Results Summary tab
-10. Sends two email reports: full results + filtered (pred > 0.75)
-
-**Preview without writing:**
-```bash
 python grade_bets.py --event-id 5 --dry-run
+python grade_bets.py --regrade --event-id 5
+python grade_bets.py --all-events --regrade
 ```
+
+**Note:** `grade_bets.py` no longer pushes the dashboard. Run `python push_dashboard_data.py` manually after if needed.
 
 ### 0.3 Review Season Performance
 ```bash
@@ -107,6 +111,16 @@ dew_calculation = 0.6*baseline_dew + 0.4*dewpoint_wave
 **Player variance (adjust per course characteristics):**
 ```python
 player_var = 2                         # Higher = more variance in sim
+```
+
+**Course category variance multipliers (for `new_sim_v2.py`):**
+```python
+COURSE_CAT_MULTS = {
+    'sg_ott': 1.24,                    # From scoring_baseline.py variance analysis
+    'sg_app': 1.09,                    # actual_category_std / field_expected_category_std
+    'sg_arg': 1.10,                    # >1.0 = course amplifies, <1.0 = compresses
+    'sg_putt': 1.01,
+}
 ```
 
 **Name replacements (add any new players with naming issues):**
@@ -176,71 +190,72 @@ print(df[['player_name', 'sg_total_mean', 'sg_total_std']].head(10))
 
 ## Phase 2: Wednesday Pre-Tournament Simulation
 
-### 2.1 Update Weather Forecasts in `sim_inputs.py`
-Get hourly wind and dewpoint forecasts for R1 through R4. Arrays start at 6 AM, need 15 elements (6 AM - 8 PM).
+### 2.1 Auto-Populate Weather & Course Codes
 
-```python
-# Example: hourly wind speeds (MPH)
-wind_1 = [5, 5, 6, 8, 10, 12, 14, 15, 14, 12, 10, 8, 7, 6, 5]
-wind_2 = [3, 3, 4, 5, 6, 7, 8, 9, 10, 10, 9, 8, 7, 6, 5]
-wind_3 = [...]
-wind_4 = [...]
-
-# Example: hourly dewpoint (F)
-dewpoint_1 = [42, 42, 43, 44, 45, 46, 47, 48, 48, 47, 46, 45, 44, 43, 42]
-dewpoint_2 = [...]
-dewpoint_3 = [...]
-dewpoint_4 = [...]
-```
-
-**Sources:** Weather.com, WeatherUnderground, or DarkSky hourly forecast.
-
-### 2.2 Run R1 Hole-by-Hole Simulation
+**Populate weather tables in Google Sheet:**
 ```bash
-python rd_1_sd_multicourse_sim.py
+python humidity.py
 ```
 
 **What this does:**
-- Reads `this_week_dists_adjusted.csv` and course hole distributions
-- For each simulation (num_sims iterations):
-  - Adjusts player distributions per hole (mean shift + variance scaling)
-  - Applies wind, dewpoint, scoring adjustments
-  - Simulates all 18 holes
-  - Computes DraftKings fantasy points
-- Outputs:
-  - `rd_1_results_sd_{tourney}.csv` (aggregated player stats)
-  - `hole_lvl_sd_1_{tourney}.csv` (per-sim, per-hole scores)
-  - `model_predictions_r1.csv`
+1. Looks up course coordinates from `permanent_data/course_coordinates.csv` using `course_id` in `sim_inputs.py`
+2. Fetches tournament dates from DataGolf `/field-updates` API (R1 = start date, R2-R4 = +1/+2/+3 days)
+3. Fetches hourly forecast from Open-Meteo (dewpoint + wind, 6 AM - 8 PM = 15 values per round)
+4. Writes directly to the `round_config` tab in Google Sheets:
+   - Dew columns (G, K, O, S) rows 3-17 for all 4 rounds
+   - Wind columns (N, R) rows 3-17 for R3/R4 only (R1/R2 wind is manual)
+   - Rows 18-21 contain formula-generated comma-separated summaries (not overwritten)
+5. Prints score adjustments, average wind speeds, rainfall, and historical variance
 
-**Test first with small num_sims:**
-```python
-# In sim_inputs.py temporarily:
-num_sims = 1000  # Then bump to 50000 for production
+**Populate course codes:**
+```bash
+python update_sheet_courses.py
+```
+Fetches course codes from DataGolf and writes to the `course_codes` row in `round_config`. Then manually fill in `course_pars` and `expected_score_rN` if multi-course.
+
+**Re-run as forecasts update** — run `humidity.py` again closer to Thursday to get fresher forecasts. It overwrites the same cells.
+
+### 2.1b Compute Scoring Baselines & Expected Scores
+```bash
+python scoring_baseline.py
 ```
 
-**Verify:**
-```python
-df = pd.read_csv(f"rd_1_results_sd_{tourney}.csv")
-print(f"Players: {len(df)}")
-print(df[['player_name', 'mean_score', 'dk_mean']].head(10))
-# Check distributions aren't identical
-print(f"Score range: {df['mean_score'].min():.2f} to {df['mean_score'].max():.2f}")
-```
+**What this does:**
+1. Fetches historical scoring averages from `dg_historical.db` for this event
+2. Fetches/caches historical weather from Visual Crossing API
+3. Computes weather-free, tour-average-field baseline per round (de-skilled, de-winded)
+4. Applies recency weighting across years
+5. Adjusts baselines for THIS WEEK's field strength (from `pre_course_fit_{tourney}.csv`) and tee-time-weighted wind exposure
+6. Writes `expected_score_r1` through `expected_score_r4` to the `round_config` tab
+7. Writes a visible breakdown table to the Sheet (cols E-J, rows 23+)
+8. Saves detail CSV (`scoring_baseline_{tourney}.csv`) and Sheets tab (`Scoring Baseline`)
 
-### 2.3 Update Google Sheet Weather
-Open the `golf_sims` Google Sheet, `round_config` tab:
+**Formula**: `expected_score = baseline - field_strength + avg_wind * wind_factor`
+
+**Requires**: `pre_course_fit_{tourney}.csv` (from pre-tournament pipeline) for field strength. Without it, field strength defaults to 0.
+
+**How the backup uses these**: If the nightly backup detects that the Sheet `round` is stale, it copies `expected_score_rN`, `wind_rN`, `dew_rN` into the primary fields and runs the pipeline. If you've already updated the Sheet manually, the backup won't overwrite your values.
+
+### 2.1c Write Base Rates Reference
+```bash
+python write_base_rates.py
+```
+Writes a "Base Rates" tab to the Google Sheet comparing tour-average defaults vs this week's `sim_inputs` values. Shows weather coefficients, per-round forecasts, AM/PM scoring splits, sim core params, V2 category multipliers/skew, and scoring baselines — all with delta columns for quick deviation spotting.
+
+### 2.2 Verify Google Sheet & Set Remaining Parameters
+After `humidity.py`, `update_sheet_courses.py`, and `scoring_baseline.py` have run, open the `round_config` tab and verify/set:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `round` | `0` | Pre-event |
 | `expected_score_1` | `71.5` | Expected scoring avg, course 1 |
 | `expected_score_2` | `72.0` | Multi-course only, blank if single |
-| `wind` | `5,5,6,8,10,...` | R1 wind, comma-separated |
-| `dew` | `42,42,43,44,...` | R1 dewpoint, comma-separated |
 | `dew_calculation` | leave blank | Falls back to sim_inputs |
 | `wind_override` | `0` | 0 = use computed blend |
-| `course_codes` | `TS` or `PB,SG` | Auto-populated or manual |
-| `course_pars` | `71` or `72,72` | Matching course_codes order |
+| `course_codes` | `TS` or `PB,SG` | Auto-populated by `update_sheet_courses.py` |
+| `course_pars` | `71` or `72,72` | Manual — match course_codes order |
+
+Weather columns (dew/wind in the hourly tables) are auto-populated by `humidity.py`.
 
 ---
 
@@ -276,12 +291,29 @@ python new_sim.py
 - Runs Monte Carlo tournament simulation (matchups + finish positions)
 - Calculates edges vs book odds
 - Sends email report with filtered bets
-- **Auto-saves to Google Sheets** (Tournament Matchups, Finish Positions, Sharp Filtered, All Filtered tabs)
+- **Auto-saves to Google Sheets** (Tournament Matchups, Finish Positions tabs)
 - **Auto-writes to Parquet ledger** (`permanent_data/bet_ledger.parquet`)
 - Stores all tournament matchups with edge > 3% (no pred/sample gate). Low-confidence bets are visible on the `/fragility` dashboard page. Email filters still apply (pred > 0.75, sample >= 20).
 - Uses single Google auth via `get_spreadsheet()` (1 connection, not 4)
 
 **Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
+
+### 3.2b (Experimental) Run V2 Category-First Sim
+```bash
+python new_sim_v2.py
+```
+
+**What this does differently from `new_sim.py`:**
+- Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total — instead of drawing total first and decomposing
+- Uses `COURSE_CAT_MULTS` from `sim_inputs.py` to scale per-category variance (e.g., Bay Hill: OTT=1.24, APP=1.09, ARG=1.10, PUTT=1.01)
+- Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
+- Stores finish positions to **"Test Sim" tab** (no ledger write, no matchup storage)
+- Outputs go to `{tourney}/v2/` subfolder
+- Sends separate email with "V2 (Cat-First)" subject
+
+**Weekly setup for v2** — update `COURSE_CAT_MULTS` in `sim_inputs.py` when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
+
+**Status**: Experimental — tracking finish position edges in "Test Sim" tab to compare conversion rates vs v1 over multiple weeks. See `CLAUDE.md` for open questions and validation TODO.
 
 **Verify bet storage:**
 ```python
@@ -332,9 +364,11 @@ python round_sim.py
   - `fair_card_r2.csv` (score card with fair UNDER prices)
   - Excel workbook
 - Sends email with filtered edges
-- **Auto-saves to Google Sheets** (Round Matchups, Sharp Filtered tabs)
+- **Auto-saves to Google Sheets** (Round Matchups tab)
 - **Auto-writes to Parquet ledger**
 - Uses single Google auth (1 connection, not 2)
+
+**Backup:** If you forget to run this, `nightly-round-sim.yml` runs at 9:45 PM EST (Thu/Fri/Sat). It's fully self-sufficient: auto-detects the completed round from DataGolf, updates the Sheet's primary fields from per-round fallbacks (set during Phase 2.1b), and runs `live_stats_engine.py` -> `round_sim.py`. If bets already exist, it exits cleanly.
 
 ---
 
@@ -414,16 +448,12 @@ Only needed if you want final-round predictions for analysis.
 python live_stats_engine.py
 ```
 
-### 6.2 Post-Tournament: Grade All Bets
-Once the tournament is final:
+### 6.2 Post-Tournament: Grading is Automated
+Grading runs automatically Monday morning via `monday-grading.yml` (see Phase 0.2). No manual action needed.
 
+To grade immediately (Sunday night):
 ```bash
-python grade_bets.py --event-id <id>
-```
-
-Or wait for Sunday night and run with auto-detect:
-```bash
-python grade_bets.py
+python monday_grading.py
 ```
 
 ### 6.3 Review Results
@@ -451,7 +481,9 @@ python -m dashboard.app   # → localhost:8050
 ## Phase 7: Post-Event SG Diagnostic
 
 ### 7.1 When to Run
-After the tournament completes (Sunday evening or Monday), but **BEFORE the weekly cleanup** (which deletes `avg_expected_cat_sg_{tourney}.csv`).
+Runs automatically as part of the Monday grading pipeline (`monday_grading.py`). Manual run only needed if you want the email report or need to override the event ID.
+
+**Note:** Requires `avg_expected_cat_sg_{tourney}.csv` which is deleted by Sunday cleanup. The Monday pipeline runs `--no-email` and gracefully skips if the file is missing (GitHub Actions). Works fully when run locally before cleanup.
 
 ### 7.2 Run the Diagnostic
 ```bash
@@ -497,15 +529,16 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 | `expected_score_3` | float | Multi-course: 3rd course scoring avg |
 | `wind` | comma-sep | Hourly wind array, 15 elements (6 AM - 8 PM) |
 | `dew` | comma-sep | Hourly dewpoint array, 15 elements |
-| `wind_r2` through `wind_r4` | comma-sep | Round-specific wind (blank = use `wind`) |
-| `dew_r2` through `dew_r4` | comma-sep | Round-specific dew (blank = use `dew`) |
+| `wind_r1` through `wind_r4` | comma-sep | Round-specific wind forecast (set by `humidity.py`, blank = use `wind`) |
+| `dew_r1` through `dew_r4` | comma-sep | Round-specific dew forecast (set by `humidity.py`, blank = use `dew`) |
 | `dew_calculation` | float | Dew effect factor (blank = use sim_inputs) |
 | `wind_override` | float | 0 = use computed blend (blank = use sim_inputs) |
 | `course_codes` | comma-sep | Course codes from API (e.g., "PB,SG") |
 | `course_pars` | comma-sep | Par values matching course_codes order |
-| `expected_score_r2` | comma-sep | R2 expected scoring (multi-course) |
-| `expected_score_r3` | comma-sep | R3 expected scoring (multi-course) |
-| `expected_score_r4` | comma-sep | R4 expected scoring (multi-course) |
+| `expected_score_r1` | float | Pre-tourney R1 scoring estimate (backup fallback) |
+| `expected_score_r2` | comma-sep | R2 expected scoring (multi-course: comma-sep, backup fallback) |
+| `expected_score_r3` | comma-sep | R3 expected scoring (backup fallback) |
+| `expected_score_r4` | comma-sep | R4 expected scoring (backup fallback) |
 
 ---
 
@@ -515,7 +548,10 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 # Pre-tournament pipeline
 python cat_dists_player.py                       # Step 1: SG distributions
 python dists_thiswk.py                           # Step 2: Field filter + course adjust
-python rd_1_sd_multicourse_sim.py                # Step 3: Hole-by-hole R1 sim
+python humidity.py                               # Step 3: Auto-populate weather to Sheet
+python update_sheet_courses.py                   # Step 3: Auto-populate course codes
+python scoring_baseline.py                       # Step 4: Scoring baselines + expected scores
+python write_base_rates.py                       # Step 5: Base rates reference tab
 
 # Live rounds
 python live_stats_engine.py                      # Skill update (reads round from Sheet)
@@ -540,9 +576,17 @@ python bet_query.py --export                     # Save to CSV
 python bet_query.py --plot                       # Plotly dashboard
 python bet_query.py --all-years                  # Include prior years
 
-# Dashboard deploy (copies local outputs to dashboard_data/ and pushes)
+# Dashboard deploy (only when you need to push manually — Monday pipeline handles this)
 python push_dashboard_data.py                    # Copy + commit + push to Render
 python push_dashboard_data.py --dry-run          # Preview only
+
+# Monday grading pipeline (automated via GitHub Actions, or run manually)
+python monday_grading.py                         # Full pipeline: grade + diagnostic + deploy
+python monday_grading.py --dry-run               # Preview checks only
+
+# Nightly round sim backup (automated Thu-Sat 9:45 PM EST, or run manually)
+python nightly_round_sim.py                      # Check + run if no bets stored yet
+python nightly_round_sim.py --dry-run            # Preview checks only
 
 # Dashboard (local)
 python -m dashboard.app                          # localhost:8050
@@ -601,14 +645,19 @@ sim_inputs.py ──────────────────────
 cat_dists_player.py ──► sg_dist_player.csv
                               │
                               ▼
-dists_thiswk.py ──► this_week_dists_adjusted.csv
+dists_thiswk.py ──► this_week_dists_adjusted.csv ──► pre_course_fit_{tourney}.csv
+                                                              │
+humidity.py ──► round_config (weather grid + formulas)        │
+                              │                               │
+                              ▼                               ▼
+                    scoring_baseline.py ──► expected_score_r1-r4 (Sheet)
                               │
-                              ├──► rd_1_sd_multicourse_sim.py ──► model_predictions_r1.csv
-                              │                                            │
-                              │                                            ▼
-                              │                                     new_sim.py ──► Sheets + Ledger
-                              │
-Google Sheet ──► sheet_config.py ──► live_stats_engine.py
+Google Sheet ──► sheet_config.py ──► live_stats_engine.py (round=0) ──► model_predictions_r1.csv
+                                            │                                     │
+                                            │                                     ▼
+                                            │                              new_sim.py ──► Sheets + Ledger
+                                            │
+                                    live_stats_engine.py (round=1-3)
                                             │
                                             ├──► r{N}_live_model.csv
                                             └──► model_predictions_r{N+1}.csv

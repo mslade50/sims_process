@@ -156,7 +156,7 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False)
         today_str = datetime.now().strftime("%Y-%m-%d")
         default_teetime = f"{today_str} 10:00"
         df[teetime_col] = default_teetime
-        print(f"  ⚠️  {teetime_col} unavailable — defaulting to {default_teetime}")
+        print(f"  WARNING: {teetime_col} unavailable — defaulting to {default_teetime}")
 
     return df
 
@@ -270,6 +270,26 @@ def clean_names(df):
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
     df["player_name"] = df["player_name"].replace(name_replacements)
     return df
+
+
+def detect_completed_round(api_key):
+    """
+    Auto-detect which round just completed by checking live stats availability.
+
+    Probes DataGolf live-tournament-stats for rounds 1-4. If round N returns
+    >10 players with stats, that round is considered complete.
+
+    Returns:
+        int: 0 (pre-event/no data), 1-4 (last completed round)
+    """
+    last_complete = 0
+    for round_num in range(1, 5):
+        df = fetch_live_stats(round_num, api_key)
+        if df is not None and len(df) > 10:
+            last_complete = round_num
+        else:
+            break
+    return last_complete
 
 
 def fetch_player_decompositions(api_key):

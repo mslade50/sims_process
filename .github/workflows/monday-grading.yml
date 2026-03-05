@@ -1,0 +1,34 @@
+name: Monday Grading Pipeline
+
+on:
+  schedule:
+    - cron: '0 14 * * 1'   # Monday 9 AM EST (14:00 UTC)
+    - cron: '0 15 * * 1'   # Monday 10 AM EST retry (15:00 UTC)
+
+  workflow_dispatch:         # Manual trigger
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter
+
+    - name: Run grading pipeline
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+      run: python monday_grading.py

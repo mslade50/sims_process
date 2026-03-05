@@ -57,6 +57,7 @@ CREDENTIALS_PATHS = [
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
+TAB_BASE_RATES = "Base Rates"
 
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
@@ -90,6 +91,8 @@ FINISH_POS_HEADERS = [
     "my_pred", "sample",
     "result", "actual_finish", "units_won",
 ]
+
+BASE_RATES_HEADERS = ["category", "parameter", "base_rate", "this_week", "delta", "notes"]
 
 ROUND_MU_HEADERS = [
     "run_timestamp", "event_name", "year", "event_id", "round",
@@ -358,9 +361,9 @@ def _extract_sim_prob(row):
     return None
 
 
-def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=None, spreadsheet=None):
+def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=None, spreadsheet=None, tab_name=None):
     """
-    Write finish position bet rows to the "Finish Positions" tab.
+    Write finish position bet rows to a Google Sheets tab.
 
     Args:
         combined_finish_df: Finish position DataFrame from new_sim.py
@@ -371,7 +374,9 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
         tourney:            Tournament name
         event_id:           DataGolf event ID
         dg_id_lookup:       Optional dict {player_name: dg_id}
+        tab_name:           Override tab name (default: "Finish Positions")
     """
+    tab = tab_name or TAB_FINISH_POS
     if combined_finish_df is None or combined_finish_df.empty:
         print("  [storage] No finish position bets to store.")
         return
@@ -427,12 +432,13 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
 
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
-    ws = _get_or_create_tab(spreadsheet, TAB_FINISH_POS, FINISH_POS_HEADERS)
+    ws = _get_or_create_tab(spreadsheet, tab, FINISH_POS_HEADERS)
     _append_rows(ws, rows)
-    print(f"  [storage] Wrote {len(rows)} finish position rows to '{TAB_FINISH_POS}'")
+    print(f"  [storage] Wrote {len(rows)} finish position rows to '{tab}'")
 
-    # Parquet write-through
-    _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts)
+    # Parquet write-through (only for primary tab)
+    if tab == TAB_FINISH_POS:
+        _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -509,6 +515,39 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
 
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Store: Base Rates
+# ══════════════════════════════════════════════════════════════════════════════
+
+def store_base_rates(rows, spreadsheet=None):
+    """
+    Write base rates reference table to the "Base Rates" tab.
+    Overwrites (clear + rewrite) since this is a point-in-time snapshot.
+
+    Args:
+        rows: list of lists, each [category, parameter, base_rate, this_week, delta, notes]
+    """
+    if not rows:
+        print("  [storage] No base rates rows to store.")
+        return
+
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = _get_or_create_tab(spreadsheet, TAB_BASE_RATES, BASE_RATES_HEADERS)
+
+    # Clear and rewrite (snapshot reference)
+    ws.clear()
+    ws.append_row(BASE_RATES_HEADERS, value_input_option="RAW")
+
+    # Sanitize all values
+    clean_rows = []
+    for row in rows:
+        clean_rows.append([_safe(v, round_digits=4) if isinstance(v, float) else _safe(v) for v in row])
+
+    ws.append_rows(clean_rows, value_input_option="USER_ENTERED")
+    print(f"  [storage] Wrote {len(clean_rows)} base rates rows to '{TAB_BASE_RATES}'")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

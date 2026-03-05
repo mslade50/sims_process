@@ -188,7 +188,8 @@ def _convert_to_units(df):
 
     Matchup bets are already in unit terms (flat 1-unit wagers).
     units_wagered is derived from kelly_stake (raw dollars) so needs conversion.
-    units_won is already in units from grade_bets.py.
+    units_won is recomputed for finish positions because older grading wrote
+    flat 0/1 values instead of proper kelly-based amounts.
     """
     df = df.copy()
 
@@ -196,6 +197,21 @@ def _convert_to_units(df):
 
     if "units_wagered" in df.columns:
         df.loc[is_finish, "units_wagered"] = df.loc[is_finish, "units_wagered"] / UNIT_SIZE
+
+    # Recompute units_won for finish positions from units_wagered + result + odds
+    if "units_won" in df.columns and "units_wagered" in df.columns and "result" in df.columns:
+        is_loss = is_finish & (df["result"] == "loss")
+        df.loc[is_loss, "units_won"] = -df.loc[is_loss, "units_wagered"]
+
+        is_win = is_finish & (df["result"].isin(["win", "win_dh"]))
+        if "book_odds" in df.columns and is_win.any():
+            book_odds = pd.to_numeric(df.loc[is_win, "book_odds"], errors="coerce")
+            dec = pd.Series(np.nan, index=book_odds.index)
+            pos = book_odds >= 0
+            dec[pos] = book_odds[pos] / 100.0 + 1.0
+            neg = book_odds < 0
+            dec[neg] = 100.0 / book_odds[neg].abs() + 1.0
+            df.loc[is_win, "units_won"] = df.loc[is_win, "units_wagered"] * (dec - 1)
 
     return df
 

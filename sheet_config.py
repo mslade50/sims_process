@@ -27,12 +27,15 @@ Sheet layout (tab: "round_config"):
         course_codes      Comma-separated course codes from API (e.g. "TS" or "PB,SG").
                           Auto-populated by update_sheet_courses.py.
         course_pars       Comma-separated par values matching course_codes order.
+        expected_score_r1 Expected scoring avg for R1. Pre-tourney estimate (backup fallback).
         expected_score_r2 Expected scoring avg for R2. Multi-course: comma-separated.
         expected_score_r3 Expected scoring avg for R3.
         expected_score_r4 Expected scoring avg for R4.
+        wind_r1           Hourly wind for R1 (blank = use 'wind'). Set by humidity.py.
         wind_r2           Hourly wind for R2 (blank = use 'wind').
         wind_r3           Hourly wind for R3 (blank = use 'wind').
         wind_r4           Hourly wind for R4 (blank = use 'wind').
+        dew_r1            Hourly dew for R1 (blank = use 'dew'). Set by humidity.py.
         dew_r2            Hourly dew for R2 (blank = use 'dew').
         dew_r3            Hourly dew for R3 (blank = use 'dew').
         dew_r4            Hourly dew for R4 (blank = use 'dew').
@@ -185,12 +188,15 @@ def load_config():
             # NEW for tournament sim:
             course_codes:     list[str] — course codes from API (e.g. ['TS'] or ['PB','SG'])
             course_pars:      list[float] — par values matching course_codes order
+            expected_score_r1: list[float] — expected scoring avg for R1 (pre-tourney estimate)
             expected_score_r2: list[float] — expected scoring avg for R2 (per-course if multi)
             expected_score_r3: list[float] — expected scoring avg for R3
             expected_score_r4: list[float] — expected scoring avg for R4
+            wind_r1:          list[float] — hourly wind for R1 (empty = use 'wind')
             wind_r2:          list[float] — hourly wind for R2 (empty = use 'wind')
             wind_r3:          list[float] — hourly wind for R3
             wind_r4:          list[float] — hourly wind for R4
+            dew_r1:           list[float] — hourly dew for R1 (empty = use 'dew')
             dew_r2:           list[float] — hourly dew for R2 (empty = use 'dew')
             dew_r3:           list[float] — hourly dew for R3
             dew_r4:           list[float] — hourly dew for R4
@@ -221,23 +227,53 @@ def load_config():
     expected_score_2 = _parse_numeric(params.get("expected_score_2"), default=None)
     expected_score_3 = _parse_numeric(params.get("expected_score_3"), default=None)
 
-    # Optional overrides (fall back to sim_inputs if not set)
-    dew_calculation = _parse_numeric(params.get("dew_calculation"), default=None)
-    wind_override = _parse_numeric(params.get("wind_override"), default=None)
+    # Weather overrides (default 0.0 — no sim_inputs fallback)
+    dew_calculation = _parse_numeric(params.get("dew_calculation"), default=0.0)
+    wind_override = _parse_numeric(params.get("wind_override"), default=0.0)
+
+    # --- V2 sim fields ---
+    tourney = params.get("tourney", "").strip()
+    event_id = int(_parse_numeric(params.get("event_id"), default=0))
+    course_id = int(_parse_numeric(params.get("course_id"), default=0))
+    cut_line = int(_parse_numeric(params.get("cut_line"), default=50))
+    use_10_shot_rule = bool(int(_parse_numeric(params.get("use_10_shot_rule"), default=1)))
+    simulations = int(_parse_numeric(params.get("simulations"), default=100000))
+    std_dev = _parse_numeric(params.get("std_dev"), default=3.02)
+
+    # Per-category course variance multipliers (default 1.0 = no scaling)
+    course_cat_mults = {
+        "sg_ott": _parse_numeric(params.get("cat_mult_ott"), default=1.0),
+        "sg_app": _parse_numeric(params.get("cat_mult_app"), default=1.0),
+        "sg_arg": _parse_numeric(params.get("cat_mult_arg"), default=1.0),
+        "sg_putt": _parse_numeric(params.get("cat_mult_putt"), default=1.0),
+    }
+
+    # Per-category course skewness (None = use tour-wide baseline in V2)
+    _raw_skew = {
+        "sg_ott": _parse_numeric(params.get("cat_skew_ott"), default=None),
+        "sg_app": _parse_numeric(params.get("cat_skew_app"), default=None),
+        "sg_arg": _parse_numeric(params.get("cat_skew_arg"), default=None),
+        "sg_putt": _parse_numeric(params.get("cat_skew_putt"), default=None),
+    }
+    # Only include non-None values; empty dict triggers tour-wide baseline
+    course_cat_skew = {k: v for k, v in _raw_skew.items() if v is not None}
 
     # --- NEW fields for tournament sim ---
     course_codes = _parse_string_array(params.get("course_codes", ""))
     course_pars = _parse_multi_numeric(params.get("course_pars", ""))
 
     # Per-round expected scoring averages (can be multi-value for multi-course)
+    expected_score_r1 = _parse_multi_numeric(params.get("expected_score_r1", ""))
     expected_score_r2 = _parse_multi_numeric(params.get("expected_score_r2", ""))
     expected_score_r3 = _parse_multi_numeric(params.get("expected_score_r3", ""))
     expected_score_r4 = _parse_multi_numeric(params.get("expected_score_r4", ""))
 
     # Per-round wind/dew arrays (empty = use default 'wind'/'dew')
+    wind_r1 = _parse_array(params.get("wind_r1", ""))
     wind_r2 = _parse_array(params.get("wind_r2", ""))
     wind_r3 = _parse_array(params.get("wind_r3", ""))
     wind_r4 = _parse_array(params.get("wind_r4", ""))
+    dew_r1 = _parse_array(params.get("dew_r1", ""))
     dew_r2 = _parse_array(params.get("dew_r2", ""))
     dew_r3 = _parse_array(params.get("dew_r3", ""))
     dew_r4 = _parse_array(params.get("dew_r4", ""))
@@ -252,22 +288,37 @@ def load_config():
         "expected_score_3": expected_score_3,
         "dew_calculation": dew_calculation,
         "wind_override": wind_override,
-        # NEW fields
+        # Course / tournament fields
         "course_codes": course_codes,
         "course_pars": course_pars,
+        "expected_score_r1": expected_score_r1,
         "expected_score_r2": expected_score_r2,
         "expected_score_r3": expected_score_r3,
         "expected_score_r4": expected_score_r4,
+        "wind_r1": wind_r1,
         "wind_r2": wind_r2,
         "wind_r3": wind_r3,
         "wind_r4": wind_r4,
+        "dew_r1": dew_r1,
         "dew_r2": dew_r2,
         "dew_r3": dew_r3,
         "dew_r4": dew_r4,
+        # V2 sim fields
+        "tourney": tourney,
+        "event_id": event_id,
+        "course_id": course_id,
+        "cut_line": cut_line,
+        "use_10_shot_rule": use_10_shot_rule,
+        "simulations": simulations,
+        "std_dev": std_dev,
+        "course_cat_mults": course_cat_mults,
+        "course_cat_skew": course_cat_skew,
     }
 
     # --- Print summary ---
     print(f"  Round:    {round_num} ({'pre-event' if round_num == 0 else f'R{round_num} complete'})")
+    if tourney:
+        print(f"  Tourney:  {tourney} (event_id={event_id}, course_id={course_id})")
     print(f"  Wind:     {len(wind)} hours -> {wind[:5]}{'...' if len(wind) > 5 else ''}")
     print(f"  Dew:      {len(dew)} hours -> {dew[:5]}{'...' if len(dew) > 5 else ''}")
     print(f"  Score adj: {expected_score_1}"
@@ -275,14 +326,116 @@ def load_config():
           + (f" / {expected_score_3}" if expected_score_3 is not None else ""))
     if course_codes:
         print(f"  Courses:  {course_codes} (pars: {course_pars})")
+    if expected_score_r1:
+        print(f"  Exp R1:   {expected_score_r1}")
     if expected_score_r2:
         print(f"  Exp R2:   {expected_score_r2}")
     if expected_score_r3:
         print(f"  Exp R3:   {expected_score_r3}")
     if expected_score_r4:
         print(f"  Exp R4:   {expected_score_r4}")
+    print(f"  Sim:      {simulations} sims, std_dev={std_dev}, cut={cut_line}, wind_coeff={wind_override}")
+    print(f"  Cat mults: " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_mults.items()))
+    if course_cat_skew:
+        print(f"  Cat skew:  " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_skew.items()))
 
     return config
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sheet Writer (for nightly backup)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def write_primary_fields(round_num, expected_score_1, wind_str, dew_str):
+    """
+    Write primary config fields to the round_config tab.
+
+    Used by nightly_round_sim.py to update the Sheet from per-round fallback
+    values so that live_stats_engine.py and round_sim.py read correct config.
+
+    Args:
+        round_num: int (0-4) — round that just completed
+        expected_score_1: float — scoring avg for primary course
+        wind_str: str — comma-separated hourly wind array
+        dew_str: str — comma-separated hourly dew array
+    """
+    ws = _connect_sheet()
+
+    # Read all rows to find parameter positions
+    all_values = ws.get("A:B")
+
+    # Build param_name -> row_index mapping (1-indexed for gspread)
+    param_rows = {}
+    for i, row in enumerate(all_values):
+        if row and row[0].strip():
+            param_rows[row[0].strip().lower()] = i + 1  # gspread is 1-indexed
+
+    updates = {
+        "round": str(round_num),
+        "expected_score_1": str(expected_score_1),
+        "wind": wind_str,
+        "dew": dew_str,
+    }
+
+    cells_updated = []
+    for param, value in updates.items():
+        row_idx = param_rows.get(param)
+        if row_idx is None:
+            print(f"  WARNING: '{param}' not found in Sheet, skipping")
+            continue
+        ws.update_cell(row_idx, 2, value)  # Column B = 2
+        cells_updated.append(param)
+
+    print(f"  Updated Sheet primary fields: {', '.join(cells_updated)}")
+
+
+def write_sim_config(cat_mults=None, cat_skew=None):
+    """
+    Write category variance multipliers and/or skewness to round_config tab.
+
+    Used by scoring_baseline.py to auto-populate cat_mult_* and cat_skew_*
+    rows after computing per-category variance analysis.
+
+    Args:
+        cat_mults: dict like {'sg_ott': 1.27, 'sg_app': 1.12, ...}
+        cat_skew:  dict like {'sg_ott': -1.14, 'sg_app': -0.38, ...}
+    """
+    ws = _connect_sheet()
+    all_values = ws.get("A:B")
+
+    param_rows = {}
+    for i, row in enumerate(all_values):
+        if row and row[0].strip():
+            param_rows[row[0].strip().lower()] = i + 1
+
+    cells_updated = []
+
+    if cat_mults:
+        for cat_key, value in cat_mults.items():
+            short = cat_key.replace("sg_", "")
+            param = f"cat_mult_{short}"
+            row_idx = param_rows.get(param)
+            if row_idx:
+                ws.update_cell(row_idx, 2, str(round(value, 3)))
+                cells_updated.append(f"{param}={value:.3f}")
+            else:
+                print(f"  WARNING: '{param}' not found in Sheet, skipping")
+
+    if cat_skew:
+        for cat_key, value in cat_skew.items():
+            short = cat_key.replace("sg_", "")
+            param = f"cat_skew_{short}"
+            row_idx = param_rows.get(param)
+            if row_idx:
+                ws.update_cell(row_idx, 2, str(round(value, 3)))
+                cells_updated.append(f"{param}={value:.3f}")
+            else:
+                print(f"  WARNING: '{param}' not found in Sheet, skipping")
+
+    if cells_updated:
+        print(f"  Updated Sheet sim config: {', '.join(cells_updated)}")
+    else:
+        print("  No sim config fields to update")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

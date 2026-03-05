@@ -493,19 +493,29 @@ def get_finish_equity(tourney=None):
 # ── Pre-Tournament Outrights ────────────────────────────────────────────────
 
 def get_simulated_probs_pre():
-    """Read simulated_probs.csv (pre-tournament, no _live suffix)."""
+    """Read simulated_probs.csv — prefer v2 output if available."""
+    config = get_tournament_config()
+    tourney = config.get("tourney", "")
+    if tourney:
+        v2_path = os.path.join(PROJECT_ROOT, tourney, "v2", "simulated_probs.csv")
+        if os.path.exists(v2_path):
+            return _read_csv_safe(v2_path)
     path = _resolve_path("simulated_probs.csv")
     return _read_csv_safe(path)
 
 
 def get_rank_probs_pre(tourney=None):
-    """Read rank_probs_updated_{tourney}.parquet (pre-tournament finish distributions)."""
+    """Read rank_probs_updated_{tourney}.parquet — prefer v2 output if available."""
     if tourney is None:
         config = get_tournament_config()
         tourney = config.get("tourney", "")
     if not tourney:
         return pd.DataFrame()
-    # Local: rank_probs_updated_{tourney}.parquet; Render: rank_probs_pre.parquet
+    # Prefer v2 output
+    v2_path = os.path.join(PROJECT_ROOT, tourney, "v2", f"rank_probs_updated_{tourney}.parquet")
+    if os.path.exists(v2_path):
+        return _read_parquet_safe(v2_path)
+    # Fallback: root then dashboard_data
     path = os.path.join(PROJECT_ROOT, f"rank_probs_updated_{tourney}.parquet")
     if os.path.exists(path):
         return _read_parquet_safe(path)
@@ -527,13 +537,17 @@ def get_rank_probs_live(tourney=None):
 
 
 def get_finish_equity_pre(tourney=None):
-    """Read finish_equity_{tourney}.csv (pre-tournament, no _live suffix)."""
+    """Read finish_equity_{tourney}.csv — prefer v2 output if available."""
     if tourney is None:
         config = get_tournament_config()
         tourney = config.get("tourney", "")
     if not tourney:
         return pd.DataFrame()
-    # Local: finish_equity_{tourney}.csv; Render: finish_equity_pre.csv
+    # Prefer v2 output
+    v2_path = os.path.join(PROJECT_ROOT, tourney, "v2", f"finish_equity_{tourney}.csv")
+    if os.path.exists(v2_path):
+        return _read_csv_safe(v2_path)
+    # Fallback: root then dashboard_data
     path = os.path.join(PROJECT_ROOT, f"finish_equity_{tourney}.csv")
     if os.path.exists(path):
         return _read_csv_safe(path)
@@ -549,6 +563,14 @@ def get_fair_card(round_num, tourney=None):
         # No tourney config — try dashboard_data/ directly
         return _read_csv_safe(_resolve_path(f"fair_card_r{round_num}.csv"))
     path = _resolve_path(f"fair_card_r{round_num}.csv", subdir=tourney)
+    return _read_csv_safe(path)
+
+
+# ── V2 SG Category Distributions ─────────────────────────────────────────
+
+def get_v2_dists():
+    """Read this_week_dists_v2.csv (per-player SG category distributions)."""
+    path = _resolve_path("this_week_dists_v2.csv")
     return _read_csv_safe(path)
 
 

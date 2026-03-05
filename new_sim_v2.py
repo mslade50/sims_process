@@ -1,6 +1,7 @@
 # ============================
-# PGA SIM: Integer Scoring + Realistic Ties
-# Weather + Category-aware R1→R2, R2→R3, R3→R4 (avg-SG only) + Markets + MATCHUPS
+# PGA SIM V2: Category-First Draws with Course Variance Multipliers
+# Draws SG categories from course-adjusted multivariate normal, sums to total.
+# Same skill updates, pricing, and email as new_sim.py — NO Google Sheets storage.
 # ============================
 
 import os
@@ -14,8 +15,28 @@ from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
 
+# --- Weekly-changing config from Google Sheet ---
+from sheet_config import load_config
+_cfg = load_config()
+tourney          = _cfg["tourney"]
+SIMULATIONS      = _cfg["simulations"]
+STD_DEV          = _cfg["std_dev"]
+PAR              = 72  # constant — doesn't affect relative rankings
+CUT_LINE         = _cfg["cut_line"]
+USE_10_SHOT_RULE = _cfg["use_10_shot_rule"]
+WIND_FACTOR_SIM  = _cfg["wind_override"]  # course-specific wind coefficient (auto-set by scoring_baseline)
+wind_1           = _cfg["wind_r1"]
+wind_2           = _cfg["wind_r2"]
+dewpoint_1       = _cfg["dew_r1"]
+dewpoint_2       = _cfg["dew_r2"]
+dew_calculation  = _cfg["dew_calculation"]
+COURSE_CAT_MULTS = _cfg["course_cat_mults"]
+COURSE_CAT_SKEW  = _cfg["course_cat_skew"]
+TOP_K            = 20  # hardcode — never changes
+_event_id        = _cfg["event_id"]
+
+# --- Stable model params from sim_inputs ---
 from sim_inputs import (
-    tourney, dew_calculation, wind_1, wind_2, dewpoint_1, dewpoint_2,
     name_replacements,
     # R1 update sets
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
@@ -23,42 +44,32 @@ from sim_inputs import (
     coefficients_r2, coefficients_r2_6_30, coefficients_r2_30_up,
     # R3 update sets (avg SG only; no residual terms)
     coefficients_r3, coefficients_r3_mid, coefficients_r3_high,
-    SIMULATIONS, STD_DEV, PAR, CUT_LINE, USE_10_SHOT_RULE,
-    WIND_FACTOR_SIM, TOP_K
 )
+
+# Tour-wide baseline skewness (PGA, 2019-2025 — stable, update rarely)
+BASELINE_CAT_SKEW = {
+    'sg_ott': -0.93,
+    'sg_app': -0.21,
+    'sg_arg': -0.18,
+    'sg_putt': -0.05,
+}
 
 from dotenv import load_dotenv
 load_dotenv()
 
+print("=" * 60)
+print("  NEW SIM V2 — Category-First Draws")
+print("=" * 60)
+
 # Matchup weather-impact report settings (doesn't affect sim)
 wind_calculation_report = WIND_FACTOR_SIM
 
-# (debug dump removed — set DUMP_FIRST_SIM = True to re-enable)
-DUMP_FIRST_SIM = False
-DUMP_FILENAME  = f"sim_iter_0001_leaderboard_{tourney}.csv"
-
-# Master toggle: use OTT-based in-tournament adjustments or not
-USE_IN_TOURN_OTT = True  # set to False to zero all in-tournament OTT adjustments
-
-# Input predictions (prefer final_predictions if available, fallback to pre_course_fit)
-_final_pred_path = f"final_predictions_{tourney}.csv"
-_pre_course_path = f"pre_course_fit_{tourney}.csv"
-PRED_PATH = _final_pred_path if os.path.exists(_final_pred_path) else _pre_course_path
-print(f"[info] Using predictions from: {PRED_PATH}")
-
-# Per-player category distribution file (course-shaped)
-DISTS_FILE = "this_week_dists_adjusted.csv"
-
-# Tour-level category correlation fallbacks
-CORR_PREFS = [
-    "permanent_data/sg_cat_corr_tour_within_player_pearson.csv",
-    "permanent_data/sg_cat_corr_tour_spearman.csv",
-    "permanent_data/sg_cat_corr_tour_pearson.csv",
-]
+# Weather delta distribution across categories [OTT, APP, ARG, PUTT]
+WEATHER_CAT_SPLIT = np.array([0.35, 0.35, 0.15, 0.15])
 
 CAT_ORDER = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
 CLIP_CAT = (-8.0, 8.0)
-RNG = np.random.default_rng(123)
+RNG = np.random.default_rng(456)  # different seed from v1 for independent draws
 
 # DataGolf API
 API_KEY = os.getenv('DATAGOLF_API_KEY', 'c05ee5fd8f2f3b14baab409bd83c')
@@ -73,11 +84,81 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 # Tournament sim email filter thresholds
 EMAIL_MU_MIN_PRED = 0.75
 EMAIL_MU_MIN_SAMPLE = 20
-EMAIL_FP_MIN_PRED = 0.0  # finish positions: include all pred > 0
+EMAIL_FP_MIN_PRED = 0.0
 
 # Sharp books for matchup filtering
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
+
+# Input predictions
+_final_pred_path = f"final_predictions_{tourney}.csv"
+_pre_course_path = f"pre_course_fit_{tourney}.csv"
+PRED_PATH = _final_pred_path if os.path.exists(_final_pred_path) else _pre_course_path
+print(f"[v2 info] Using predictions from: {PRED_PATH}")
+
+# Per-player category distribution file (course-shaped)
+DISTS_FILE = "this_week_dists_v2.csv"
+
+# Tour-level category correlation fallbacks
+CORR_PREFS = [
+    "permanent_data/sg_cat_corr_tour_within_player_pearson.csv",
+    "permanent_data/sg_cat_corr_tour_spearman.csv",
+    "permanent_data/sg_cat_corr_tour_pearson.csv",
+]
+
+# Course multipliers
+course_mults = np.array([COURSE_CAT_MULTS.get(c, 1.0) for c in CAT_ORDER])
+print(f"[v2 info] Course category multipliers: OTT={course_mults[0]:.3f}, APP={course_mults[1]:.3f}, "
+      f"ARG={course_mults[2]:.3f}, PUTT={course_mults[3]:.3f}")
+
+# Course skewness — use course-specific if available, else tour-wide baseline
+course_skew = np.array([
+    COURSE_CAT_SKEW.get(c, BASELINE_CAT_SKEW.get(c, 0.0)) for c in CAT_ORDER
+])
+print(f"[v2 info] Course category skewness:    OTT={course_skew[0]:+.2f}, APP={course_skew[1]:+.2f}, "
+      f"ARG={course_skew[2]:+.2f}, PUTT={course_skew[3]:+.2f}")
+
+
+def _cf_calibration_multiplier(gamma):
+    """
+    Correction multiplier for first-order Cornish-Fisher saturation.
+
+    The CF expansion underdelivers skewness for |gamma| > ~0.5.
+    This polynomial fit (R²>0.999 on grid from 0 to -2.0) maps
+    target skewness to the input gamma needed to realize it exactly.
+    """
+    ag = abs(gamma)
+    if ag < 0.2:
+        return 1.0
+    return 1.0 + 0.0234 * ag**2 + 0.0125 * ag**3
+
+
+def _apply_skew(z, gamma):
+    """
+    Apply Cornish-Fisher skewness to standard-normal draws.
+
+    Uses first-order CF expansion with calibration correction so that
+    realized skewness matches the target (compensates for CF saturation
+    at |gamma| > ~0.5).
+
+    Args:
+        z: array of draws (any shape, transformation applied elementwise)
+        gamma: target skewness (negative = left-skewed)
+
+    Returns:
+        Transformed draws with mean ~0, variance ~1, skewness ~gamma.
+    """
+    if abs(gamma) < 0.01:
+        return z
+    # Overshoot input to compensate for CF first-order saturation
+    gamma_adj = gamma * _cf_calibration_multiplier(gamma)
+    z_skewed = z + (gamma_adj / 6.0) * (z ** 2 - 1.0)
+    # Variance correction: Var(z') = 1 + gamma_adj^2/18
+    z_skewed /= np.sqrt(1.0 + gamma_adj ** 2 / 18.0)
+    return z_skewed
+
+# Master toggle: use OTT-based in-tournament adjustments or not
+USE_IN_TOURN_OTT = True
 
 
 # --- Helpers ---
@@ -140,28 +221,16 @@ def load_corr_matrix(cat_order):
             return R.values
     return np.eye(len(cat_order))
 
-def categories_given_total_for_player(mu, L, v, denom, S_vec):
-    """
-    Draw X ~ N(mu, Sigma) via Cholesky, then project so sum(X)=S for each S in S_vec.
-    Sigma is implied by L (Cholesky), v = Sigma * 1, denom = 1' Sigma 1.
-    """
-    Z = RNG.standard_normal(size=(S_vec.shape[0], 4))
-    X = mu + (Z @ L.T)
-    sum_x = X @ np.ones(4)
-    k = (S_vec - sum_x) / denom
-    Xc = X + k[:, None] * v
-    return np.clip(Xc, CLIP_CAT[0], CLIP_CAT[1])
-
 def rank_positions_from_strokes(strokes_asc_int):
     s = pd.Series(strokes_asc_int)
     return s.rank(method='min').astype(int).to_numpy()
 
 def coeff_vec_r1(cdict):
-    # order: ott, (app unused), (arg unused), putt, residual, residual2
     return np.array([cdict['ott'], 0.0, 0.0, cdict['putt'], cdict['residual'], cdict['residual2']], dtype=float)
 
 def ensure_array(x, shape):
     return x if isinstance(x, np.ndarray) else np.zeros(shape, dtype=float)
+
 
 # --- Load predictions ---
 model_preds = pd.read_csv(PRED_PATH).rename(columns={'pred': 'my_pred'})
@@ -172,13 +241,13 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
-# --- Pull sample sizes from pre_course_fit if missing (final_predictions doesn't include them) ---
+# Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
     pcf = pd.read_csv(_pre_course_path, usecols=['player_name', 'sample'])
     pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     model_preds = model_preds.merge(pcf, on='player_name', how='left')
 
-# --- Replace low-confidence predictions with DG decomposition ---
+# Replace low-confidence predictions with DG decomposition
 from api_utils import fetch_player_decompositions
 dg_decomp = fetch_player_decompositions(API_KEY)
 if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
@@ -188,11 +257,11 @@ if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
     if n_replaced > 0:
         replaced = model_preds.loc[mask, ['player_name', 'my_pred', 'dg_final_pred']].copy()
         model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
-        print(f"[DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
+        print(f"[v2 DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
         for _, r in replaced.iterrows():
             print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
     else:
-        print("[DG decomp] No predictions below threshold needed replacement")
+        print("[v2 DG decomp] No predictions below threshold needed replacement")
     model_preds = model_preds.drop(columns=['dg_final_pred'])
 
 # --- Weather for SIM (R1/R2 only; sim waves centered) ---
@@ -213,20 +282,24 @@ model_preds['dew_adj_r2_sim']  = dew_calculation * np.array(dew_r2_sim, dtype=fl
 for col in ['wind_adj_r1_sim', 'wind_adj_r2_sim', 'dew_adj_r1_sim', 'dew_adj_r2_sim']:
     model_preds[col] = model_preds[col] - model_preds[col].mean()
 
-# Round-level means for SIM
+# Weather deltas per player (scalar, already mean-centered)
+weather_delta_r1 = (model_preds['wind_adj_r1_sim'] + model_preds['dew_adj_r1_sim']).to_numpy(dtype=float)
+weather_delta_r2 = (model_preds['wind_adj_r2_sim'] + model_preds['dew_adj_r2_sim']).to_numpy(dtype=float)
+
+# Round-level means for SIM (used for skill update math — same as v1)
 model_preds['r1_pred'] = model_preds['my_pred'] + model_preds['wind_adj_r1_sim'] + model_preds['dew_adj_r1_sim']
 model_preds['r2_pred'] = model_preds['my_pred'] + model_preds['wind_adj_r2_sim'] + model_preds['dew_adj_r2_sim']
 model_preds['r3_pred'] = model_preds['my_pred']   # no wave
 model_preds['r4_pred'] = model_preds['my_pred']   # no wave
 
-# Per-player round stdev (blend global & player)
+# Per-player round stdev (for validation comparison only — not used for draws)
 preds = model_preds[['player_name', 'my_pred', 'std_dev', 'r1_pred', 'r2_pred', 'r3_pred', 'r4_pred']].copy()
 preds['std'] = (preds['std_dev'] + STD_DEV) / 2.0
 
 player_names = preds['player_name'].tolist()
 n_players = len(player_names)
 
-# --- Sample sizes and pred lookups for email filtering ---
+# Sample sizes and pred lookups for email filtering
 sample_lookup = dict(zip(
     model_preds['player_name'],
     model_preds['sample'].fillna(0).astype(int)
@@ -244,24 +317,34 @@ dists['player_name'] = (
     .replace(name_replacements)
 )
 
-need_cols = {'player_name', 'category_clean', 'mean_adj', 'std_adj'}
+need_cols = {'player_name', 'category_clean', 'mean', 'std', 'skew', 'n_eff'}
 missing = need_cols - set(dists.columns)
 if missing:
     raise ValueError(f"{DISTS_FILE} missing columns: {missing}")
 
-mu_w  = dists.pivot(index='player_name', columns='category_clean', values='mean_adj')
-std_w = dists.pivot(index='player_name', columns='category_clean', values='std_adj')
-global_mu  = dists.groupby('category_clean')['mean_adj'].mean()
-global_std = dists.groupby('category_clean')['std_adj'].median()
+# V2 reads RAW (un-scaled) distributions — course variance scaling is applied
+# via COURSE_CAT_MULTS below, so using 'mean'/'std' avoids double-counting.
+mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean')
+std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
+skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
+neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
+global_mu  = dists.groupby('category_clean')['mean'].mean()
+global_std = dists.groupby('category_clean')['std'].median()
 
 R = load_corr_matrix(CAT_ORDER)
 try:
-    _ = cholesky(R)
+    L_corr = cholesky(R)
 except np.linalg.LinAlgError:
     R = 0.95*R + 0.05*np.eye(4)
+    L_corr = cholesky(R)
 
-player_params = []
-ones4 = np.ones(4)
+# --- Build course-adjusted player params ---
+# Re-center category means so they sum to my_pred (preserves relative proportions,
+# changes only the variance structure — not the base predictions)
+my_pred_series = preds.set_index('player_name')['my_pred']
+
+player_params_v2 = []
+recenter_diffs = []
 for p in player_names:
     mu_row  = mu_w.loc[p].reindex(CAT_ORDER) if p in mu_w.index else pd.Series(index=CAT_ORDER, dtype=float)
     std_row = std_w.loc[p].reindex(CAT_ORDER) if p in std_w.index else pd.Series(index=CAT_ORDER, dtype=float)
@@ -269,36 +352,100 @@ for p in player_names:
     mu  = mu_row.fillna(global_mu.reindex(CAT_ORDER)).to_numpy(dtype=float)
     std = std_row.fillna(global_std.reindex(CAT_ORDER)).to_numpy(dtype=float).clip(1e-6)
 
-    D = np.diag(std)
-    Sigma = D @ R @ D
-    L = cholesky(Sigma)
-    v = Sigma @ ones4
-    denom = float(ones4 @ v)
-    player_params.append((mu, std, Sigma, L, v, denom))
+    # Re-center: shift each category equally so sum(mu) == my_pred
+    cat_sum = mu.sum()
+    target = my_pred_series.loc[p]
+    shift = (target - cat_sum) / 4.0
+    mu = mu + shift
+    recenter_diffs.append(cat_sum - target)
 
-# Align arrays
+    # Apply course variance multipliers
+    std_course = std * course_mults
+    player_params_v2.append((mu, std_course))
+
+recenter_diffs = np.array(recenter_diffs)
+print(f"[v2 recenter] Category means re-centered to my_pred: "
+      f"mean shift={recenter_diffs.mean():.3f}, max |shift|={np.abs(recenter_diffs).max():.3f}, "
+      f"std={recenter_diffs.std():.3f}")
+
+# --- Per-player effective skewness (confidence-weighted blend) ---
+SKEW_BLEND_MAX = 0.5       # max weight on player skew (at full confidence)
+SKEW_CONFIDENCE_N = 100.0   # n_eff at which player reaches full confidence
+
+effective_skew = np.zeros((n_players, 4), dtype=float)
+for i, p in enumerate(player_names):
+    for j, cat in enumerate(CAT_ORDER):
+        # Player-specific skew (fall back to 0 if missing)
+        p_skew = (skew_w.at[p, cat]
+                  if p in skew_w.index and cat in skew_w.columns
+                     and pd.notna(skew_w.at[p, cat])
+                  else 0.0)
+        # Effective sample size
+        p_neff = (neff_w.at[p, cat]
+                  if p in neff_w.index and cat in neff_w.columns
+                     and pd.notna(neff_w.at[p, cat])
+                  else 0.0)
+        # Confidence ramp: 0 → SKEW_BLEND_MAX as n_eff → SKEW_CONFIDENCE_N
+        confidence = min(p_neff / SKEW_CONFIDENCE_N, 1.0)
+        blend_w = SKEW_BLEND_MAX * confidence
+        effective_skew[i, j] = (1 - blend_w) * course_skew[j] + blend_w * p_skew
+
+print(f"[v2 info] Per-player skew blending: max_weight={SKEW_BLEND_MAX}, "
+      f"full_confidence_at_n_eff={SKEW_CONFIDENCE_N}")
+print(f"[v2 info] Effective skew range: "
+      f"min={effective_skew.min():.3f}, max={effective_skew.max():.3f}, "
+      f"mean={effective_skew.mean():.3f}")
+
+# Align arrays (same as v1 — needed for skill updates)
 indexer = preds.set_index('player_name')
 r1_mu = indexer['r1_pred'].reindex(player_names).to_numpy(dtype=float)
 r2_mu = indexer['r2_pred'].reindex(player_names).to_numpy(dtype=float)
 r3_mu = indexer['r3_pred'].reindex(player_names).to_numpy(dtype=float)
 r4_mu = indexer['r4_pred'].reindex(player_names).to_numpy(dtype=float)
 my_pred_base = indexer['my_pred'].reindex(player_names).to_numpy(dtype=float)
-round_std = indexer['std'].reindex(player_names).to_numpy(dtype=float)
+round_std = indexer['std'].reindex(player_names).to_numpy(dtype=float)  # for validation only
+
+print(f"\n[v2] {n_players} players, {SIMULATIONS:,} simulations")
+
 
 # ======================
-# R1: sample totals and decompose; integer strokes
+# R1: Category-first draws
 # ======================
-sg_r1 = RNG.normal(loc=r1_mu[:, None], scale=round_std[:, None], size=(n_players, SIMULATIONS))
 cats_r1 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-    cats_r1[i] = categories_given_total_for_player(mu, L, v, denom, sg_r1[i])
-max_err_r1 = float(np.abs(cats_r1.sum(axis=2) - sg_r1).max())
-print(f"[check] R1 category sum error max: {max_err_r1:.6f}")
+sg_r1 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+for i, (mu, std_c) in enumerate(player_params_v2):
+    # Category means shifted by weather delta
+    cat_mu = mu + weather_delta_r1[i] * WEATHER_CAT_SPLIT
+    Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+    corr_z = Z @ L_corr.T                          # correlated unit-variance draws
+    for j in range(4):                              # apply per-player skewness
+        corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+    draws = cat_mu + corr_z * std_c                 # scale by per-player category stds
+    cats_r1[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+    sg_r1[i] = cats_r1[i].sum(axis=1)
 
 strokes_r1 = np.rint(PAR - sg_r1).astype(int)
 
+# --- Validation: R1 ---
+r1_total_std_realized = np.std(sg_r1, axis=1).mean()
+r1_cat_stds_realized = np.std(cats_r1, axis=1).mean(axis=0)
+print(f"\n[v2 check] R1 total std (realized): {r1_total_std_realized:.3f}  (v1 blend would be ~{round_std.mean():.3f})")
+print(f"[v2 check] R1 category stds (realized): OTT={r1_cat_stds_realized[0]:.3f}, "
+      f"APP={r1_cat_stds_realized[1]:.3f}, ARG={r1_cat_stds_realized[2]:.3f}, PUTT={r1_cat_stds_realized[3]:.3f}")
+# Realized skewness check
+from scipy.stats import skew as _skew_fn
+r1_cat_skew_realized = np.array([_skew_fn(cats_r1[:, :, j].ravel()) for j in range(4)])
+print(f"[v2 check] R1 category skew (realized): OTT={r1_cat_skew_realized[0]:+.3f}, "
+      f"APP={r1_cat_skew_realized[1]:+.3f}, ARG={r1_cat_skew_realized[2]:+.3f}, PUTT={r1_cat_skew_realized[3]:+.3f}")
+print(f"[v2 check] R1 category skew  (targets): OTT={effective_skew[:, 0].mean():+.3f}, "
+      f"APP={effective_skew[:, 1].mean():+.3f}, ARG={effective_skew[:, 2].mean():+.3f}, "
+      f"PUTT={effective_skew[:, 3].mean():+.3f}")
+print(f"[v2 check] R1 mean SG (field): {sg_r1.mean():.4f}  (should be near 0)")
+
+
 # ======================
-# R1 → R2 skill update
+# R1 -> R2 skill update (same logic as v1)
 # ======================
 resid_r1  = sg_r1 - my_pred_base[:, None]
 resid2_r1 = resid_r1**2
@@ -333,18 +480,31 @@ total_adjustment_r1 = tot_resid_adj_r1 + sg_adj_r1
 updated_skill_r2 = my_pred_base[:, None] + total_adjustment_r1
 sg_r2_mean = updated_skill_r2 + (r2_mu - my_pred_base)[:, None]
 
+
 # ======================
-# R2: sample totals and decompose; integer strokes
+# R2: Category-first draws with skill update shift
 # ======================
-sg_r2 = RNG.normal(loc=sg_r2_mean, scale=round_std[:, None], size=(n_players, SIMULATIONS))
 cats_r2 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-    cats_r2[i] = categories_given_total_for_player(mu, L, v, denom, sg_r2[i])
-max_err_r2 = float(np.abs(cats_r2.sum(axis=2) - sg_r2).max())
-print(f"[check] R2 category sum error max: {max_err_r2:.6f}")
+sg_r2 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+for i, (mu, std_c) in enumerate(player_params_v2):
+    # Category means shifted by weather delta
+    cat_mu = mu + weather_delta_r2[i] * WEATHER_CAT_SPLIT
+    # Skill update shift: distribute evenly across 4 categories
+    base_total_mu = mu.sum() + weather_delta_r2[i]
+    skill_shift = sg_r2_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+    cat_mu_shifted = cat_mu + skill_shift[:, None] / 4.0
+    Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+    corr_z = Z @ L_corr.T
+    for j in range(4):
+        corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+    draws = cat_mu_shifted + corr_z * std_c
+    cats_r2[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+    sg_r2[i] = cats_r2[i].sum(axis=1)
 
 strokes_r2 = np.rint(PAR - sg_r2).astype(int)
 r1_r2_scores = strokes_r1 + strokes_r2
+
 
 # ======================
 # CUT LOGIC after 36 (Top-N and ties)
@@ -360,8 +520,9 @@ for j in range(SIMULATIONS):
     else:
         made_cut_mask[:, j] = top_cut
 
+
 # ======================
-# R2 → R3 skill update (position buckets; uses R1+R2 stats)
+# R2 -> R3 skill update (position buckets; uses R1+R2 stats)
 # ======================
 resid_r2  = sg_r2 - sg_r2_mean
 resid2_r2 = resid_r2**2
@@ -428,28 +589,41 @@ tot_sg_adj_r2 = (
     ensure_array(adj_sum.get('avg_arg_adj', 0.0),   shape2) +
     ensure_array(adj_sum.get('delta_app_adj', 0.0), shape2)
 )
-sg_adj_r1 = ensure_array(sg_adj_r1, shape2)  # avoid double counting R1 part
+sg_adj_r1 = ensure_array(sg_adj_r1, shape2)
 total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
 
 updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
 sg_r3_mean = updated_skill_r3 + (r3_mu - my_pred_base)[:, None]
 
+
 # ======================
-# R3: sample totals & decompose; integer strokes
+# R3: Category-first draws (no weather)
 # ======================
-sg_r3 = RNG.normal(loc=sg_r3_mean, scale=round_std[:, None], size=(n_players, SIMULATIONS))
 cats_r3 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-    cats_r3[i] = categories_given_total_for_player(mu, L, v, denom, sg_r3[i])
+sg_r3 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+for i, (mu, std_c) in enumerate(player_params_v2):
+    # No weather delta for R3
+    base_total_mu = mu.sum()
+    skill_shift = sg_r3_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+    cat_mu_shifted = mu + skill_shift[:, None] / 4.0
+    Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+    corr_z = Z @ L_corr.T
+    for j in range(4):
+        corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+    draws = cat_mu_shifted + corr_z * std_c
+    cats_r3[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+    sg_r3[i] = cats_r3[i].sum(axis=1)
 
 strokes_r3 = np.rint(PAR - sg_r3).astype(int)
 r1_r3_scores = r1_r2_scores + strokes_r3
 
+
 # ======================
-# R3 → R4 (AVG-SG ONLY; position buckets)
+# R3 -> R4 (AVG-SG ONLY; position buckets)
 # ======================
 avg_ott_r3  = 0.66 * (0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])) + 0.34 * cats_r3[:, :, 0]
-avg_app_r3  = 0.66 * ( 0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])) + 0.34 * cats_r3[:, :, 1]
+avg_app_r3  = 0.66 * (0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])) + 0.34 * cats_r3[:, :, 1]
 avg_arg_r3  = 0.66 * (0.5 * (cats_r1[:, :, 2] + cats_r2[:, :, 2])) + 0.34 * cats_r3[:, :, 2]
 avg_putt_r3 = 0.66 * (0.5 * (cats_r1[:, :, 3] + cats_r2[:, :, 3])) + 0.34 * cats_r3[:, :, 3]
 
@@ -499,13 +673,24 @@ total_adjustment_r3 = tot_sg_adj_r3
 updated_skill_r4 = updated_skill_r3 - (tot_sg_adj_r2 + tot_resid_adj_r2) + total_adjustment_r3
 sg_r4_mean = updated_skill_r4 + (r4_mu - my_pred_base)[:, None]
 
+
 # ======================
-# R4: sample totals & decompose; integer strokes
+# R4: Category-first draws (no weather)
 # ======================
-sg_r4 = RNG.normal(loc=sg_r4_mean, scale=round_std[:, None], size=(n_players, SIMULATIONS))
 cats_r4 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-    cats_r4[i] = categories_given_total_for_player(mu, L, v, denom, sg_r4[i])
+sg_r4 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+for i, (mu, std_c) in enumerate(player_params_v2):
+    base_total_mu = mu.sum()
+    skill_shift = sg_r4_mean[i] - base_total_mu
+    cat_mu_shifted = mu + skill_shift[:, None] / 4.0
+    Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+    corr_z = Z @ L_corr.T
+    for j in range(4):
+        corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+    draws = cat_mu_shifted + corr_z * std_c
+    cats_r4[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+    sg_r4[i] = cats_r4[i].sum(axis=1)
 
 strokes_r4 = np.rint(PAR - sg_r4).astype(int)
 
@@ -516,20 +701,68 @@ r3_r4[~made_cut_mask] = 200
 # Final integer 72-hole totals
 final_scores = r1_r2_scores + r3_r4
 
+
 # ======================
-# Markets (WIN; Top-5/10/20 with dead-heat)
+# Validation checks
 # ======================
-simulated_winners = []
+print(f"\n{'='*50}")
+print("  V2 VALIDATION CHECKS")
+print(f"{'='*50}")
+
+# 1. Total std dev per round
+for rnd, sg_arr, label in [(1, sg_r1, "R1"), (2, sg_r2, "R2"), (3, sg_r3, "R3"), (4, sg_r4, "R4")]:
+    std_realized = np.std(sg_arr, axis=1).mean()
+    print(f"  {label} total std (realized avg): {std_realized:.3f}")
+
+# 2. Category stds vs expected
+print(f"\n  Category stds (R1 realized vs input*course_mult):")
+for k, cat in enumerate(["OTT", "APP", "ARG", "PUTT"]):
+    realized = np.std(cats_r1[:, :, k], axis=1).mean()
+    expected_avg = np.mean([p[1][k] for p in player_params_v2])
+    print(f"    {cat}: realized={realized:.3f}, expected_avg={expected_avg:.3f}, ratio={realized/expected_avg:.3f}")
+
+# 3. Win prob sanity
+simulated_winners_v2 = []
 for j in range(SIMULATIONS):
     sc = final_scores[:, j]
     min_score = sc.min()
     tied = np.where(sc == min_score)[0]
     winner_idx = RNG.choice(tied)
-    simulated_winners.append(player_names[winner_idx])
+    simulated_winners_v2.append(player_names[winner_idx])
 
-win_counts = pd.Series(simulated_winners).value_counts(normalize=True)
+win_counts = pd.Series(simulated_winners_v2).value_counts(normalize=True)
+print(f"\n  Win prob sum: {win_counts.sum():.4f} (should be 1.0)")
+print(f"  Top winner: {win_counts.index[0]} at {win_counts.iloc[0]*100:.1f}%")
+if win_counts.iloc[0] > 0.25:
+    print(f"  [WARN] Top win prob > 25% — may indicate variance too low")
+
+# 4. Mean SG near 0
+print(f"\n  Mean field SG: R1={sg_r1.mean():.4f}, R2={sg_r2.mean():.4f}, R3={sg_r3.mean():.4f}, R4={sg_r4.mean():.4f}")
+
+# 5. Category correlations
+r1_flat = cats_r1.reshape(-1, 4)
+sample_idx = RNG.choice(r1_flat.shape[0], size=min(100000, r1_flat.shape[0]), replace=False)
+r1_sample = r1_flat[sample_idx]
+realized_corr = np.corrcoef(r1_sample.T)
+print(f"\n  Realized category correlations (R1 sample):")
+cat_labels = ["OTT", "APP", "ARG", "PUTT"]
+for i_c in range(4):
+    for j_c in range(i_c+1, 4):
+        print(f"    {cat_labels[i_c]}-{cat_labels[j_c]}: realized={realized_corr[i_c,j_c]:.4f}, input={R[i_c,j_c]:.4f}")
+
+print(f"{'='*50}\n")
+
+
+# ======================
+# Markets (WIN; Top-5/10/20 with dead-heat)
+# ======================
 sim_win_probs = win_counts.rename_axis('player_name').reset_index(name='simulated_win_prob')
-sim_win_probs.to_csv("simulated_probs.csv", index=False)
+
+# V2 output directory
+v2_dir = os.path.join(".", tourney, "v2")
+os.makedirs(v2_dir, exist_ok=True)
+
+sim_win_probs.to_csv(os.path.join(v2_dir, "simulated_probs.csv"), index=False)
 
 df_long = pd.DataFrame(final_scores, index=player_names).T
 df_long['simulation_id'] = np.arange(SIMULATIONS)
@@ -557,102 +790,18 @@ for sim_id, group in long_df.groupby("simulation_id", sort=False):
 
 topn_df = pd.DataFrame.from_dict(player_stats, orient='index')
 topn_df = topn_df.div(SIMULATIONS).reset_index().rename(columns={'index': 'player_name'})
-topn_df.to_csv(f"top_finish_probs_{tourney}.csv", index=False)
+topn_df.to_csv(os.path.join(v2_dir, f"top_finish_probs_{tourney}.csv"), index=False)
 
 finish_equity_df = pd.merge(sim_win_probs, topn_df, on="player_name", how="outer").fillna(0)
 for col in ['simulated_win_prob', 'top_5', 'top_10', 'top_20']:
     finish_equity_df[f"{col}_a"] = finish_equity_df[col].apply(prob_to_american)
-finish_equity_df.to_csv(f"finish_equity_{tourney}.csv", index=False)
+finish_equity_df.to_csv(os.path.join(v2_dir, f"finish_equity_{tourney}.csv"), index=False)
 
-# ======================
-# Dump the full leaderboard for the FIRST simulation iteration (j=0) with adjustments
-# ======================
-if DUMP_FIRST_SIM:
-    j = 0
-    pos_r1 = rank_positions_from_strokes(strokes_r1[:, j])
-    pos_r2 = rank_positions_from_strokes(r1_r2_scores[:, j])
-    pos_r3 = rank_positions_from_strokes(r1_r3_scores[:, j])
-    pos_r4 = rank_positions_from_strokes(final_scores[:, j])
-
-    r2_wave = (r2_mu - my_pred_base)
-    r3_wave = (r3_mu - my_pred_base)
-    r4_wave = (r4_mu - my_pred_base)
-
-    skill_base = my_pred_base
-    skill_r2   = updated_skill_r2[:, j]
-    skill_r3   = updated_skill_r3[:, j]
-    skill_r4   = updated_skill_r4[:, j]
-
-    adj_r1_resid = tot_resid_adj_r1[:, j]
-    adj_r1_ott   = ott_adj_r1[:, j]
-    adj_r1_putt  = putt_adj_r1[:, j]
-    adj_r1_total = adj_r1_resid + adj_r1_ott + adj_r1_putt
-
-    adj_r2_resid_total = tot_resid_adj_r2[:, j]
-    adj_r2_sg_total    = tot_sg_adj_r2[:, j]
-    adj_r2_total       = total_adjustment_r2[:, j]
-
-    adj_r3_resid_total = np.zeros_like(adj_r2_resid_total)
-    adj_r3_sg_total    = tot_sg_adj_r3[:, j]
-    adj_r3_total       = adj_r3_sg_total
-    adj_r4_increment   = -(adj_r2_resid_total + adj_r2_sg_total) + (adj_r3_sg_total)
-
-    r1_to_par = (strokes_r1[:, j] - PAR)
-    r2_to_par = (r1_r2_scores[:, j] - 2*PAR)
-    r3_to_par = (r1_r3_scores[:, j] - 3*PAR)
-    r4_to_par = (final_scores[:, j] - 4*PAR)
-
-    df_dump = pd.DataFrame({
-        "player_name": player_names,
-        # integer strokes and to-par
-        "r1_strokes":  strokes_r1[:, j], "r1_to_par": r1_to_par,
-        "r2_strokes_36": r1_r2_scores[:, j], "r2_to_par": r2_to_par,
-        "r3_strokes_54": r1_r3_scores[:, j], "r3_to_par": r3_to_par,
-        "r4_strokes_72": final_scores[:, j], "r4_to_par": r4_to_par,
-        # SG totals & cats
-        "r1_sg_total": sg_r1[:, j], "r1_sg_ott": cats_r1[:, j, 0], "r1_sg_app": cats_r1[:, j, 1],
-        "r1_sg_arg": cats_r1[:, j, 2], "r1_sg_putt": cats_r1[:, j, 3], "r1_pos": pos_r1,
-        "r2_sg_total": sg_r2[:, j], "r2_sg_ott": cats_r2[:, j, 0], "r2_sg_app": cats_r2[:, j, 1],
-        "r2_sg_arg": cats_r2[:, j, 2], "r2_sg_putt": cats_r2[:, j, 3], "r2_pos": pos_r2,
-        "r3_sg_total": sg_r3[:, j], "r3_sg_ott": cats_r3[:, j, 0], "r3_sg_app": cats_r3[:, j, 1],
-        "r3_sg_arg": cats_r3[:, j, 2], "r3_sg_putt": cats_r3[:, j, 3], "r3_pos": pos_r3,
-        "r4_sg_total": sg_r4[:, j], "r4_sg_ott": cats_r4[:, j, 0], "r4_sg_app": cats_r4[:, j, 1],
-        "r4_sg_arg": cats_r4[:, j, 2], "r4_sg_putt": cats_r4[:, j, 3], "r4_pos": pos_r4,
-        # running avg cats
-        "avg_ott_r1": cats_r1[:, j, 0], "avg_app_r1": cats_r1[:, j, 1],
-        "avg_arg_r1": cats_r1[:, j, 2], "avg_putt_r1": cats_r1[:, j, 3],
-        "avg_ott_r2": 0.5*(cats_r1[:, j, 0]+cats_r2[:, j, 0]),
-        "avg_app_r2": 0.5*(cats_r1[:, j, 1]+cats_r2[:, j, 1]),
-        "avg_arg_r2": 0.5*(cats_r1[:, j, 2]+cats_r2[:, j, 2]),
-        "avg_putt_r2": 0.5*(cats_r1[:, j, 3]+cats_r2[:, j, 3]),
-        "avg_ott_r3": avg_ott_r3[:, j],
-        "avg_app_r3": avg_app_r3[:, j],
-        "avg_arg_r3": avg_arg_r3[:, j],
-        "avg_putt_r3": avg_putt_r3[:, j],
-        # skill & waves
-        "skill_base": skill_base,
-        "adj_r1_resid": adj_r1_resid, "adj_r1_ott": adj_r1_ott, "adj_r1_putt": adj_r1_putt,
-        "adj_r1_total": adj_r1_total, "skill_r2": skill_r2, "r2_wave": r2_wave, "r2_mean": sg_r2_mean[:, j],
-        "adj_r2_resid_total": adj_r2_resid_total, "adj_r2_sg_total": adj_r2_sg_total, "adj_r2_total": adj_r2_total,
-        "skill_r3": skill_r3, "r3_wave": r3_wave, "r3_mean": sg_r3_mean[:, j],
-        "adj_r3_resid_total": adj_r3_resid_total, "adj_r3_sg_total": adj_r3_sg_total, "adj_r3_total": adj_r3_total,
-        "adj_r4_increment": adj_r4_increment, "skill_r4": skill_r4, "r4_wave": r4_wave, "r4_mean": sg_r4_mean[:, j],
-        # totals
-        "total_sg": (sg_r1[:, j] + sg_r2[:, j] + sg_r3[:, j] + sg_r4[:, j]),
-        "total_strokes": final_scores[:, j],
-        "final_pos": pos_r4,
-    })
-    df_dump.sort_values(["final_pos", "total_strokes", "player_name"], inplace=True)
-    df_dump.to_csv(DUMP_FILENAME, index=False)
-    print(f"[dump] wrote {DUMP_FILENAME}")
-
-print(f"[ok] Sim complete for {tourney}.")
+print(f"[v2 ok] Sim complete for {tourney}.")
 print(f"  Players: {n_players}, Sims: {SIMULATIONS}")
-print(f"  Outputs: simulated_probs.csv, top_finish_probs_{tourney}.csv, finish_equity_{tourney}.csv")
+print(f"  Outputs in: {v2_dir}/")
 
-# ======================
-# Per-player expected SG summaries (optional; same as before)
-# ======================
+# Per-player expected SG summaries
 COLS = ["ott", "app", "arg", "putt"]
 r1m = cats_r1.mean(axis=1); r2m = cats_r2.mean(axis=1); r3m = cats_r3.mean(axis=1); r4m = cats_r4.mean(axis=1)
 r1_total_mean = sg_r1.mean(axis=1); r2_total_mean = sg_r2.mean(axis=1)
@@ -660,7 +809,7 @@ r3_total_mean = sg_r3.mean(axis=1); r4_total_mean = sg_r4.mean(axis=1)
 per_round_avg_cat = ((cats_r1 + cats_r2 + cats_r3 + cats_r4) / 4.0).mean(axis=1)
 tourn_total_per_round_mean = ((sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0).mean(axis=1)
 
-rows = []
+rows_avg = []
 for i, p in enumerate(player_names):
     row = {"player_name": p}
     for k, col in enumerate(COLS):
@@ -674,12 +823,10 @@ for i, p in enumerate(player_names):
     row["r3_total_mean"] = float(r3_total_mean[i])
     row["r4_total_mean"] = float(r4_total_mean[i])
     row["tourn_total_sg_per_round_mean"] = float(tourn_total_per_round_mean[i])
-    rows.append(row)
+    rows_avg.append(row)
 
-df_avg = pd.DataFrame(rows)
-out_avg_file = f"avg_expected_cat_sg_{tourney}.csv"
-df_avg.to_csv(out_avg_file, index=False)
-print(f"[ok] wrote {out_avg_file}")
+df_avg = pd.DataFrame(rows_avg)
+df_avg.to_csv(os.path.join(v2_dir, f"avg_expected_cat_sg_{tourney}.csv"), index=False)
 
 rank_probs = (
     long_df.groupby(['player_name', 'rank'])
@@ -688,21 +835,17 @@ rank_probs = (
             .rename('prob')
             .reset_index()
 )
-
-# === SAVE UPDATED-SIM RANK DISTRIBUTIONS (for dashboard overlay) ===
 rank_probs_updated = rank_probs.rename(columns={'prob': 'prob_u'}).copy()
 rank_probs_updated['rank'] = rank_probs_updated['rank'].astype(int)
-rank_probs_updated.to_parquet(f"rank_probs_updated_{tourney}.parquet", index=False)
-print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
+rank_probs_updated.to_parquet(os.path.join(v2_dir, f"rank_probs_updated_{tourney}.parquet"), index=False)
 
 
 # ============================================================
-# OUTRIGHTS & TOP-N PRICING VS MARKET + BET SHEETS (same outputs as old flow)
+# OUTRIGHTS & TOP-N PRICING VS MARKET
 # ============================================================
 
-# --- Config for betting outputs ---
-EDGE_THRESHOLD_WIN   = 2.0     # minimum edge (pp) for WIN market (sim_prob - implied_prob)
-EDGE_THRESHOLD_TOPN  = 2.0     # minimum edge (pp) for Top-N markets (sim_prob - implied_prob)
+EDGE_THRESHOLD_WIN   = 2.0
+EDGE_THRESHOLD_TOPN  = 2.0
 BANKROLL             = 10000.0
 KELLY_FRACTION       = 0.25
 RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','pointsbet','wynnbet','unibet','betway','betfred','betrivers']
@@ -731,23 +874,19 @@ def fetch_market_data(market_name):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"[warn] Failed to fetch {market_name}: {e}")
+        print(f"[v2 warn] Failed to fetch {market_name}: {e}")
         return {}
 
 def extract_market_rows(json_obj, odds_key='odds'):
     if not isinstance(json_obj, dict):
         return pd.DataFrame()
-    
     entries = json_obj.get(odds_key, [])
     if not isinstance(entries, list):
         return pd.DataFrame()
-
     rows = []
     for entry in entries:
-        # Check if entry is actually a dictionary before accessing .get
         if not isinstance(entry, dict):
             continue
-            
         player = entry.get('player_name', '')
         if not player:
             continue
@@ -759,9 +898,7 @@ def extract_market_rows(json_obj, odds_key='odds'):
     return pd.DataFrame(rows)
 
 model_preds['player_name'] = model_preds['player_name'].str.lower().str.strip()
-# (Do the same for any other model tables if needed, e.g., topn_df, sim_win_probs)
 
-# Rebuild helpers
 sample_df = model_preds[['player_name','sample']].copy() if 'sample' in model_preds.columns else \
             pd.DataFrame({'player_name': model_preds['player_name'], 'sample': np.nan})
 
@@ -779,110 +916,88 @@ if not win_df.empty:
     b = win_merged['decimal_odds'] - 1.0
     q = 1.0 - p
     win_merged['edge'] = (p - win_merged['implied_prob']) * 100.0
-
-    # Keep all positive-edge bets for storage; email applies its own stricter filter
     win_filtered = win_merged[win_merged['edge'] > 0].copy()
     f_star = (b * p - q) / b
     win_filtered['stake'] = (BANKROLL * KELLY_FRACTION * f_star.clip(lower=0)).astype(float)
     win_filtered['eg'] = f_star * win_filtered['edge'] / 2.0
     win_filtered['market_type'] = 'win'
     n_email = (win_filtered['edge'] > EDGE_THRESHOLD_WIN).sum()
-    print(f"[finish-pos] WIN: checked {len(win_merged)} player-book lines, "
-          f"best edge {win_merged['edge'].max():.1f}pp -> {len(win_filtered)} saved, {n_email} email-worthy (>{EDGE_THRESHOLD_WIN}pp)")
+    print(f"[v2 finish-pos] WIN: checked {len(win_merged)} player-book lines, "
+          f"best edge {win_merged['edge'].max():.1f}pp -> {len(win_filtered)} saved, {n_email} email-worthy")
 else:
     win_filtered = pd.DataFrame()
-    print("[finish-pos] WIN: no market data returned from API")
+    print("[v2 finish-pos] WIN: no market data returned from API")
 
 # --- Top-N helper ---
 def process_topn_market(market, prob_col):
     data = fetch_market_data(market)
     if not data:
-        print(f"[finish-pos] {market.upper()}: no market data returned from API")
+        print(f"[v2 finish-pos] {market.upper()}: no market data returned from API")
         return pd.DataFrame()
-
     df = extract_market_rows(data, odds_key='odds')
     if df.empty:
-        print(f"[finish-pos] {market.upper()}: API returned data but no parseable odds rows")
+        print(f"[v2 finish-pos] {market.upper()}: API returned data but no parseable odds rows")
         return pd.DataFrame()
-
-    # merge model probs
     if prob_col not in topn_df.columns:
-        print(f"[finish-pos] {market.upper()}: '{prob_col}' column not found in topn_df")
+        print(f"[v2 finish-pos] {market.upper()}: '{prob_col}' column not found in topn_df")
         return pd.DataFrame()
-
     df = df.merge(topn_df[['player_name', prob_col]], on='player_name', how='inner')
-
-    # implieds from market price
-    df['implied_prob'] = 1.0 / df['decimal_odds']                # market implied (no-vig)
+    df['implied_prob'] = 1.0 / df['decimal_odds']
     df['american_odds'] = df['decimal_odds'].apply(decimal_to_american)
-
-    # ensure p is 0–1
     p = df[prob_col].astype(float)
     if p.max() > 1.0:
         p = p / 100.0
-
-    # edge & sizing
     b = df['decimal_odds'] - 1.0
     q = 1.0 - p
     df['edge'] = (p - df['implied_prob']) * 100.0
     n_checked = len(df)
     best_edge = df['edge'].max() if not df.empty else 0.0
-    # Keep all positive-edge bets for storage; email applies its own stricter filter
     df = df[df['edge'] > 0].copy()
     n_email = (df['edge'] > EDGE_THRESHOLD_TOPN).sum()
-    print(f"[finish-pos] {market.upper()}: checked {n_checked} player-book lines, "
-          f"best edge {best_edge:.1f}pp -> {len(df)} saved, {n_email} email-worthy (>{EDGE_THRESHOLD_TOPN}pp)")
+    print(f"[v2 finish-pos] {market.upper()}: checked {n_checked} player-book lines, "
+          f"best edge {best_edge:.1f}pp -> {len(df)} saved, {n_email} email-worthy")
     if df.empty:
         return df
-
     f_star = (b * p - q) / b
     df['stake'] = (BANKROLL * KELLY_FRACTION * f_star.clip(lower=0)).astype(float)
     df['eg'] = f_star * df['edge'] / 2.0
     df['market_type'] = market
-
-    # your model fair (for display)
     df['my_fair'] = p.apply(prob_to_american)
     return df
-
 
 top5_bets  = process_topn_market('top_5',  'top_5')
 top10_bets = process_topn_market('top_10', 'top_10')
 top20_bets = process_topn_market('top_20', 'top_20')
 
-# Combine all candidate bets (Filter empty DFs first)
+# Combine all candidate bets
 frames_to_concat = [df for df in [win_filtered, top5_bets, top10_bets, top20_bets] if not df.empty]
 if frames_to_concat:
     combined_finish_df = pd.concat(frames_to_concat, ignore_index=True)
     n_email_worthy = (combined_finish_df['edge'] > EDGE_THRESHOLD_WIN).sum()
-    print(f"\n[finish-pos] TOTAL: {len(combined_finish_df)} +EV bets saved to Sheets, "
-          f"{n_email_worthy} email-worthy (>{EDGE_THRESHOLD_WIN}pp)")
+    print(f"\n[v2 finish-pos] TOTAL: {len(combined_finish_df)} +EV bets, "
+          f"{n_email_worthy} email-worthy")
 else:
     combined_finish_df = pd.DataFrame()
-    print("\n[finish-pos] TOTAL: 0 +EV bets found across all 4 finish position markets")
+    print("\n[v2 finish-pos] TOTAL: 0 +EV bets found")
 
-combined_finish_df.to_csv('finish_test.csv')
+combined_finish_df.to_csv(os.path.join(v2_dir, 'finish_test.csv'))
 
-# Keep only best price per player/market (highest decimal odds)
+# Best price per player/market
 if not combined_finish_df.empty:
     combined_finish_df = (
         combined_finish_df.sort_values(['player_name','market_type','decimal_odds'], ascending=[True, True, False])
         .drop_duplicates(subset=['player_name','market_type'], keep='first')
     )
-
-    # Add metadata: sample + my_pred
     combined_finish_df = (
         combined_finish_df
         .merge(sample_df, on='player_name', how='left')
         .merge(pred_join, on='player_name', how='left')
     )
-
-    # Light filter like old flow (tweak as needed)
     combined_finish_df = combined_finish_df[
         (combined_finish_df['sample'].fillna(0) >= 0) &
         (combined_finish_df['my_pred'].fillna(0) >= -1.0)
     ].copy()
 
-    # Present odds shapes
     combined_finish_df['american_odds'] = combined_finish_df['decimal_odds'].apply(decimal_to_american)
     def pick_my_fair(row):
         if row['market_type'] == 'win':
@@ -896,7 +1011,6 @@ if not combined_finish_df.empty:
         return np.nan
     combined_finish_df['my_fair'] = combined_finish_df.apply(pick_my_fair, axis=1)
 
-    # Collapse books to one row per player/market/price (aggregate identical best prices)
     output_df = (
         combined_finish_df
         .groupby(['player_name','market_type','decimal_odds'])
@@ -915,7 +1029,6 @@ if not combined_finish_df.empty:
 
     output_df.rename(columns={'market_type':'market','bookmaker':'book'}, inplace=True)
 
-    # Book groups & bankroll scaling
     def classify_book(book_str):
         books = [b.strip().lower() for b in str(book_str).split(',')]
         if any(b == 'betonline' for b in books): return 'betonline'
@@ -927,53 +1040,39 @@ if not combined_finish_df.empty:
 
     output_df['book_group'] = output_df['book'].apply(classify_book)
     output_df['bookroll']   = output_df['book_group'].map(BANKROLLS).fillna(BANKROLL)
-    # Share by edge gain (eg)
     eg_total = output_df['eg'].sum()
     output_df['eg_share'] = np.where(eg_total > 0, output_df['eg'] / eg_total, 0.0)
-
-    # Scale stake by book group bankroll; cap at 15% of bucket
     output_df['size_grouped'] = output_df['stake'] * (output_df['bookroll'] / BANKROLL)
     output_df['size_grouped'] = np.minimum(output_df['size_grouped'], 0.15 * output_df['bookroll'])
     output_df['size'] = output_df['size_grouped'].round(2)
-
-    # Rank within player/market by size
     output_df['rank'] = output_df.groupby(['player_name','market'])['size'].rank(method='max', ascending=False)
-    # After: output_df['rank'] = ...
+
     fb = pd.read_csv(PRED_PATH)
     fb['player_name'] = (
         fb['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     )
     if 'sample' in fb.columns:
         sample_map = fb.set_index('player_name')['sample']
-        # map by a normalized key, but keep original names intact
         _key = output_df['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
         output_df['sample'] = _key.map(sample_map).combine_first(output_df['sample'])
         del _key
 
-
-    # Keep pre-filter copy for ALL workbook
     output_df_all = output_df.copy()
+    sharp_books_list = ['betcris','pinnacle','betonline']
+    pattern = '|'.join(sharp_books_list)
+    sharp_df_finish = output_df[output_df['book'].str.contains(pattern, case=False, na=False)].copy()
 
-    # Optional filter: like old flow, drop non-win bets when my_pred < 1
-    sharp_books = ['betcris','pinnacle','betonline']
-    pattern = '|'.join(sharp_books)
-    sharp_df = output_df[output_df['book'].str.contains(pattern, case=False, na=False)].copy()
-    # sharp_df = sharp_df[~((sharp_df['my_pred'] < 1) & (sharp_df['market'] != 'win'))].copy()
-    # output_df = output_df[~((output_df['my_pred'] < 1) & (output_df['market'] != 'win'))].copy()
-
-    # --- Save outputs (same structure/names as old flow) ---
+    # Save outputs to v2 directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    base_dir  = os.path.join(r"C:\Users\mckin\OneDrive", tourney)
-    finish_dir = os.path.join(base_dir, "finish_pos")
+    finish_dir = os.path.join(v2_dir, "finish_pos")
     os.makedirs(finish_dir, exist_ok=True)
 
     if not output_df.empty:
         output_df.to_csv(os.path.join(finish_dir, f"positions_{tourney}_{timestamp}.csv"), index=False)
-    if not sharp_df.empty:
-        sharp_df.sort_values("eg", ascending=False).assign(size=lambda d: d['size'].round(2)) \
+    if not sharp_df_finish.empty:
+        sharp_df_finish.sort_values("eg", ascending=False).assign(size=lambda d: d['size'].round(2)) \
                 .to_csv(os.path.join(finish_dir, f"sharp_pos_{tourney}.csv"), index=False)
 
-    # Excel workbooks (grouped by book group)
     def write_grouped_workbook(df, path):
         grouped = df.drop(columns=['decimal_odds'], errors='ignore').copy()
         combined = grouped.assign(bet_key=lambda d: d['player_name'] + ' | ' + d['market'])
@@ -989,15 +1088,14 @@ if not combined_finish_df.empty:
     write_grouped_workbook(output_df_all, os.path.join(finish_dir, f"grouped_bankroll_ALL_{tourney}.xlsx"))
 
 else:
-    print("[warn] No valid finish positions bets found to process.")
+    print("[v2 warn] No valid finish positions bets found to process.")
 
 
 # ============================================================
 # MATCHUPS PRICING (tournament matchups) + weather impact CSV
 # ============================================================
 
-# --- Weather impact report (independent of sim waves) ---
-# We recompute wind/dew with report factors (wind_calculation_report, dew_calculation)
+# --- Weather impact report ---
 wx = model_preds[['player_name', 'r1_teetime', 'r2_teetime', 'my_pred']].copy()
 wx['r1_teetime'] = pd.to_datetime(wx['r1_teetime'], format='mixed', errors='coerce')
 wx['r2_teetime'] = pd.to_datetime(wx['r2_teetime'], format='mixed', errors='coerce')
@@ -1014,7 +1112,6 @@ wx['wind_adj_r2'] = np.array(wind_r2_rep) * wind_calculation_report
 wx['dew_adj_r1']  = np.array(dew_r1_rep) * dew_calculation
 wx['dew_adj_r2']  = np.array(dew_r2_rep) * dew_calculation
 
-# center field means (so waves sum to ~0; individual - mean matches rd_1_sd pattern)
 for c in ['wind_adj_r1','wind_adj_r2','dew_adj_r1','dew_adj_r2']:
     wx[c] = wx[c] - wx[c].mean()
 
@@ -1023,8 +1120,7 @@ wx['dew_adv_r1_2']  = wx['dew_adj_r1']  + wx['dew_adj_r2']
 
 wx_out = wx[['player_name','dew_adj_r1','wind_adj_r1','dew_adj_r2','wind_adj_r2','dew_adv_r1_2','wind_adv_r1_2']].copy()
 wx_out = wx_out.round(2)
-wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
-print(f"[ok] wrote weather_impact_{tourney}.csv")
+wx_out.to_csv(os.path.join(v2_dir, f'weather_impact_{tourney}.csv'), index=False)
 
 # --- Pull DataGolf tournament matchups ---
 params = {
@@ -1039,19 +1135,18 @@ try:
     resp.raise_for_status()
     data_tournament = resp.json()
 except Exception as e:
-    print(f"[warn] Failed to fetch matchups: {e}")
+    print(f"[v2 warn] Failed to fetch matchups: {e}")
     data_tournament = {}
 
-# Normalize a helper to canonical player key
 def norm_player(s: str) -> str:
     if s is None: return None
     x = str(s).lower().strip()
     return name_replacements.get(x, x)
 
-rows = []
+rows_mu = []
 match_list = data_tournament.get('match_list', [])
 if not isinstance(match_list, list):
-    print(f"[info] No tournament matchups available: {match_list}")
+    print(f"[v2 info] No tournament matchups available: {match_list}")
     match_list = []
 for m in match_list:
     p1 = norm_player(m.get('p1_player_name'))
@@ -1060,7 +1155,7 @@ for m in match_list:
     for book, odds in m.get('odds', {}).items():
         if book == 'datagolf':
             continue
-        rows.append({
+        rows_mu.append({
             'Player 1': p1,
             'Player 2': p2,
             'Bookmaker': book,
@@ -1073,22 +1168,16 @@ for m in match_list:
 
 
 # ============================================================
-# EMAIL: Tournament Sim Summary
+# EMAIL: Tournament Sim V2 Summary
 # ============================================================
 
 def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup):
-    """
-    Build HTML email body with:
-      1. Sharp tournament matchup picks (pred > 0.75, sample > 30)
-      2. Finish position edge table (pred > 0)
-    """
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
-    # ── Section 1: Tournament Matchups ──
+    # Section 1: Tournament Matchups
     mu_html = ""
     if sharp_mu_df is not None and not sharp_mu_df.empty:
         filtered = sharp_mu_df.copy()
-        # Ensure sample_on and pred_on exist
         if 'sample_on' not in filtered.columns:
             filtered['sample_on'] = filtered['bet_on'].str.lower().map(sample_lookup).fillna(0)
         if 'pred_on' not in filtered.columns:
@@ -1163,7 +1252,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
-                    <th style="padding:6px 10px; text-align:center;">½ Shot</th>
+                    <th style="padding:6px 10px; text-align:center;">1/2 Shot</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -1172,7 +1261,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
     else:
         mu_html = "<p>No tournament matchup data available.</p>"
 
-    # ── Section 2: Finish Positions ──
+    # Section 2: Finish Positions
     fp_html = ""
     if finish_df is not None and not finish_df.empty:
         fp_filtered = finish_df[
@@ -1231,15 +1320,15 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
-        <h2 style="margin-bottom:4px;">Tournament Sim — {tourney.replace('_', ' ').title()}</h2>
-        <p style="color:#666; margin-top:0;">{timestamp_str} | {SIMULATIONS:,} simulations</p>
+        <h2 style="margin-bottom:4px;">Tournament Sim V2 (Cat-First) &mdash; {tourney.replace('_', ' ').title()}</h2>
+        <p style="color:#666; margin-top:0;">{timestamp_str} | {SIMULATIONS:,} simulations | Course mults: OTT={course_mults[0]:.2f} APP={course_mults[1]:.2f} ARG={course_mults[2]:.2f} PUTT={course_mults[3]:.2f}</p>
 
         {mu_html}
         {fp_html}
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price (ties push) | Edge = expected return % |
-            Pred = model SG prediction | ½ Shot = value of half-shot spread (in edge pts)
+            Pred = model SG prediction | 1/2 Shot = value of half-shot spread (in edge pts)
         </p>
     </body>
     </html>"""
@@ -1248,28 +1337,23 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
 def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
                           attachment_paths=None):
-    """
-    Send tournament sim email with HTML tables + optional attachments.
-    Non-blocking: prints warning on failure but doesn't crash.
-    """
     if not EMAIL_PASSWORD:
-        print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
+        print("  [v2 warn] EMAIL_PASSWORD not set. Skipping email.")
         return
     if not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
-        print("  [warn] EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
+        print("  [v2 warn] EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
         return
 
     try:
         html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup)
 
         msg = MIMEMultipart("mixed")
-        msg["Subject"] = f"Tournament Sim — {tourney.replace('_', ' ').title()}"
+        msg["Subject"] = f"Tournament Sim V2 (Cat-First) -- {tourney.replace('_', ' ').title()}"
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
 
         msg.attach(MIMEText(html, "html"))
 
-        # Attach any provided files
         if attachment_paths:
             for fpath in attachment_paths:
                 if fpath and os.path.exists(fpath):
@@ -1286,21 +1370,21 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
             server.login(EMAIL_FROM, EMAIL_PASSWORD)
             server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
 
-        print("  [ok] Tournament sim email sent")
+        print("  [v2 ok] Tournament sim V2 email sent")
 
     except Exception as e:
-        print(f"  [warn] Email failed: {e}")
-        print("    (Sim outputs still saved — email is non-blocking)")
+        print(f"  [v2 warn] Email failed: {e}")
+        print("    (Sim outputs still saved -- email is non-blocking)")
 
-df_match = pd.DataFrame(rows).drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first')
-# remove rows with missing names
+
+# --- Process matchups ---
+df_match = pd.DataFrame(rows_mu).drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first')
 if not df_match.empty:
     df_match = df_match.dropna(subset=['Player 1','Player 2'])
 
-    # --- Compute matchup probabilities from the SIM integer totals ---
-    # Build fast access: player -> index and their final score vectors (int)
+    # Compute matchup probabilities from sim final scores
     name_to_idx = {p: i for i, p in enumerate(player_names)}
-    final_scores_np = final_scores  # shape (n_players, SIMULATIONS), dtype=int
+    final_scores_np = final_scores
 
     def get_score_vec(pname):
         idx = name_to_idx.get(pname)
@@ -1309,7 +1393,7 @@ if not df_match.empty:
         return final_scores_np[idx]
 
     p1_probs, p2_probs = [], []
-    p1_probs_tl, p2_probs_tl = [], []   # ties-as-loss
+    p1_probs_tl, p2_probs_tl = [], []
     for _, r in df_match.iterrows():
         p1 = r['Player 1']; p2 = r['Player 2']
         s1 = get_score_vec(p1); s2 = get_score_vec(p2)
@@ -1321,11 +1405,9 @@ if not df_match.empty:
         wins_p2 = np.sum(s1 > s2)
         ties    = np.sum(s1 == s2)
         total   = float(SIMULATIONS)
-        # "ties push" (i.e., condition on no tie)
         denom = max(total - ties, 1.0)
         p1_probs.append(wins_p1 / denom)
         p2_probs.append(wins_p2 / denom)
-        # "ties as loss"
         p1_probs_tl.append(wins_p1 / total)
         p2_probs_tl.append(wins_p2 / total)
 
@@ -1334,11 +1416,9 @@ if not df_match.empty:
     df_match['my_odds_p1_ties_loss'] = p1_probs_tl
     df_match['my_odds_p2_ties_loss'] = p2_probs_tl
 
-    # --- Compute edge metrics on full df_match before splitting by book ---
     df_match['P1 Odds'] = pd.to_numeric(df_match['P1 Odds'], errors='coerce')
     df_match['P2 Odds'] = pd.to_numeric(df_match['P2 Odds'], errors='coerce')
 
-    # Decimal odds
     df_match['p1_dec'] = np.where(
         df_match['P1 Odds'] > 0,
         df_match['P1 Odds'] / 100 + 1,
@@ -1350,7 +1430,6 @@ if not df_match.empty:
         100 / df_match['P2 Odds'].abs() + 1,
     )
 
-    # Which prob to use: ties-loss when "separate bet offered"
     use_tl = df_match['Ties'] == 'separate bet offered'
     prob_p1 = np.where(use_tl, df_match['my_odds_p1_ties_loss'], df_match['my_odds_p1'])
     prob_p2 = np.where(use_tl, df_match['my_odds_p2_ties_loss'], df_match['my_odds_p2'])
@@ -1358,17 +1437,14 @@ if not df_match.empty:
     df_match['edge_p1'] = (prob_p1 * (df_match['p1_dec'] - 1) - (1 - prob_p1)) * 100
     df_match['edge_p2'] = (prob_p2 * (df_match['p2_dec'] - 1) - (1 - prob_p2)) * 100
 
-    # Fair American odds (ties push)
     df_match['Fair_p1'] = df_match['my_odds_p1'].apply(
         lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
     df_match['Fair_p2'] = df_match['my_odds_p2'].apply(
         lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
 
-    # Half-shot values
     df_match['half_shot_p1'] = (df_match['my_odds_p1'] - df_match['my_odds_p1_ties_loss']) * 400
     df_match['half_shot_p2'] = (df_match['my_odds_p2'] - df_match['my_odds_p2_ties_loss']) * 400
 
-    # edge_on, bet_on, pred_on for downstream filtering
     df_match['edge_on'] = df_match[['edge_p1', 'edge_p2']].max(axis=1).round(1)
     df_match['bet_on'] = df_match.apply(
         lambda r: r['Player 1'] if r['edge_p1'] > r['edge_p2'] else r['Player 2'], axis=1)
@@ -1377,21 +1453,15 @@ if not df_match.empty:
 
     dfs_by_book = {bk: df for bk, df in df_match.groupby('Bookmaker', dropna=True)}
 
-    round_var = 'tourn'  # label column header
+    round_var = 'tourn'
 
-    # write each bookmaker file similar to your previous script
     for bookmaker, dfb in dfs_by_book.items():
         dfb = dfb.copy()
         dfb['p1_implied'] = dfb['P1 Odds'].apply(american_to_implied_probability).round(1)
         dfb['p2_implied'] = dfb['P2 Odds'].apply(american_to_implied_probability).round(1)
-
         dfb['use_ties_loss'] = (dfb['Ties'] == "separate bet offered")
-
-        # decimal odds
         dfb['p1_decimal_odds'] = np.where(dfb['P1 Odds'] > 0, dfb['P1 Odds'] / 100 + 1, 100 / dfb['P1 Odds'].abs() + 1)
         dfb['p2_decimal_odds'] = np.where(dfb['P2 Odds'] > 0, dfb['P2 Odds'] / 100 + 1, 100 / dfb['P2 Odds'].abs() + 1)
-
-        # expected return edges (%)
         dfb['edge_p1'] = np.where(
             dfb['use_ties_loss'],
             ((dfb['my_odds_p1_ties_loss'] * (dfb['p1_decimal_odds'] - 1)) - (1 - dfb['my_odds_p1_ties_loss'])) * 100,
@@ -1402,80 +1472,65 @@ if not df_match.empty:
             ((dfb['my_odds_p2_ties_loss'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2_ties_loss'])) * 100,
             ((dfb['my_odds_p2'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2'])) * 100
         )
-
-        # Fairs (ties push)
-        # handle NaNs safely when converting to American odds
         dfb['Fair_p1'] = dfb['my_odds_p1'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
         dfb['Fair_p2'] = dfb['my_odds_p2'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
-
-
         dfb['Round'] = round_var
 
-        # Final column order
         final_cols = ['Player 1','Player 2','Bookmaker','Ties','P1 Odds','P2 Odds','Fair_p1','Fair_p2','edge_p1','edge_p2','Round']
         use_cols = [c for c in final_cols if c in dfb.columns]
         dfb = dfb[use_cols].dropna(subset=['Fair_p1','Fair_p2'])
 
-        out_name = f"{bookmaker}_odds_with_my_odds_tu.csv"
+        out_name = os.path.join(v2_dir, f"{bookmaker}_odds_with_my_odds_tu.csv")
         dfb.drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first').to_csv(out_name, index=False)
-        print(f"[ok] wrote {out_name}")
+        print(f"[v2 ok] wrote {out_name}")
 
-    # -------- Combine + filter into {tourney}/matchups_ftsimp_*.csv --------
+    # Combine + filter into v2/{tourney}/matchups
     timestamp = datetime.now().strftime('%H%M')
-    tourney_folder = f"./{tourney}"
-    os.makedirs(tourney_folder, exist_ok=True)
+    matchup_dir = os.path.join(v2_dir, "matchups")
+    os.makedirs(matchup_dir, exist_ok=True)
 
-    csv_files = [f"{bk}_odds_with_my_odds_tu.csv" for bk in dfs_by_book.keys()]
+    csv_files = [os.path.join(v2_dir, f"{bk}_odds_with_my_odds_tu.csv") for bk in dfs_by_book.keys()]
     dfs_list = []
     for fpath in csv_files:
         if os.path.exists(fpath):
             dfs_list.append(pd.read_csv(fpath))
-        else:
-            print(f"[miss] {fpath}")
 
     if dfs_list:
         combined_df = pd.concat(dfs_list, ignore_index=True)
-        # Add sample sizes (if available)
         combined_df['Sample_P1'] = combined_df['Player 1'].str.lower().map(sample_lookup)
         combined_df['Sample_P2'] = combined_df['Player 2'].str.lower().map(sample_lookup)
         combined_df['sample_on'] = combined_df.apply(
             lambda r: r['Sample_P1'] if r.get('edge_p1', 0) > r.get('edge_p2', 0) else r['Sample_P2'], axis=1
         )
-
-        # Add my_pred lookup & edge_on, pred_on, bet_on
         combined_df['my_pred_p1'] = combined_df['Player 1'].str.lower().map(my_pred_lookup)
         combined_df['my_pred_p2'] = combined_df['Player 2'].str.lower().map(my_pred_lookup)
         combined_df['edge_on'] = combined_df[['edge_p1','edge_p2']].max(axis=1)
-        # Require the greater of edge_p1/edge_p2 to be > 3 (add right after you set 'edge_on')
         combined_df = combined_df[combined_df['edge_on'] > 3]
 
         combined_df['pred_on'] = combined_df.apply(
             lambda r: r['my_pred_p1'] if r['edge_p1'] > r['edge_p2'] else r['my_pred_p2'], axis=1
         )
-        # add predicted value for the player we are betting against
         combined_df['pred_against'] = combined_df.apply(
             lambda r: r['my_pred_p2'] if r['edge_p1'] > r['edge_p2'] else r['my_pred_p1'],
             axis=1
         )
-
         combined_df['bet_on'] = combined_df.apply(
             lambda r: r['Player 1'] if r['edge_p1'] > r['edge_p2'] else r['Player 2'], axis=1
         )
 
-        combined_csv_name = f"{tourney_folder}/matchups_ftsimp_{tourney}_{timestamp}.csv"
+        combined_csv_name = os.path.join(matchup_dir, f"matchups_ftsimp_{tourney}_{timestamp}.csv")
         combined_df.to_csv(combined_csv_name, index=False)
-        print(f"[ok] combined matchups -> {combined_csv_name}")
+        print(f"[v2 ok] combined matchups -> {combined_csv_name}")
 
-        # Sharp filter + wind diffs
-        sharp_books = ['betonline', 'betcris', 'pinnacle']
-        sharp_df = combined_df[combined_df['Bookmaker'].str.lower().isin(sharp_books)].copy()
+        # Sharp filter
+        sharp_books_mu = ['betonline', 'betcris', 'pinnacle']
+        sharp_df = combined_df[combined_df['Bookmaker'].str.lower().isin(sharp_books_mu)].copy()
 
         if sharp_df.empty:
-            print("[warn] No sharp-book matchups found — skipping sharp filter output")
-            sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
+            print("[v2 warn] No sharp-book matchups found")
+            sharp_filename = os.path.join(matchup_dir, f"sharp_filtered_{tourney}_{timestamp}.csv")
             sharp_df.to_csv(sharp_filename, index=False)
         else:
-            # Weather advantages for sides
             wind_lookup = dict(zip(wx['player_name'].str.lower(), wx['wind_adv_r1_2']))
             sharp_df['wind_on'] = sharp_df['bet_on'].str.lower().map(wind_lookup)
             sharp_df['bet_against'] = sharp_df.apply(
@@ -1484,32 +1539,30 @@ if not df_match.empty:
             sharp_df['wind_against'] = sharp_df['bet_against'].str.lower().map(wind_lookup)
             sharp_df['wind_diff'] = sharp_df['wind_on'] - sharp_df['wind_against']
 
-            # Keep only highest edge per matchup_key (order-independent)
             sharp_df['matchup_key'] = sharp_df.apply(
                 lambda r: '-'.join(sorted([r['Player 1'].lower(), r['Player 2'].lower()])),
                 axis=1
             )
             sharp_df = sharp_df.sort_values('edge_on', ascending=False).drop_duplicates('matchup_key', keep='first')
             sharp_df = sharp_df.drop(columns=['matchup_key', 'Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
-            # Ensure sample_on survives for Sheets storage
             if 'sample_on' not in sharp_df.columns and 'sample_on' in combined_df.columns:
                 sharp_df = sharp_df.merge(
                     combined_df[['Player 1', 'Player 2', 'Bookmaker', 'sample_on']],
                     on=['Player 1', 'Player 2', 'Bookmaker'], how='left'
                 )
 
-            sharp_filename = f"{tourney_folder}/sharp_filtered_{tourney}_{timestamp}.csv"
+            sharp_filename = os.path.join(matchup_dir, f"sharp_filtered_{tourney}_{timestamp}.csv")
             sharp_df.to_csv(sharp_filename, index=False)
-            print(f"[ok] sharp filtered -> {sharp_filename}")
+            print(f"[v2 ok] sharp filtered -> {sharp_filename}")
 
-        # --- Send tournament email ---
-        print("\n[email] Building tournament sim email...")
+        # --- Send tournament V2 email ---
+        print("\n[v2 email] Building tournament sim V2 email...")
         _finish_for_email = combined_finish_df if ('combined_finish_df' in dir() and not combined_finish_df.empty) else None
         _attachments = [f for f in [
             combined_csv_name,
             sharp_filename,
-            f"weather_impact_{tourney}.csv",
-            f"finish_equity_{tourney}.csv",
+            os.path.join(v2_dir, f"weather_impact_{tourney}.csv"),
+            os.path.join(v2_dir, f"finish_equity_{tourney}.csv"),
         ] if os.path.exists(f)]
         send_tournament_email(
             sharp_mu_df=sharp_df,
@@ -1518,80 +1571,34 @@ if not df_match.empty:
             my_pred_lookup=my_pred_lookup,
             attachment_paths=_attachments,
         )
-        # rename a couple files to {book}_{tourney}.csv (compat)
-        for bk in ['betcris','betonline']:
-            oldf = f"{bk}_odds_with_my_odds_tu.csv"
-            newf = f"{bk}_{tourney}.csv"
-            if os.path.exists(oldf):
-                try:
-                    if os.path.exists(newf):
-                        os.remove(newf)
-                    os.rename(oldf, newf)
-                    print(f"[ok] renamed {oldf} -> {newf}")
-                except Exception as e:
-                    print(f"[warn] rename {oldf} -> {newf}: {e}")
     else:
-        print("[note] no bookmaker CSVs found to combine; skipping combined/sharp outputs.")
+        print("[v2 note] no bookmaker CSVs found to combine.")
 
 else:
-    print("[warn] No valid tournament matchups found.")
+    print("[v2 warn] No valid tournament matchups found.")
 
-# --- Storage: always attempt (finish positions don't depend on matchups) ---
-from sheets_storage import (
-    is_valid_run_time,
-    get_spreadsheet,
-    store_tournament_matchups,
-    store_finish_positions,
+# --- Store finish positions to "Test Sim" tab (no ledger, no matchups) ---
+from sheets_storage import get_spreadsheet, store_finish_positions, load_dg_id_lookup
 
-    load_dg_id_lookup,
-)
-
-if is_valid_run_time():
-    print("\n[storage] Saving to Google Sheets...")
-    try:
-        from sim_inputs import event_ids
-
-        # Single auth for all store calls
-        spreadsheet = get_spreadsheet()
-
-        # Build dg_id lookup from the predictions file
-        dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
-
-        # 1. Tournament matchups (only if matchup data exists)
-        if 'combined_df' in dir() and not combined_df.empty:
-            store_tournament_matchups(
-                combined_df, tourney, event_ids[0],
-                dg_id_lookup=dg_id_lookup,
-                spreadsheet=spreadsheet,
-            )
-
-        # 2. Finish position bets
-        if 'combined_finish_df' in dir() and not combined_finish_df.empty:
-            store_finish_positions(
-                combined_finish_df, tourney, event_ids[0],
-                dg_id_lookup=dg_id_lookup,
-                spreadsheet=spreadsheet,
-            )
-
-        print("[storage] Done.")
-    except Exception as e:
-        print(f"[storage] FAILED: {e}")
-        import traceback; traceback.print_exc()
-else:
-    print("[storage] Skipped — before Monday 3 PM EST cutoff.")
-
-# Push dashboard data to Render
+print("\n[v2 storage] Saving finish positions to 'Test Sim' tab...")
 try:
-    from push_dashboard_data import copy_files, git_push
-    print(f"\n{'='*60}")
-    print("  Pushing dashboard data to Render...")
-    copied, skipped = copy_files()
-    if copied:
-        print(f"  Copied {len(copied)} files to dashboard_data/")
-        git_push()
-        print("  Render deploy triggered.")
+    spreadsheet = get_spreadsheet()
+    dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
+
+    if 'combined_finish_df' in dir() and not combined_finish_df.empty:
+        store_finish_positions(
+            combined_finish_df, tourney, _event_id,
+            dg_id_lookup=dg_id_lookup,
+            spreadsheet=spreadsheet,
+            tab_name="Test Sim",
+        )
     else:
-        print("  No files to push.")
-    print(f"{'='*60}")
+        print("  [v2 storage] No finish position bets to store.")
+    print("[v2 storage] Done.")
 except Exception as e:
-    print(f"  [dashboard push] Warning: {e}")
+    print(f"[v2 storage] FAILED: {e}")
+    import traceback; traceback.print_exc()
+
+print("[v2] Dashboard push DISABLED -- monitor mode only.")
+print(f"\n[v2] All outputs saved to: {v2_dir}/")
+print("[v2] Done.")

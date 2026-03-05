@@ -1082,7 +1082,11 @@ def calculate_performance_metrics(all_graded_bets, event_name, event_id, year):
 
 
 def write_summary_row(spreadsheet, metrics):
-    """Write a summary row to the Bet Results Summary tab."""
+    """Write (upsert) a summary row to the Bet Results Summary tab.
+
+    If a row for this event_id already exists, it is replaced in-place.
+    Otherwise a new row is appended.
+    """
     try:
         try:
             ws = spreadsheet.worksheet(TAB_RESULTS_SUMMARY)
@@ -1092,8 +1096,28 @@ def write_summary_row(spreadsheet, metrics):
             print(f"  Created '{TAB_RESULTS_SUMMARY}' tab")
 
         row = [metrics.get(h, "") for h in RESULTS_SUMMARY_HEADERS]
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        print(f"  Added summary row for {metrics.get('event_name')}")
+
+        # Upsert: find ALL existing rows by event_id, delete them, then append
+        event_id = str(metrics.get("event_id", "")).strip()
+        rows_to_delete = []
+        if event_id:
+            all_values = ws.get_all_values()
+            headers = all_values[0] if all_values else []
+            eid_col = headers.index("event_id") if "event_id" in headers else None
+            if eid_col is not None:
+                for i, r in enumerate(all_values[1:], start=2):
+                    if str(r[eid_col]).strip() == event_id:
+                        rows_to_delete.append(i)
+
+        if rows_to_delete:
+            # Delete from bottom up so indices stay valid
+            for row_idx in sorted(rows_to_delete, reverse=True):
+                ws.delete_rows(row_idx)
+            ws.append_row(row, value_input_option="USER_ENTERED")
+            print(f"  Replaced {len(rows_to_delete)} summary row(s) for {metrics.get('event_name')}")
+        else:
+            ws.append_row(row, value_input_option="USER_ENTERED")
+            print(f"  Added summary row for {metrics.get('event_name')}")
 
     except Exception as e:
         print(f"  Error writing summary: {e}")
@@ -1851,23 +1875,6 @@ def main():
             print("\n  Email report skipped (--no-email)")
     elif len(events_to_grade) > 1:
         print(f"\n  Re-graded {len(grand_total_graded)} bets across {len(events_to_grade)} events (email skipped for bulk re-grade)")
-
-    # Push dashboard data to Render
-    if not args.dry_run:
-        try:
-            from push_dashboard_data import copy_files, git_push
-            print(f"\n{'='*60}")
-            print("  Pushing dashboard data to Render...")
-            copied, skipped = copy_files()
-            if copied:
-                print(f"  Copied {len(copied)} files to dashboard_data/")
-                git_push()
-                print("  Render deploy triggered.")
-            else:
-                print("  No files to push.")
-            print(f"{'='*60}")
-        except Exception as e:
-            print(f"  [warn] Dashboard push failed: {e}")
 
     print("\n" + "="*60)
     print("  Done.")

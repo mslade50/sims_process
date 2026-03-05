@@ -33,9 +33,20 @@ from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
 
+# --- Weekly-changing config from Google Sheet ---
+from sheet_config import load_config as _load_sheet_config
+_cfg = _load_sheet_config()
+tourney          = _cfg["tourney"]
+STD_DEV          = _cfg["std_dev"]
+PAR              = 72  # constant
+CUT_LINE         = _cfg["cut_line"]
+USE_10_SHOT_RULE = _cfg["use_10_shot_rule"]
+SIMULATIONS      = _cfg["simulations"]
+_event_id        = _cfg["event_id"]
+
+# --- Stable model params from sim_inputs ---
 from sim_inputs import (
-    tourney, STD_DEV, PAR, name_replacements,
-    CUT_LINE, USE_10_SHOT_RULE, SIMULATIONS,
+    name_replacements,
     # R1 update coefficient sets
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
     # R2 update sets (position buckets)
@@ -208,7 +219,7 @@ def load_tournament_config(sheet_config):
             course_map[code] = {"par": int(par)}
 
             # Add per-round expected scores if available
-            for rnd, key in [(2, "expected_score_r2"), (3, "expected_score_r3"), (4, "expected_score_r4")]:
+            for rnd, key in [(1, "expected_score_r1"), (2, "expected_score_r2"), (3, "expected_score_r3"), (4, "expected_score_r4")]:
                 exp_list = sheet_config.get(key, [])
                 if exp_list:
                     exp_val = exp_list[i] if i < len(exp_list) else exp_list[0]
@@ -221,6 +232,7 @@ def load_tournament_config(sheet_config):
     # Wind arrays per round (fallback to generic 'wind')
     default_wind = sheet_config.get("wind", [])
     wind_arrays = {
+        1: sheet_config.get("wind_r1", []) or default_wind,
         2: sheet_config.get("wind_r2", []) or default_wind,
         3: sheet_config.get("wind_r3", []) or default_wind,
         4: sheet_config.get("wind_r4", []) or default_wind,
@@ -229,6 +241,7 @@ def load_tournament_config(sheet_config):
     # Dew arrays per round (fallback to generic 'dew')
     default_dew = sheet_config.get("dew", [])
     dew_arrays = {
+        1: sheet_config.get("dew_r1", []) or default_dew,
         2: sheet_config.get("dew_r2", []) or default_dew,
         3: sheet_config.get("dew_r3", []) or default_dew,
         4: sheet_config.get("dew_r4", []) or default_dew,
@@ -2038,8 +2051,7 @@ def main():
     sheet_config = None
     if not args.cli:
         try:
-            from sheet_config import load_config
-            sheet_config = load_config()
+            sheet_config = _cfg  # reuse config loaded at import time
             round_num = sheet_config["round_num"]
             sim_round = round_num + 1 if round_num < 4 else 4
             expected_avg = sheet_config.get("expected_score_1")
@@ -2288,8 +2300,6 @@ def main():
         if is_valid_run_time():
             print("\n[storage] Saving round matchups to Google Sheets...")
             try:
-                from sim_inputs import event_ids
-
                 # Single auth for all store calls
                 spreadsheet = get_spreadsheet()
 
@@ -2298,7 +2308,7 @@ def main():
 
                 # 1. All filtered round matchups
                 store_round_matchups(
-                    combined, sim_round, tourney, event_ids[0],
+                    combined, sim_round, tourney, _event_id,
                     dg_id_lookup=dg_id_lookup,
                     spreadsheet=spreadsheet,
                 )
