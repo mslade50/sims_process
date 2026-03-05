@@ -1,14 +1,13 @@
-"""Distributions — V2 SG category distributions with per-player skew."""
+"""Distributions — Finish position histograms with Win/T5/T10/T20 overlays."""
 
 import dash
 from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 
-from dashboard.data_layer import get_v2_dists
+from dashboard.data_layer import get_rank_probs_pre, get_rank_probs_live
 
 dash.register_page(__name__, path="/distributions", title="Distributions", order=5)
 
@@ -17,154 +16,121 @@ PLOT_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(22,33,62,0.8)",
     font=dict(color="#e0e0e0"),
-    margin=dict(l=50, r=30, t=60, b=50),
+    margin=dict(l=50, r=30, t=60, b=40),
 )
 
-CAT_ORDER = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
-CAT_LABELS = {"sg_ott": "OTT", "sg_app": "APP", "sg_arg": "ARG", "sg_putt": "PUTT"}
-CAT_COLORS = {"sg_ott": "#1f77b4", "sg_app": "#2ca02c", "sg_arg": "#ff7f0e", "sg_putt": "#d62728"}
+# Threshold lines
+THRESHOLDS = [
+    (1.5, "Win", "gold"),
+    (5.5, "T5", "#2ca02c"),
+    (10.5, "T10", "#ff7f0e"),
+    (20.5, "T20", "#d62728"),
+]
 
+# Colors for multi-player comparison
 COMPARE_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
     "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
 ]
 
 
-def _cf_skew_pdf(x, mu, sigma, gamma):
-    """Approximate PDF under Cornish-Fisher skew transform of a normal."""
-    if sigma <= 0:
-        return np.zeros_like(x)
-    z = (x - mu) / sigma
-    # Standard normal PDF
-    phi = np.exp(-0.5 * z ** 2) / np.sqrt(2 * np.pi) / sigma
-    if abs(gamma) < 0.01:
-        return phi
-    # Gram-Charlier type A expansion (skewness term)
-    he3 = z ** 3 - 3 * z
-    return phi * (1 + (gamma / 6.0) * he3)
+def _load_data(mode):
+    """Load rank probs for the selected mode."""
+    if mode == "live":
+        return get_rank_probs_live()
+    return get_rank_probs_pre()
 
 
-def _make_category_figure(dists_df, players):
-    """Build 2x2 subplot with SG category PDFs for one or more players."""
+def _compute_stats(df):
+    """Compute Win%, T5%, T10%, T20% from rank_probs for a single player."""
+    win = df.loc[df["rank"] == 1, "prob_u"].sum() * 100
+    t5 = df.loc[df["rank"] <= 5, "prob_u"].sum() * 100
+    t10 = df.loc[df["rank"] <= 10, "prob_u"].sum() * 100
+    t20 = df.loc[df["rank"] <= 20, "prob_u"].sum() * 100
+    return win, t5, t10, t20
+
+
+def _make_figure(rank_df, players, max_rank):
+    """Build a Plotly bar chart for one or more players."""
+    fig = go.Figure()
     multi = len(players) > 1
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=[CAT_LABELS[c] for c in CAT_ORDER],
-        horizontal_spacing=0.08,
-        vertical_spacing=0.12,
-    )
+    opacity = 0.5 if multi else 0.75
 
-    for pi, player in enumerate(players):
-        pdf = dists_df[dists_df["player_name"] == player]
+    for i, player in enumerate(players):
+        pdf = rank_df[rank_df["player_name"] == player].copy()
         if pdf.empty:
             continue
-        color = COMPARE_COLORS[pi % len(COMPARE_COLORS)] if multi else None
 
-        for ci, cat in enumerate(CAT_ORDER):
-            row, col = divmod(ci, 2)
-            row += 1
-            col += 1
-            cat_row = pdf[pdf["category_clean"] == cat]
-            if cat_row.empty:
-                continue
-            r = cat_row.iloc[0]
-            mu, sigma, skew_val = float(r["mean"]), float(r["std"]), float(r["skew"])
+        # Fill missing ranks with 0
+        full_ranks = pd.DataFrame({"rank": np.arange(1, max_rank + 1)})
+        pdf = full_ranks.merge(pdf[["rank", "prob_u"]], on="rank", how="left").fillna(0)
 
-            x = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 300)
-            y = _cf_skew_pdf(x, mu, sigma, skew_val)
-            y = np.clip(y, 0, None)  # ensure non-negative
+        color = COMPARE_COLORS[i % len(COMPARE_COLORS)] if multi else "steelblue"
 
-            c = color or CAT_COLORS[cat]
-            fig.add_trace(go.Scatter(
-                x=x, y=y, mode="lines",
-                name=f"{player.title()}" if ci == 0 else None,
-                legendgroup=player,
-                showlegend=(ci == 0),
-                line=dict(color=c, width=2),
-                opacity=0.7 if multi else 0.9,
-                fill="tozeroy" if not multi else None,
-                fillcolor=f"rgba{tuple(list(int(c.lstrip('#')[i:i+2], 16) for i in (0,2,4)) + [0.15])}" if not multi else None,
-            ), row=row, col=col)
+        fig.add_trace(go.Bar(
+            x=pdf["rank"],
+            y=pdf["prob_u"] * 100,
+            name=player.title(),
+            marker_color=color,
+            opacity=opacity,
+        ))
 
-            # Mean line
-            fig.add_vline(
-                x=mu, line_dash="dash", line_color=c, line_width=1,
-                row=row, col=col,
+    # Threshold lines
+    for x_pos, label, color in THRESHOLDS:
+        if x_pos <= max_rank:
+            fig.add_vline(x=x_pos, line_dash="dash", line_color=color, line_width=1.5)
+            fig.add_annotation(
+                x=x_pos, y=1.02, yref="paper", text=label,
+                showarrow=False, font=dict(color=color, size=11),
             )
 
-            # Annotation with stats (single player only)
-            if not multi:
-                n_eff = float(r["n_eff"]) if pd.notna(r["n_eff"]) else 0
-                fig.add_annotation(
-                    x=0.98, y=0.95, xref=f"x{ci+1 if ci > 0 else ''} domain",
-                    yref=f"y{ci+1 if ci > 0 else ''} domain",
-                    text=f"<b>{mu:+.2f}</b> | std {sigma:.2f} | skew {skew_val:+.2f} | n_eff {n_eff:.0f}",
-                    showarrow=False, font=dict(size=10, color="#aaa"),
-                    xanchor="right", yanchor="top",
-                    bgcolor="rgba(0,0,0,0.5)",
-                )
-
-    title = (
-        f"<b>{players[0].title()}</b> — SG Category Distributions"
-        if len(players) == 1
-        else " vs ".join(p.title() for p in players)
-    )
+    # Title with stats
+    if len(players) == 1 and not rank_df[rank_df["player_name"] == players[0]].empty:
+        pdf = rank_df[rank_df["player_name"] == players[0]]
+        win, t5, t10, t20 = _compute_stats(pdf)
+        title_text = (
+            f"<b>{players[0].title()}</b><br>"
+            f"<sup>Win: {win:.2f}% | T5: {t5:.1f}% | T10: {t10:.1f}% | T20: {t20:.1f}%</sup>"
+        )
+    elif len(players) > 1:
+        title_text = " vs ".join(p.title() for p in players)
+    else:
+        title_text = "Select a player"
 
     fig.update_layout(
         **PLOT_LAYOUT,
-        title=dict(text=title, x=0.5, xanchor="center"),
+        title=dict(text=title_text, x=0.5, xanchor="center"),
+        xaxis_title="Finish Position",
+        yaxis_title="Probability (%)",
+        xaxis=dict(range=[0, min(max_rank + 1, 80)], dtick=5),
+        bargap=0.1,
+        barmode="overlay" if multi else "relative",
         showlegend=multi,
-        legend=dict(x=0.85, y=1.05, bgcolor="rgba(0,0,0,0.5)"),
+        legend=dict(x=0.85, y=0.95, bgcolor="rgba(0,0,0,0.5)"),
     )
-    for ci in range(4):
-        ax = f"xaxis{ci+1 if ci > 0 else ''}"
-        fig.update_layout(**{ax: dict(title="Strokes Gained")})
 
     return fig
 
 
-def _make_stats_table(dists_df, player):
-    """Build a stats summary table for a single player."""
-    pdf = dists_df[dists_df["player_name"] == player]
-    if pdf.empty:
-        return dbc.Alert("No distribution data for this player.", color="warning")
-
-    rows = []
-    for cat in CAT_ORDER:
-        cat_row = pdf[pdf["category_clean"] == cat]
-        if cat_row.empty:
-            rows.append([CAT_LABELS[cat], "-", "-", "-", "-", "-", "-"])
-            continue
-        r = cat_row.iloc[0]
-        rows.append([
-            CAT_LABELS[cat],
-            f"{r['mean']:+.3f}",
-            f"{r['std']:.3f}",
-            f"{r['skew']:+.3f}",
-            f"{r['excess_kurtosis']:+.3f}",
-            f"{int(r['n'])}",
-            f"{r['n_eff']:.1f}",
-        ])
-
-    # Total row
-    total_mu = sum(float(pdf[pdf["category_clean"] == c].iloc[0]["mean"])
-                   for c in CAT_ORDER if not pdf[pdf["category_clean"] == c].empty)
-    rows.append(["TOTAL", f"{total_mu:+.3f}", "", "", "", "", ""])
-
-    return dbc.Table(
-        [html.Thead(html.Tr([html.Th(h) for h in
-            ["Category", "Mean", "Std", "Skew", "Ex. Kurt", "N", "N_eff"]]))] +
-        [html.Tbody([html.Tr([html.Td(c) for c in row]) for row in rows])],
-        bordered=True, hover=True, size="sm", color="dark",
-    )
-
-
-# -- Layout ---------------------------------------------------------------
+# ── Layout ───────────────────────────────────────────────────────────────────
 
 layout = dbc.Container([
-    html.H4("V2 SG Category Distributions", className="page-header"),
+    html.H4("Finish Position Distributions", className="page-header"),
 
     dbc.Row([
+        dbc.Col([
+            dbc.Label("Data Source"),
+            dbc.RadioItems(
+                id="dist-mode",
+                options=[
+                    {"label": "Pre-Tournament", "value": "pre"},
+                    {"label": "Live", "value": "live"},
+                ],
+                value="pre",
+                inline=True,
+                className="mb-2",
+            ),
+        ], md=3),
         dbc.Col([
             dbc.Label("Player"),
             dcc.Dropdown(id="dist-player", placeholder="Select player...", className="mb-2"),
@@ -179,27 +145,30 @@ layout = dbc.Container([
     ], className="mb-3"),
 
     dcc.Graph(id="dist-chart", style={"height": "550px"}),
-
-    html.Div(id="dist-stats-table", className="mt-3"),
 ], fluid=True)
 
 
-# -- Callbacks -------------------------------------------------------------
+# ── Callbacks ────────────────────────────────────────────────────────────────
 
 @callback(
     Output("dist-player", "options"),
     Output("dist-player", "value"),
     Output("dist-compare", "options"),
-    Input("dist-player", "id"),  # fires once on page load
+    Input("dist-mode", "value"),
 )
-def populate_players(_):
-    df = get_v2_dists()
+def populate_players(mode):
+    df = _load_data(mode)
     if df.empty:
         return [], None, []
 
-    # Sort by total mean (sum of 4 categories) descending
-    totals = df.groupby("player_name")["mean"].sum().sort_values(ascending=False)
-    sorted_players = totals.index.tolist()
+    # Sort by win probability (rank == 1 prob) descending
+    win_probs = df[df["rank"] == 1].groupby("player_name")["prob_u"].sum().sort_values(ascending=False)
+    sorted_players = win_probs.index.tolist()
+
+    # Include players with no wins at the end
+    all_players = df["player_name"].unique().tolist()
+    remaining = [p for p in sorted(all_players) if p not in sorted_players]
+    sorted_players.extend(remaining)
 
     options = [{"label": p.title(), "value": p} for p in sorted_players]
     default = sorted_players[0] if sorted_players else None
@@ -209,27 +178,27 @@ def populate_players(_):
 
 @callback(
     Output("dist-chart", "figure"),
-    Output("dist-stats-table", "children"),
     Input("dist-player", "value"),
     Input("dist-compare", "value"),
+    Input("dist-mode", "value"),
 )
-def update_chart(player, compare_players):
+def update_chart(player, compare_players, mode):
     if not player:
         fig = go.Figure()
         fig.update_layout(**PLOT_LAYOUT, title="Select a player to view distribution")
-        return fig, ""
+        return fig
 
-    df = get_v2_dists()
+    df = _load_data(mode)
     if df.empty:
         fig = go.Figure()
-        fig.update_layout(**PLOT_LAYOUT, title="No V2 distribution data available")
-        return fig, dbc.Alert("this_week_dists_v2.csv not found. Run cat_dists_player.py first.", color="danger")
+        fig.update_layout(**PLOT_LAYOUT, title="No distribution data available")
+        return fig
 
+    max_rank = int(df["rank"].max())
+
+    # Build player list: primary + comparisons
     players = [player]
     if compare_players:
         players.extend([p for p in compare_players if p != player])
 
-    fig = _make_category_figure(df, players)
-    table = _make_stats_table(df, player) if len(players) == 1 else ""
-
-    return fig, table
+    return _make_figure(df, players, max_rank)
