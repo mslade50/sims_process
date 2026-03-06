@@ -356,6 +356,15 @@ def load_known_rounds(completed_round, course_map, default_par):
         df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
 
         if all_players is None:
+            # Exclude players with NaN pred — they can't be simulated and
+            # NaN propagates through skill updates, producing garbage scores
+            pred_col = 'pred' if 'pred' in df.columns else ('my_pred' if 'my_pred' in df.columns else None)
+            if pred_col:
+                nan_pred = df[df[pred_col].isna()]['player_name'].tolist()
+                if nan_pred:
+                    print(f"    Excluding {len(nan_pred)} player(s) with NaN pred: {nan_pred}")
+                    df = df[df[pred_col].notna()].copy()
+
             all_players = df['player_name'].tolist()
             result["player_names"] = all_players
 
@@ -364,10 +373,8 @@ def load_known_rounds(completed_round, course_map, default_par):
                 result["course_x"] = dict(zip(df['player_name'], df['course_x']))
 
             # Get base predictions
-            if 'pred' in df.columns:
-                result["player_preds"] = dict(zip(df['player_name'], df['pred']))
-            elif 'my_pred' in df.columns:
-                result["player_preds"] = dict(zip(df['player_name'], df['my_pred']))
+            if pred_col:
+                result["player_preds"] = dict(zip(df['player_name'], df[pred_col]))
 
         # Calculate strokes for this round
         # strokes = par - sg_total (or use 'total' column if available)
@@ -1948,6 +1955,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          excel_path=None, card_csv_path=None, outrights_sharp=None,
                          win_edges_csv_path=None, bol_matchups_csv_path=None,
+                         finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None):
     """
     Send round sim email with:
@@ -2006,6 +2014,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                 att.add_header(
                     "Content-Disposition", "attachment",
                     filename=os.path.basename(bol_matchups_csv_path),
+                )
+                msg.attach(att)
+
+        # Attach finish equity CSV (all outright edges)
+        if finish_equity_csv_path and os.path.exists(finish_equity_csv_path):
+            with open(finish_equity_csv_path, "rb") as f:
+                att = MIMEApplication(f.read(), _subtype="csv")
+                att.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(finish_equity_csv_path),
                 )
                 msg.attach(att)
 
@@ -2153,6 +2171,7 @@ def main():
     outrights_sharp = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
+    finish_equity_csv_path = None
     win_positive_top10 = pd.DataFrame()
     win_negative_top10 = pd.DataFrame()
 
@@ -2225,8 +2244,9 @@ def main():
                 )
 
                 if not outrights_combined.empty:
-                    outrights_combined.to_csv(f"finish_equity_live_{tourney}.csv", index=False)
-                    print(f"    Saved finish_equity_live_{tourney}.csv")
+                    finish_equity_csv_path = f"finish_equity_live_{tourney}.csv"
+                    outrights_combined.to_csv(finish_equity_csv_path, index=False)
+                    print(f"    Saved {finish_equity_csv_path}")
                     print(f"    Outrights: {len(outrights_combined)} edges found, {len(outrights_sharp)} sharp")
                 else:
                     print(f"    No outright edges above threshold")
@@ -2281,6 +2301,7 @@ def main():
             outrights_sharp=outrights_sharp,
             win_edges_csv_path=win_edges_csv_path,
             bol_matchups_csv_path=bol_matchups_csv,
+            finish_equity_csv_path=finish_equity_csv_path,
             win_positive_top10=win_positive_top10,
             win_negative_top10=win_negative_top10,
         )
@@ -2293,12 +2314,12 @@ def main():
             is_valid_run_time,
             get_spreadsheet,
             store_round_matchups,
-
+            store_finish_positions,
             load_dg_id_lookup,
         )
 
         if is_valid_run_time():
-            print("\n[storage] Saving round matchups to Google Sheets...")
+            print("\n[storage] Saving to Google Sheets...")
             try:
                 # Single auth for all store calls
                 spreadsheet = get_spreadsheet()
@@ -2312,6 +2333,14 @@ def main():
                     dg_id_lookup=dg_id_lookup,
                     spreadsheet=spreadsheet,
                 )
+
+                # 2. Finish position bets
+                if not outrights_combined.empty:
+                    store_finish_positions(
+                        outrights_combined, tourney, _event_id,
+                        dg_id_lookup=dg_id_lookup,
+                        spreadsheet=spreadsheet,
+                    )
 
                 print("[storage] Done.")
             except Exception as e:

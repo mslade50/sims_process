@@ -210,10 +210,15 @@ def update_pricer(round_num, player, score_line):
     fig.update_xaxes(title_text="Score")
     fig.update_yaxes(title_text="Density", showticklabels=False)
 
-    # Score card table (multiple lines)
+    # Score card table — standard .5 lines like sportsbooks use
+    # P(under 70.5) = P(score <= 70) since scores are integers
+    low = int(expected - 3)
+    high = int(expected + 3) + 1
+    lines = [x + 0.5 for x in range(low, high)]
+
     card_rows = []
-    for offset in np.arange(-3, 3.5, 0.5):
-        line = expected + offset
+    for line in lines:
+        # Discrete: under 70.5 means score <= 70, so use CDF at the .5 boundary
         p_u = norm.cdf(line, loc=expected, scale=std_dev)
         p_o = 1 - p_u
         u_odds = _prob_to_american(p_u)
