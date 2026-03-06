@@ -28,6 +28,8 @@ ROOT_FILES = [
     "r4_live_model.csv",
     "simulated_probs_live.csv",
     "simulated_probs.csv",
+    "sg_dist_player.csv",
+    "this_week_dists_adjusted.csv",
 ]
 
 # Files in the tournament folder → flattened into dashboard_data/
@@ -72,16 +74,23 @@ def copy_files(dry_run=False):
 
     os.makedirs(DASHBOARD_DATA, exist_ok=True)
 
-    # Root-level files
+    # Root-level files (prefer v2 output if available)
     for fname in ROOT_FILES:
-        src = os.path.join(PROJECT_ROOT, fname)
-        dst = os.path.join(DASHBOARD_DATA, fname)
-        if os.path.exists(src):
-            if not dry_run:
-                shutil.copy2(src, dst)
-            copied.append(fname)
+        v2_src = os.path.join(PROJECT_ROOT, tourney, "v2", fname) if tourney else None
+        root_src = os.path.join(PROJECT_ROOT, fname)
+        if v2_src and os.path.exists(v2_src):
+            src = v2_src
+            label = f"{tourney}/v2/{fname}"
+        elif os.path.exists(root_src):
+            src = root_src
+            label = fname
         else:
             skipped.append(fname)
+            continue
+        dst = os.path.join(DASHBOARD_DATA, fname)
+        if not dry_run:
+            shutil.copy2(src, dst)
+        copied.append(label)
 
     # Tournament folder files
     if tourney:
@@ -97,14 +106,22 @@ def copy_files(dry_run=False):
 
         for src_template, dst_name in TOURNEY_RENAMED:
             src_fname = src_template.format(tourney=tourney)
-            src = os.path.join(PROJECT_ROOT, src_fname)
-            dst = os.path.join(DASHBOARD_DATA, dst_name)
-            if os.path.exists(src):
-                if not dry_run:
-                    shutil.copy2(src, dst)
-                copied.append(f"{src_fname} -> {dst_name}")
+            # Prefer v2 output if available
+            v2_src = os.path.join(PROJECT_ROOT, tourney, "v2", src_fname)
+            root_src = os.path.join(PROJECT_ROOT, src_fname)
+            if os.path.exists(v2_src):
+                src = v2_src
+                label = f"{tourney}/v2/{src_fname} -> {dst_name}"
+            elif os.path.exists(root_src):
+                src = root_src
+                label = f"{src_fname} -> {dst_name}"
             else:
                 skipped.append(src_fname)
+                continue
+            dst = os.path.join(DASHBOARD_DATA, dst_name)
+            if not dry_run:
+                shutil.copy2(src, dst)
+            copied.append(label)
     else:
         print("  Warning: Could not import tourney from sim_inputs.py — skipping tournament folder files")
 
