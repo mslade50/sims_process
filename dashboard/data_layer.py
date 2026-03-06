@@ -574,6 +574,18 @@ def get_v2_dists():
     return _read_csv_safe(path)
 
 
+def get_sg_dist_player():
+    """Read sg_dist_player.csv (full historical per-player SG distributions with histograms)."""
+    path = _resolve_path("sg_dist_player.csv")
+    return _read_csv_safe(path)
+
+
+def get_this_week_dists_adjusted():
+    """Read this_week_dists_adjusted.csv (course-adjusted distributions for this week's field)."""
+    path = _resolve_path("this_week_dists_adjusted.csv")
+    return _read_csv_safe(path)
+
+
 # ── SG Diagnostics ───────────────────────────────────────────────────────────
 
 def get_sg_diagnostics():
