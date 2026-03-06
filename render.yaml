@@ -4,6 +4,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn dashboard.app:server
+    healthCheckPath: /
     envVars:
       - key: GOOGLE_CREDS_JSON
         sync: false
