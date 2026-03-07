@@ -3,7 +3,7 @@ services:
     name: golf-sim-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn dashboard.app:server
+    startCommand: gunicorn dashboard.app:server --workers 1 --threads 2 --timeout 120
     healthCheckPath: /
     envVars:
       - key: GOOGLE_CREDS_JSON

@@ -1,1 +1,1 @@
-web: gunicorn dashboard.app:server
+web: gunicorn dashboard.app:server --workers 1 --threads 2 --timeout 120
