@@ -1910,7 +1910,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
         win_neg_html = f"""
             <h3 style="color:#2c5282; margin:30px 0 8px 0;">
-                Outright Win — Top Fades (30:1+ odds, most overpriced)
+                Outright Win — Top Fades (&lt;30:1 odds, most overpriced)
             </h3>
             <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
                 <tr style="background:#343a40; color:white;">
@@ -2264,7 +2264,7 @@ def main():
                     pos = pos.sort_values('kelly', ascending=False).drop_duplicates('player_name', keep='first').head(10)
                     win_positive_top10 = pos
 
-                    neg = win_all_edges[(win_all_edges['edge'] < 0) & (win_all_edges['decimal_odds'] >= 31.0)].copy()
+                    neg = win_all_edges[(win_all_edges['edge'] < 0) & (win_all_edges['decimal_odds'] < 31.0)].copy()
                     neg = neg.sort_values('edge', ascending=True).drop_duplicates('player_name', keep='first').head(10)
                     win_negative_top10 = neg
 
