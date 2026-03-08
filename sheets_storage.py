@@ -641,6 +641,17 @@ def _empty_ledger_record():
         "units_wagered": np.nan,
         "units_won": np.nan,
         "graded_at": "",
+        "margin": np.nan,
+        "margin_bucket": "",
+        "is_unlucky_push": False,
+        "bet_on_sg_ott": np.nan,
+        "bet_on_sg_app": np.nan,
+        "bet_on_sg_arg": np.nan,
+        "bet_on_sg_putt": np.nan,
+        "opp_sg_ott": np.nan,
+        "opp_sg_app": np.nan,
+        "opp_sg_arg": np.nan,
+        "opp_sg_putt": np.nan,
     }
 
 
@@ -945,6 +956,33 @@ def update_ledger_grades(graded_bets):
             ledger.at[idx, "p1_round_score"] = _safe_float(bet["p1_score"])
         if "p2_score" in bet:
             ledger.at[idx, "p2_round_score"] = _safe_float(bet["p2_score"])
+
+        # Margin + SG attribution fields (always write, even None → NaN clears old bad values)
+        margin = bet.get("margin")
+        margin_val = _safe_float(margin) if margin is not None else np.nan
+        ledger.at[idx, "margin"] = margin_val
+        if not np.isnan(margin_val):
+            abs_m = abs(margin_val)
+            sign = "+" if margin_val > 0 else ("-" if margin_val < 0 else "")
+            if abs_m < 1.5:
+                ledger.at[idx, "margin_bucket"] = f"{sign}1"
+            elif abs_m < 2.5:
+                ledger.at[idx, "margin_bucket"] = f"{sign}2"
+            else:
+                ledger.at[idx, "margin_bucket"] = f"{sign}3+"
+        else:
+            ledger.at[idx, "margin_bucket"] = ""
+
+        # Unlucky push: push at +130 or better odds (high EV missed)
+        if result == "push":
+            book_odds_val = _safe_float(ledger.at[idx, "book_odds"]) if "book_odds" in ledger.columns else np.nan
+            if not np.isnan(book_odds_val) and book_odds_val >= 130:
+                ledger.at[idx, "is_unlucky_push"] = True
+
+        for sg_col in ["bet_on_sg_ott", "bet_on_sg_app", "bet_on_sg_arg", "bet_on_sg_putt",
+                        "opp_sg_ott", "opp_sg_app", "opp_sg_arg", "opp_sg_putt"]:
+            if sg_col in bet and bet[sg_col] is not None:
+                ledger.at[idx, sg_col] = _safe_float(bet[sg_col])
 
         updated += 1
 

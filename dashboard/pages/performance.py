@@ -105,8 +105,23 @@ layout = dbc.Container([
         ], md=4),
     ], className="mb-2"),
 
-    # Filters — Row 3: Raw Edge, Decimal Odds, Player
+    # Filters — Row 3: Analysis mode, Raw Edge, Decimal Odds, Player
     dbc.Row([
+        dbc.Col([
+            html.Label("Analysis", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-analysis-mode",
+                options=[
+                    {"label": "All Bets", "value": "all"},
+                    {"label": "Best Price", "value": "best_price"},
+                    {"label": "Sharp Only", "value": "sharp_only"},
+                    {"label": "Sharp Only, Best Price", "value": "sharp_best"},
+                ],
+                value="all",
+                clearable=False,
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
         dbc.Col([
             html.Label("Raw % Edge", className="form-label small text-muted"),
             dbc.InputGroup([
@@ -236,6 +251,7 @@ def _convert_to_units(df):
     Input("perf-sample-max", "value"),
     Input("perf-pred-min", "value"),
     Input("perf-pred-max", "value"),
+    Input("perf-analysis-mode", "value"),
     Input("perf-raw-edge-min", "value"),
     Input("perf-raw-edge-max", "value"),
     Input("perf-dec-odds-min", "value"),
@@ -244,6 +260,7 @@ def _convert_to_units(df):
 )
 def update_performance(event, bet_type, books, min_edge, round_filter,
                        sample_min, sample_max, pred_min, pred_max,
+                       analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
                        player_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
@@ -266,6 +283,16 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     # Apply round filter
     if round_filter and round_filter != "all" and "round" in df.columns:
         df = df[df["round"].astype(str).str.strip() == str(round_filter)]
+
+    # Apply analysis mode: sharp filtering + best-price dedup
+    if analysis_mode in ("sharp_only", "sharp_best") and "bookmaker" in df.columns:
+        sharp_pattern = "|".join(SHARP_BOOKS)
+        df = df[df["bookmaker"].str.lower().str.contains(sharp_pattern, na=False)]
+    if analysis_mode in ("best_price", "sharp_best"):
+        dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent"]
+        existing = [c for c in dedup_cols if c in df.columns]
+        if existing:
+            df = df.drop_duplicates(subset=existing, keep="first")
 
     # Apply sample_on range filter
     if (sample_min is not None or sample_max is not None) and "sample_on" in df.columns:

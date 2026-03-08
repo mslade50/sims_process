@@ -53,6 +53,7 @@ TOURNEY_RENAMED = [
 # Parquet from permanent_data/
 PERMANENT_FILES = [
     ("permanent_data/sg_diagnostic.parquet", "sg_diagnostic.parquet"),
+    ("permanent_data/bet_ledger.parquet", "luck_attribution.parquet"),
 ]
 
 

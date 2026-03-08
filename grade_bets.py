@@ -159,14 +159,20 @@ def fetch_historical_results(event_id, year=None):
             df["fin_text"] = df["position"].astype(str)
             df["fin_num"] = df["position"].apply(parse_finish_position)
 
-        # Extract round scores from nested dicts
-        # API returns round_1/2/3/4 as dicts with 'score' key
+        # Extract round scores and SG categories from nested dicts
+        # API returns round_1/2/3/4 as dicts with 'score', 'sg_ott', 'sg_app', etc.
+        SG_CATS = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "sg_total"]
         for r in range(1, 5):
             col_name = f"round_{r}"
             if col_name in df.columns:
                 # Check if it's a dict (nested structure)
                 first_val = df[col_name].iloc[0] if len(df) > 0 else None
                 if isinstance(first_val, dict):
+                    # Extract SG categories before overwriting with score
+                    for sg in SG_CATS:
+                        df[f"r{r}_{sg}"] = df[col_name].apply(
+                            lambda x, s=sg: x.get(s) if isinstance(x, dict) else None
+                        )
                     # Extract 'score' from each dict
                     df[col_name] = df[col_name].apply(
                         lambda x: x.get('score') if isinstance(x, dict) else x
@@ -591,12 +597,29 @@ def grade_round_matchup(row, results_df):
         result = "loss"
         units_won = -units_wagered
 
+    # Margin: positive = our player won by N strokes (lower score is better)
+    opponent = p2 if bet_on == p1 else p1
+    opp_score = p2_score if bet_on == p1 else p1_score
+    bet_on_score = p1_score if bet_on == p1 else p2_score
+    margin = opp_score - bet_on_score  # positive = we won by this many
+
+    # SG category lookups
+    sg_fields = {}
+    bet_on_data = results_df[results_df["player_name"] == bet_on]
+    opp_data = results_df[results_df["player_name"] == opponent]
+    for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
+        col = f"r{round_num}_{cat}"
+        sg_fields[f"bet_on_{cat}"] = float(bet_on_data[col].iloc[0]) if not bet_on_data.empty and col in bet_on_data.columns and pd.notna(bet_on_data[col].iloc[0]) else None
+        sg_fields[f"opp_{cat}"] = float(opp_data[col].iloc[0]) if not opp_data.empty and col in opp_data.columns and pd.notna(opp_data[col].iloc[0]) else None
+
     return {
         "result": result,
         "p1_score": int(p1_score),
         "p2_score": int(p2_score),
         "units_wagered": round(units_wagered, 3),
         "units_won": round(units_won, 3),
+        "margin": margin,
+        **sg_fields,
         "notes": ""
     }
 
@@ -716,12 +739,65 @@ def grade_tournament_matchup(row, results_df):
         result = "loss"
         units_won = -units_wagered
 
+    # Margin: compare strokes over the SAME rounds both players completed
+    # If one MC'd and other didn't, margin is incomparable (set None)
+    opponent = p2 if bet_on == p1 else p1
+    margin = None
+    bet_on_mc = (p1_fin >= 999) if bet_on == p1 else (p2_fin >= 999)
+    opp_mc = (p2_fin >= 999) if bet_on == p1 else (p1_fin >= 999)
+    if bet_on_mc != opp_mc:
+        # One MC'd, one didn't — not comparable
+        margin = None
+    else:
+        # Both same status: compare R1+R2 if both MC, full total if both made cut
+        rounds_to_sum = [1, 2] if bet_on_mc else [1, 2, 3, 4]
+        bet_on_sum = 0.0
+        opp_sum = 0.0
+        has_data = True
+        for r in rounds_to_sum:
+            col = f"round_{r}"
+            if col not in results_df.columns:
+                has_data = False
+                break
+            b_val = pd.to_numeric(p1_data[col].iloc[0] if bet_on == p1 else p2_data[col].iloc[0], errors="coerce")
+            o_val = pd.to_numeric(p2_data[col].iloc[0] if bet_on == p1 else p1_data[col].iloc[0], errors="coerce")
+            if pd.isna(b_val) or pd.isna(o_val):
+                has_data = False
+                break
+            bet_on_sum += b_val
+            opp_sum += o_val
+        if has_data:
+            margin = opp_sum - bet_on_sum
+
+    # SG categories: sum across all rounds played
+    sg_fields = {}
+    bet_on_data = results_df[results_df["player_name"] == bet_on]
+    opp_data = results_df[results_df["player_name"] == opponent]
+    for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
+        bet_on_sum = 0.0
+        opp_sum = 0.0
+        has_bet_on = False
+        has_opp = False
+        for r in range(1, 5):
+            col = f"r{r}_{cat}"
+            if col in results_df.columns:
+                if not bet_on_data.empty and pd.notna(bet_on_data[col].iloc[0]):
+                    bet_on_sum += float(bet_on_data[col].iloc[0])
+                    has_bet_on = True
+                if not opp_data.empty and pd.notna(opp_data[col].iloc[0]):
+                    opp_sum += float(opp_data[col].iloc[0])
+                    has_opp = True
+        sg_fields[f"bet_on_{cat}"] = round(bet_on_sum, 3) if has_bet_on else None
+        sg_fields[f"opp_{cat}"] = round(opp_sum, 3) if has_opp else None
+
     return {
         "result": result,
         "p1_finish": p1_fin_text,
         "p2_finish": p2_fin_text,
         "units_wagered": round(units_wagered, 3),
         "units_won": round(units_won, 3),
+        "margin": margin,
+        **sg_fields,
         "notes": ""
     }
 
@@ -822,6 +898,19 @@ def grade_finish_position(row, results_df):
         result = "loss"
         units_won = -units_wagered
 
+    # SG categories: sum bet_on player's categories across all rounds
+    sg_fields = {}
+    for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
+        total = 0.0
+        has_data = False
+        for r in range(1, 5):
+            col = f"r{r}_{cat}"
+            if col in results_df.columns and not player_data.empty and pd.notna(player_data[col].iloc[0]):
+                total += float(player_data[col].iloc[0])
+                has_data = True
+        sg_fields[f"bet_on_{cat}"] = round(total, 3) if has_data else None
+        sg_fields[f"opp_{cat}"] = None  # No opponent for finish positions
+
     return {
         "result": result,
         "actual_finish": fin_text,
@@ -829,6 +918,8 @@ def grade_finish_position(row, results_df):
         "dead_heat_factor": round(dead_heat_factor, 3),
         "units_wagered": round(units_wagered, 3),
         "units_won": round(units_won, 3),
+        "margin": None,
+        **sg_fields,
         "notes": ""
     }
 
@@ -1781,6 +1872,12 @@ def main():
                     "pred_value": pred_value,
                     "sample": sample,
                 }
+
+                # Add margin + SG attribution fields
+                grade["margin"] = grade_result.get("margin")
+                for sg_field in ["bet_on_sg_ott", "bet_on_sg_app", "bet_on_sg_arg", "bet_on_sg_putt",
+                                  "opp_sg_ott", "opp_sg_app", "opp_sg_arg", "opp_sg_putt"]:
+                    grade[sg_field] = grade_result.get(sg_field)
 
                 # Add type-specific fields
                 if bet_type == "round_matchup":

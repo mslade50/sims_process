@@ -651,6 +651,41 @@ def get_available_matchup_rounds(tourney=None):
     return rounds
 
 
+def get_luck_attribution():
+    """Read luck/attribution data from bet_ledger.parquet (local) or dashboard_data/ (Render).
+
+    Returns graded bets with margin and SG category columns.
+    """
+    # Prefer local ledger (has latest data)
+    df = _read_parquet_safe(LEDGER_PATH)
+    if df.empty:
+        df = _read_parquet_safe(os.path.join(DASHBOARD_DATA, "luck_attribution.parquet"))
+    if df.empty:
+        return pd.DataFrame()
+
+    # Filter to graded bets only
+    if "result" in df.columns:
+        df = df[df["result"].astype(str).str.strip().isin(["win", "loss", "push", "win_dh"])]
+
+    # Coerce numeric columns
+    numeric_cols = [
+        "margin", "book_odds", "edge", "units_wagered", "units_won",
+        "bet_on_sg_ott", "bet_on_sg_app", "bet_on_sg_arg", "bet_on_sg_putt",
+        "opp_sg_ott", "opp_sg_app", "opp_sg_arg", "opp_sg_putt",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Dedup: same matchup across multiple books counts once for luck analysis
+    dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent"]
+    existing = [c for c in dedup_cols if c in df.columns]
+    if existing:
+        df = df.drop_duplicates(subset=existing, keep="first")
+
+    return df
+
+
 def get_file_mtime(filename):
     """Get modification time of a file. Returns None if missing."""
     path = _resolve_path(filename)

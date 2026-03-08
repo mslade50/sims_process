@@ -20,6 +20,7 @@ def make_navbar():
                     dbc.NavItem(dbc.NavLink("Pricer", href="/pricer")),
                     dbc.NavItem(dbc.NavLink("Bets", href="/bets")),
                     dbc.NavItem(dbc.NavLink("Performance", href="/performance")),
+                    dbc.NavItem(dbc.NavLink("Luck", href="/luck")),
                     dbc.NavItem(dbc.NavLink("Skill", href="/skill")),
                     dbc.NavItem(dbc.NavLink("Diagnostics", href="/diagnostics")),
                     dbc.NavItem(dbc.NavLink("Fragility", href="/fragility")),
