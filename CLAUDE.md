@@ -12,28 +12,18 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 
-## V2 Sim: Category-First Tournament Simulation (Experimental)
+## Category-First Tournament Simulation
 
-`new_sim_v2.py` is an experimental parallel sim that flips the draw order: instead of drawing total SG then decomposing into categories, it draws each SG category from a course-adjusted multivariate normal and sums to total. This captures course-specific variance profiles (e.g., Bay Hill amplifies OTT variance 1.24x but barely affects PUTT at 1.01x).
+`new_sim.py` uses category-first draws: instead of drawing total SG then decomposing into categories, it draws each SG category from a course-adjusted multivariate normal and sums to total. This captures course-specific variance profiles (e.g., Bay Hill amplifies OTT variance 1.24x but barely affects PUTT at 1.01x).
 
-**Status**: Testing — stores finish positions to "Test Sim" tab in Google Sheets (no ledger write). Run side-by-side with `new_sim.py` to compare edge conversion rates over multiple weeks before deciding whether to promote.
+**Status**: Promoted to production (March 2025). The archived total-first sim is `new_sim_v1.py`.
 
 **Key details**:
 - Uses `COURSE_CAT_MULTS` dict in `sim_inputs.py` (per-category variance multipliers from `scoring_baseline.py` analysis)
-- Category means are **re-centered to sum to `my_pred`** so v2 only changes variance structure, not base predictions. Without this fix, category means and `my_pred` diverge by up to 1.2 strokes for some players, creating spurious edges.
+- Category means are **re-centered to sum to `my_pred`** so category-first draws only change variance structure, not base predictions
 - Weather delta distributed as 0.35 OTT, 0.35 APP, 0.15 ARG, 0.15 PUTT
-- Skill updates between rounds are identical to v1 (same coefficients). Category values used in updates are "real" draws rather than decomposed.
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
-- Uses different RNG seed (456 vs 123) for independent draws
-- Outputs go to `{tourney}/v2/` subfolder
-- Email subject prefixed with "V2 (Cat-First)"
-
-**Open questions to validate before promoting**:
-- Do the extra finish position edges from wider tails actually convert at a better rate than v1?
-- Is equal-split re-centering (`shift / 4.0` per category) the right approach, or should proportional re-centering be tested?
-- PUTT signal-to-noise is below 1.0 across courses — should PUTT course multiplier always be forced to 1.0?
-- Per-category course multipliers come from `sg_category_event_profiles.csv` — these need to be computed for each new course via `scoring_baseline.py` variance analysis
-- The within-player category correlation matrix is very weak (~0.03) — verify this holds for the specific player pool each week
+- Per-category course multipliers come from `sg_category_event_profiles.csv` — computed for each new course via `scoring_baseline.py` variance analysis
 
 **Supporting analysis files** (created during development, not part of weekly pipeline):
 - `sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events

@@ -8,6 +8,9 @@ on:
   # Also allow manual trigger for testing
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest

@@ -113,7 +113,7 @@ dew_calculation = 0.6*baseline_dew + 0.4*dewpoint_wave
 player_var = 2                         # Higher = more variance in sim
 ```
 
-**Course category variance multipliers (for `new_sim_v2.py`):**
+**Course category variance multipliers (for `new_sim.py`):**
 ```python
 COURSE_CAT_MULTS = {
     'sg_ott': 1.24,                    # From scoring_baseline.py variance analysis
@@ -287,6 +287,9 @@ python new_sim.py
 ```
 
 **What this does:**
+- Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total (category-first approach)
+- Uses `COURSE_CAT_MULTS` from `sim_inputs.py` / Google Sheet to scale per-category variance
+- Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
 - Fetches betting odds from DataGolf matchup/outright APIs
 - Runs Monte Carlo tournament simulation (matchups + finish positions)
 - Calculates edges vs book odds
@@ -298,22 +301,7 @@ python new_sim.py
 
 **Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
 
-### 3.2b (Experimental) Run V2 Category-First Sim
-```bash
-python new_sim_v2.py
-```
-
-**What this does differently from `new_sim.py`:**
-- Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total — instead of drawing total first and decomposing
-- Uses `COURSE_CAT_MULTS` from `sim_inputs.py` to scale per-category variance (e.g., Bay Hill: OTT=1.24, APP=1.09, ARG=1.10, PUTT=1.01)
-- Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
-- Stores finish positions to **"Test Sim" tab** (no ledger write, no matchup storage)
-- Outputs go to `{tourney}/v2/` subfolder
-- Sends separate email with "V2 (Cat-First)" subject
-
-**Weekly setup for v2** — update `COURSE_CAT_MULTS` in `sim_inputs.py` when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
-
-**Status**: Experimental — tracking finish position edges in "Test Sim" tab to compare conversion rates vs v1 over multiple weeks. See `CLAUDE.md` for open questions and validation TODO.
+**Weekly setup** — update `COURSE_CAT_MULTS` in `sim_inputs.py` when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
 
 **Verify bet storage:**
 ```python
