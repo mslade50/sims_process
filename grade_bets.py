@@ -1907,7 +1907,8 @@ def main():
                     grade["player_name"] = row_dict.get("player_name", "")
 
                 grades.append(grade)
-                all_graded_bets.append(grade)
+                if not bet_type.endswith("_v2"):
+                    all_graded_bets.append(grade)
 
             # Mark duplicates (skip on regrade — they're already marked)
             if not args.regrade:
