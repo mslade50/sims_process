@@ -3,10 +3,10 @@ import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
-STD_DEV       = 3.02
+STD_DEV       = 2.75
 PAR           = 72
-CUT_LINE      = 50
-USE_10_SHOT_RULE = True
+CUT_LINE      = 65
+USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.15  # must match your main script
 TOP_K = 20 
 
@@ -24,9 +24,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [9]
-course_id = 9
-tourney = 'bayhill'
+event_ids = [11]
+course_id = 11
+tourney = 'players'
 course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
@@ -34,24 +34,8 @@ course_name = "" #this is for the multi course showdown sims to id proper course
 major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
-# Course-specific SG category variance multipliers (for new_sim_v2.py)
-# actual_category_std / field_expected_category_std from scoring_baseline analysis
-COURSE_CAT_MULTS = {
-    'sg_ott': 1.27,
-    'sg_app': 1.12,
-    'sg_arg': 1.14,
-    'sg_putt': 1.02,
-}
-
-COURSE_CAT_SKEW = {
-    'sg_ott': -1.14,
-    'sg_app': -0.38,
-    'sg_arg': -0.18,
-    'sg_putt': -0.04,
-}
-
 #for multiple course setups in the showdown sim
-course_id_1=9
+course_id_1=11
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -62,12 +46,15 @@ shot_rule=0
 default_birthday = datetime(1995, 1, 1)
 
 #wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
-dewpoint_1 = [46.9, 49.0, 51.8, 52.8, 54.0, 53.0, 51.8, 50.7, 50.4, 51.6, 53.8, 56.2, 58.5, 59.2, 59.7]
-dewpoint_2 = [62.4, 63.0, 64.3, 65.6, 63.6, 62.0, 61.3, 60.1, 59.8, 60.1, 62.3, 62.6, 63.0, 63.9, 65.0]
-dewpoint_3 = [64.8, 65.3, 64.7, 64.7, 64.0, 63.3, 63.3, 63.4, 64.0, 63.9, 63.7, 63.8, 64.6, 64.8, 65.3]
-dewpoint_4 = [64.8, 64.3, 64.4, 64.2, 63.8, 63.4, 63.4, 62.9, 62.7, 62.6, 62.7, 62.6, 62.7, 62.6, 63.2]
-wind_1 = [3,3,4,5,6,7,9,9,8,8,8,7,6,6]
-wind_2 = [2,2,3,3,4,5,6,7,7,7,6,6,6,6]
+dewpoint_1 = [59, 60, 62, 64, 64, 63, 62, 61, 63, 63, 63, 63, 63, 64, 65]
+
+dewpoint_2 = [65, 65, 66, 66, 64, 62, 60, 60, 59, 60, 61, 61, 62, 64, 65]
+
+dewpoint_3 = [65, 65, 66, 65, 63, 61, 59, 58, 57, 56, 57, 58, 61, 63, 64]
+
+dewpoint_4 = [64, 64, 65, 64, 63, 62, 59, 57, 55, 55, 56, 58, 60, 62, 63]
+wind_1 = [4,5,6,7,8,8,8,8,9,9,10,9,8,8,7]
+wind_2 = [5,6,7,8,7,7,7,7,7,8,9,9,9,8,7]
 wind_3 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
 wind_4 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
 
