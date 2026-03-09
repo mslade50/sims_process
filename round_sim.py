@@ -2334,12 +2334,13 @@ def main():
                     spreadsheet=spreadsheet,
                 )
 
-                # 2. Finish position bets
+                # 2. Finish position bets (live tab — not graded)
                 if not outrights_combined.empty:
                     store_finish_positions(
                         outrights_combined, tourney, _event_id,
                         dg_id_lookup=dg_id_lookup,
                         spreadsheet=spreadsheet,
+                        tab_name="Live",
                     )
 
                 print("[storage] Done.")

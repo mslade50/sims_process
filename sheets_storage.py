@@ -58,6 +58,7 @@ TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
 TAB_BASE_RATES = "Base Rates"
+TAB_LIVE = "Live"
 
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
@@ -436,9 +437,11 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     _append_rows(ws, rows)
     print(f"  [storage] Wrote {len(rows)} finish position rows to '{tab}'")
 
-    # Parquet write-through (only for primary tab)
+    # Parquet write-through
     if tab == TAB_FINISH_POS:
         _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts)
+    elif tab == TAB_LIVE:
+        _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts, bet_type="finish_position_live")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -761,7 +764,7 @@ def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_look
         print(f"  [ledger] Warning: tournament matchup write failed: {e}")
 
 
-def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts):
+def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts, bet_type="finish_position"):
     """Build ledger records from finish position DataFrame and append."""
     try:
         if combined_finish_df is None or combined_finish_df.empty:
@@ -781,7 +784,7 @@ def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_
                 "event_name": tourney,
                 "year": year,
                 "event_id": str(event_id),
-                "bet_type": "finish_position",
+                "bet_type": bet_type,
                 "round": 0,
                 "bet_on": player,
                 "opponent": market,

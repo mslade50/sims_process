@@ -27,6 +27,58 @@ SG_LABELS = {"sg_ott": "OTT", "sg_app": "APP", "sg_arg": "ARG", "sg_putt": "PUTT
 
 RESULT_COLORS = {"win": "#2ca02c", "win_dh": "#2ca02c", "loss": "#d62728", "push": "#7f7f7f"}
 
+SHARP_BOOKS = ["pinnacle", "betonline", "betcris", "bet online", "bookmaker"]
+
+
+def _sg_waterfall(sg_df, title):
+    """Build SG category delta bar chart from a filtered DataFrame."""
+    if sg_df.empty:
+        return go.Figure().update_layout(**PLOT_LAYOUT, title=f"{title} — No data")
+    cat_means = []
+    for cat in SG_CATS:
+        opp_col, bet_col = f"opp_{cat}", f"bet_on_{cat}"
+        if opp_col in sg_df.columns and bet_col in sg_df.columns:
+            delta = (sg_df[opp_col] - sg_df[bet_col]).mean()
+            cat_means.append({"category": SG_LABELS[cat], "delta": delta if pd.notna(delta) else 0})
+    if not cat_means:
+        return go.Figure().update_layout(**PLOT_LAYOUT, title=f"{title} — No SG data")
+    wf_df = pd.DataFrame(cat_means)
+    colors = ["#d62728" if d > 0 else "#2ca02c" for d in wf_df["delta"]]
+    fig = go.Figure(go.Bar(
+        x=wf_df["category"], y=wf_df["delta"], marker_color=colors,
+        text=[f"{d:+.2f}" for d in wf_df["delta"]], textposition="outside",
+    ))
+    fig.update_layout(**PLOT_LAYOUT, title=title, xaxis_title="Category", yaxis_title="Avg SG Delta")
+    return fig
+
+
+def _sg_heatmap(sg_df, title):
+    """Build SG category delta heatmap by event from a filtered DataFrame."""
+    if sg_df.empty or "event_name" not in sg_df.columns:
+        return go.Figure().update_layout(**PLOT_LAYOUT, title=f"{title} — No data")
+    events = sg_df["event_name"].unique()
+    heatmap_data = []
+    for ev in events:
+        ev_df = sg_df[sg_df["event_name"] == ev]
+        row = {"event": ev}
+        for cat in SG_CATS:
+            opp_col, bet_col = f"opp_{cat}", f"bet_on_{cat}"
+            if opp_col in ev_df.columns and bet_col in ev_df.columns:
+                row[SG_LABELS[cat]] = (ev_df[opp_col] - ev_df[bet_col]).mean()
+            else:
+                row[SG_LABELS[cat]] = 0
+        heatmap_data.append(row)
+    hm_df = pd.DataFrame(heatmap_data).set_index("event")
+    if hm_df.empty:
+        return go.Figure().update_layout(**PLOT_LAYOUT, title=f"{title} — No data")
+    fig = go.Figure(go.Heatmap(
+        z=hm_df.values, x=hm_df.columns.tolist(), y=hm_df.index.tolist(),
+        colorscale="RdYlGn_r", text=np.round(hm_df.values, 2), texttemplate="%{text}",
+        hovertemplate="Event: %{y}<br>Category: %{x}<br>SG Delta: %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(**PLOT_LAYOUT, title=title, xaxis_title="Category", yaxis_title="Event")
+    return fig
+
 
 layout = dbc.Container([
     html.H4("Luck & Attribution", className="page-header"),
@@ -76,6 +128,20 @@ layout = dbc.Container([
                 className="dash-dropdown-dark",
             ),
         ], md=2),
+        dbc.Col([
+            html.Label("SG Charts", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="luck-sg-result-filter",
+                options=[
+                    {"label": "Losses", "value": "loss"},
+                    {"label": "Wins", "value": "win"},
+                    {"label": "All Results", "value": "all"},
+                ],
+                value="loss",
+                clearable=False,
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
     ], className="mb-3"),
 
     # KPI cards
@@ -89,10 +155,17 @@ layout = dbc.Container([
         dbc.Col(dcc.Graph(id="luck-margin-odds"), md=3),
     ], className="mb-3"),
 
-    # Charts row 2
+    # Charts row 2 — SG breakdown
     dbc.Row([
         dbc.Col(dcc.Graph(id="luck-sg-waterfall"), md=6),
         dbc.Col(dcc.Graph(id="luck-sg-heatmap"), md=6),
+    ], className="mb-3"),
+
+    # Charts row 3 — Best Sharp Price R2-R4
+    html.H5("Best Sharp Price Only (R2-R4 Matchups)", className="mt-3 mb-2"),
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="luck-sg-waterfall-sharp"), md=6),
+        dbc.Col(dcc.Graph(id="luck-sg-heatmap-sharp"), md=6),
     ], className="mb-3"),
 
     # Detail table
@@ -122,16 +195,20 @@ def populate_events(_):
     Output("luck-margin-odds", "figure"),
     Output("luck-sg-waterfall", "figure"),
     Output("luck-sg-heatmap", "figure"),
+    Output("luck-sg-waterfall-sharp", "figure"),
+    Output("luck-sg-heatmap-sharp", "figure"),
     Output("luck-table", "children"),
     Input("luck-event-filter", "value"),
     Input("luck-type-filter", "value"),
     Input("luck-round-filter", "value"),
+    Input("luck-sg-result-filter", "value"),
 )
-def update_luck(event, bet_type, round_filter):
+def update_luck(event, bet_type, round_filter, sg_result_filter):
     empty_fig = go.Figure().update_layout(**PLOT_LAYOUT, title="No data")
     empty = (
         dbc.Alert("No graded bets with attribution data found.", color="warning"),
         empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig,
+        empty_fig, empty_fig,
         dbc.Alert("No data", color="secondary"),
     )
 
@@ -304,77 +381,54 @@ def update_luck(event, bet_type, round_filter):
     else:
         fig_scatter = go.Figure().update_layout(**PLOT_LAYOUT, title="Margin vs Odds — No data")
 
-    # ── Chart 4: SG Category Waterfall (losses) ──────────────────────────
-    if not losses.empty:
-        cat_means = []
-        for cat in SG_CATS:
-            opp_col = f"opp_{cat}"
-            bet_col = f"bet_on_{cat}"
-            if opp_col in losses.columns and bet_col in losses.columns:
-                delta = (losses[opp_col] - losses[bet_col]).mean()
-                cat_means.append({"category": SG_LABELS[cat], "delta": delta if pd.notna(delta) else 0})
-        if cat_means:
-            wf_df = pd.DataFrame(cat_means)
-            colors = ["#d62728" if d > 0 else "#2ca02c" for d in wf_df["delta"]]
-            fig_waterfall = go.Figure(go.Bar(
-                x=wf_df["category"],
-                y=wf_df["delta"],
-                marker_color=colors,
-                text=[f"{d:+.2f}" for d in wf_df["delta"]],
-                textposition="outside",
-            ))
-            fig_waterfall.update_layout(
-                **PLOT_LAYOUT,
-                title="SG Delta in Losses (Opp - Us)",
-                xaxis_title="Category",
-                yaxis_title="Avg SG Delta",
-            )
-        else:
-            fig_waterfall = go.Figure().update_layout(**PLOT_LAYOUT, title="SG Waterfall — No SG data")
+    # ── SG result filter ────────────────────────────────────────────────
+    if sg_result_filter == "loss":
+        sg_df = df[df["result"] == "loss"]
+        sg_label = "Losses"
+    elif sg_result_filter == "win":
+        sg_df = df[df["result"].isin(["win", "win_dh"])]
+        sg_label = "Wins"
     else:
-        fig_waterfall = go.Figure().update_layout(**PLOT_LAYOUT, title="SG Waterfall — No losses")
+        sg_df = df[df["result"].isin(["win", "win_dh", "loss"])]
+        sg_label = "All"
 
-    # ── Chart 5: Category Attribution Heatmap by Event ────────────────────
-    if not losses.empty and "event_name" in losses.columns:
-        events = losses["event_name"].unique()
-        heatmap_data = []
-        for ev in events:
-            ev_losses = losses[losses["event_name"] == ev]
-            row = {"event": ev}
-            for cat in SG_CATS:
-                opp_col = f"opp_{cat}"
-                bet_col = f"bet_on_{cat}"
-                if opp_col in ev_losses.columns and bet_col in ev_losses.columns:
-                    row[SG_LABELS[cat]] = (ev_losses[opp_col] - ev_losses[bet_col]).mean()
-                else:
-                    row[SG_LABELS[cat]] = 0
-            heatmap_data.append(row)
+    fig_waterfall = _sg_waterfall(sg_df, f"SG Delta in {sg_label} (Opp - Us)")
+    fig_heatmap = _sg_heatmap(sg_df, f"SG Delta in {sg_label} by Event (Opp - Us)")
 
-        hm_df = pd.DataFrame(heatmap_data).set_index("event")
-        if not hm_df.empty:
-            fig_heatmap = go.Figure(go.Heatmap(
-                z=hm_df.values,
-                x=hm_df.columns.tolist(),
-                y=hm_df.index.tolist(),
-                colorscale="RdYlGn_r",
-                text=np.round(hm_df.values, 2),
-                texttemplate="%{text}",
-                hovertemplate="Event: %{y}<br>Category: %{x}<br>SG Delta: %{z:.2f}<extra></extra>",
-            ))
-            fig_heatmap.update_layout(
-                **PLOT_LAYOUT,
-                title="SG Delta in Losses by Event (Opp - Us)",
-                xaxis_title="Category",
-                yaxis_title="Event",
-            )
+    # ── Best Sharp Price R2-R4 ───────────────────────────────────────────
+    sharp_df = df[
+        (df["bet_type"] == "round_matchup") &
+        (df["round"].astype(str).isin(["2", "3", "4"])) &
+        (df["bookmaker"].str.lower().isin(SHARP_BOOKS))
+    ].copy() if "bookmaker" in df.columns else pd.DataFrame()
+
+    if not sharp_df.empty:
+        # Keep best odds per unique matchup
+        sharp_df["book_odds_num"] = pd.to_numeric(sharp_df["book_odds"], errors="coerce")
+        sharp_df = sharp_df.sort_values("book_odds_num", ascending=False)
+        sharp_df = sharp_df.drop_duplicates(
+            subset=["event_id", "round", "bet_on", "opponent"], keep="first"
+        )
+        sharp_df = sharp_df.drop(columns=["book_odds_num"])
+
+        # Apply same result filter
+        if sg_result_filter == "loss":
+            sharp_sg = sharp_df[sharp_df["result"] == "loss"]
+        elif sg_result_filter == "win":
+            sharp_sg = sharp_df[sharp_df["result"].isin(["win", "win_dh"])]
         else:
-            fig_heatmap = go.Figure().update_layout(**PLOT_LAYOUT, title="SG Heatmap — No data")
+            sharp_sg = sharp_df[sharp_df["result"].isin(["win", "win_dh", "loss"])]
+
+        n_sharp = len(sharp_df)
+        fig_wf_sharp = _sg_waterfall(sharp_sg, f"Best Sharp R2-R4 — {sg_label} (n={n_sharp})")
+        fig_hm_sharp = _sg_heatmap(sharp_sg, f"Best Sharp R2-R4 — {sg_label} by Event")
     else:
-        fig_heatmap = go.Figure().update_layout(**PLOT_LAYOUT, title="SG Heatmap — No losses")
+        fig_wf_sharp = go.Figure().update_layout(**PLOT_LAYOUT, title="Best Sharp R2-R4 — No data")
+        fig_hm_sharp = go.Figure().update_layout(**PLOT_LAYOUT, title="Best Sharp R2-R4 — No data")
 
     # ── Detail Table ──────────────────────────────────────────────────────
     table_cols = ["event_name", "bet_on", "opponent", "round", "result", "margin",
-                  "book_odds", "edge", "units_won"]
+                  "book_odds", "bookmaker", "edge", "units_won"]
     for cat in SG_CATS:
         table_cols.extend([f"bet_on_{cat}", f"opp_{cat}"])
 
@@ -389,4 +443,5 @@ def update_luck(event, bet_type, round_filter):
 
     table = make_grid(table_df, id_suffix="luck", height=500, page_size=20)
 
-    return kpis, fig_hist, fig_round_hist, fig_close, fig_scatter, fig_waterfall, fig_heatmap, table
+    return (kpis, fig_hist, fig_round_hist, fig_close, fig_scatter,
+            fig_waterfall, fig_heatmap, fig_wf_sharp, fig_hm_sharp, table)
