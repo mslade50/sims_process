@@ -382,7 +382,7 @@ def deduplicate_bets(df, bet_type):
         key_cols = ["event_id", "player_1", "player_2", "bookmaker", "round"]
     elif bet_type == "tournament_matchup":
         key_cols = ["event_id", "player_1", "player_2", "bookmaker"]
-    elif bet_type == "finish_position":
+    elif bet_type.startswith("finish_position"):
         key_cols = ["event_id", "player_name", "market_type", "sportsbook"]
     elif bet_type == "sharp":
         key_cols = ["event_id", "bet_type", "bet_on", "opponent", "bookmaker", "round"]
@@ -1818,6 +1818,7 @@ def main():
             (TAB_ROUND_MU, "round_matchup", grade_round_matchup),
             (TAB_TOURNAMENT_MU, "tournament_matchup", grade_tournament_matchup),
             (TAB_FINISH_POS, "finish_position", grade_finish_position),
+            ("Test Sim", "finish_position_v2", grade_finish_position),
         ]
 
         for tab_idx, (tab_name, bet_type, grade_fn) in enumerate(tabs_to_process):
@@ -1853,7 +1854,7 @@ def main():
                 book_category = categorize_book(bookmaker)
 
                 # Get pred value
-                if bet_type == "finish_position":
+                if bet_type.startswith("finish_position"):
                     pred_value = row_dict.get("my_pred", "")
                     sample = row_dict.get("sample", "")
                 else:
@@ -1898,7 +1899,7 @@ def main():
                     grade["player_2"] = row_dict.get("player_2", "")
                     grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
 
-                elif bet_type == "finish_position":
+                elif bet_type.startswith("finish_position"):
                     grade["market_type"] = row_dict.get("market_type", "")
                     grade["actual_finish"] = grade_result.get("actual_finish", "")
                     grade["num_tied"] = grade_result.get("num_tied", "")
