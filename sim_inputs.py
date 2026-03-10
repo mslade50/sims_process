@@ -45,21 +45,6 @@ shot_rule=0
 #for players who we don't have a birthday (monday q guys etc.)
 default_birthday = datetime(1995, 1, 1)
 
-#wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
-wind_1 = [5,5,5,6,6,6,7,7,9,10,11,12,12,12,12]
-wind_2 = [7,7,7,9,12,13,14,14,13,14,13,12,11,11,11]
-wind_3 = [3,4,4,4,6,7,8,9,9,9,9,7,6,6,5]
-wind_4 = [4,4,4,5,6,7,7,7,8,8,8,8,7,5,4]
-dewpoint_1 = [61,61,61,61,62,63,63,58,57,58,59,58,61,61,60]
-dewpoint_2 = [50,50,50,53,54,54,55,55,56,56,57,57,57,56,57]
-dewpoint_3 = [62,62,62,63,62,62,62,62,63,64,65,66,66,66,65]
-dewpoint_4 = [63,63,63,64,65,66,65,63,62,65,66,66,66,66,66]
-
-# wind = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] to gauge length of list
-# wind = [1,1,1,1,1,1,1,1,10,10,10,10,10,10,10] 8 single 7 double
-# wind = [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10] all double
-
-
 #if you have reason to believe the course will play easier than it has in the past
 #postiive value here indicates increased difficulty
 score_adj_r1 = -0.11
