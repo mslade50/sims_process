@@ -34,6 +34,16 @@ COMPARE_COLORS = [
 ]
 
 
+def _prob_to_american(prob):
+    """Convert probability to American odds string."""
+    if prob <= 0 or prob >= 1:
+        return "N/A"
+    if prob >= 0.5:
+        return f"{int(-prob / (1 - prob) * 100):+d}"
+    else:
+        return f"+{int((1 - prob) / prob * 100)}"
+
+
 def _load_data(mode):
     """Load rank probs for the selected mode."""
     if mode == "live":
@@ -145,6 +155,33 @@ layout = dbc.Container([
     ], className="mb-3"),
 
     dcc.Graph(id="dist-chart", style={"height": "550px"}),
+
+    html.Hr(),
+
+    # ── Finish Position Pricer ───────────────────────────────────────────
+    html.H5("Finish Position Pricer", className="mt-3 mb-2"),
+    dbc.Row([
+        dbc.Col([
+            dbc.Label("Position"),
+            dbc.Input(id="dist-pos", type="number", min=1, max=160, step=1, value=10, className="mb-2"),
+        ], md=2),
+        dbc.Col([
+            dbc.Label("Side"),
+            dbc.RadioItems(
+                id="dist-side",
+                options=[
+                    {"label": "Better (≤)", "value": "better"},
+                    {"label": "Worse (≥)", "value": "worse"},
+                ],
+                value="better",
+                inline=True,
+                className="mb-2",
+            ),
+        ], md=3),
+        dbc.Col([
+            html.Div(id="dist-pricer-output", className="mt-4"),
+        ], md=7),
+    ], className="mb-4"),
 ], fluid=True)
 
 
@@ -202,3 +239,46 @@ def update_chart(player, compare_players, mode):
         players.extend([p for p in compare_players if p != player])
 
     return _make_figure(df, players, max_rank)
+
+
+@callback(
+    Output("dist-pricer-output", "children"),
+    Input("dist-player", "value"),
+    Input("dist-pos", "value"),
+    Input("dist-side", "value"),
+    Input("dist-mode", "value"),
+)
+def update_pricer(player, pos, side, mode):
+    if not player or not pos:
+        return ""
+
+    df = _load_data(mode)
+    if df.empty:
+        return ""
+
+    pdf = df[df["player_name"] == player]
+    if pdf.empty:
+        return ""
+
+    pos = int(pos)
+    if side == "better":
+        prob = pdf.loc[pdf["rank"] <= pos, "prob_u"].sum()
+        label = f"{pos}th or better (≤ {pos})"
+    else:
+        prob = pdf.loc[pdf["rank"] >= pos, "prob_u"].sum()
+        label = f"{pos}th or worse (≥ {pos})"
+
+    pct = prob * 100
+    american = _prob_to_american(prob) if prob > 0 else "N/A"
+    decimal_odds = f"{1 / prob:.2f}" if prob > 0 else "N/A"
+
+    return dbc.Card(
+        dbc.CardBody([
+            html.Span(f"{player.title()}: ", style={"fontWeight": "bold"}),
+            html.Span(f"{label}  "),
+            html.Span(f"{pct:.1f}%", style={"color": "gold", "fontWeight": "bold", "fontSize": "1.1em"}),
+            html.Span(f"  |  {american}  |  {decimal_odds} dec", style={"color": "#aaa"}),
+        ]),
+        color="dark",
+        className="p-2",
+    )
