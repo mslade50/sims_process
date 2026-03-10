@@ -143,7 +143,11 @@ overrides_sd = {
 
 manual_boosts={
 }
-# manual_boosts = { }
+
+# Players whose pred we override with DG decomposition regardless of threshold
+dg_override_players = [
+    'ewart, a.j.',
+]
 
 
 #for etr export to sheet
