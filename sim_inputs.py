@@ -46,17 +46,14 @@ shot_rule=0
 default_birthday = datetime(1995, 1, 1)
 
 #wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
-dewpoint_1 = [59, 60, 62, 64, 64, 63, 62, 61, 63, 63, 63, 63, 63, 64, 65]
-
-dewpoint_2 = [65, 65, 66, 66, 64, 62, 60, 60, 59, 60, 61, 61, 62, 64, 65]
-
-dewpoint_3 = [65, 65, 66, 65, 63, 61, 59, 58, 57, 56, 57, 58, 61, 63, 64]
-
-dewpoint_4 = [64, 64, 65, 64, 63, 62, 59, 57, 55, 55, 56, 58, 60, 62, 63]
-wind_1 = [4,5,6,7,8,8,8,8,9,9,10,9,8,8,7]
-wind_2 = [5,6,7,8,7,7,7,7,7,8,9,9,9,8,7]
-wind_3 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
-wind_4 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
+wind_1 = [5,5,5,6,6,6,7,7,9,10,11,12,12,12,12]
+wind_2 = [7,7,7,9,12,13,14,14,13,14,13,12,11,11,11]
+wind_3 = [3,4,4,4,6,7,8,9,9,9,9,7,6,6,5]
+wind_4 = [4,4,4,5,6,7,7,7,8,8,8,8,7,5,4]
+dewpoint_1 = [61,61,61,61,62,63,63,58,57,58,59,58,61,61,60]
+dewpoint_2 = [50,50,50,53,54,54,55,55,56,56,57,57,57,56,57]
+dewpoint_3 = [62,62,62,63,62,62,62,62,63,64,65,66,66,66,65]
+dewpoint_4 = [63,63,63,64,65,66,65,63,62,65,66,66,66,66,66]
 
 # wind = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] to gauge length of list
 # wind = [1,1,1,1,1,1,1,1,10,10,10,10,10,10,10] 8 single 7 double
@@ -65,10 +62,10 @@ wind_4 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
 
 #if you have reason to believe the course will play easier than it has in the past
 #postiive value here indicates increased difficulty
-score_adj_r1 = 0
-score_adj_r2 = 0
-score_adj_r3 = 0
-score_adj_r4 = 0
+score_adj_r1 = -0.11
+score_adj_r2 = 0.06
+score_adj_r3 = -0.2
+score_adj_r4 = -0.23
 
 ###for showdown sims
 score_adj_r1_sd= 0
