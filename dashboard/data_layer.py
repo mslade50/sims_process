@@ -237,13 +237,21 @@ def _load_all_bets_from_sheets():
 
     df = pd.concat(frames, ignore_index=True)
 
+    # Keep only the latest sim run per (event_id, bet_type)
+    if "run_timestamp" in df.columns and "event_id" in df.columns and "bet_type" in df.columns:
+        df["run_timestamp"] = pd.to_datetime(df["run_timestamp"], errors="coerce")
+        latest = df.groupby(["event_id", "bet_type"])["run_timestamp"].transform("max")
+        # Keep rows from the latest run OR rows that have been graded (from earlier runs)
+        has_grade = df.get("result", pd.Series(dtype=str)).astype(str).str.strip().ne("")
+        df = df[(df["run_timestamp"] == latest) | has_grade]
+
     # Dedup: keep first occurrence by (event_id, bet_type, round, bet_on, opponent, bookmaker)
     dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker"]
     existing = [c for c in dedup_cols if c in df.columns]
     if existing:
         for col in existing:
             df[col] = df[col].astype(str).str.lower().str.strip()
-        df = df.drop_duplicates(subset=existing, keep="first")
+        df = df.drop_duplicates(subset=existing, keep="last")
 
     # Convert numeric columns
     for col in ["edge", "pred_on", "sample_on", "units_won", "book_odds", "fair_odds", "kelly_stake"]:

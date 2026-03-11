@@ -143,7 +143,22 @@ cutline = 80         # Cut line (inclusive of ties)
 shot_rule = 0        # 10-shot rule: 0 = off, 10 = on
 ```
 
-### 1.2 Run Distribution Builder (if new SG data available)
+### 1.2 Generate Skill Predictions (external)
+Run the skill model outside this repo. It produces two files that are auto-pushed here:
+
+1. **`pre_course_fit_{tourney}.csv`** — early-week baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` as a fallback.
+2. **`final_predictions_{tourney}.csv`** — final model pass closer to Thursday (`my_pred`, `std_dev`, `dg_final_pred`). Preferred by `new_sim.py` and `live_stats_engine.py` when available.
+
+`new_sim.py` uses `final_predictions` if it exists, otherwise falls back to `pre_course_fit`. Both are auto-pushed to the repo by the external model.
+
+**Downstream consumers:**
+- `scoring_baseline.py` — reads `pre_course_fit` for field strength adjustment
+- `cat_dists_player.py` — checks `pre_course_fit` for hot players missing the sample cut
+- `live_stats_engine.py` — reads `final_predictions` for round=0 baseline
+- `new_sim.py` — reads predictions for Monte Carlo sim (`my_pred` per player)
+- `sheets_storage.py` — reads `pre_course_fit` for `dg_id` lookup
+
+### 1.3 Run Distribution Builder (if new SG data available)
 ```bash
 python cat_dists_player.py
 ```
@@ -157,7 +172,7 @@ python cat_dists_player.py
 
 **When to skip:** If no new historical data has been added since last run.
 
-### 1.3 Run Distribution Adjustment
+### 1.4 Run Distribution Adjustment
 ```bash
 python dists_thiswk.py
 ```
@@ -214,6 +229,8 @@ python update_sheet_courses.py
 Fetches course codes from DataGolf and writes to the `course_codes` row in `round_config`. Then manually fill in `course_pars` and `expected_score_rN` if multi-course.
 
 **Re-run as forecasts update** — run `humidity.py` again closer to Thursday to get fresher forecasts. It overwrites the same cells.
+
+**Bayesian wind blending** — the sim and live_stats_engine automatically blend forecast wind arrays with a historical climatological prior (monthly hourly averages at the course location, 2019-2025). The climo weight scales with lead time: `lead_days / 12`, clamped [5%, 50%]. Running the sim Monday gives ~25% climo for R1; re-running Wednesday night gives ~5%. No action needed — blending is automatic in `api_utils.py`.
 
 ### 2.1b Compute Scoring Baselines & Expected Scores
 ```bash

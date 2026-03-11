@@ -18,6 +18,7 @@ from datetime import datetime
 import sim_inputs
 from api_utils import calculate_average_wind
 from sheets_storage import store_base_rates, get_spreadsheet
+from sheet_config import load_config as load_sheet_config
 
 # ---------------------------------------------------------------------------
 # Constants / defaults (tour-average base rates)
@@ -39,6 +40,7 @@ BASE_CAT_SKEW = {
 
 DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 WIND_TEST_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "wind_test.csv")
+COURSE_COORDS_CSV = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +251,86 @@ def _query_tour_wide_scoring_std():
     return round(float(grouped.mean()), 2), ""
 
 
+def _query_variance_attribution(event_ids):
+    """
+    Compute % of scoring variance attributable to each SG category.
+    Returns (tour_wide_pct, course_pct, course_percentiles, note).
+    tour_wide_pct / course_pct: dicts keyed by category (avg % of variance).
+    course_percentiles: dict keyed by category (percentile rank among all events).
+    """
+    cats = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
+    empty = {c: None for c in cats}
+    if not os.path.exists(DB_PATH):
+        return empty, empty, empty, "db not found"
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df_tour = pd.read_sql_query(
+            """
+            SELECT event_id, year, round_num, sg_ott, sg_app, sg_arg, sg_putt
+            FROM player_rounds
+            WHERE year >= 2019 AND tour = 'pga'
+              AND sg_ott IS NOT NULL AND sg_app IS NOT NULL
+              AND sg_arg IS NOT NULL AND sg_putt IS NOT NULL
+            """, conn
+        )
+        first_id = int(event_ids[0])
+        df_course = pd.read_sql_query(
+            """
+            SELECT event_id, year, round_num, sg_ott, sg_app, sg_arg, sg_putt
+            FROM player_rounds
+            WHERE year >= 2019 AND event_id = ?
+              AND sg_ott IS NOT NULL AND sg_app IS NOT NULL
+              AND sg_arg IS NOT NULL AND sg_putt IS NOT NULL
+            """, conn, params=(first_id,)
+        )
+        conn.close()
+    except Exception as e:
+        return empty, empty, empty, str(e)
+
+    # Per event-round variance percentages
+    grouped_all = df_tour.groupby(["event_id", "year", "round_num"])[cats].var()
+    pct_all = grouped_all.div(grouped_all.sum(axis=1), axis=0) * 100
+    tour_avg = {c: round(float(pct_all[c].mean()), 1) for c in cats}
+
+    # Per-event averages (collapse rounds) for percentile distribution
+    event_avg = pct_all.groupby(level=["event_id", "year"]).mean()
+
+    # Course-specific
+    if df_course.empty:
+        return tour_avg, empty, empty, "no course cat data"
+
+    grouped_c = df_course.groupby(["event_id", "year", "round_num"])[cats].var()
+    pct_c = grouped_c.div(grouped_c.sum(axis=1), axis=0) * 100
+    course_avg = {c: round(float(pct_c[c].mean()), 1) for c in cats}
+
+    # Course avg across years for percentile rank
+    course_event_avg = pct_c.groupby(level=["event_id", "year"]).mean()
+    course_mean = course_event_avg.mean()
+
+    percentiles = {}
+    for c in cats:
+        ptile = (event_avg[c] < course_mean[c]).mean() * 100
+        percentiles[c] = int(round(ptile))
+
+    return tour_avg, course_avg, percentiles, ""
+
+
+def _get_course_coords(course_id):
+    """Look up lat/lon from course_coordinates.csv."""
+    if not os.path.exists(COURSE_COORDS_CSV):
+        return None, None
+    df = pd.read_csv(COURSE_COORDS_CSV)
+    row = df[df["course_id"] == course_id]
+    if row.empty:
+        return None, None
+    return float(row["lat"].iloc[0]), float(row["lon"].iloc[0])
+
+
+# Use shared implementation from api_utils
+from api_utils import fetch_historical_hourly_wind as _fetch_historical_hourly_wind
+
+
 # ---------------------------------------------------------------------------
 # Build rows
 # ---------------------------------------------------------------------------
@@ -278,18 +360,19 @@ def build_rows():
 
     add("Weather Coeff", "wind_speed_base", BASE_WIND_SPEED, sim_inputs.wind_speed_base)
 
-    # --- Per-Round Weather ---
+    # --- Per-Round Weather (from Google Sheet) ---
+    sheet_cfg = load_sheet_config()
     wind_arrays = {
-        1: getattr(sim_inputs, "wind_1", []),
-        2: getattr(sim_inputs, "wind_2", []),
-        3: getattr(sim_inputs, "wind_3", []),
-        4: getattr(sim_inputs, "wind_4", []),
+        1: sheet_cfg.get("wind_r1", []),
+        2: sheet_cfg.get("wind_r2", []),
+        3: sheet_cfg.get("wind_r3", []),
+        4: sheet_cfg.get("wind_r4", []),
     }
     dew_arrays = {
-        1: getattr(sim_inputs, "dewpoint_1", []),
-        2: getattr(sim_inputs, "dewpoint_2", []),
-        3: getattr(sim_inputs, "dewpoint_3", []),
-        4: getattr(sim_inputs, "dewpoint_4", []),
+        1: sheet_cfg.get("dew_r1", []),
+        2: sheet_cfg.get("dew_r2", []),
+        3: sheet_cfg.get("dew_r3", []),
+        4: sheet_cfg.get("dew_r4", []),
     }
     for rnd in range(1, 5):
         avg_w = _avg_array(wind_arrays[rnd])
@@ -318,18 +401,34 @@ def build_rows():
     add("Sim Core", "STD_DEV", tour_std, sim_inputs.STD_DEV,
         f"tour avg since 2019{'; ' + std_note if std_note else ''}")
 
-    # --- Cat Variance (V2) ---
-    cat_mults = getattr(sim_inputs, "COURSE_CAT_MULTS", {})
+    # --- Cat Variance (V2) — read from Google Sheet (written by scoring_baseline.py) ---
+    cat_mults = sheet_cfg.get("course_cat_mults", {})
+    cat_skew = sheet_cfg.get("course_cat_skew", {})
+
     for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
         val = cat_mults.get(cat, 1.0)
         add_mult("Cat Variance (V2)", f"cat_mult_{cat.replace('sg_', '')}", BASE_CAT_MULT, val)
 
     # --- Cat Skew (V2) ---
-    cat_skew = getattr(sim_inputs, "COURSE_CAT_SKEW", {})
     for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
         base_sk = BASE_CAT_SKEW.get(cat, 0.0)
         val = cat_skew.get(cat, base_sk)
         add("Cat Skew (V2)", f"cat_skew_{cat.replace('sg_', '')}", base_sk, val)
+
+    # --- Variance Attribution (% of scoring variance per category) ---
+    tour_var_pct, course_var_pct, course_ptiles, var_note = _query_variance_attribution(sim_inputs.event_ids)
+    for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
+        base_v = tour_var_pct.get(cat)
+        this_v = course_var_pct.get(cat)
+        ptile = course_ptiles.get(cat)
+        label = cat.replace("sg_", "")
+        if base_v is not None and this_v is not None:
+            ptile_str = f" ({ptile}th %ile)" if ptile is not None else ""
+            add("Variance Attribution", f"var_pct_{label}", f"{base_v}%", f"{this_v}%",
+                f"{label.upper()}{ptile_str}")
+        elif base_v is not None:
+            add("Variance Attribution", f"var_pct_{label}", f"{base_v}%", "N/A",
+                f"no course data{'; ' + var_note if var_note else ''}")
 
     # --- Scoring Baseline ---
     sb_df, sb_note = _load_scoring_baseline(sim_inputs.tourney)
@@ -366,6 +465,20 @@ def build_rows():
                     add("Scoring Baseline", "hist_scoring_std", tour_std, round(weighted_std, 2))
     else:
         rows.append(["Scoring Baseline", "(unavailable)", "", "", "", sb_note])
+
+    # --- Historical Base-Rate Wind by Hour ---
+    lat, lon = _get_course_coords(sim_inputs.course_id)
+    if lat is not None:
+        t_month = datetime.now().month
+        hist_wind = _fetch_historical_hourly_wind(lat, lon, t_month)
+        if hist_wind:
+            hour_labels = [f"{h % 12 or 12}{'am' if h < 12 else 'pm'}" for h in range(6, 21)]
+            for i, (label, val) in enumerate(zip(hour_labels, hist_wind)):
+                # Compare to this week's R1 wind at same index if available
+                r1_wind = wind_arrays[1]
+                tw_val = round(r1_wind[i], 1) if i < len(r1_wind) else ""
+                add("Hist Wind by Hour", f"wind_{label}", val, tw_val,
+                    f"avg {label} wind, month {t_month}, 2019-2025")
 
     return rows
 

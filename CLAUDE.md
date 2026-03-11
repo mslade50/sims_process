@@ -79,6 +79,7 @@ Both sides of every join/merge must go through `name_replacements`. The `dists_t
 - **Multi-course ShotLink gaps**: Not all courses have ShotLink data. Use `.fillna(0)` for adjustment columns.
 - **Wind array index 0 = 6 AM**. Wind calculation uses 5-hour window average with minute-level interpolation.
 - **Wind coefficient blending** (when `wind_override == 0`): `course_wind_effect * 0.4 + baseline_wind * 0.6`. Course effect from `permanent_data/wind_test.csv`.
+- **Bayesian wind blending**: Forecast wind arrays are blended with a climatological prior (monthly hourly avg from Open-Meteo archive, 2019-2025). Climo weight = `lead_days / 12`, clamped [5%, 50%]. Round dates are Thu–Sun of current week via `get_round_dates()`. Applied in `new_sim.py` and `live_stats_engine.py`. Functions in `api_utils.py`.
 - **R1 residual cap**: Capped at 0.2 if raw residual is negative; hard cap at 0.5 regardless.
 - **Tee time parsing**: Multiple formats in the wild (`%Y-%m-%d %H:%M`, `%I:%M%p`, `%m/%d/%Y %H:%M`). New formats cause `ValueError`.
 - **Course shape adjustment filenames**: Must match exactly `course_shape_adjustments_{course_id}.csv`.

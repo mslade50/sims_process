@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from sim_inputs import dewpoint_wave, baseline_dew, tourney, course_id
 from sheets_storage import get_spreadsheet
+from api_utils import fetch_historical_hourly_wind
 
 load_dotenv()
 
@@ -396,6 +397,39 @@ def write_weather_to_sheet():
     if row_idx:
         ws.update_cell(row_idx, 2, str(round(dew_factor, 4)))
         print(f"  dew_calculation -> {dew_factor:.4f}")
+
+    # Write course lat/lon so it's easy to copy into Windy
+    coord_str = f"{LATITUDE},{LONGITUDE}"
+    row_idx = param_rows.get("course_lat_lon")
+    if row_idx:
+        ws.update_cell(row_idx, 2, coord_str)
+    else:
+        next_row = len(all_values) + 1
+        ws.update_cell(next_row, 1, "course_lat_lon")
+        ws.update_cell(next_row, 2, coord_str)
+    print(f"  course_lat_lon -> {coord_str}")
+
+    # Write dewpoint_base to config tab (used by live_stats_engine for actuals)
+    row_idx = param_rows.get("dewpoint_base")
+    if row_idx:
+        ws.update_cell(row_idx, 2, str(round(dewpoint_base, 1)))
+    else:
+        next_row = len(all_values) + 1
+        ws.update_cell(next_row, 1, "dewpoint_base")
+        ws.update_cell(next_row, 2, str(round(dewpoint_base, 1)))
+        all_values.append(["dewpoint_base", str(round(dewpoint_base, 1))])
+    print(f"  dewpoint_base -> {dewpoint_base:.1f}")
+
+    # NOTE: wind_r1..wind_r4 and dew_r1..dew_r4 in the A:B params area are
+    # FORMULA cells (e.g. =TEXTJOIN(",",TRUE,F3:F17)) that pull from the grid
+    # columns. Do NOT overwrite them here — the grid writes above are sufficient.
+
+    # Write historical hourly wind base rates as Python list to D44
+    hist_wind = fetch_historical_hourly_wind(LATITUDE, LONGITUDE, month)
+    if hist_wind:
+        wind_base_str = f"wind_base={hist_wind}"
+        ws.update_cell(44, 4, wind_base_str)  # D44
+        print(f"  wind_base -> D44 ({len(hist_wind)} hours, avg {sum(hist_wind)/len(hist_wind):.1f} mph)")
 
 
 write_weather_to_sheet()

@@ -268,8 +268,8 @@ summ = (merged.groupby("category_clean")
 print("\nPer-category transform summary:")
 for _, r in summ.iterrows():
     print(f"  {r['category_clean']}: rows={int(r['n_rows'])}, "
-          f"Δμ̄={r['mean_delta_mu']:+.3f} (|Δμ| p95={r['p95_abs_delta_mu']:.3f}), "
-          f"σ× mean={r['mean_sigma_ratio']:.3f} (p05={r['p05_sigma_ratio']:.3f}, p95={r['p95_sigma_ratio']:.3f}), "
+          f"d_mu={r['mean_delta_mu']:+.3f} (|d_mu| p95={r['p95_abs_delta_mu']:.3f}), "
+          f"sig_ratio mean={r['mean_sigma_ratio']:.3f} (p05={r['p05_sigma_ratio']:.3f}, p95={r['p95_sigma_ratio']:.3f}), "
           f"student-t share={r['tail_share']:.2%}")
 
 # ---------------- save adjusted dists ----------------
@@ -277,8 +277,8 @@ keep_cols = (
     ["player_name", "player_name_original"] if "player_name_original" in merged.columns else ["player_name"]
 )
 keep_cols += [
-    "category", "category_clean", "n",
-    "mean", "std", "excess_kurtosis",
+    "category", "category_clean", "n", "n_eff",
+    "mean", "std", "skew", "excess_kurtosis",
     "delta_mu", "sigma_ratio", "tail_ratio_course",
     "mean_adj", "std_adj", "df_t", "distribution", "sanity_flags"
 ]
@@ -287,7 +287,7 @@ keep_cols += [c for c in merged.columns if c.endswith("_adj") and c.startswith("
 out = merged[keep_cols].copy()
 out.to_csv(OUT_ADJUSTED, index=False)
 
-print(f"\n[ok] course_id={course_id} → wrote {OUT_ADJUSTED} "
+print(f"\n[ok] course_id={course_id} -> wrote {OUT_ADJUSTED} "
       f"({out['player_name'].nunique()} players; {out['category_clean'].nunique()} categories)")
 
 # ============================================================

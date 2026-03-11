@@ -227,7 +227,7 @@ print(f"[ok] wrote {OUT_CSV} ({len(player_df)} rows, {n_players} players, EMA sp
 # --------------------------
 from scipy.stats import norm, t as student_t
 
-OVERRIDE_CSV = "manual_dist_overrides.csv"
+OVERRIDE_CSV = "permanent_data/manual_dist_overrides.csv"
 
 print("\n" + "="*60)
 print("FIELD CHECK: Players with small sample but pred_step2 > 0")

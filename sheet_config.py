@@ -278,6 +278,13 @@ def load_config():
     dew_r3 = _parse_array(params.get("dew_r3", ""))
     dew_r4 = _parse_array(params.get("dew_r4", ""))
 
+    # Realized wind (manual entry) and dewpoint base (from humidity.py)
+    realized_wind_r1 = _parse_numeric(params.get("realized_wind_r1"), default=None)
+    realized_wind_r2 = _parse_numeric(params.get("realized_wind_r2"), default=None)
+    realized_wind_r3 = _parse_numeric(params.get("realized_wind_r3"), default=None)
+    realized_wind_r4 = _parse_numeric(params.get("realized_wind_r4"), default=None)
+    dewpoint_base = _parse_numeric(params.get("dewpoint_base"), default=None)
+
     config = {
         "round_num": round_num,
         "pre_event": round_num == 0,
@@ -313,6 +320,12 @@ def load_config():
         "std_dev": std_dev,
         "course_cat_mults": course_cat_mults,
         "course_cat_skew": course_cat_skew,
+        # Realized weather + dewpoint base
+        "realized_wind_r1": realized_wind_r1,
+        "realized_wind_r2": realized_wind_r2,
+        "realized_wind_r3": realized_wind_r3,
+        "realized_wind_r4": realized_wind_r4,
+        "dewpoint_base": dewpoint_base,
     }
 
     # --- Print summary ---
@@ -387,6 +400,48 @@ def write_primary_fields(round_num, expected_score_1, wind_str, dew_str):
         cells_updated.append(param)
 
     print(f"  Updated Sheet primary fields: {', '.join(cells_updated)}")
+
+
+def reset_for_new_week():
+    """
+    Reset round_config tab for a new tournament week.
+
+    Reads tourney, event_ids, course_id from sim_inputs.py and writes them
+    to the Sheet along with round=0. Call this at the start of each week
+    before running humidity.py / scoring_baseline.py / etc.
+    """
+    from sim_inputs import tourney, event_ids, course_id
+
+    ws = _connect_sheet()
+    all_values = ws.get("A:B")
+
+    param_rows = {}
+    for i, row in enumerate(all_values):
+        if row and row[0].strip():
+            param_rows[row[0].strip().lower()] = i + 1
+
+    updates = {
+        "round": "0",
+        "tourney": tourney,
+        "event_id": str(event_ids[0]),
+        "course_id": str(course_id),
+    }
+
+    cells_updated = []
+    for param, value in updates.items():
+        row_idx = param_rows.get(param)
+        if row_idx is None:
+            print(f"  WARNING: '{param}' not found in Sheet, adding at bottom")
+            next_row = len(all_values) + 1
+            ws.update_cell(next_row, 1, param)
+            ws.update_cell(next_row, 2, value)
+            cells_updated.append(f"{param} (new row)")
+        else:
+            ws.update_cell(row_idx, 2, value)
+            cells_updated.append(param)
+
+    print(f"  [reset] Sheet updated for new week: {', '.join(cells_updated)}")
+    print(f"  [reset] tourney={tourney}, event_id={event_ids[0]}, course_id={course_id}, round=0")
 
 
 def write_sim_config(cat_mults=None, cat_skew=None):

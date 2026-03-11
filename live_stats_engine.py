@@ -45,8 +45,6 @@ import matplotlib.dates as mdates
 from sim_inputs import (
     tourney, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
-    wind_1, wind_2, wind_3, wind_4,
-    dewpoint_1, dewpoint_2, dewpoint_3, dewpoint_4,
     score_adj_r1, score_adj_r2, score_adj_r3, score_adj_r4,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
@@ -61,6 +59,8 @@ from api_utils import (
     fetch_live_stats, fetch_field_updates,
     calculate_average_wind, compute_wind_factor, clean_names,
     fetch_player_decompositions,
+    fetch_historical_hourly_wind, blend_wind_with_climo,
+    get_round_dates, climo_weight_for_lead,
 )
 
 
@@ -71,8 +71,34 @@ from api_utils import (
 API_KEY = "c05ee5fd8f2f3b14baab409bd83c"
 
 # Wind/dewpoint arrays indexed by round (1-based; index 0 unused)
-WIND_ARRAYS = {1: wind_1, 2: wind_2, 3: wind_3, 4: wind_4}
-DEW_ARRAYS = {1: dewpoint_1, 2: dewpoint_2, 3: dewpoint_3, 4: dewpoint_4}
+# Populated at runtime from Google Sheet config (_apply_sheet_overrides)
+WIND_ARRAYS = {1: [], 2: [], 3: [], 4: []}
+DEW_ARRAYS = {1: [], 2: [], 3: [], 4: []}
+
+# --- Bayesian wind blending: blend forecast with climatological prior ---
+# Climo weight scales with actual lead time (days until round).
+# Wind arrays are populated from Sheet at runtime (_apply_sheet_overrides),
+# so blending happens there. This block pre-fetches climo for later use.
+try:
+    import pandas as _pd_coords
+    from sim_inputs import course_id as _course_id
+    from datetime import datetime as _dt
+    _coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
+    _coords_df = _pd_coords.read_csv(_coords_csv)
+    _coords_row = _coords_df[_coords_df["course_id"] == _course_id]
+    _CLIMO_WIND = None
+    _ROUND_DATES = None
+    if not _coords_row.empty:
+        _lat = float(_coords_row["lat"].iloc[0])
+        _lon = float(_coords_row["lon"].iloc[0])
+        _CLIMO_WIND = fetch_historical_hourly_wind(_lat, _lon, _dt.now().month)
+        _ROUND_DATES = get_round_dates()
+        if _CLIMO_WIND:
+            print(f"[weather] Climo wind prior loaded for blending")
+except Exception as _e:
+    _CLIMO_WIND = None
+    _ROUND_DATES = None
+    print(f"[weather] Climo blend skipped: {_e}")
 SCORE_ADJS = {1: score_adj_r1, 2: score_adj_r2, 3: score_adj_r3, 4: score_adj_r4}
 
 # Multi-course expected scoring adjustments (populated from Google Sheet).
@@ -900,8 +926,8 @@ def create_pre_event_predictions():
     wind_vals, dew_vals = [], []
     for _, row in preds.iterrows():
         tt = row.get(teetime_col)
-        wind_vals.append(calculate_average_wind(tt, wind_1))
-        dew_vals.append(calculate_average_wind(tt, dewpoint_1))
+        wind_vals.append(calculate_average_wind(tt, WIND_ARRAYS[1]))
+        dew_vals.append(calculate_average_wind(tt, DEW_ARRAYS[1]))
 
     preds["wind_r1"] = wind_vals
     preds["dew_r1"] = dew_vals
@@ -1331,6 +1357,244 @@ def run_weather_update(round_num):
 # Config Loading (Google Sheet or CLI fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def refresh_dew_forecasts():
+    """
+    Fetch fresh dewpoint forecasts from Open-Meteo for all 4 round dates
+    and write updated dew arrays to the sheet's dew grid columns.
+
+    Uses same lat/lon + date resolution as humidity.py.
+    """
+    import requests
+    from sheets_storage import get_spreadsheet
+
+    try:
+        from sim_inputs import course_id as _cid
+    except ImportError:
+        print("  [dew_refresh] Cannot import course_id from sim_inputs")
+        return
+
+    # Get coordinates
+    coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
+    if not os.path.exists(coords_csv):
+        print("  [dew_refresh] course_coordinates.csv not found")
+        return
+
+    coords_df = pd.read_csv(coords_csv)
+    coords_row = coords_df[coords_df["course_id"] == _cid]
+    if coords_row.empty:
+        print(f"  [dew_refresh] course_id {_cid} not found in coordinates")
+        return
+
+    lat = float(coords_row["lat"].iloc[0])
+    lon = float(coords_row["lon"].iloc[0])
+
+    # Get round dates from DataGolf
+    round_dates = get_round_dates()
+    if not round_dates or len(round_dates) < 4:
+        print("  [dew_refresh] Could not resolve round dates")
+        return
+
+    start_date = round_dates[0].strftime("%Y-%m-%d")
+    end_date = round_dates[3].strftime("%Y-%m-%d")
+
+    # Fetch forecast
+    api_url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "dewpoint_2m",
+        "temperature_unit": "fahrenheit",
+        "timezone": "America/New_York",
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    try:
+        resp = requests.get(api_url, params=params, timeout=15)
+        data = resp.json()
+    except Exception as e:
+        print(f"  [dew_refresh] Forecast fetch failed: {e}")
+        return
+
+    if "hourly" not in data or "dewpoint_2m" not in data["hourly"]:
+        print("  [dew_refresh] No dewpoint data in response")
+        return
+
+    timestamps = data["hourly"]["time"]
+    dewpoint_values = data["hourly"]["dewpoint_2m"]
+
+    # Build per-round arrays (6 AM - 8 PM = 15 values)
+    dew_by_round = {i: [] for i in range(1, 5)}
+    date_strs = [d.strftime("%Y-%m-%d") for d in round_dates]
+
+    import datetime as _dt_mod
+    for time_str, dewpoint in zip(timestamps, dewpoint_values):
+        dt_obj = _dt_mod.datetime.fromisoformat(time_str)
+        if 6 <= dt_obj.hour <= 20:
+            date_str = dt_obj.date().strftime("%Y-%m-%d")
+            if date_str in date_strs:
+                rd = date_strs.index(date_str) + 1
+                dew_by_round[rd].append(round(dewpoint))
+
+    # Write to sheet
+    import gspread
+    spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet("round_config")
+
+    DEW_COLS = {1: 7, 2: 11, 3: 15, 4: 19}
+    DATA_START_ROW = 3
+
+    cells_to_update = []
+    for rd in range(1, 5):
+        col = DEW_COLS[rd]
+        values = dew_by_round.get(rd, [])
+        if not values:
+            continue
+        values = values[:15]
+        while len(values) < 15:
+            values.append("")
+        for i, val in enumerate(values):
+            row = DATA_START_ROW + i
+            cells_to_update.append(gspread.Cell(row=row, col=col, value=val))
+        print(f"  [dew_refresh] R{rd}: {len([v for v in values if v != ''])} values -> col {col}")
+
+    if cells_to_update:
+        ws.update_cells(cells_to_update, value_input_option="USER_ENTERED")
+        print(f"  [dew_refresh] Updated {len(cells_to_update)} dew cells on sheet")
+
+
+def _read_dew_array_from_sheet(ws, round_num):
+    """
+    Read the dew array for a given round from the sheet grid.
+    Returns list of floats (6AM-8PM values from rows 3-17).
+    """
+    DEW_COLS = {1: 7, 2: 11, 3: 15, 4: 19}
+    col = DEW_COLS.get(round_num)
+    if col is None:
+        return []
+
+    all_data = ws.get_all_values()
+    values = []
+    for row_i in range(2, min(17, len(all_data))):  # rows 3-17 (0-indexed)
+        try:
+            val = float(all_data[row_i][col - 1])  # 0-indexed columns
+            values.append(val)
+        except (ValueError, IndexError, TypeError):
+            pass
+    return values
+
+
+def write_actuals_to_sheet(round_num):
+    """
+    Write realized weather actuals for a completed round to the config tab.
+
+    Steps:
+      1. Read current dew array for this round (= forecast dew before refresh)
+      2. Refresh all dew forecasts (overwrites sheet)
+      3. Read refreshed dew array (= realized dew)
+      4. Read realized_wind, dewpoint_base, wind_override, dew_calculation from config
+      5. Read base_score and field_adj from pre-tourney breakdown (cols V-W)
+      6. Compute expected score; fetch actual scoring avg; compute delta
+      7. Write row to sheet
+    """
+    from sheets_storage import get_spreadsheet
+    from sheet_config import load_config
+
+    try:
+        spreadsheet = get_spreadsheet()
+        ws = spreadsheet.worksheet("round_config")
+    except Exception as e:
+        print(f"  [actuals] Could not connect to sheet: {e}")
+        return
+
+    # 1. Read forecast dew (before refresh)
+    forecast_dew_arr = _read_dew_array_from_sheet(ws, round_num)
+    forecast_dew = sum(forecast_dew_arr) / len(forecast_dew_arr) if forecast_dew_arr else 0.0
+    print(f"  [actuals] R{round_num} forecast dew (pre-refresh): {forecast_dew:.1f}F")
+
+    # 2. Refresh dew forecasts
+    try:
+        refresh_dew_forecasts()
+    except Exception as e:
+        print(f"  [actuals] Dew refresh failed: {e}")
+
+    # 3. Re-read sheet for realized dew (post-refresh)
+    # Need to re-fetch worksheet data after the refresh wrote to it
+    try:
+        ws = spreadsheet.worksheet("round_config")
+    except Exception:
+        pass
+    realized_dew_arr = _read_dew_array_from_sheet(ws, round_num)
+    realized_dew = sum(realized_dew_arr) / len(realized_dew_arr) if realized_dew_arr else 0.0
+    print(f"  [actuals] R{round_num} realized dew (post-refresh): {realized_dew:.1f}F")
+
+    # 4. Read config values
+    config = load_config()
+    realized_wind = config.get(f"realized_wind_r{round_num}")
+    dewpoint_base = config.get("dewpoint_base", 0.0) or 0.0
+    wind_factor = config.get("wind_override", 0.0) or 0.0
+    dew_calc = config.get("dew_calculation", 0.0) or 0.0
+
+    if realized_wind is None:
+        print(f"  [actuals] No realized_wind_r{round_num} in sheet — skipping actuals row")
+        return
+
+    # 5. Read base_score and field_adj from pre-tourney breakdown (cols V-W of the round's row)
+    # Row = 2 + round_num (R1=row3, R2=row4, etc.), Col V=22, W=23
+    all_data = ws.get_all_values()
+    row_idx = 2 + round_num - 1  # 0-indexed
+    base_score = 0.0
+    field_adj = 0.0
+    try:
+        base_score = float(all_data[row_idx][21])  # col V (0-indexed = 21)
+        field_adj = float(all_data[row_idx][22])   # col W (0-indexed = 22)
+    except (ValueError, IndexError, TypeError):
+        print(f"  [actuals] Could not read base_score/field_adj from pre-tourney breakdown")
+
+    # 6. Compute expected and actual
+    wind_impact = realized_wind * wind_factor
+    dew_impact = (realized_dew - dewpoint_base) * dew_calc if dewpoint_base else 0.0
+
+    # base_score is already the absolute baseline (not relative to par)
+    expected_score = base_score + field_adj + wind_impact + dew_impact
+
+    # Fetch actual scoring average from DataGolf
+    # Note: API "score" column is absolute strokes (e.g. 72, 68), not SG
+    actual_score = None
+    try:
+        live_df = fetch_live_stats(round_num, API_KEY, include_score=True)
+        if live_df is not None and "score" in live_df.columns:
+            scores = pd.to_numeric(live_df["score"], errors="coerce").dropna()
+            if not scores.empty:
+                actual_score = float(scores.mean())
+    except Exception as e:
+        print(f"  [actuals] Could not fetch live scores: {e}")
+
+    delta = (actual_score - expected_score) if actual_score is not None else None
+
+    print(f"  [actuals] R{round_num}: wind={realized_wind:.1f}, "
+          f"expected={expected_score:.1f}, actual={actual_score if actual_score else 'N/A'}, "
+          f"delta={delta if delta is not None else 'N/A'}")
+
+    # 7. Write to sheet (row = 10 + round_num, cols U-AC)
+    import gspread
+    COL_U = 21
+    write_row = 10 + round_num  # R1=11, R2=12, etc.
+
+    cells = [
+        gspread.Cell(row=write_row, col=COL_U, value=f"R{round_num}"),
+        gspread.Cell(row=write_row, col=COL_U + 1, value=round(realized_wind, 1)),
+        gspread.Cell(row=write_row, col=COL_U + 2, value=round(forecast_dew, 1)),
+        gspread.Cell(row=write_row, col=COL_U + 3, value=round(realized_dew, 1)),
+        gspread.Cell(row=write_row, col=COL_U + 4, value=round(wind_impact, 3)),
+        gspread.Cell(row=write_row, col=COL_U + 5, value=round(dew_impact, 3)),
+        gspread.Cell(row=write_row, col=COL_U + 6, value=round(expected_score, 1) if expected_score else ""),
+        gspread.Cell(row=write_row, col=COL_U + 7, value=round(actual_score, 2) if actual_score else ""),
+        gspread.Cell(row=write_row, col=COL_U + 8, value=round(delta, 2) if delta is not None else ""),
+    ]
+    ws.update_cells(cells, value_input_option="USER_ENTERED")
+    print(f"  [actuals] Wrote R{round_num} actuals to row {write_row}")
+
+
 def _apply_sheet_overrides(config):
     """
     Apply Google Sheet config values as runtime overrides.
@@ -1344,7 +1608,16 @@ def _apply_sheet_overrides(config):
     round_num = config["round_num"]
     next_round = round_num + 1 if round_num < 4 else 4
 
-    # Override wind/dew arrays for the next round
+    # Load per-round wind/dew arrays from sheet (written by humidity.py)
+    for rnd in range(1, 5):
+        wind_key = f"wind_r{rnd}"
+        dew_key = f"dew_r{rnd}"
+        if config.get(wind_key):
+            WIND_ARRAYS[rnd] = config[wind_key]
+        if config.get(dew_key):
+            DEW_ARRAYS[rnd] = config[dew_key]
+
+    # Override with the generic wind/dew for the next round (live-round override)
     if config.get("wind"):
         WIND_ARRAYS[next_round] = config["wind"]
         print(f"  Wind array for R{next_round} loaded from sheet ({len(config['wind'])} hours)")
@@ -1352,6 +1625,19 @@ def _apply_sheet_overrides(config):
     if config.get("dew"):
         DEW_ARRAYS[next_round] = config["dew"]
         print(f"  Dew array for R{next_round} loaded from sheet ({len(config['dew'])} hours)")
+
+    # Apply Bayesian blending with climo prior to all populated wind arrays
+    if _CLIMO_WIND and _ROUND_DATES:
+        _blend_log = []
+        for rnd in range(1, 5):
+            if WIND_ARRAYS[rnd]:
+                _rd = _ROUND_DATES[rnd - 1] if _ROUND_DATES and len(_ROUND_DATES) >= rnd else None
+                WIND_ARRAYS[rnd], _w = blend_wind_with_climo(
+                    WIND_ARRAYS[rnd], _CLIMO_WIND, round_date=_rd
+                )
+                _blend_log.append(f"R{rnd}={_w:.0%}")
+        if _blend_log:
+            print(f"  Wind blended with climo prior ({', '.join(_blend_log)})")
 
     # Build per-course scoring adjustments list
     # expected_score_1 = first course_x encountered in API data, etc.
@@ -1447,6 +1733,12 @@ def main():
 
     # Step 1: Always run skill update
     run_skill_update(round_num, dry_run=args.dry_run)
+
+    # Step 1b: Write actuals for the completed round
+    try:
+        write_actuals_to_sheet(round_num)
+    except Exception as e:
+        print(f"\n[warn] Actuals write failed: {e}")
 
     # Step 2: Attempt weather/predictions for next round
     if round_num < 4:

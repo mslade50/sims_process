@@ -1556,6 +1556,149 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
     }
 
 
+def _write_details_tab(spreadsheet, table_rows, regression, sg_result,
+                       sg_cat_result, field_strength, wind_factor, cut_adj):
+    """
+    Write analysis tables to the Details tab (moved from round_config cols E-S).
+    Clear + rewrite each time.
+    """
+    import gspread
+    try:
+        from sheets_storage import _get_or_create_tab, TAB_DETAILS, DETAILS_HEADERS
+    except ImportError:
+        print("  WARNING: sheets_storage import failed — skipping Details tab")
+        return
+
+    try:
+        ws = _get_or_create_tab(spreadsheet, TAB_DETAILS, DETAILS_HEADERS)
+        ws.clear()
+
+        rows = []
+
+        # Section 1: Expected scoring breakdown
+        rows.append(["Scoring Breakdown", "Round", "Baseline", "Expected", "Hist Avg",
+                      "Hist Field", "ThisWk Fld", "Hist Wind", "ThisWk Wind", "Hist StdDev", "Pred StdDev"])
+        for trow in table_rows:
+            rows.append([
+                "", trow["round"], trow["baseline"], trow["expected"],
+                trow["hist_avg"], trow["hist_field"], trow["this_wk_field"],
+                trow["hist_wind"], trow["this_wk_wind"], trow["hist_std"],
+                trow["pred_std"],
+            ])
+
+        # Summary
+        summary_parts = [f"Field: {field_strength:+.4f} SG"]
+        summary_parts.append(f"Wind Factor: {wind_factor:.4f}")
+        if cut_adj > 0:
+            summary_parts.append(f"Cut adj R3/R4: -{cut_adj:.2f}")
+        rows.append(["", " | ".join(summary_parts)])
+
+        rows.append([])  # blank separator
+
+        # Section 2: Wind-Variance Regression
+        if regression is not None:
+            intercept, slope, r_sq, n_obs = regression
+            rows.append(["Wind-Variance Regression", f"StdDev = {intercept:.2f} + {slope:.4f} * Wind_mph"])
+            rows.append(["", f"R-sq: {r_sq:.3f} | N: {n_obs} obs"])
+            pred_stds = [t["pred_std"] for t in table_rows if t["pred_std"] != ""]
+            if pred_stds:
+                suggested = round(np.mean(pred_stds), 2)
+                rows.append(["", f"Suggested STD_DEV: {suggested} (current: {STD_DEV})"])
+            rows.append([])
+
+        # Section 3: SG Variance Analysis
+        if sg_result is not None:
+            sg_data_rows = sg_result["rows"]
+            sg_weighted = sg_result["weighted_row"]
+            rows.append(["SG Variance Analysis", "Year", "Qual Players", "Actual StdDev",
+                          "Field Exp Std", "Global Avg", "vs Expected", "vs Global"])
+            for sr in sg_data_rows:
+                rows.append([
+                    "", int(sr["year"]), int(sr["qual_players"]), float(sr["actual_std"]),
+                    float(sr["field_exp_std"]), float(sr["global_avg"]),
+                    f"{sr['vs_expected']:+.3f}", f"{sr['vs_global']:+.3f}",
+                ])
+            rows.append([
+                "", "Wt Avg", "", float(sg_weighted["actual_std"]),
+                float(sg_weighted["field_exp_std"]), float(sg_weighted["global_avg"]),
+                f"{sg_weighted['vs_expected']:+.3f}", f"{sg_weighted['vs_global']:+.3f}",
+            ])
+            rows.append(["", "vs Expected < 0 = course compresses variance; > 0 = course amplifies"])
+            rows.append([])
+
+        # Section 4: Per-Category SG Variance
+        CAT_NAMES_DISP = ["OTT", "APP", "ARG", "PUTT"]
+        CAT_NAMES_KEY = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
+
+        if sg_cat_result is not None:
+            cat_data_rows = sg_cat_result["per_year"]
+            cat_weighted = sg_cat_result["weighted"]
+            cat_mults = sg_cat_result["category_mults"]
+
+            # Header
+            cat_headers = ["Per-Category Variance", "Year", "Qual"]
+            for disp in CAT_NAMES_DISP:
+                cat_headers.extend([f"{disp} Act", f"{disp} Exp", f"{disp} Mult"])
+            rows.append(cat_headers)
+
+            for cr in cat_data_rows:
+                vals = ["", int(cr["year"]), int(cr["qual_players"])]
+                for name in CAT_NAMES_KEY:
+                    vals.append(cr.get(f"{name}_actual", ""))
+                    vals.append(cr.get(f"{name}_field_exp", ""))
+                    m = cr.get(f"{name}_mult")
+                    vals.append(m if m is not None else "")
+                rows.append(vals)
+
+            # Weighted average
+            wt_vals = ["", "Wt Avg", ""]
+            for name in CAT_NAMES_KEY:
+                wt_vals.append(cat_weighted.get(f"{name}_actual", ""))
+                wt_vals.append(cat_weighted.get(f"{name}_field_exp", ""))
+                wt_vals.append(cat_mults.get(name, ""))
+            rows.append(wt_vals)
+
+            # COURSE_CAT_MULTS summary
+            mults_str = "  |  ".join(
+                f"{name.replace('sg_', '').upper()}: {cat_mults[name]}"
+                for name in CAT_NAMES_KEY
+            )
+            rows.append(["", f"COURSE_CAT_MULTS: {mults_str}"])
+
+            # Skewness
+            cat_skew = sg_cat_result.get("category_skew", {})
+            base_skew = sg_cat_result.get("baseline_skew", {})
+            rows.append([])
+            skew_h = ["Skewness", ""]
+            for disp in CAT_NAMES_DISP:
+                skew_h.extend([f"{disp} Skew", "", ""])
+            rows.append(skew_h)
+
+            course_skew_vals = ["", "Course (wt avg)"]
+            for name in CAT_NAMES_KEY:
+                course_skew_vals.extend([cat_skew.get(name, ""), "", ""])
+            rows.append(course_skew_vals)
+
+            base_skew_vals = ["", "Tour baseline"]
+            for name in CAT_NAMES_KEY:
+                base_skew_vals.extend([base_skew.get(name, ""), "", ""])
+            rows.append(base_skew_vals)
+
+            skew_str = "  |  ".join(
+                f"{name.replace('sg_', '').upper()}: {cat_skew.get(name, 0)}"
+                for name in CAT_NAMES_KEY
+            )
+            rows.append(["", f"COURSE_CAT_SKEW: {skew_str}"])
+
+        # Write all rows
+        if rows:
+            ws.append_rows(rows, value_input_option="USER_ENTERED")
+        print(f"  [Details] Wrote {len(rows)} rows to Details tab")
+
+    except Exception as e:
+        print(f"  WARNING: Details tab write failed: {e}")
+
+
 def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None):
     """
     Write per-round expected scoring averages to the round_config tab as
@@ -1741,278 +1884,128 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
         else:
             print("  WARNING: 'wind_override' row not found in Sheet")
 
-        # 2) Write expanded breakdown table (cols E-N, rows 23-33)
-        TABLE_START_ROW = 23
-        COL_E = 5  # col E
-
+        # 2) Write cat_mult_* and cat_skew_* param values to column B
         cells = []
 
-        # Clear the old table area (rows 23-33, cols E-N = 10 cols)
-        for r in range(TABLE_START_ROW, TABLE_START_ROW + 11):
-            for c in range(COL_E, COL_E + 10):
-                cells.append(gspread.Cell(row=r, col=c, value=""))
-
-        # Header row (row 23)
-        headers = ["Round", "Baseline", "Expected", "Hist Avg", "Hist Field",
-                    "ThisWk Fld", "Hist Wind", "ThisWk Wind", "Hist StdDev", "Pred StdDev"]
-        for ci, h in enumerate(headers):
-            cells.append(gspread.Cell(row=TABLE_START_ROW, col=COL_E + ci, value=h))
-
-        # Data rows (rows 24-27)
-        for ri, trow in enumerate(table_rows):
-            vals = [
-                trow["round"], trow["baseline"], trow["expected"],
-                trow["hist_avg"], trow["hist_field"], trow["this_wk_field"],
-                trow["hist_wind"], trow["this_wk_wind"], trow["hist_std"],
-                trow["pred_std"],
-            ]
-            for ci, val in enumerate(vals):
-                cells.append(gspread.Cell(
-                    row=TABLE_START_ROW + 1 + ri,
-                    col=COL_E + ci,
-                    value=val if val != "" else "",
-                ))
-
-        # Summary row (row 28)
-        summary_parts = [f"Field: {field_strength:+.4f} SG"]
-        summary_parts.append(f"Wind Factor: {wind_factor:.4f}")
-        if cut_adj > 0:
-            summary_parts.append(f"Cut adj R3/R4: -{cut_adj:.2f}")
-        cells.append(gspread.Cell(
-            row=TABLE_START_ROW + len(table_rows) + 1,
-            col=COL_E,
-            value=" | ".join(summary_parts),
-        ))
-
-        # Regression section (rows 30-33)
-        if regression is not None:
-            intercept, slope, r_sq, n_obs = regression
-            # Row 30: header
-            cells.append(gspread.Cell(
-                row=TABLE_START_ROW + 7,  # row 30
-                col=COL_E,
-                value="Wind-Variance Regression",
-            ))
-            # Row 31: formula
-            cells.append(gspread.Cell(
-                row=TABLE_START_ROW + 8,  # row 31
-                col=COL_E,
-                value=f"StdDev = {intercept:.2f} + {slope:.4f} * Wind_mph",
-            ))
-            # Row 32: R-sq and N
-            cells.append(gspread.Cell(
-                row=TABLE_START_ROW + 9,  # row 32
-                col=COL_E,
-                value=f"R-sq: {r_sq:.3f} | N: {n_obs} obs",
-            ))
-            # Row 33: suggested STD_DEV
-            # Use the mean of this week's predicted round std devs
-            pred_stds = [t["pred_std"] for t in table_rows if t["pred_std"] != ""]
-            if pred_stds:
-                suggested = round(np.mean(pred_stds), 2)
-                cells.append(gspread.Cell(
-                    row=TABLE_START_ROW + 10,  # row 33
-                    col=COL_E,
-                    value=f"Suggested STD_DEV: {suggested} (current: {STD_DEV})",
-                ))
-
-        # 3) SG Variance Analysis table (rows 35-45, cols E-K)
-        SG_TABLE_START = 35
-        SG_COLS = 7  # E through K
-
-        # Clear SG variance area (rows 35-45)
-        for r in range(SG_TABLE_START, SG_TABLE_START + 11):
-            for c in range(COL_E, COL_E + SG_COLS):
-                cells.append(gspread.Cell(row=r, col=c, value=""))
-
-        if sg_result is not None:
-            sg_rows = sg_result["rows"]
-            sg_weighted = sg_result["weighted_row"]
-
-            # Row 35: title
-            cells.append(gspread.Cell(
-                row=SG_TABLE_START, col=COL_E,
-                value="SG Variance Analysis (sg_total_adj, trailing 50 rounds, all tours)",
-            ))
-
-            # Row 36: headers
-            sg_headers = ["Year", "Qual Players", "Actual StdDev",
-                          "Field Exp Std", "Global Avg", "vs Expected", "vs Global"]
-            for ci, h in enumerate(sg_headers):
-                cells.append(gspread.Cell(
-                    row=SG_TABLE_START + 1, col=COL_E + ci, value=h,
-                ))
-
-            # Data rows (row 37+)
-            for ri, sr in enumerate(sg_rows):
-                vals = [
-                    int(sr["year"]), int(sr["qual_players"]), float(sr["actual_std"]),
-                    float(sr["field_exp_std"]), float(sr["global_avg"]),
-                    f"{sr['vs_expected']:+.3f}", f"{sr['vs_global']:+.3f}",
-                ]
-                for ci, val in enumerate(vals):
-                    cells.append(gspread.Cell(
-                        row=SG_TABLE_START + 2 + ri,
-                        col=COL_E + ci,
-                        value=val,
-                    ))
-
-            # Weighted average row
-            wt_row_idx = SG_TABLE_START + 2 + len(sg_rows)
-            wt_vals = [
-                "Wt Avg", "", float(sg_weighted["actual_std"]),
-                float(sg_weighted["field_exp_std"]), float(sg_weighted["global_avg"]),
-                f"{sg_weighted['vs_expected']:+.3f}", f"{sg_weighted['vs_global']:+.3f}",
-            ]
-            for ci, val in enumerate(wt_vals):
-                cells.append(gspread.Cell(
-                    row=wt_row_idx, col=COL_E + ci, value=val,
-                ))
-
-            # Interpretation row
-            cells.append(gspread.Cell(
-                row=wt_row_idx + 1, col=COL_E,
-                value="Interpretation: vs Expected < 0 = course compresses variance; > 0 = course amplifies",
-            ))
-
-            print(f"  [round_config] Wrote SG variance table to rows {SG_TABLE_START}-{wt_row_idx + 1}")
-
-        # 4) Per-category SG variance table (rows 48+, cols E-Q)
-        CAT_TABLE_START = 48
-        CAT_NAMES_DISP = ["OTT", "APP", "ARG", "PUTT"]
-        CAT_NAMES_KEY = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
-        CAT_TABLE_COLS = 14  # E through R (year + qual + 3 per cat)
-
-        # Clear category table area (rows 48-62)
-        for r in range(CAT_TABLE_START, CAT_TABLE_START + 15):
-            for c in range(COL_E, COL_E + CAT_TABLE_COLS):
-                cells.append(gspread.Cell(row=r, col=c, value=""))
-
         if sg_cat_result is not None:
-            cat_rows = sg_cat_result["per_year"]
-            cat_weighted = sg_cat_result["weighted"]
             cat_mults = sg_cat_result["category_mults"]
-
-            # Title row
-            cells.append(gspread.Cell(
-                row=CAT_TABLE_START, col=COL_E,
-                value="Per-Category SG Variance Analysis (trailing 50 rounds, COURSE_CAT_MULTS)",
-            ))
-
-            # Header row: Year, Qual, then (Actual, FldExp, Mult) x 4 categories
-            cat_headers = ["Year", "Qual"]
-            for disp in CAT_NAMES_DISP:
-                cat_headers.extend([f"{disp} Act", f"{disp} Exp", f"{disp} Mult"])
-            for ci, h in enumerate(cat_headers):
-                cells.append(gspread.Cell(
-                    row=CAT_TABLE_START + 1, col=COL_E + ci, value=h,
-                ))
-
-            # Data rows
-            for ri, cr in enumerate(cat_rows):
-                vals = [int(cr["year"]), int(cr["qual_players"])]
-                for name in CAT_NAMES_KEY:
-                    vals.append(cr.get(f"{name}_actual", ""))
-                    vals.append(cr.get(f"{name}_field_exp", ""))
-                    m = cr.get(f"{name}_mult")
-                    vals.append(m if m is not None else "")
-                for ci, val in enumerate(vals):
-                    cells.append(gspread.Cell(
-                        row=CAT_TABLE_START + 2 + ri,
-                        col=COL_E + ci,
-                        value=val if val != "" else "",
-                    ))
-
-            # Weighted average row
-            cat_wt_row = CAT_TABLE_START + 2 + len(cat_rows)
-            wt_vals = ["Wt Avg", ""]
-            for name in CAT_NAMES_KEY:
-                wt_vals.append(cat_weighted.get(f"{name}_actual", ""))
-                wt_vals.append(cat_weighted.get(f"{name}_field_exp", ""))
-                wt_vals.append(cat_mults.get(name, ""))
-            for ci, val in enumerate(wt_vals):
-                cells.append(gspread.Cell(
-                    row=cat_wt_row, col=COL_E + ci, value=val,
-                ))
-
-            # COURSE_CAT_MULTS summary row
-            mults_str = "  |  ".join(
-                f"{name.replace('sg_', '').upper()}: {cat_mults[name]}"
-                for name in CAT_NAMES_KEY
-            )
-            cells.append(gspread.Cell(
-                row=cat_wt_row + 1, col=COL_E,
-                value=f"COURSE_CAT_MULTS: {mults_str}",
-            ))
-
-            # Skewness section (2 rows below mults)
             cat_skew = sg_cat_result.get("category_skew", {})
-            base_skew = sg_cat_result.get("baseline_skew", {})
-            skew_row = cat_wt_row + 3
 
-            # Header
-            skew_headers = ["Skewness", ""]
-            for disp in CAT_NAMES_DISP:
-                skew_headers.extend([f"{disp} Skew", "", ""])
-            for ci, h in enumerate(skew_headers):
-                if h:
-                    cells.append(gspread.Cell(
-                        row=skew_row, col=COL_E + ci, value=h,
-                    ))
-
-            # Course skew row
-            skew_vals = ["Course (wt avg)", ""]
-            for name in CAT_NAMES_KEY:
-                skew_vals.extend([cat_skew.get(name, ""), "", ""])
-            for ci, val in enumerate(skew_vals):
-                if val != "":
-                    cells.append(gspread.Cell(
-                        row=skew_row + 1, col=COL_E + ci, value=val,
-                    ))
-
-            # Baseline skew row
-            base_vals = ["Tour baseline", ""]
-            for name in CAT_NAMES_KEY:
-                base_vals.extend([base_skew.get(name, ""), "", ""])
-            for ci, val in enumerate(base_vals):
-                if val != "":
-                    cells.append(gspread.Cell(
-                        row=skew_row + 2, col=COL_E + ci, value=val,
-                    ))
-
-            # COURSE_CAT_SKEW summary
-            skew_str = "  |  ".join(
-                f"{name.replace('sg_', '').upper()}: {cat_skew.get(name, 0)}"
-                for name in CAT_NAMES_KEY
-            )
-            cells.append(gspread.Cell(
-                row=skew_row + 3, col=COL_E,
-                value=f"COURSE_CAT_SKEW: {skew_str}",
-            ))
-
-            print(f"  [round_config] Wrote category variance table to rows {CAT_TABLE_START}-{cat_wt_row + 1}")
-
-            # Write cat_mult_* and cat_skew_* param values to column B
             for cat_key in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
                 short = cat_key.replace("sg_", "")
-                # Write mult
                 mult_row = param_rows.get(f"cat_mult_{short}")
                 if mult_row:
                     cells.append(gspread.Cell(row=mult_row, col=2,
                                              value=str(cat_mults.get(cat_key, 1.0))))
-                # Write skew
-                skew_row = param_rows.get(f"cat_skew_{short}")
-                if skew_row:
-                    cells.append(gspread.Cell(row=skew_row, col=2,
+                skew_row_idx = param_rows.get(f"cat_skew_{short}")
+                if skew_row_idx:
+                    cells.append(gspread.Cell(row=skew_row_idx, col=2,
                                              value=str(cat_skew.get(cat_key, 0))))
-            updated_params.extend([
-                f"cat_mult/skew auto-set from {len(cat_rows)} year(s)"
-            ])
+            updated_params.append(
+                f"cat_mult/skew auto-set from {len(sg_cat_result['per_year'])} year(s)"
+            )
+
+        # 3) Clear old analysis tables from cols E-S, rows 22-64
+        COL_E = 5
+        for r in range(22, 65):
+            for c in range(COL_E, COL_E + 15):
+                cells.append(gspread.Cell(row=r, col=c, value=""))
+
+        # 4) Write pre-tournament expected score breakdown to cols T-Z, rows 2-7
+        COL_T = 20  # col T (section label)
+        COL_U = 21  # col U
+        # Section label
+        cells.append(gspread.Cell(row=2, col=COL_T, value="PRE-TOURNEY EXPECTED"))
+
+        # Read dew info from sheet for dew impact computation
+        dew_calc = 0.0
+        dew_base = 0.0
+        dc_row = param_rows.get("dew_calculation")
+        if dc_row:
+            try:
+                dc_val = ws.cell(dc_row, 2).value
+                dew_calc = float(dc_val) if dc_val else 0.0
+            except (ValueError, TypeError):
+                pass
+        db_row = param_rows.get("dewpoint_base")
+        if db_row:
+            try:
+                db_val = ws.cell(db_row, 2).value
+                dew_base = float(db_val) if db_val else 0.0
+            except (ValueError, TypeError):
+                pass
+
+        # Read dew arrays from sheet for average dew per round
+        all_data = ws.get_all_values()
+        dew_cols = {1: 7, 2: 11, 3: 15, 4: 19}  # round -> column (1-indexed)
+
+        # Header row (row 2)
+        breakdown_headers = ["Round", "Base Score", "Field Adj", "Wind Impact", "Dew Impact", "= Expected"]
+        for ci, h in enumerate(breakdown_headers):
+            cells.append(gspread.Cell(row=2, col=COL_U + ci, value=h))
+
+        # Data rows (rows 3-6)
+        for rnd in sorted(adjusted.keys()):
+            row_num = 2 + rnd  # R1->row3, R2->row4, etc.
+            base = final_estimates[rnd]
+            this_wk_field = -field_strength
+            if rnd >= 3 and cut_adj > 0:
+                this_wk_field -= cut_adj
+            avg_wind = round_wind_avgs.get(rnd, 0.0)
+            wind_impact = avg_wind * wind_factor
+
+            # Compute dew impact: read avg dew for this round from sheet grid
+            avg_dew_rd = 0.0
+            dew_col_idx = dew_cols.get(rnd)
+            if dew_col_idx and len(all_data) >= 17:
+                dew_vals = []
+                for row_i in range(2, min(17, len(all_data))):  # rows 3-17 (0-indexed 2-16)
+                    try:
+                        v = float(all_data[row_i][dew_col_idx - 1])  # 0-indexed
+                        dew_vals.append(v)
+                    except (ValueError, IndexError, TypeError):
+                        pass
+                if dew_vals:
+                    avg_dew_rd = sum(dew_vals) / len(dew_vals)
+            dew_impact = (avg_dew_rd - dew_base) * dew_calc if dew_base else 0.0
+
+            expected = round(base + this_wk_field + wind_impact + dew_impact, 1)
+
+            vals = [
+                f"R{rnd}",
+                round(base, 2),
+                round(this_wk_field, 3),
+                round(wind_impact, 3),
+                round(dew_impact, 3),
+                expected,
+            ]
+            for ci, val in enumerate(vals):
+                cells.append(gspread.Cell(row=row_num, col=COL_U + ci, value=val))
+
+        # Coefficients reference row (row 7)
+        cells.append(gspread.Cell(row=7, col=COL_U, value="Coefficients:"))
+        cells.append(gspread.Cell(row=7, col=COL_U + 1, value=f"wind_factor={wind_factor:.4f}"))
+        cells.append(gspread.Cell(row=7, col=COL_U + 2, value=f"dew_coeff={dew_calc:.4f}"))
+        cells.append(gspread.Cell(row=7, col=COL_U + 3, value=f"dewpoint_base={dew_base:.1f}"))
+
+        # 5) Actuals section label (row 10)
+        cells.append(gspread.Cell(row=10, col=COL_T, value="ACTUALS"))
+
+        # Actuals header (row 10, cols U-AC)
+        actuals_headers = ["Round", "Realized Wind", "Forecast Dew", "Realized Dew",
+                           "Wind Impact", "Dew Impact", "Expected", "Actual", "Delta"]
+        for ci, h in enumerate(actuals_headers):
+            cells.append(gspread.Cell(row=10, col=COL_U + ci, value=h))
 
         ws.update_cells(cells, value_input_option="USER_ENTERED")
 
         print(f"\n  [round_config] Wrote backup fallbacks: {', '.join(updated_params)}")
-        print(f"  [round_config] Wrote expanded table to cols E-N, rows {TABLE_START_ROW}-{TABLE_START_ROW + 10}")
+        print(f"  [round_config] Wrote pre-tourney breakdown to cols U-Z, rows 2-7")
+        print(f"  [round_config] Cleared old analysis tables from cols E-S, rows 22-64")
+
+        # 6) Write analysis tables to Details tab
+        _write_details_tab(spreadsheet, table_rows, regression, sg_result,
+                           sg_cat_result, field_strength, wind_factor, cut_adj)
 
     except Exception as e:
         print(f"  WARNING: Could not write to round_config: {e}")

@@ -262,6 +262,121 @@ def compute_wind_factor(event_ids, wind_override, baseline_wind):
 
 
 # --------------------------------------------------------------------------
+# Bayesian Wind Blending (climatology prior + forecast)
+# --------------------------------------------------------------------------
+
+# NWP forecast skill decays roughly linearly toward climatology at ~10-12 days.
+# climo_weight = clamp(lead_days / 12, 0.05, 0.50)
+# At 0 days: 5% climo.  At 3 days: 25%.  At 6 days: 50% (cap).
+MIN_CLIMO_WT = 0.05
+MAX_CLIMO_WT = 0.50
+SKILL_HORIZON_DAYS = 12.0  # forecast = climatology beyond this
+
+
+def climo_weight_for_lead(lead_days):
+    """Compute climatology blend weight from lead time in days."""
+    return max(MIN_CLIMO_WT, min(MAX_CLIMO_WT, lead_days / SKILL_HORIZON_DAYS))
+
+
+def fetch_historical_hourly_wind(lat, lon, month, start_year=2019, end_year=2025):
+    """
+    Query Open-Meteo archive for hourly wind (6 AM–8 PM) across multiple years
+    for a given month. Returns 15-element list (index 0 = 6 AM, 14 = 8 PM)
+    or None on failure.
+    """
+    import os
+    all_frames = []
+    for year in range(start_year, end_year + 1):
+        url = (
+            f"https://archive-api.open-meteo.com/v1/archive"
+            f"?latitude={lat}&longitude={lon}"
+            f"&start_date={year}-{month:02d}-01"
+            f"&end_date={year}-{month:02d}-28"
+            f"&hourly=wind_speed_10m"
+            f"&windspeed_unit=mph&timezone=auto"
+        )
+        try:
+            resp = requests.get(url, timeout=15)
+            data = resp.json()
+            if "hourly" not in data or "wind_speed_10m" not in data["hourly"]:
+                continue
+            df = pd.DataFrame({
+                "datetime": pd.to_datetime(data["hourly"]["time"]),
+                "wind": data["hourly"]["wind_speed_10m"],
+            })
+            df["hour"] = df["datetime"].dt.hour
+            df = df[(df["hour"] >= 6) & (df["hour"] <= 20)]
+            all_frames.append(df)
+        except Exception as e:
+            print(f"  [climo wind] {year} fetch failed: {e}")
+            continue
+
+    if not all_frames:
+        return None
+
+    combined = pd.concat(all_frames, ignore_index=True)
+    hourly_avg = combined.groupby("hour")["wind"].mean()
+    return [round(float(hourly_avg.get(h, 0.0)), 1) for h in range(6, 21)]
+
+
+def blend_wind_with_climo(forecast_array, climo_array, lead_days=None, round_date=None):
+    """
+    Bayesian blend of forecast wind array with climatological prior.
+
+    Climo weight scales with lead time:  lead_days / 12, clamped to [0.05, 0.50].
+      ~12 hrs out -> ~5% climo   (fresh forecast, trust it)
+      ~3 days out -> 25% climo   (typical R1 from Tuesday)
+      ~6 days out -> 50% climo   (R4 from early week, cap)
+
+    Args:
+        forecast_array: list[float] — 15 hourly values (6 AM–8 PM)
+        climo_array:    list[float] — 15 hourly base-rate values
+        lead_days:      float — explicit days until the round (preferred)
+        round_date:     datetime — round date; lead = round_date - now()
+
+    Returns:
+        (blended_array, w_climo) — blended 15-element list and the weight used
+    """
+    if not forecast_array or not climo_array:
+        return forecast_array, 0.0
+
+    # Determine lead time
+    if lead_days is None and round_date is not None:
+        delta = round_date - datetime.now()
+        lead_days = max(delta.total_seconds() / 86400.0, 0.0)
+    if lead_days is None:
+        lead_days = 3.0  # safe fallback
+
+    w_climo = climo_weight_for_lead(lead_days)
+    w_fcst = 1.0 - w_climo
+    n = min(len(forecast_array), len(climo_array))
+    blended = [
+        round(w_fcst * forecast_array[i] + w_climo * climo_array[i], 1)
+        for i in range(n)
+    ]
+    if len(forecast_array) > n:
+        blended.extend(forecast_array[n:])
+    return blended, w_climo
+
+
+def get_round_dates():
+    """
+    Return [R1, R2, R3, R4] datetimes for the current week's tournament.
+    PGA events are always Thursday–Sunday.  Rounds start ~7 AM local.
+    """
+    from datetime import timedelta
+    today = datetime.now()
+    # Thursday = weekday 3.  Find this week's Thursday.
+    days_since_thu = (today.weekday() - 3) % 7
+    thursday = (today - timedelta(days=days_since_thu)).replace(hour=7, minute=0, second=0, microsecond=0)
+    # If we're past Sunday, jump to next week's Thursday
+    sunday = thursday + timedelta(days=3)
+    if today > sunday.replace(hour=23):
+        thursday += timedelta(days=7)
+    return [thursday + timedelta(days=i) for i in range(4)]
+
+
+# --------------------------------------------------------------------------
 # Name Cleaning
 # --------------------------------------------------------------------------
 

@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
-from dashboard.data_layer import get_sg_diagnostics
+from dashboard.data_layer import get_sg_diagnostics, get_mkt_regress_diagnostics
 from dashboard.components.tables import make_grid
 
 dash.register_page(__name__, path="/diagnostics", title="Diagnostics", order=8)
@@ -62,6 +62,18 @@ layout = dbc.Container([
         ], md=3),
     ], className="mb-2"),
     html.Div(id="diag-player-detail"),
+
+    html.Hr(className="mt-5"),
+    html.H4("Market Regression Analysis", className="page-header mt-3"),
+    html.Div(id="diag-mkt-regress-alert"),
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="diag-mkt-rmse"), md=6),
+        dbc.Col(dcc.Graph(id="diag-mkt-direction"), md=6),
+    ]),
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="diag-mkt-scatter"), md=6),
+        dbc.Col(dcc.Graph(id="diag-mkt-component"), md=6),
+    ], className="mt-2"),
 ], fluid=True)
 
 
@@ -336,3 +348,131 @@ def update_player_detail(player, event_id):
 
     available = [c for c in display_cols if c in player_df.columns]
     return make_grid(player_df[available], id_suffix="player-detail", height=300)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Market Regression Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+@callback(
+    Output("diag-mkt-regress-alert", "children"),
+    Output("diag-mkt-rmse", "figure"),
+    Output("diag-mkt-direction", "figure"),
+    Output("diag-mkt-scatter", "figure"),
+    Output("diag-mkt-component", "figure"),
+    Input("diag-event-filter", "id"),  # fires once on load
+)
+def update_mkt_regress(_):
+    empty = go.Figure(layout={**PLOT_LAYOUT, "height": 350})
+
+    df = get_mkt_regress_diagnostics()
+    if df.empty:
+        alert = dbc.Alert(
+            "No market regression data. Drop mkt_regress_*.csv files in the project root.",
+            color="info",
+        )
+        return alert, empty, empty, empty, empty
+
+    alert = None
+    events = df["event_name"].unique()
+
+    # ── 1. RMSE comparison: raw pred vs regressed pred (per event + overall) ──
+    rmse_rows = []
+    for ename in events:
+        edf = df[df["event_name"] == ename]
+        rmse_raw = np.sqrt((edf["error_raw"] ** 2).mean())
+        rmse_reg = np.sqrt((edf["error_regressed"] ** 2).mean())
+        rmse_rows.append({"event": ename, "Raw Pred": rmse_raw, "Regressed": rmse_reg})
+    # Overall
+    rmse_raw_all = np.sqrt((df["error_raw"] ** 2).mean())
+    rmse_reg_all = np.sqrt((df["error_regressed"] ** 2).mean())
+    rmse_rows.append({"event": "OVERALL", "Raw Pred": rmse_raw_all, "Regressed": rmse_reg_all})
+
+    rmse_df = pd.DataFrame(rmse_rows)
+    rmse_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "RMSE: Raw vs Regressed", "height": 350})
+    rmse_fig.add_trace(go.Bar(
+        name="Raw Pred", x=rmse_df["event"], y=rmse_df["Raw Pred"],
+        marker_color="#b71c1c", text=rmse_df["Raw Pred"].round(3), textposition="outside",
+    ))
+    rmse_fig.add_trace(go.Bar(
+        name="Regressed", x=rmse_df["event"], y=rmse_df["Regressed"],
+        marker_color="#2e7d32", text=rmse_df["Regressed"].round(3), textposition="outside",
+    ))
+    rmse_fig.update_layout(barmode="group", yaxis_title="RMSE (SG)")
+    rmse_fig.update_xaxes(tickangle=-20)
+
+    # ── 2. Directional accuracy by regression bucket ──
+    df["rgrs_bucket"] = pd.cut(
+        df["tot_rgrs"],
+        bins=[-np.inf, -0.08, -0.03, 0.03, 0.08, np.inf],
+        labels=["Big Down", "Mod Down", "Neutral", "Mod Up", "Big Up"],
+    )
+    bucket_stats = df.groupby("rgrs_bucket", observed=True).agg(
+        n=("regress_helped", "count"),
+        hit_rate=("regress_helped", "mean"),
+    ).reset_index()
+
+    dir_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Regression Hit Rate by Bucket", "height": 350})
+    colors = ["#b71c1c", "#e57373", "#9e9e9e", "#81c784", "#2e7d32"]
+    dir_fig.add_trace(go.Bar(
+        x=bucket_stats["rgrs_bucket"].astype(str),
+        y=bucket_stats["hit_rate"] * 100,
+        marker_color=colors[:len(bucket_stats)],
+        text=[f"{r:.0f}%<br>(n={n})" for r, n in zip(bucket_stats["hit_rate"] * 100, bucket_stats["n"])],
+        textposition="outside",
+    ))
+    dir_fig.add_hline(y=50, line_dash="dot", line_color="#888", annotation_text="50%")
+    dir_fig.update_yaxes(title_text="% of Players Where Regression Helped", range=[0, 100])
+
+    # ── 3. Scatter: tot_rgrs vs error improvement ──
+    df["error_improvement"] = df["error_raw"].abs() - df["error_regressed"].abs()
+    scatter_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Regression Size vs Error Improvement", "height": 350})
+    scatter_fig.add_trace(go.Scatter(
+        x=df["tot_rgrs"],
+        y=df["error_improvement"],
+        mode="markers",
+        marker=dict(
+            size=5, opacity=0.5,
+            color=df["error_improvement"],
+            colorscale="RdYlGn", cmid=0,
+        ),
+        text=df["player_name"].str.title() + " (" + df["event_name"].str.slice(0, 12) + ")",
+        hovertemplate="<b>%{text}</b><br>Regression: %{x:+.3f}<br>Error improvement: %{y:+.3f}<extra></extra>",
+    ))
+    scatter_fig.add_hline(y=0, line_dash="dot", line_color="#888")
+    scatter_fig.add_vline(x=0, line_dash="dot", line_color="#888")
+    scatter_fig.update_xaxes(title_text="Total Regression (SG)")
+    scatter_fig.update_yaxes(title_text="Error Improvement (+ = helped)")
+
+    # ── 4. Component value: mkt_adj vs mu_adj contribution ──
+    comp_rows = []
+    for comp_name, comp_col in [("mkt_adj", "mkt_adj"), ("mu_adj", "mu_adj")]:
+        for ename in events:
+            edf = df[df["event_name"] == ename]
+            # Correlation between component and actual error reduction
+            if edf[comp_col].std() > 0:
+                corr = edf[comp_col].corr(edf["actual_sg"] - edf["pred"])
+            else:
+                corr = 0
+            comp_rows.append({"event": ename, "component": comp_name, "corr_with_actual": corr})
+        # Overall
+        if df[comp_col].std() > 0:
+            corr_all = df[comp_col].corr(df["actual_sg"] - df["pred"])
+        else:
+            corr_all = 0
+        comp_rows.append({"event": "OVERALL", "component": comp_name, "corr_with_actual": corr_all})
+
+    comp_df = pd.DataFrame(comp_rows)
+    comp_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Component Signal Strength", "height": 350})
+    for comp_name, color in [("mkt_adj", "#1f77b4"), ("mu_adj", "#ff7f0e")]:
+        cdf = comp_df[comp_df["component"] == comp_name]
+        comp_fig.add_trace(go.Bar(
+            name=comp_name, x=cdf["event"], y=cdf["corr_with_actual"],
+            marker_color=color,
+            text=cdf["corr_with_actual"].round(3), textposition="outside",
+        ))
+    comp_fig.update_layout(barmode="group", yaxis_title="Corr(component, actual miss)")
+    comp_fig.update_xaxes(tickangle=-20)
+    comp_fig.add_hline(y=0, line_dash="dot", line_color="#888")
+
+    return alert, rmse_fig, dir_fig, scatter_fig, comp_fig

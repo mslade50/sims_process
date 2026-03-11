@@ -59,6 +59,9 @@ TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
 TAB_BASE_RATES = "Base Rates"
 TAB_LIVE = "Live"
+TAB_DETAILS = "Details"
+
+DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
 
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")

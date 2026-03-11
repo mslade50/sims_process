@@ -103,6 +103,18 @@ layout = dbc.Container([
         ], md=2),
     ], className="mb-3"),
 
+    # Finish position filters
+    dbc.Row([
+        dbc.Col([
+            html.Label("Market Type", className="form-label small text-muted"),
+            dcc.Dropdown(id="bets-market-filter", placeholder="All markets", multi=True, className="dash-dropdown-dark"),
+        ], md=3),
+        dbc.Col([
+            html.Label("Player", className="form-label small text-muted"),
+            dcc.Dropdown(id="bets-player-filter", placeholder="All players", multi=True, className="dash-dropdown-dark"),
+        ], md=3),
+    ], className="mb-3"),
+
     html.Div(id="bets-kpi-row", className="mb-3"),
 
     dbc.Accordion([
@@ -140,6 +152,8 @@ def populate_events(_):
 
 
 @callback(
+    Output("bets-market-filter", "options"),
+    Output("bets-player-filter", "options"),
     Output("bets-kpi-row", "children"),
     Output("bets-tourney-mu-summary", "children"),
     Output("bets-tourney-mu-table", "children"),
@@ -149,8 +163,10 @@ def populate_events(_):
     Output("bets-finish-table", "children"),
     Input("bets-event-filter", "value"),
     Input("bets-book-filter", "value"),
+    Input("bets-market-filter", "value"),
+    Input("bets-player-filter", "value"),
 )
-def update_bets(event, books):
+def update_bets(event, books, markets, players):
     filters = {}
     if event:
         filters["event"] = event
@@ -161,7 +177,7 @@ def update_bets(event, books):
 
     if df.empty:
         alert = dbc.Alert("No bets found for this event.", color="warning")
-        return alert, alert, "", alert, "", alert, ""
+        return [], [], alert, alert, "", alert, "", alert, ""
 
     # Derive units_wagered from kelly_stake for finish pos, default 1.0 for matchups
     if "units_wagered" not in df.columns:
@@ -175,10 +191,32 @@ def update_bets(event, books):
     # Convert finish position dollar amounts to units ($200 = 1 unit)
     df = _convert_to_units(df)
 
-    # KPI
-    total = len(df)
-    avg_edge = df["edge"].mean() if "edge" in df.columns else 0
-    resolved = df[df["result"].astype(str).str.strip() != ""]
+    # Split by type
+    tourney_mu = df[df["bet_type"] == "tournament_matchup"]
+    round_mu = df[df["bet_type"] == "round_matchup"]
+    finish = df[df["bet_type"] == "finish_position"]
+
+    # Populate market/player filter options from finish positions (before filtering)
+    market_options = []
+    player_options = []
+    if not finish.empty and "opponent" in finish.columns:
+        market_vals = sorted(finish["opponent"].dropna().unique())
+        market_options = [{"label": m.replace("_", " ").title(), "value": m} for m in market_vals]
+    if not finish.empty and "bet_on" in finish.columns:
+        player_vals = sorted(finish["bet_on"].dropna().unique())
+        player_options = [{"label": p.title(), "value": p} for p in player_vals]
+
+    # Apply market/player filters to finish positions
+    if markets and not finish.empty and "opponent" in finish.columns:
+        finish = finish[finish["opponent"].isin(markets)]
+    if players and not finish.empty and "bet_on" in finish.columns:
+        finish = finish[finish["bet_on"].isin(players)]
+
+    # KPI (uses all bets, finish filtered)
+    all_for_kpi = pd.concat([tourney_mu, round_mu, finish], ignore_index=True)
+    total = len(all_for_kpi)
+    avg_edge = all_for_kpi["edge"].mean() if "edge" in all_for_kpi.columns else 0
+    resolved = all_for_kpi[all_for_kpi["result"].astype(str).str.strip() != ""]
     resolved = resolved[~resolved["result"].isin(["no_data", "unknown", "duplicate"])]
     won = resolved["units_won"].sum() if not resolved.empty else 0
 
@@ -188,23 +226,23 @@ def update_bets(event, books):
         {"title": "P&L", "value": f"{won:+.2f}u", "color": "success" if won >= 0 else "danger"},
     ])
 
-    # Split by type
-    display_cols = ["bet_on", "opponent", "bookmaker", "edge", "pred_on", "book_odds", "fair_odds", "units_wagered", "result", "units_won"]
+    # Display columns
+    mu_display_cols = ["bet_on", "opponent", "bookmaker", "edge", "pred_on", "book_odds", "fair_odds", "units_wagered", "result", "units_won"]
+    fp_display_cols = ["bet_on", "opponent", "bookmaker", "edge", "pred_on", "book_odds", "fair_odds", "units_wagered", "result", "units_won"]
 
-    tourney_mu = df[df["bet_type"] == "tournament_matchup"]
-    round_mu = df[df["bet_type"] == "round_matchup"]
-    finish = df[df["bet_type"] == "finish_position"]
-
-    def _make_section(section_df, suffix):
-        available = [c for c in display_cols if c in section_df.columns]
+    def _make_section(section_df, suffix, cols=mu_display_cols, rename=None):
+        available = [c for c in cols if c in section_df.columns]
         show_df = section_df[available].copy() if not section_df.empty else pd.DataFrame()
+        if rename and not show_df.empty:
+            show_df = show_df.rename(columns=rename)
         return _section_summary(section_df), make_grid(show_df, id_suffix=suffix, height=400)
 
     tm_sum, tm_tbl = _make_section(tourney_mu, "tourney-mu")
     rm_sum, rm_tbl = _make_section(round_mu, "round-mu")
-    fp_sum, fp_tbl = _make_section(finish, "finish-pos")
+    fp_sum, fp_tbl = _make_section(finish, "finish-pos", cols=fp_display_cols,
+                                    rename={"bet_on": "player", "opponent": "market"})
 
-    return kpi, tm_sum, tm_tbl, rm_sum, rm_tbl, fp_sum, fp_tbl
+    return market_options, player_options, kpi, tm_sum, tm_tbl, rm_sum, rm_tbl, fp_sum, fp_tbl
 
 
 @callback(
