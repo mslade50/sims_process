@@ -291,6 +291,8 @@ python live_stats_engine.py
 - Generates `model_predictions_r1.csv` with pre-tournament skill estimates
 - No skill adjustments applied (pre-event baseline)
 
+> **IMPORTANT: `round=0` is used for ALL R1 operations** — both `live_stats_engine.py` (creates `model_predictions_r1.csv`) and `round_sim.py` (prices R1 matchups + score cards). The `expected_score_1` field in the sheet is the R1 expected scoring average. Do NOT change round to 1 until R1 is complete and you're ready to run the R2 pipeline.
+
 **Verify:**
 ```python
 df = pd.read_csv("model_predictions_r1.csv")
@@ -354,6 +356,12 @@ python live_stats_engine.py
 - Outputs:
   - `r1_live_model.csv` (R1 skill-adjusted model)
   - `model_predictions_r2.csv` (predictions for R2)
+
+### 3.3b R1 Round Sim (with round=0 still in the sheet)
+```bash
+python round_sim.py
+```
+**Note:** `round=0` in the sheet means "R1 hasn't happened yet" — `round_sim.py` reads this and prices R1 matchups using `model_predictions_r1.csv` and `expected_score_1` as the R1 expected scoring average. Make sure `expected_score_1` is set to the R1 expected score (e.g., 72.6), not the generic baseline.
 
 ### 3.4 Post-Round 1: Run R2 Matchup Pricing
 ```bash
