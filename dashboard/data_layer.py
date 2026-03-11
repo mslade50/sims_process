@@ -695,9 +695,17 @@ def get_file_mtime(filename):
 # ── Weather Data ─────────────────────────────────────────────────────────────
 
 def get_weather_impact_players():
-    """Read weather_impact_players.csv (per-player wind/dew adjustments from sim)."""
-    path = _resolve_path("weather_impact_players.csv")
-    return _read_csv_safe(path)
+    """Read weather_impact_{tourney}.csv (per-player wind/dew adjustments from sim).
+
+    Local: weather_impact_{tourney}.csv; Render: weather_impact.csv in dashboard_data/.
+    """
+    config = get_tournament_config()
+    tourney = config.get("tourney", "")
+    if tourney:
+        path = os.path.join(PROJECT_ROOT, f"weather_impact_{tourney}.csv")
+        if os.path.exists(path):
+            return _read_csv_safe(path)
+    return _read_csv_safe(_resolve_path("weather_impact.csv"))
 
 
 _WEATHER_CACHE = {"data": None, "timestamp": 0}
