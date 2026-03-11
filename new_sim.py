@@ -60,6 +60,45 @@ print("=" * 60)
 print("  Tournament Sim — Category-First")
 print("=" * 60)
 
+# --- Bayesian wind blending: blend forecast with climatological prior ---
+# Climo weight scales with actual lead time (days to round), not hard-coded.
+from api_utils import (
+    fetch_historical_hourly_wind, blend_wind_with_climo,
+    get_round_dates, climo_weight_for_lead,
+)
+try:
+    import pandas as _pd_coords
+    _coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
+    _coords_df = _pd_coords.read_csv(_coords_csv)
+    _coords_row = _coords_df[_coords_df["course_id"] == _event_id]
+    if not _coords_row.empty:
+        _lat = float(_coords_row["lat"].iloc[0])
+        _lon = float(_coords_row["lon"].iloc[0])
+        _month = datetime.now().month
+        _climo_wind = fetch_historical_hourly_wind(_lat, _lon, _month)
+        _round_dates = get_round_dates()
+        if _climo_wind:
+            print(f"[weather] Blending forecast with {_month}-month climo prior ({_lat}, {_lon})")
+            print(f"[weather] Climo avg: {np.mean(_climo_wind):.1f} mph | "
+                  f"R1 fcst avg: {np.mean(wind_1):.1f} | R2 fcst avg: {np.mean(wind_2):.1f}")
+            wind_1, _w1 = blend_wind_with_climo(wind_1, _climo_wind,
+                                                 round_date=_round_dates[0] if _round_dates else None)
+            wind_2, _w2 = blend_wind_with_climo(wind_2, _climo_wind,
+                                                 round_date=_round_dates[1] if _round_dates else None)
+            print(f"[weather] Blended R1 avg: {np.mean(wind_1):.1f} (w_climo={_w1:.0%}) | "
+                  f"R2 avg: {np.mean(wind_2):.1f} (w_climo={_w2:.0%})")
+            if _round_dates:
+                _now = datetime.now()
+                for _r in range(4):
+                    _ld = (_round_dates[_r] - _now).total_seconds() / 86400
+                    print(f"  R{_r+1}: {_ld:.1f} days out -> climo weight {climo_weight_for_lead(_ld):.0%}")
+        else:
+            print("[weather] Could not fetch climo wind — using raw forecast")
+    else:
+        print(f"[weather] No coordinates for event_id={_event_id} — skipping climo blend")
+except Exception as _e:
+    print(f"[weather] Climo blend failed: {_e} — using raw forecast")
+
 # Matchup weather-impact report settings (doesn't affect sim)
 wind_calculation_report = WIND_FACTOR_SIM
 
@@ -245,23 +284,6 @@ if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
     pcf = pd.read_csv(_pre_course_path, usecols=['player_name', 'sample'])
     pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     model_preds = model_preds.merge(pcf, on='player_name', how='left')
-
-# Replace low-confidence predictions with DG decomposition
-from api_utils import fetch_player_decompositions
-dg_decomp = fetch_player_decompositions(API_KEY)
-if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
-    model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
-    mask = (model_preds['my_pred'].abs() < 0.5) & model_preds['dg_final_pred'].notna()
-    n_replaced = mask.sum()
-    if n_replaced > 0:
-        replaced = model_preds.loc[mask, ['player_name', 'my_pred', 'dg_final_pred']].copy()
-        model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
-        print(f"[DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
-        for _, r in replaced.iterrows():
-            print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
-    else:
-        print("[DG decomp] No predictions below threshold needed replacement")
-    model_preds = model_preds.drop(columns=['dg_final_pred'])
 
 # --- Weather for SIM (R1/R2 only; sim waves centered) ---
 wind_r1_sim, wind_r2_sim, dew_r1_sim, dew_r2_sim = [], [], [], []
@@ -748,6 +770,75 @@ cat_labels = ["OTT", "APP", "ARG", "PUTT"]
 for i_c in range(4):
     for j_c in range(i_c+1, 4):
         print(f"    {cat_labels[i_c]}-{cat_labels[j_c]}: realized={realized_corr[i_c,j_c]:.4f}, input={R[i_c,j_c]:.4f}")
+
+# 6. Per-player realized vs predicted (mean & std)
+print(f"\n  Per-player validation:")
+
+# R1 mean (cleanest — no skill updates)
+r1_mean_realized = sg_r1.mean(axis=1)
+mean_delta = r1_mean_realized - r1_mu
+
+# Per-round realized std
+r1_std_real = sg_r1.std(axis=1)
+r2_std_real = sg_r2.std(axis=1)
+r3_std_real = sg_r3.std(axis=1)
+r4_std_real = sg_r4.std(axis=1)
+avg_std_real = (r1_std_real + r2_std_real + r3_std_real + r4_std_real) / 4.0
+std_delta = avg_std_real - round_std
+
+# Tournament-wide mean (all 4 rounds averaged)
+tourn_sg = (sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0
+tourn_mean_realized = tourn_sg.mean(axis=1)
+tourn_mean_delta = tourn_mean_realized - my_pred_base
+
+print(f"  {'':30s}  {'R1 Mean':>10s}  {'Avg Std':>10s}  {'Tourn Mean':>10s}")
+print(f"  {'MAE (all players)':30s}  {np.abs(mean_delta).mean():10.4f}  {np.abs(std_delta).mean():10.4f}  {np.abs(tourn_mean_delta).mean():10.4f}")
+print(f"  {'Max abs delta':30s}  {np.abs(mean_delta).max():10.4f}  {np.abs(std_delta).max():10.4f}  {np.abs(tourn_mean_delta).max():10.4f}")
+
+# Per-round std summary
+print(f"\n  Std dev by round (field avg):")
+print(f"    R1: pred={round_std.mean():.3f}  real={r1_std_real.mean():.3f}  d={r1_std_real.mean() - round_std.mean():+.3f}")
+print(f"    R2: pred={round_std.mean():.3f}  real={r2_std_real.mean():.3f}  d={r2_std_real.mean() - round_std.mean():+.3f}")
+print(f"    R3: pred={round_std.mean():.3f}  real={r3_std_real.mean():.3f}  d={r3_std_real.mean() - round_std.mean():+.3f}")
+print(f"    R4: pred={round_std.mean():.3f}  real={r4_std_real.mean():.3f}  d={r4_std_real.mean() - round_std.mean():+.3f}")
+
+# Flag players with largest discrepancies
+_val_df = pd.DataFrame({
+    'player_name': player_names,
+    'pred': my_pred_base,
+    'r1_pred': r1_mu,
+    'r1_mean_real': r1_mean_realized,
+    'mean_delta': mean_delta,
+    'pred_std': round_std,
+    'r1_std_real': r1_std_real,
+    'r2_std_real': r2_std_real,
+    'r3_std_real': r3_std_real,
+    'r4_std_real': r4_std_real,
+    'avg_std_real': avg_std_real,
+    'std_delta': std_delta,
+    'tourn_mean_real': tourn_mean_realized,
+    'tourn_mean_delta': tourn_mean_delta,
+})
+
+# Top 5 mean misses
+print(f"\n  Biggest R1 mean misses:")
+for _, r in _val_df.nlargest(5, 'mean_delta').iterrows():
+    print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
+for _, r in _val_df.nsmallest(5, 'mean_delta').iterrows():
+    print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
+
+# Top 5 std misses (avg across all rounds)
+print(f"\n  Biggest avg std misses (pred vs realized avg of R1-R4):")
+for _, r in _val_df.nlargest(5, 'std_delta').iterrows():
+    print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
+          f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
+for _, r in _val_df.nsmallest(5, 'std_delta').iterrows():
+    print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
+          f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
+
+# Save full validation file
+_val_df.to_csv(f'sim_validation_{tourney}.csv', index=False)
+print(f"\n  [ok] Saved sim_validation_{tourney}.csv")
 
 print(f"{'='*50}\n")
 
@@ -1536,6 +1627,15 @@ if not df_match.empty:
             lambda r: r['Player 1'] if r['edge_p1'] > r['edge_p2'] else r['Player 2'], axis=1
         )
 
+        # Add wind advantage columns to combined_df (for Sheets storage)
+        wind_lookup = dict(zip(wx['player_name'].str.lower(), wx['wind_adv_r1_2']))
+        combined_df['wind_on'] = combined_df['bet_on'].str.lower().map(wind_lookup)
+        combined_df['bet_against'] = combined_df.apply(
+            lambda r: r['Player 2'] if r['bet_on'] == r['Player 1'] else r['Player 1'], axis=1
+        )
+        combined_df['wind_against'] = combined_df['bet_against'].str.lower().map(wind_lookup)
+        combined_df['wind_diff'] = combined_df['wind_on'] - combined_df['wind_against']
+
         combined_csv_name = os.path.join(matchup_dir, f"matchups_ftsimp_{tourney}_{timestamp}.csv")
         combined_df.to_csv(combined_csv_name, index=False)
         print(f"[ok] combined matchups -> {combined_csv_name}")
@@ -1549,14 +1649,6 @@ if not df_match.empty:
             sharp_filename = os.path.join(matchup_dir, f"sharp_filtered_{tourney}_{timestamp}.csv")
             sharp_df.to_csv(sharp_filename, index=False)
         else:
-            wind_lookup = dict(zip(wx['player_name'].str.lower(), wx['wind_adv_r1_2']))
-            sharp_df['wind_on'] = sharp_df['bet_on'].str.lower().map(wind_lookup)
-            sharp_df['bet_against'] = sharp_df.apply(
-                lambda r: r['Player 2'] if r['bet_on'] == r['Player 1'] else r['Player 1'], axis=1
-            )
-            sharp_df['wind_against'] = sharp_df['bet_against'].str.lower().map(wind_lookup)
-            sharp_df['wind_diff'] = sharp_df['wind_on'] - sharp_df['wind_against']
-
             sharp_df['matchup_key'] = sharp_df.apply(
                 lambda r: '-'.join(sorted([r['Player 1'].lower(), r['Player 2'].lower()])),
                 axis=1
