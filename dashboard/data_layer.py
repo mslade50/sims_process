@@ -71,8 +71,6 @@ def get_tournament_config():
             "tourney", "course_id", "course_name", "course_par", "event_ids",
             "num_sims", "player_var", "baseline_wind", "wind_override",
             "baseline_dew", "dew_calculation",
-            "wind_1", "wind_2", "wind_3", "wind_4",
-            "dewpoint_1", "dewpoint_2", "dewpoint_3", "dewpoint_4",
             "score_adj_r1", "score_adj_r2", "score_adj_r3", "score_adj_r4",
             "PAR", "STD_DEV", "SIMULATIONS", "CUT_LINE",
         ]
@@ -692,3 +690,216 @@ def get_file_mtime(filename):
     if os.path.exists(path):
         return os.path.getmtime(path)
     return None
+
+
+# ── Weather Data ─────────────────────────────────────────────────────────────
+
+def get_weather_impact_players():
+    """Read weather_impact_players.csv (per-player wind/dew adjustments from sim)."""
+    path = _resolve_path("weather_impact_players.csv")
+    return _read_csv_safe(path)
+
+
+_WEATHER_CACHE = {"data": None, "timestamp": 0}
+
+
+def get_weather_forecast():
+    """Read wind/dew hourly arrays from Google Sheet round_config tab.
+
+    Returns dict with wind_r1..wind_r4, dew_r1..dew_r4 arrays,
+    plus wind_override, dew_calculation scalars.
+    Falls back to sim_inputs for wind_speed_base.
+    """
+    import time
+    now = time.time()
+
+    if _WEATHER_CACHE["data"] is not None and (now - _WEATHER_CACHE["timestamp"]) < _SHEETS_CACHE_TTL:
+        return _WEATHER_CACHE["data"]
+
+    result = {}
+    try:
+        from sheet_config import load_config
+        config = load_config()
+        for r in range(1, 5):
+            result[f"wind_r{r}"] = config.get(f"wind_r{r}", [])
+            result[f"dew_r{r}"] = config.get(f"dew_r{r}", [])
+        result["wind_override"] = config.get("wind_override", 0.0)
+        result["dew_calculation"] = config.get("dew_calculation", 0.0)
+    except Exception as e:
+        print(f"  [dashboard] Sheet config failed: {e}")
+
+    # wind_speed_base from sim_inputs
+    try:
+        import sim_inputs
+        result["wind_speed_base"] = getattr(sim_inputs, "wind_speed_base", None)
+        result["baseline_wind"] = getattr(sim_inputs, "baseline_wind", None)
+        result["baseline_dew"] = getattr(sim_inputs, "baseline_dew", None)
+    except Exception:
+        pass
+
+    _WEATHER_CACHE["data"] = result
+    _WEATHER_CACHE["timestamp"] = now
+    return result
+
+
+def get_weather_matchup_edges():
+    """Join weather_impact_players with BetOnline tournament matchups.
+
+    Computes weather differential for each matched pair.
+    Returns df sorted by absolute differential descending.
+    """
+    weather = get_weather_impact_players()
+    if weather.empty:
+        return pd.DataFrame()
+
+    # Get tournament matchups (raw, before get_matchups drops player columns)
+    tourn_df = _load_matchups_from_sheets(_TAB_TOURNAMENT_MU, _TOURNAMENT_MU_HEADERS)
+    if tourn_df.empty:
+        return pd.DataFrame()
+
+    # Filter to current event, latest timestamp, BetOnline only
+    config = get_tournament_config()
+    tourney = config.get("tourney", "")
+    if tourney:
+        tourn_df = tourn_df[tourn_df["event_name"].str.lower().str.strip() == tourney.lower()]
+    if tourn_df.empty:
+        return pd.DataFrame()
+
+    latest_ts = tourn_df["run_timestamp"].max()
+    tourn_df = tourn_df[tourn_df["run_timestamp"] == latest_ts].copy()
+
+    # Filter to BetOnline
+    if "bookmaker" in tourn_df.columns:
+        tourn_df = tourn_df[tourn_df["bookmaker"].str.lower().str.contains("betonline", na=False)]
+    if tourn_df.empty:
+        return pd.DataFrame()
+
+    # Compute total weather advantage per player
+    adv_cols = []
+    for col in ["wind_adv_r1_2", "dew_adv_r1_2"]:
+        if col in weather.columns:
+            adv_cols.append(col)
+    if not adv_cols:
+        return pd.DataFrame()
+
+    weather["total_weather_adv"] = weather[adv_cols].sum(axis=1)
+    weather_lookup = weather.set_index("player_name")["total_weather_adv"].to_dict()
+
+    rows = []
+    for _, mu in tourn_df.iterrows():
+        p1 = str(mu.get("player_1", "")).strip().lower()
+        p2 = str(mu.get("player_2", "")).strip().lower()
+        w1 = weather_lookup.get(p1)
+        w2 = weather_lookup.get(p2)
+        if w1 is None or w2 is None:
+            continue
+        diff = w1 - w2
+        rows.append({
+            "player_1": p1,
+            "player_2": p2,
+            "p1_weather_adv": round(w1, 3),
+            "p2_weather_adv": round(w2, 3),
+            "differential": round(diff, 3),
+            "favored": p1 if diff > 0 else p2,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
+    result["abs_diff"] = result["differential"].abs()
+    result = result.sort_values("abs_diff", ascending=False).drop(columns=["abs_diff"])
+    return result
+
+
+# ── Market Regression Diagnostics ────────────────────────────────────────────
+
+_DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
+
+
+def get_mkt_regress_diagnostics():
+    """Combine historical mkt_regress files with actual tournament SG from db.
+
+    Returns DataFrame with one row per player-event:
+        player_name, event_name, event_id, pred, my_pred_regressed,
+        comp_c_adj, tot_rgrs, mkt_adj, mu_adj, actual_sg,
+        error_raw, error_regressed, regress_helped
+    Returns empty DataFrame if no data available.
+    """
+    import sqlite3
+
+    # Find all mkt_regress_*.csv files
+    pattern = os.path.join(PROJECT_ROOT, "mkt_regress_*.csv")
+    files = glob.glob(pattern)
+    if not files:
+        return pd.DataFrame()
+
+    frames = []
+    for f in files:
+        try:
+            df = pd.read_csv(f)
+            # Standardize columns across old/new format
+            keep = {}
+            keep["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
+            keep["event_id"] = df["event_id"] if "event_id" in df.columns else np.nan
+            keep["event_name"] = df["event_name"] if "event_name" in df.columns else os.path.basename(f)
+            keep["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+            # New format uses my_pred_final, old uses my_pred_3
+            if "my_pred_final" in df.columns:
+                keep["my_pred_regressed"] = pd.to_numeric(df["my_pred_final"], errors="coerce")
+            elif "my_pred_3" in df.columns:
+                keep["my_pred_regressed"] = pd.to_numeric(df["my_pred_3"], errors="coerce")
+            keep["tot_rgrs"] = pd.to_numeric(df.get("tot_rgrs", 0), errors="coerce")
+            keep["mkt_adj"] = pd.to_numeric(df.get("mkt_adj", 0), errors="coerce")
+            keep["mu_adj"] = pd.to_numeric(df.get("mu_adj", 0), errors="coerce")
+            keep["comp_c_adj"] = pd.to_numeric(df.get("comp_c_adj", df.get("c_adj", 0)), errors="coerce")
+            frames.append(pd.DataFrame(keep))
+        except Exception:
+            continue
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined.dropna(subset=["event_id", "pred", "my_pred_regressed"])
+    combined["event_id"] = combined["event_id"].astype(int)
+
+    # Fetch actuals from db
+    if not os.path.exists(_DB_PATH):
+        return pd.DataFrame()
+
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        event_ids = combined["event_id"].unique().tolist()
+        placeholders = ",".join("?" * len(event_ids))
+        actuals = pd.read_sql_query(
+            f"""
+            SELECT player_name, event_id,
+                   AVG(sg_total) as actual_sg,
+                   COUNT(*) as rounds_played
+            FROM player_rounds
+            WHERE event_id IN ({placeholders}) AND year = 2026
+            GROUP BY player_name, event_id
+            """,
+            conn,
+            params=event_ids,
+        )
+        conn.close()
+    except Exception:
+        return pd.DataFrame()
+
+    if actuals.empty:
+        return pd.DataFrame()
+
+    actuals["player_name"] = actuals["player_name"].astype(str).str.lower().str.strip()
+
+    merged = combined.merge(actuals, on=["player_name", "event_id"], how="inner")
+    if merged.empty:
+        return pd.DataFrame()
+
+    # Compute errors (positive = predicted too high / too optimistic)
+    merged["error_raw"] = merged["pred"] - merged["actual_sg"]
+    merged["error_regressed"] = merged["my_pred_regressed"] - merged["actual_sg"]
+    merged["regress_helped"] = merged["error_regressed"].abs() < merged["error_raw"].abs()
+
+    return merged

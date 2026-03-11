@@ -13,7 +13,6 @@ def make_navbar():
                 dbc.Nav([
                     dbc.NavItem(dbc.NavLink("Home", href="/")),
                     dbc.NavItem(dbc.NavLink("Matchups", href="/matchups")),
-                    dbc.NavItem(dbc.NavLink("Outrights (Pre)", href="/outrights-pre")),
                     dbc.NavItem(dbc.NavLink("Outrights (Live)", href="/outrights-live")),
                     dbc.NavItem(dbc.NavLink("Distributions", href="/distributions")),
                     dbc.NavItem(dbc.NavLink("SG Dists", href="/sg-distributions")),
@@ -21,9 +20,8 @@ def make_navbar():
                     dbc.NavItem(dbc.NavLink("Bets", href="/bets")),
                     dbc.NavItem(dbc.NavLink("Performance", href="/performance")),
                     dbc.NavItem(dbc.NavLink("Luck", href="/luck")),
-                    dbc.NavItem(dbc.NavLink("Skill", href="/skill")),
                     dbc.NavItem(dbc.NavLink("Diagnostics", href="/diagnostics")),
-                    dbc.NavItem(dbc.NavLink("Fragility", href="/fragility")),
+                    dbc.NavItem(dbc.NavLink("Weather", href="/weather")),
                 ], className="ms-auto", navbar=True),
                 id="navbar-collapse",
                 navbar=True,

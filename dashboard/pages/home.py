@@ -31,8 +31,8 @@ NAV_CARDS = [
     {"title": "Pricer", "href": "/pricer", "icon": "O/U", "desc": "Interactive over/under calculator"},
     {"title": "Bets", "href": "/bets", "icon": "$", "desc": "Active bets this tournament"},
     {"title": "Performance", "href": "/performance", "icon": "P&L", "desc": "Historical ROI & results"},
-    {"title": "Skill", "href": "/skill", "icon": "SG", "desc": "Live prediction adjustments"},
     {"title": "Diagnostics", "href": "/diagnostics", "icon": "Dx", "desc": "SG prediction analysis"},
+    {"title": "Weather", "href": "/weather", "icon": "W", "desc": "Weather impact & forecasts"},
 ]
 
 
