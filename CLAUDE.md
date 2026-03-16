@@ -16,7 +16,7 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 
 `new_sim.py` uses category-first draws: instead of drawing total SG then decomposing into categories, it draws each SG category from a course-adjusted multivariate normal and sums to total. This captures course-specific variance profiles (e.g., Bay Hill amplifies OTT variance 1.24x but barely affects PUTT at 1.01x).
 
-**Status**: Promoted to production (March 2025). The archived total-first sim is `new_sim_v1.py`.
+**Status**: Promoted to production (March 2025). The archived total-first sim is `archive/new_sim_v1.py`.
 
 **Key details**:
 - Uses `COURSE_CAT_MULTS` dict in `sim_inputs.py` (per-category variance multipliers from `scoring_baseline.py` analysis)
@@ -25,11 +25,19 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
 - Per-category course multipliers come from `sg_category_event_profiles.csv` — computed for each new course via `scoring_baseline.py` variance analysis
 
-**Supporting analysis files** (created during development, not part of weekly pipeline):
-- `sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events
-- `sg_category_predictive_test.py` — Player-level predictive power test (leave-one-year-out)
+**Supporting analysis files** (in `archive/`, not part of weekly pipeline):
+- `archive/sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events
+- `archive/sg_category_predictive_test.py` — Player-level predictive power test (leave-one-year-out)
 - `sg_category_event_profiles.csv` — Per-event per-category variance profiles
 - `sg_category_variance_results.csv` — Raw variance test results
+
+## Repository Layout
+
+- **Root**: Active pipeline scripts only (19 files) + current docs
+- **`archive/`**: Dead code, analysis scripts, one-time fixes, stale docs. Nothing imports from here.
+- **`permanent_data/`**: Persists across weekly cleanup. Ledger, diagnostics, course data.
+- **`dashboard/`**: Dash app (pages, components, data layer, assets)
+- **`dashboard_data/`**: Committed copies for Render deploy
 
 ## Key Files Not Obvious From Code
 

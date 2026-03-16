@@ -692,6 +692,47 @@ def get_luck_attribution():
     return df
 
 
+HISTORICAL_DISTS = os.path.join(PERMANENT_DATA, "historical_dists")
+
+
+def get_historical_events():
+    """Scan permanent_data/historical_dists/ for archived events.
+
+    Returns list of (event_id, tourney_name) tuples sorted by event_id descending.
+    """
+    if not os.path.isdir(HISTORICAL_DISTS):
+        return []
+    events = []
+    for name in os.listdir(HISTORICAL_DISTS):
+        path = os.path.join(HISTORICAL_DISTS, name)
+        if not os.path.isdir(path):
+            continue
+        # Format: {event_id}_{tourney}
+        parts = name.split("_", 1)
+        if len(parts) == 2:
+            try:
+                event_id = int(parts[0])
+                events.append((event_id, parts[1]))
+            except ValueError:
+                continue
+    events.sort(key=lambda x: x[0], reverse=True)
+    return events
+
+
+def get_historical_rank_probs(event_id, tourney, mode="pre"):
+    """Read archived rank_probs parquet for a historical event.
+
+    Args:
+        event_id: Numeric event ID.
+        tourney: Tournament name slug.
+        mode: "pre" or "live".
+
+    Returns DataFrame (empty if missing).
+    """
+    path = os.path.join(HISTORICAL_DISTS, f"{event_id}_{tourney}", f"rank_probs_{mode}.parquet")
+    return _read_parquet_safe(path)
+
+
 def get_file_mtime(filename):
     """Get modification time of a file. Returns None if missing."""
     path = _resolve_path(filename)

@@ -58,6 +58,9 @@ PERMANENT_FILES = [
 ]
 
 
+HISTORICAL_DISTS = os.path.join(PROJECT_ROOT, "permanent_data", "historical_dists")
+
+
 def get_tourney():
     """Import tourney name from sim_inputs.py."""
     sys.path.insert(0, PROJECT_ROOT)
@@ -65,6 +68,17 @@ def get_tourney():
         import sim_inputs
         return getattr(sim_inputs, "tourney", None)
     except ImportError:
+        return None
+
+
+def get_event_id():
+    """Import first event_id from sim_inputs.py."""
+    sys.path.insert(0, PROJECT_ROOT)
+    try:
+        import sim_inputs
+        ids = getattr(sim_inputs, "event_ids", [])
+        return ids[0] if ids else None
+    except (ImportError, IndexError):
         return None
 
 
@@ -126,6 +140,32 @@ def copy_files(dry_run=False):
             copied.append(label)
     else:
         print("  Warning: Could not import tourney from sim_inputs.py — skipping tournament folder files")
+
+    # Archive rank_probs into permanent_data/historical_dists/
+    event_id = get_event_id()
+    if tourney and event_id:
+        archive_dir = os.path.join(HISTORICAL_DISTS, f"{event_id}_{tourney}")
+        for src_template, archive_name in [
+            ("rank_probs_updated_{tourney}.parquet", "rank_probs_pre.parquet"),
+            ("rank_probs_live_{tourney}.parquet", "rank_probs_live.parquet"),
+        ]:
+            src_fname = src_template.format(tourney=tourney)
+            # Prefer v2 output
+            v2_src = os.path.join(PROJECT_ROOT, tourney, "v2", src_fname)
+            root_src = os.path.join(PROJECT_ROOT, src_fname)
+            if os.path.exists(v2_src):
+                src = v2_src
+            elif os.path.exists(root_src):
+                src = root_src
+            else:
+                skipped.append(f"archive: {src_fname}")
+                continue
+            if not dry_run:
+                os.makedirs(archive_dir, exist_ok=True)
+                shutil.copy2(src, os.path.join(archive_dir, archive_name))
+            copied.append(f"archive: {src_fname} -> historical_dists/{event_id}_{tourney}/{archive_name}")
+    else:
+        print("  Warning: Could not determine event_id — skipping rank_probs archive")
 
     # Permanent data files
     for src_rel, dst_name in PERMANENT_FILES:
