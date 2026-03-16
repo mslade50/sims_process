@@ -465,9 +465,127 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None, year=No
     print(f"  Archetypes: {matched}/{len(field_players)} players matched in DB"
           f" ({partial} partial, {no_data} no data)")
 
-    # Classify archetypes using percentile ranks within this field
-    result = _classify_archetypes(result)
+    # Build tour-wide population for percentile ranking
+    tour_pop = _compute_tour_population(cutoff_date)
+
+    # Classify archetypes using percentile ranks against tour population
+    result = _classify_archetypes(result, tour_population=tour_pop)
     return result
+
+
+def _compute_tour_population(cutoff_date):
+    """Compute rolling stats for all tour-eligible players before cutoff_date.
+
+    Eligibility: 30+ total rounds with SG data AND 20+ rounds in the
+    trailing 12 months. Returns DataFrame with same rolling stat columns
+    as compute_rolling_archetypes.
+    """
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame()
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+    # Parse cutoff for 12-month window
+    try:
+        cutoff_dt = pd.to_datetime(cutoff_date)
+    except Exception:
+        cutoff_dt = pd.Timestamp.now()
+    twelve_months_ago = (cutoff_dt - pd.DateOffset(months=12)).strftime("%Y-%m-%d")
+
+    try:
+        # Find eligible players: 30+ total rounds AND 20+ in trailing 12 months
+        eligible = pd.read_sql_query(
+            """
+            SELECT player_name
+            FROM player_rounds
+            WHERE sg_ott_adj IS NOT NULL AND round_date < ?
+            GROUP BY player_name
+            HAVING COUNT(*) >= 30
+               AND SUM(CASE WHEN round_date >= ? THEN 1 ELSE 0 END) >= 20
+            """,
+            conn,
+            params=(cutoff_date, twelve_months_ago),
+        )
+        if eligible.empty:
+            conn.close()
+            return pd.DataFrame()
+
+        eligible_players = set(
+            eligible["player_name"].astype(str).str.lower().str.strip().tolist()
+        )
+
+        # Pull all rounds for eligible players
+        db_df = pd.read_sql_query(
+            """
+            SELECT player_name, round_date,
+                   sg_ott_adj, sg_app_adj, sg_arg_adj, sg_putt_adj,
+                   sg_total_adj, driving_dist, driving_acc, rel_dd
+            FROM player_rounds
+            WHERE sg_ott_adj IS NOT NULL AND round_date < ?
+            ORDER BY player_name, round_date DESC
+            """,
+            conn,
+            params=(cutoff_date,),
+        )
+        conn.close()
+    except Exception:
+        conn.close()
+        return pd.DataFrame()
+
+    if db_df.empty:
+        return pd.DataFrame()
+
+    db_df["player_name"] = db_df["player_name"].astype(str).str.lower().str.strip()
+    db_df["player_name"] = db_df["player_name"].replace(name_replacements)
+    db_df = db_df[db_df["player_name"].isin(eligible_players)]
+
+    records = []
+    for player in eligible_players:
+        player_data = db_df[db_df["player_name"] == player]
+        if player_data.empty:
+            continue
+
+        rec = {"player_name": player}
+        for col, out_col in [
+            ("sg_ott_adj", "sg_ott_rolling"),
+            ("sg_app_adj", "sg_app_rolling"),
+            ("sg_arg_adj", "sg_arg_rolling"),
+            ("sg_putt_adj", "sg_putt_rolling"),
+            ("rel_dd", "driving_dist_rolling"),
+            ("driving_acc", "driving_acc_rolling"),
+        ]:
+            vals = player_data[col].dropna()
+            n = len(vals)
+            if n == 0:
+                rec[out_col] = np.nan
+                continue
+            if n >= 100:
+                rec[out_col] = 0.5 * vals.head(50).mean() + 0.5 * vals.head(100).mean()
+            elif n >= 50:
+                rec[out_col] = vals.head(50).mean()
+            else:
+                rec[out_col] = vals.mean()
+
+        total_vals = player_data["sg_total_adj"].dropna()
+        n_total = len(total_vals)
+        if n_total >= 50:
+            rec["sg_total_rolling"] = total_vals.head(50).mean()
+        elif n_total > 0:
+            rec["sg_total_rolling"] = total_vals.mean()
+        else:
+            rec["sg_total_rolling"] = np.nan
+
+        records.append(rec)
+
+    if not records:
+        return pd.DataFrame()
+
+    pop = pd.DataFrame(records)
+    print(f"  Tour population: {len(pop)} eligible players (30+ rounds, 20+ in trailing 12mo)")
+    return pop
 
 
 def _unknown_archetypes(field_players):
@@ -488,44 +606,69 @@ def _unknown_archetypes(field_players):
     )
 
 
-def _classify_archetypes(df):
+def _classify_archetypes(df, tour_population=None):
     """
-    Classify players into archetypes based on percentile ranks within field.
+    Classify players into archetypes based on percentile ranks against the
+    tour-wide population (30+ total rounds, 20+ in trailing 12 months).
+    If tour_population is None, falls back to ranking within the field.
     First match wins. Uses mean-based archetypes (not variance-based).
     """
-    # Compute percentile ranks (0-100) for players with data
-    for col in [
-        "sg_ott_rolling",
-        "sg_app_rolling",
-        "sg_arg_rolling",
-        "sg_putt_rolling",
-        "sg_total_rolling",
-        "driving_dist_rolling",
-        "driving_acc_rolling",
-    ]:
-        df[f"{col}_pct"] = df[col].rank(pct=True) * 100
+    ranking_cols = [
+        "sg_ott_rolling", "sg_app_rolling", "sg_arg_rolling",
+        "sg_putt_rolling", "sg_total_rolling",
+        "driving_dist_rolling", "driving_acc_rolling",
+    ]
 
-    # Composite columns for ball-striking and short game
-    df["ball_striking"] = df["sg_ott_rolling"] + df["sg_app_rolling"]
-    df["short_game"] = df["sg_arg_rolling"] + df["sg_putt_rolling"]
-    df["ball_striking_pct"] = df["ball_striking"].rank(pct=True) * 100
-    df["short_game_pct"] = df["short_game"].rank(pct=True) * 100
+    if tour_population is not None and not tour_population.empty:
+        # Rank field players against full tour population
+        # Combine field + population, rank, then keep only field rows
+        df["_is_field"] = True
+        tour_population["_is_field"] = False
+        # Only include tour players NOT already in the field to avoid duplicates
+        field_names = set(df["player_name"].tolist())
+        tour_only = tour_population[~tour_population["player_name"].isin(field_names)]
+        combined = pd.concat([df[["player_name", "_is_field"] + ranking_cols],
+                              tour_only[["player_name", "_is_field"] + ranking_cols]],
+                             ignore_index=True)
+
+        for col in ranking_cols:
+            combined[f"{col}_pct"] = combined[col].rank(pct=True) * 100
+
+        # Composite columns
+        combined["ball_striking"] = combined["sg_ott_rolling"] + combined["sg_app_rolling"]
+        combined["short_game"] = combined["sg_arg_rolling"] + combined["sg_putt_rolling"]
+        combined["ball_striking_pct"] = combined["ball_striking"].rank(pct=True) * 100
+        combined["short_game_pct"] = combined["short_game"].rank(pct=True) * 100
+
+        # Extract percentiles back to field players only
+        pct_cols = [f"{c}_pct" for c in ranking_cols] + ["ball_striking_pct", "short_game_pct"]
+        field_pcts = combined[combined["_is_field"]][["player_name"] + pct_cols]
+        df = df.drop(columns=["_is_field"])
+        df = df.merge(field_pcts, on="player_name", how="left")
+    else:
+        # Legacy: rank within field only
+        for col in ranking_cols:
+            df[f"{col}_pct"] = df[col].rank(pct=True) * 100
+        df["ball_striking"] = df["sg_ott_rolling"] + df["sg_app_rolling"]
+        df["short_game"] = df["sg_arg_rolling"] + df["sg_putt_rolling"]
+        df["ball_striking_pct"] = df["ball_striking"].rank(pct=True) * 100
+        df["short_game_pct"] = df["short_game"].rank(pct=True) * 100
 
     # Manual overrides for players with insufficient data.
     # Remove entries once a player accumulates 20+ rounds in dg_historical.db.
     MANUAL_ARCHETYPE_OVERRIDES = {
-        "penge, marco": "Bomber",
-        "lamprecht, christo": "Bomber",
-        "nyholm, pontus": "Bomber",
-        "sargent, gordon": "Bomber",
-        "brennan, michael": "Bomber",
+        "penge, marco": "Long Wild",
+        "lamprecht, christo": "Long Wild",
+        "nyholm, pontus": "Long Wild",
+        "sargent, gordon": "Long Wild",
+        "brennan, michael": "Long Wild",
         "mouw, william": "Balanced",
         "castillo, ricky": "Balanced",
         "chatfield, davis": "Short Accurate",
         "ford, david": "Short Accurate",
         "keefer, johnny": "Ball Striker",
         "neergaard-petersen, rasmus": "Ball Striker",
-        "reitan, kristoffer": "Bomber",
+        "reitan, kristoffer": "Long Wild",
     }
 
     def classify(row):
@@ -555,7 +698,9 @@ def _classify_archetypes(df):
         if all(v > 70 for v in [ott, app, arg, putt]) and (not pd.isna(sg_total) and sg_total > 70):
             return "Stud"
         if dd >= 80 and da < 40:
-            return "Bomber"
+            return "Long Wild"
+        if dd >= 80 and da >= 40:
+            return "Long Accurate"
         if dd < 35 and da >= 70:
             return "Short Accurate"
         if bs >= 70 and sg < 50:
@@ -1258,8 +1403,9 @@ def main():
         drop_cols = [c for c in rolling_cols if c in df.columns]
         df = df.drop(columns=drop_cols)
 
-        # Classify per-event: each event has its own field, so percentile
-        # ranks (and therefore archetypes) must be computed independently.
+        # Classify per-event: each event uses the same rolling stat computation
+        # but percentile ranks are against the tour-wide population at that
+        # event's cutoff date.
         event_arch_frames = []
         for eid in event_ids_in_parquet:
             event_df = df[df["event_id"] == eid]
