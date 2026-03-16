@@ -273,28 +273,27 @@ def update_player_explorer(archetype, event_id):
         top = df.nlargest(20, "abs_miss")
         display_cols = ["player_name", "round", "category", miss_col, "abs_miss", "archetype"]
     else:
-        # Filter to selected archetype — summarize per player
+        # Filter to selected archetype — one row per player per event
         arch_df = df[df["archetype"] == archetype]
         if arch_df.empty:
             return dbc.Alert(f"No players classified as {archetype}.", color="info")
 
-        # Pivot: one row per player, avg centered miss per category
+        # Total miss per player-event
         total_miss = (
             arch_df[arch_df["category"] == "total"]
-            .groupby("player_name")[miss_col].mean()
+            .groupby(["player_name", "event_id", "event_name"])[miss_col].mean()
             .reset_index()
             .rename(columns={miss_col: "total_miss"})
         )
         cat_misses = arch_df[arch_df["category"].isin(SG_CATEGORIES)].pivot_table(
-            values=miss_col, index="player_name", columns="category", aggfunc="mean"
+            values=miss_col, index=["player_name", "event_id"], columns="category", aggfunc="mean"
         ).reset_index()
-        # Rename category columns for clarity
         cat_misses.columns = [f"{c}_miss" if c in SG_CATEGORIES else c for c in cat_misses.columns]
 
-        top = total_miss.merge(cat_misses, on="player_name", how="left")
+        top = total_miss.merge(cat_misses, on=["player_name", "event_id"], how="left")
         top["abs_total"] = top["total_miss"].abs()
-        top = top.sort_values("abs_total", ascending=False).drop(columns=["abs_total"])
-        display_cols = ["player_name", "total_miss"] + [f"{c}_miss" for c in SG_CATEGORIES if f"{c}_miss" in top.columns]
+        top = top.sort_values("abs_total", ascending=False).drop(columns=["abs_total", "event_id"])
+        display_cols = ["player_name", "event_name", "total_miss"] + [f"{c}_miss" for c in SG_CATEGORIES if f"{c}_miss" in top.columns]
 
     available = [c for c in display_cols if c in top.columns]
     return make_grid(top[available], id_suffix="misses", height=400)
