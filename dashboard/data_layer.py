@@ -237,10 +237,10 @@ def _load_all_bets_from_sheets():
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Keep only the latest sim run per (event_id, bet_type)
+    # Keep only the latest sim run per (event_id, bet_type, round)
     if "run_timestamp" in df.columns and "event_id" in df.columns and "bet_type" in df.columns:
         df["run_timestamp"] = pd.to_datetime(df["run_timestamp"], errors="coerce")
-        latest = df.groupby(["event_id", "bet_type"])["run_timestamp"].transform("max")
+        latest = df.groupby(["event_id", "bet_type", "round"])["run_timestamp"].transform("max")
         # Keep rows from the latest run OR rows that have been graded (from earlier runs)
         has_grade = df.get("result", pd.Series(dtype=str)).astype(str).str.strip().ne("")
         df = df[(df["run_timestamp"] == latest) | has_grade]
