@@ -98,7 +98,8 @@ name_replacements = {
     'nesmith, matthew' : 'nesmith, matt',
     'ayora, angel': 'ayora fanegas, angel',
     'capan, frankie' : 'capan iii, frankie',
-    'stallings, stephen jr' : 'stallings jr., stephen'
+    'stallings, stephen jr' : 'stallings jr., stephen',
+    'bauchou, zachary' : 'bauchou, zach'
 }
 
 #regression informed coefficients for base model
