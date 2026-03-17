@@ -152,8 +152,8 @@ coefficients_3 = {
     'course_history': 0.005
 }
 
-# Players to force-replace with DG pred in mkt_regress (even if |pred| >= 0.5)
-dg_override_players = []
+# Players to force-replace with DG pred even if |pred| >= 0.5
+dg_override_players = ["ewart, a.j."]
 
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
