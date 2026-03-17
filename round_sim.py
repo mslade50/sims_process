@@ -102,11 +102,29 @@ CORR_PREFS = [
     "permanent_data/sg_cat_corr_tour_pearson.csv",
 ]
 
-# Per-player distribution file
-DISTS_FILE = "this_week_dists_adjusted.csv"
-
 # Random number generator for reproducibility
 RNG = np.random.default_rng(42)
+
+# ── Category-first sim constants ─────────────────────────────────────────────
+DISTS_FILE_V2 = "this_week_dists_v2.csv"
+
+COURSE_CAT_MULTS = _cfg.get("course_cat_mults", {})
+COURSE_CAT_SKEW  = _cfg.get("course_cat_skew", {})
+BASELINE_CAT_SKEW = {
+    'sg_ott': -0.93, 'sg_app': -0.21, 'sg_arg': -0.18, 'sg_putt': -0.05,
+}
+
+_course_mults_cf = np.array([COURSE_CAT_MULTS.get(c, 1.0) for c in CAT_ORDER])
+_course_skew_cf = np.array([
+    COURSE_CAT_SKEW.get(c, BASELINE_CAT_SKEW.get(c, 0.0)) for c in CAT_ORDER
+])
+
+WEATHER_CAT_SPLIT = np.array([0.35, 0.35, 0.15, 0.15])
+
+SKEW_BLEND_MAX_CF = 0.5
+SKEW_CONFIDENCE_N_CF = 100.0
+
+RNG_CF = np.random.default_rng(789)  # separate seed for catfirst draws
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -123,17 +141,129 @@ def load_corr_matrix(cat_order):
     return np.eye(len(cat_order))
 
 
-def categories_given_total_for_player(mu, L, v, denom, S_vec):
+def _cf_calibration_multiplier(gamma):
+    """Correction multiplier for first-order Cornish-Fisher saturation."""
+    ag = abs(gamma)
+    if ag < 0.2:
+        return 1.0
+    return 1.0 + 0.0234 * ag**2 + 0.0125 * ag**3
+
+
+def _apply_skew(z, gamma):
+    """Apply Cornish-Fisher skewness to standard-normal draws."""
+    if abs(gamma) < 0.01:
+        return z
+    gamma_adj = gamma * _cf_calibration_multiplier(gamma)
+    z_skewed = z + (gamma_adj / 6.0) * (z ** 2 - 1.0)
+    z_skewed /= np.sqrt(1.0 + gamma_adj ** 2 / 18.0)
+    return z_skewed
+
+
+def _load_catfirst_dists(player_names):
+    """Load v2 dists + correlation + per-player params for category-first draws.
+
+    Returns (player_cf_params, effective_skew, L_corr) or None if data unavailable.
+      player_cf_params: list of (mu, std_course) per player — mu NOT re-centered
+      effective_skew: np.array (n_players, 4)
+      L_corr: (4, 4) Cholesky of correlation matrix
     """
-    Draw X ~ N(mu, Sigma) via Cholesky, then project so sum(X)=S for each S in S_vec.
-    Sigma is implied by L (Cholesky), v = Sigma * 1, denom = 1' Sigma 1.
+    if not os.path.exists(DISTS_FILE_V2):
+        print(f"  [catfirst] Warning: {DISTS_FILE_V2} not found")
+        return None
+
+    dists = pd.read_csv(DISTS_FILE_V2)
+    dists['player_name'] = (
+        dists['player_name'].astype(str).str.lower().str.strip()
+        .replace(name_replacements)
+    )
+
+    need_cols = {'player_name', 'category_clean', 'mean', 'std', 'skew', 'n_eff'}
+    missing = need_cols - set(dists.columns)
+    if missing:
+        print(f"  [catfirst] Warning: {DISTS_FILE_V2} missing columns: {missing}")
+        return None
+
+    mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean')
+    std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
+    skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
+    neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
+    global_mu  = dists.groupby('category_clean')['mean'].mean()
+    global_std = dists.groupby('category_clean')['std'].median()
+
+    # Load correlation matrix and Cholesky
+    R = load_corr_matrix(CAT_ORDER)
+    try:
+        L_corr = cholesky(R)
+    except np.linalg.LinAlgError:
+        R = 0.95 * R + 0.05 * np.eye(4)
+        L_corr = cholesky(R)
+
+    player_cf_params = []
+    effective_skew = np.zeros((len(player_names), 4), dtype=float)
+
+    for idx, player in enumerate(player_names):
+        # Build category means/stds
+        if player in mu_w.index:
+            mu_row = mu_w.loc[player].reindex(CAT_ORDER)
+            std_row = std_w.loc[player].reindex(CAT_ORDER)
+        else:
+            mu_row = pd.Series(index=CAT_ORDER, dtype=float)
+            std_row = pd.Series(index=CAT_ORDER, dtype=float)
+
+        mu = mu_row.fillna(global_mu.reindex(CAT_ORDER)).to_numpy(dtype=float)
+        std = std_row.fillna(global_std.reindex(CAT_ORDER)).to_numpy(dtype=float).clip(1e-6)
+
+        # Apply course variance multipliers
+        std_course = std * _course_mults_cf
+
+        player_cf_params.append((mu, std_course))
+
+        # Per-player effective skewness (confidence-weighted blend)
+        for j, cat in enumerate(CAT_ORDER):
+            p_skew = (skew_w.at[player, cat]
+                      if player in skew_w.index and cat in skew_w.columns
+                         and pd.notna(skew_w.at[player, cat])
+                      else 0.0)
+            p_neff = (neff_w.at[player, cat]
+                      if player in neff_w.index and cat in neff_w.columns
+                         and pd.notna(neff_w.at[player, cat])
+                      else 0.0)
+            confidence = min(p_neff / SKEW_CONFIDENCE_N_CF, 1.0)
+            blend_w = SKEW_BLEND_MAX_CF * confidence
+            effective_skew[idx, j] = (1 - blend_w) * _course_skew_cf[j] + blend_w * p_skew
+
+    return player_cf_params, effective_skew, L_corr
+
+
+def _catfirst_draw(mu, std_c, eff_skew, skill_mean, L_corr, rng, num_sims):
+    """Category-first draw for one player (no weather splitting).
+
+    Args:
+        mu: (4,) base category means (un-recentered)
+        std_c: (4,) course-adjusted category stds
+        eff_skew: (4,) effective skewness per category
+        skill_mean: scalar OR (num_sims,) per-sim-path skill target
+        L_corr: (4,4) Cholesky of correlation matrix
+        rng: numpy RNG
+        num_sims: number of simulations
+
+    Returns:
+        cats: (num_sims, 4) category draws
+        sg_total: (num_sims,) total SG = sum of categories
     """
-    Z = RNG.standard_normal(size=(S_vec.shape[0], 4))
-    X = mu + (Z @ L.T)
-    sum_x = X @ np.ones(4)
-    k = (S_vec - sum_x) / denom
-    Xc = X + k[:, None] * v
-    return np.clip(Xc, CLIP_CAT[0], CLIP_CAT[1])
+    skill_shift = skill_mean - mu.sum()
+    if np.ndim(skill_shift) == 0:
+        cat_mu = mu + skill_shift / 4.0  # (4,)
+    else:
+        cat_mu = mu + skill_shift[:, None] / 4.0  # (num_sims, 4)
+
+    Z = rng.standard_normal(size=(num_sims, 4))
+    corr_z = Z @ L_corr.T
+    for j in range(4):
+        corr_z[:, j] = _apply_skew(corr_z[:, j], eff_skew[j])
+    draws = cat_mu + corr_z * std_c
+    cats = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+    return cats, cats.sum(axis=1)
 
 
 def rank_positions_from_strokes(strokes_asc_int):
@@ -254,69 +384,6 @@ def load_tournament_config(sheet_config):
         "wind_arrays": wind_arrays,
         "dew_arrays": dew_arrays,
     }
-
-
-def load_player_params(player_names):
-    """
-    Load per-player category distributions and build Cholesky parameters.
-
-    Returns list of tuples: (mu, std, Sigma, L, v, denom) indexed by player_names.
-    """
-    if not os.path.exists(DISTS_FILE):
-        print(f"  Warning: {DISTS_FILE} not found. Using global defaults.")
-        # Return default params for all players
-        R = load_corr_matrix(CAT_ORDER)
-        try:
-            _ = cholesky(R)
-        except np.linalg.LinAlgError:
-            R = 0.95 * R + 0.05 * np.eye(4)
-
-        default_mu = np.zeros(4)
-        default_std = np.ones(4) * 1.5  # reasonable default std
-        D = np.diag(default_std)
-        Sigma = D @ R @ D
-        L = cholesky(Sigma)
-        ones4 = np.ones(4)
-        v = Sigma @ ones4
-        denom = float(ones4 @ v)
-        return [(default_mu, default_std, Sigma, L, v, denom) for _ in player_names]
-
-    dists = pd.read_csv(DISTS_FILE)
-    dists['player_name'] = (
-        dists['player_name'].astype(str).str.lower().str.strip()
-        .replace(name_replacements)
-    )
-
-    # Pivot to get means and stds per player per category
-    mu_w = dists.pivot(index='player_name', columns='category_clean', values='mean_adj')
-    std_w = dists.pivot(index='player_name', columns='category_clean', values='std_adj')
-    global_mu = dists.groupby('category_clean')['mean_adj'].mean()
-    global_std = dists.groupby('category_clean')['std_adj'].median()
-
-    R = load_corr_matrix(CAT_ORDER)
-    try:
-        _ = cholesky(R)
-    except np.linalg.LinAlgError:
-        R = 0.95 * R + 0.05 * np.eye(4)
-
-    player_params = []
-    ones4 = np.ones(4)
-
-    for p in player_names:
-        mu_row = mu_w.loc[p].reindex(CAT_ORDER) if p in mu_w.index else pd.Series(index=CAT_ORDER, dtype=float)
-        std_row = std_w.loc[p].reindex(CAT_ORDER) if p in std_w.index else pd.Series(index=CAT_ORDER, dtype=float)
-
-        mu = mu_row.fillna(global_mu.reindex(CAT_ORDER)).to_numpy(dtype=float)
-        std = std_row.fillna(global_std.reindex(CAT_ORDER)).to_numpy(dtype=float).clip(1e-6)
-
-        D = np.diag(std)
-        Sigma = D @ R @ D
-        L = cholesky(Sigma)
-        v = Sigma @ ones4
-        denom = float(ones4 @ v)
-        player_params.append((mu, std, Sigma, L, v, denom))
-
-    return player_params
 
 
 def load_known_rounds(completed_round, course_map, default_par):
@@ -443,13 +510,15 @@ def simulate_remaining_rounds(
     known_strokes,
     known_categories,
     model_preds,
-    player_params,
+    player_cf_params,
+    effective_skew,
+    L_corr,
     tournament_config,
     player_preds_base,
     num_sims=TOURNAMENT_SIMULATIONS,
 ):
     """
-    Simulate from round (completed_round + 1) through R4.
+    Simulate from round (completed_round + 1) through R4 using category-first draws.
 
     Returns:
         final_scores: np.array (n_players, num_sims) - 72-hole totals
@@ -460,7 +529,6 @@ def simulate_remaining_rounds(
 
     # Get base predictions for each player
     my_pred_base = np.array([player_preds_base.get(p, 0.0) for p in player_names])
-    round_std = np.ones(n_players) * STD_DEV
 
     # Per-player expected score for R2 (multi-course aware)
     player_expected_r2 = np.full(n_players, default_par, dtype=float)
@@ -472,35 +540,23 @@ def simulate_remaining_rounds(
         if np.unique(player_expected_r2).size > 1:
             print(f"    Multi-course R2: expected scores = {dict(zip(*np.unique(player_expected_r2, return_counts=True)))}")
 
-    # Get updated predictions from model_preds if available
-    if model_preds is not None and not model_preds.empty:
-        for i, p in enumerate(player_names):
-            row = model_preds[model_preds['player_name'] == p]
-            if not row.empty:
-                # Use std_dev if available
-                if 'std_dev' in row.columns:
-                    std_val = row['std_dev'].iloc[0]
-                    if pd.notna(std_val):
-                        round_std[i] = (std_val + STD_DEV) / 2.0
-
     # Initialize accumulators
     if completed_round >= 1 and 1 in known_strokes:
         strokes_r1 = np.tile(known_strokes[1][:, np.newaxis], (1, num_sims))
         cats_r1 = np.tile(known_categories.get(1, np.zeros((n_players, 4)))[:, np.newaxis, :], (1, num_sims, 1))
     else:
-        # Simulate R1
-        r1_mu = my_pred_base
-        sg_r1 = RNG.normal(loc=r1_mu[:, None], scale=round_std[:, None], size=(n_players, num_sims))
+        # Simulate R1 — category-first draws
         cats_r1 = np.empty((n_players, num_sims, 4), dtype=float)
-        for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-            cats_r1[i] = categories_given_total_for_player(mu, L, v, denom, sg_r1[i])
+        sg_r1 = np.empty((n_players, num_sims), dtype=float)
+        for i, (mu, std_c) in enumerate(player_cf_params):
+            cats_r1[i], sg_r1[i] = _catfirst_draw(
+                mu, std_c, effective_skew[i], my_pred_base[i],
+                L_corr, RNG, num_sims
+            )
         strokes_r1 = np.clip(np.rint(default_par - sg_r1), default_par - 12, default_par + 12).astype(int)
 
     # R1 -> R2 skill update
-    if completed_round >= 1:
-        sg_r1_actual = default_par - strokes_r1.astype(float)
-    else:
-        sg_r1_actual = default_par - strokes_r1.astype(float)
+    sg_r1_actual = default_par - strokes_r1.astype(float)
 
     resid_r1 = sg_r1_actual - my_pred_base[:, None]
     resid2_r1 = resid_r1 ** 2
@@ -541,11 +597,14 @@ def simulate_remaining_rounds(
         cats_r2 = np.tile(known_categories.get(2, np.zeros((n_players, 4)))[:, np.newaxis, :], (1, num_sims, 1))
         sg_r2 = (default_par - strokes_r2.astype(float))
     else:
-        sg_r2_mean = updated_skill_r2
-        sg_r2 = RNG.normal(loc=sg_r2_mean, scale=round_std[:, None], size=(n_players, num_sims))
+        # Category-first draws — per-sim-path skill mean
         cats_r2 = np.empty((n_players, num_sims, 4), dtype=float)
-        for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-            cats_r2[i] = categories_given_total_for_player(mu, L, v, denom, sg_r2[i])
+        sg_r2 = np.empty((n_players, num_sims), dtype=float)
+        for i, (mu, std_c) in enumerate(player_cf_params):
+            cats_r2[i], sg_r2[i] = _catfirst_draw(
+                mu, std_c, effective_skew[i], updated_skill_r2[i],
+                L_corr, RNG, num_sims
+            )
         strokes_r2 = np.clip(np.rint(player_expected_r2[:, None] - sg_r2), (player_expected_r2 - 12)[:, None], (player_expected_r2 + 12)[:, None]).astype(int)
 
     r1_r2_scores = strokes_r1 + strokes_r2
@@ -650,11 +709,14 @@ def simulate_remaining_rounds(
         cats_r3 = np.tile(known_categories.get(3, np.zeros((n_players, 4)))[:, np.newaxis, :], (1, num_sims, 1))
         sg_r3 = (default_par - strokes_r3.astype(float))
     else:
-        sg_r3_mean = updated_skill_r3
-        sg_r3 = RNG.normal(loc=sg_r3_mean, scale=round_std[:, None], size=(n_players, num_sims))
+        # Category-first draws — per-sim-path skill mean
         cats_r3 = np.empty((n_players, num_sims, 4), dtype=float)
-        for i, (mu, std, Sigma, L, v, denom) in enumerate(player_params):
-            cats_r3[i] = categories_given_total_for_player(mu, L, v, denom, sg_r3[i])
+        sg_r3 = np.empty((n_players, num_sims), dtype=float)
+        for i, (mu, std_c) in enumerate(player_cf_params):
+            cats_r3[i], sg_r3[i] = _catfirst_draw(
+                mu, std_c, effective_skew[i], updated_skill_r3[i],
+                L_corr, RNG, num_sims
+            )
         strokes_r3 = np.clip(np.rint(default_par - sg_r3), default_par - 12, default_par + 12).astype(int)
 
     r1_r3_scores = r1_r2_scores + strokes_r3
@@ -710,9 +772,14 @@ def simulate_remaining_rounds(
     # Undo R2 adjustments, apply R3 adjustments
     updated_skill_r4 = updated_skill_r3 - (tot_sg_adj_r2 + tot_resid_adj_r2) + tot_sg_adj_r3
 
-    # R4 simulation
-    sg_r4_mean = updated_skill_r4
-    sg_r4 = RNG.normal(loc=sg_r4_mean, scale=round_std[:, None], size=(n_players, num_sims))
+    # R4 simulation — category-first draws, per-sim-path skill mean
+    cats_r4 = np.empty((n_players, num_sims, 4), dtype=float)
+    sg_r4 = np.empty((n_players, num_sims), dtype=float)
+    for i, (mu, std_c) in enumerate(player_cf_params):
+        cats_r4[i], sg_r4[i] = _catfirst_draw(
+            mu, std_c, effective_skew[i], updated_skill_r4[i],
+            L_corr, RNG, num_sims
+        )
     strokes_r4 = np.clip(np.rint(default_par - sg_r4), default_par - 12, default_par + 12).astype(int)
 
     # Missed-cut penalty
@@ -1168,6 +1235,151 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
     return sim_dict
 
 
+def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
+                                   wx_lookup, num_sims=NUM_SIMULATIONS):
+    """
+    Category-first round score simulation.
+
+    Draws each SG category from a course-adjusted multivariate normal with
+    Cornish-Fisher skewness, then sums to total. Mirrors new_sim.py's approach
+    but re-centers to the per-player skill prediction (post skill-update, pre-weather).
+
+    Returns same format as simulate_round_scores(): {player_name: np.array of int scores}
+    """
+    scores_col = f"scores_r{sim_round}"
+    if scores_col not in model_preds.columns:
+        raise ValueError(f"Column '{scores_col}' not found in predictions file.")
+
+    # Load v2 distributions via shared helper
+    dists_result = _load_catfirst_dists(list(model_preds["player_name"]))
+    if dists_result is None:
+        print(f"  [catfirst] Falling back to standard sim")
+        return simulate_round_scores(model_preds, sim_round, expected_avg, num_sims)
+    player_cf_params, effective_skew, L_corr = dists_result
+
+    has_course_adj = "course_score_adj" in model_preds.columns
+
+    sim_dict = {}
+    for idx, (_, row) in enumerate(model_preds.iterrows()):
+        player = row["player_name"]
+        scores_rn = row[scores_col]
+        if pd.isna(scores_rn):
+            continue
+
+        # Per-player expected avg (multi-course) or global
+        if has_course_adj and pd.notna(row.get("course_score_adj")):
+            player_avg = row["course_score_adj"]
+        else:
+            player_avg = expected_avg
+
+        mu, std_c = player_cf_params[idx]
+
+        # Decompose: skill = scores_rN - weather
+        wx_delta = wx_lookup.get(player, 0.0)
+        skill = scores_rn - wx_delta
+
+        # Re-center + weather split (inline, not via _catfirst_draw)
+        shift = (skill - mu.sum()) / 4.0
+        cat_mu = mu + shift + wx_delta * WEATHER_CAT_SPLIT
+
+        # Draw: correlated standard normals → skew → scale → clip → sum
+        Z = RNG_CF.standard_normal(size=(num_sims, 4))
+        corr_z = Z @ L_corr.T
+        for j in range(4):
+            corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[idx, j])
+        draws = np.clip(cat_mu + corr_z * std_c, CLIP_CAT[0], CLIP_CAT[1])
+        sg_total = draws.sum(axis=1)
+
+        # Convert SG to integer scores
+        scores = np.rint(player_avg - sg_total).astype(int)
+        sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12,
+                                   int(round(player_avg)) + 12)
+
+    print(f"  [catfirst] Simulated {len(sim_dict)} players × {num_sims:,} iterations")
+    print(f"  [catfirst] Course mults: OTT={_course_mults_cf[0]:.3f}, APP={_course_mults_cf[1]:.3f}, "
+          f"ARG={_course_mults_cf[2]:.3f}, PUTT={_course_mults_cf[3]:.3f}")
+    return sim_dict
+
+
+def print_catfirst_comparison(sim_old, sim_cf, model_preds, pred_col, expected_avg):
+    """Print a console comparison table between standard and category-first sims."""
+    common = sorted(set(sim_old.keys()) & set(sim_cf.keys()))
+    if not common:
+        print("  [catfirst] No common players to compare.")
+        return
+
+    pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
+
+    rows = []
+    for p in common:
+        old_scores = sim_old[p].astype(float)
+        cf_scores = sim_cf[p].astype(float)
+        pred = pred_lookup.get(p, 0.0)
+        rows.append({
+            "player": p,
+            "pred": pred,
+            "std_mean": old_scores.mean(),
+            "std_sd": old_scores.std(),
+            "cf_mean": cf_scores.mean(),
+            "cf_sd": cf_scores.std(),
+            "delta_mean": cf_scores.mean() - old_scores.mean(),
+        })
+
+    rows.sort(key=lambda r: r["pred"], reverse=True)
+
+    print(f"\n{'-'*76}")
+    print(f"{'CATEGORY-FIRST vs STANDARD SIM COMPARISON':^76}")
+    print(f"{'-'*76}")
+    print(f"  {'Player':<22s} {'Pred':>6s}  {'Std-Mean':>8s} {'Std-SD':>7s}  "
+          f"{'CF-Mean':>8s} {'CF-SD':>7s}  {'d Mean':>7s}")
+    print(f"{'-'*76}")
+
+    for r in rows[:30]:
+        print(f"  {r['player']:<22s} {r['pred']:>6.2f}  {r['std_mean']:>8.2f} {r['std_sd']:>7.2f}  "
+              f"{r['cf_mean']:>8.2f} {r['cf_sd']:>7.2f}  {r['delta_mean']:>+7.2f}")
+
+    if len(rows) > 30:
+        print(f"  ... ({len(rows) - 30} more players)")
+
+    abs_deltas = [abs(r["delta_mean"]) for r in rows]
+    std_sds = [r["std_sd"] for r in rows]
+    cf_sds = [r["cf_sd"] for r in rows]
+
+    print(f"{'-'*76}")
+    print(f"  SUMMARY:  Mean abs d = {np.mean(abs_deltas):.2f} strokes,  "
+          f"Max d = {max(abs_deltas):.2f}")
+    print(f"            Std-SD avg = {np.mean(std_sds):.2f},  CF-SD avg = {np.mean(cf_sds):.2f}")
+
+    # Matchup win probability comparison (sample top players by pred)
+    players_by_pred = sorted(rows, key=lambda r: r["pred"], reverse=True)
+    top_players = [r["player"] for r in players_by_pred[:20]]
+    matchup_rows = []
+    for i in range(0, len(top_players) - 1, 2):
+        p1, p2 = top_players[i], top_players[i + 1]
+        p1_wins_old = (sim_old[p1] < sim_old[p2]).sum()
+        p1_pct_old = p1_wins_old / len(sim_old[p1]) * 100
+        p1_wins_cf = (sim_cf[p1] < sim_cf[p2]).sum()
+        p1_pct_cf = p1_wins_cf / len(sim_cf[p1]) * 100
+        matchup_rows.append({
+            "matchup": f"{p1} vs {p2}",
+            "std_p1": p1_pct_old,
+            "cf_p1": p1_pct_cf,
+            "delta": p1_pct_cf - p1_pct_old,
+        })
+
+    if matchup_rows:
+        print(f"\n{'-'*70}")
+        print(f"{'MATCHUP WIN PROBABILITY COMPARISON (sample)':^70}")
+        print(f"{'-'*70}")
+        print(f"  {'Matchup':<34s} {'Std P1%':>8s}  {'CF P1%':>8s}  {'d':>6s}")
+        print(f"{'-'*70}")
+        for r in matchup_rows:
+            print(f"  {r['matchup']:<34s} {r['std_p1']:>7.1f}%  {r['cf_p1']:>7.1f}%  {r['delta']:>+5.1f}%")
+        abs_d = [abs(r["delta"]) for r in matchup_rows]
+        print(f"{'-'*70}")
+        print(f"  Mean abs d = {np.mean(abs_d):.1f}%")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 2: Matchup Pricing
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1328,7 +1540,7 @@ def calculate_edges(df):
     return df
 
 
-def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
+def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None):
     """
     Filter, annotate, and split matchup DataFrame into combined + sharp outputs.
 
@@ -1359,6 +1571,40 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
         lambda r: r["Sample_P1"] if r["edge_p1"] > r["edge_p2"] else r["Sample_P2"],
         axis=1,
     )
+
+    # --- Weather edge decomposition (analytical Normal CDF) ---
+    if wx_lookup:
+        from scipy.stats import norm as _norm_dist
+        df["wx_on"] = df["bet_on"].map(wx_lookup).fillna(0)
+        df["wx_against"] = df.apply(
+            lambda r: wx_lookup.get(
+                r["Player 2"] if r["bet_on"] == r["Player 1"] else r["Player 1"], 0
+            ),
+            axis=1,
+        )
+        df["wx_diff"] = df["wx_on"] - df["wx_against"]
+
+        # Skill diff = total pred diff minus weather diff
+        df["skill_diff"] = (df["pred_on"] - df["wx_on"]) - (df["pred_against"] - df["wx_against"])
+
+        # Round: 1 round, diff ~ N(skill_diff, 2*STD_DEV^2)
+        _sigma_round = STD_DEV * np.sqrt(2)
+        df["prob_no_wx"] = _norm_dist.cdf(df["skill_diff"] / _sigma_round)
+
+        # Decimal odds for bet-on player
+        df["odds_on"] = df.apply(
+            lambda r: r["P1 Odds"] if r["edge_p1"] > r["edge_p2"] else r["P2 Odds"],
+            axis=1,
+        )
+        df["dec_on"] = np.where(
+            df["odds_on"] > 0,
+            df["odds_on"] / 100 + 1,
+            100 / df["odds_on"].abs() + 1,
+        )
+        df["edge_no_wx"] = (
+            df["prob_no_wx"] * (df["dec_on"] - 1) - (1 - df["prob_no_wx"])
+        ) * 100
+        df["wx_edge"] = df["edge_on"] - df["edge_no_wx"]
 
     # --- Combined: basic filters ---
     combined = df[df["edge_on"] > 3].copy()
@@ -1398,6 +1644,10 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup):
         "Sample_P1", "Sample_P2", "sample_on",
         "half_shot_p1", "half_shot_p2",
     ]
+    # Add weather decomposition columns if available
+    for col in ["wx_edge", "edge_no_wx", "wx_diff"]:
+        if col in combined.columns:
+            display_cols.append(col)
     # Add spread columns if they exist
     for col in ["p1_+0.5", "p2_+0.5", "p1_-0.5", "p2_-0.5"]:
         if col in combined.columns:
@@ -1673,7 +1923,8 @@ def load_sample_data():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
-                             win_positive_top10=None, win_negative_top10=None):
+                             win_positive_top10=None, win_negative_top10=None,
+                             wx_lookup=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -1725,6 +1976,15 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     else row.get("half_shot_p2", "")
                 )
 
+                # Weather edge decomposition
+                wx_e = row.get("wx_edge", 0) if pd.notna(row.get("wx_edge", None)) else 0
+                no_wx = row.get("edge_no_wx", edge) if pd.notna(row.get("edge_no_wx", None)) else edge
+                no_wx_color = (
+                    "#d4edda" if no_wx > 5 else
+                    "#fff3cd" if no_wx >= 0 else
+                    "#f8d7da"
+                )
+
                 # Color coding
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
@@ -1743,6 +2003,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{wx_e:+.1f}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:600; background:{no_wx_color};">{no_wx:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
                     <td style="padding:6px 10px; text-align:center;">{hs_str}</td>
@@ -1761,6 +2023,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx</th>
+                    <th style="padding:6px 10px; text-align:center;">No-Wx</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
                     <th style="padding:6px 10px; text-align:center;">1/2 Shot</th>
@@ -1791,6 +2055,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred = row.get('my_pred', 0)
                 stake = row.get('stake', 0)
 
+                # Weather context
+                _fp_wx_sg = 0.0
+                if wx_lookup:
+                    _fp_wx_sg = wx_lookup.get(str(row.get('player_name', '')).lower().strip(), 0)
+                _fp_wx_color = "#d4edda" if abs(_fp_wx_sg) > 0.3 else "#ffffff"
+                _fp_wx_str = f"{_fp_wx_sg:+.2f}" if _fp_wx_sg != 0 else "0.00"
+
                 edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
 
@@ -1809,6 +2080,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{stake_str}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{_fp_wx_color};">{_fp_wx_str}</td>
                 </tr>"""
 
             outrights_html = f"""
@@ -1825,6 +2097,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Stake</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -1941,6 +2214,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price | Edge = expected return % |
+            Wx = weather edge contribution (pp) | No-Wx = edge without weather |
+            Wx SG = weather SG shift this round (positive = favorable) |
             Pred = model SG prediction | Stake = suggested Kelly stake
         </p>
         <p style="color:#999; font-size:11px;">
@@ -1956,7 +2231,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          excel_path=None, card_csv_path=None, outrights_sharp=None,
                          win_edges_csv_path=None, bol_matchups_csv_path=None,
                          finish_equity_csv_path=None,
-                         win_positive_top10=None, win_negative_top10=None):
+                         win_positive_top10=None, win_negative_top10=None,
+                         wx_lookup=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -1974,7 +2250,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
     try:
         html = build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp,
                                         win_positive_top10=win_positive_top10,
-                                        win_negative_top10=win_negative_top10)
+                                        win_negative_top10=win_negative_top10,
+                                        wx_lookup=wx_lookup)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -2063,6 +2340,8 @@ def main():
                         help="Skip tournament simulation (matchups + score card only)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip email sending and bet storage")
+    parser.add_argument("--legacy", action="store_true",
+                        help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
     args = parser.parse_args()
 
     # ── Config ───────────────────────────────────────────────────────────
@@ -2117,13 +2396,39 @@ def main():
     print(f"{'='*60}")
     print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
     print(f"  Expected avg: {expected_avg}")
-    print(f"  Std dev:      {STD_DEV}")
+    print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
     print(f"  Simulations:  {NUM_SIMULATIONS:,}")
     print(f"  Pred column:  {pred_col}")
 
+    # ── Build weather lookup from model predictions ─────────────────────
+    _wind_col = f"wind_adj{sim_round}"
+    _dew_col = f"dew_adj{sim_round}"
+    _wx_lookup = {}
+    if _wind_col in model_preds.columns and _dew_col in model_preds.columns:
+        _avg_wind = model_preds[_wind_col].mean()
+        _wx_lookup = dict(zip(
+            model_preds["player_name"],
+            _avg_wind - model_preds[_wind_col] + model_preds[_dew_col],
+        ))
+        print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
+    else:
+        print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
+
     # ── Step 1: Simulate scores ──────────────────────────────────────────
     print(f"\n  Simulating R{sim_round} scores...")
-    sim_dict = simulate_round_scores(model_preds, sim_round, expected_avg)
+
+    # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
+    sim_dict_cf = simulate_round_scores_catfirst(
+        model_preds, sim_round, expected_avg, _wx_lookup
+    )
+
+    if args.legacy:
+        sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
+        print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
+        print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
+        sim_dict = sim_dict_legacy
+    else:
+        sim_dict = sim_dict_cf
 
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds from DataGolf...")
@@ -2132,7 +2437,7 @@ def main():
         matchup_df = price_matchups(matchup_df, sim_dict)
         matchup_df = calculate_edges(matchup_df)
         combined, sharp = build_matchup_outputs(
-            matchup_df, sim_round, pred_lookup, sample_lookup
+            matchup_df, sim_round, pred_lookup, sample_lookup, wx_lookup=_wx_lookup
         )
         # Build unfiltered BetOnline matchup CSV (all edges, all samples)
         out_dir = f"./{tourney}"
@@ -2201,9 +2506,13 @@ def main():
                 player_names = known_data["player_names"]
                 print(f"    Loaded {len(player_names)} players from R1-R{round_num} data")
 
-                # Load player distribution params
-                player_params = load_player_params(player_names)
-                print(f"    Loaded player distribution parameters")
+                # Load category-first distribution params
+                cf_result = _load_catfirst_dists(player_names)
+                if cf_result is None:
+                    print("    Warning: catfirst dists unavailable, skipping tournament sim")
+                    raise RuntimeError("catfirst dists unavailable")
+                player_cf_params, effective_skew, L_corr = cf_result
+                print(f"    Loaded catfirst distribution parameters")
 
                 # Simulate remaining rounds
                 print(f"    Simulating remaining rounds ({TOURNAMENT_SIMULATIONS:,} sims)...")
@@ -2213,7 +2522,9 @@ def main():
                     known_strokes=known_data["strokes"],
                     known_categories=known_data["categories"],
                     model_preds=model_preds,
-                    player_params=player_params,
+                    player_cf_params=player_cf_params,
+                    effective_skew=effective_skew,
+                    L_corr=L_corr,
                     tournament_config=tourn_config,
                     player_preds_base=known_data["player_preds"],
                     num_sims=TOURNAMENT_SIMULATIONS,
@@ -2304,6 +2615,7 @@ def main():
             finish_equity_csv_path=finish_equity_csv_path,
             win_positive_top10=win_positive_top10,
             win_negative_top10=win_negative_top10,
+            wx_lookup=_wx_lookup,
         )
     else:
         print(f"\n  [dry-run] Skipping email")

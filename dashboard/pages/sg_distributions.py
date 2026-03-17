@@ -12,12 +12,16 @@ import numpy as np
 
 from dashboard.data_layer import (
     get_sg_dist_player,
-    get_this_week_dists_adjusted,
+    get_v2_dists,
     get_model_predictions,
 )
 from dashboard.components.tables import make_grid
+from sheet_config import load_config as _load_sheet_config
 
 dash.register_page(__name__, path="/sg-distributions", title="SG Distributions", order=6)
+
+_cfg = _load_sheet_config()
+_COURSE_MULTS = {cat: _cfg.get("course_cat_mults", {}).get(cat, 1.0) for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]}
 
 PLOT_LAYOUT = dict(
     template="plotly_dark",
@@ -47,7 +51,7 @@ COMPARE_COLORS = [
 
 def _load_field_players():
     """Return sorted player list from this week's adjusted dists, plus my_pred mapping."""
-    adj = get_this_week_dists_adjusted()
+    adj = get_v2_dists()
     if adj.empty:
         return [], {}
 
@@ -66,23 +70,11 @@ def _load_field_players():
     return players, pred_map
 
 
-def _get_player_raw(player_name, raw_df, adj_df):
-    """Get raw distribution data for a player, matching names across files."""
-    # adj_df has lowercase names; raw_df has mixed case
-    # Find original name from adj_df if available
-    adj_row = adj_df[adj_df["player_name"] == player_name.lower().strip()]
-    if not adj_row.empty and "player_name_original" in adj_row.columns:
-        original_name = adj_row["player_name_original"].iloc[0]
-    else:
-        original_name = player_name
-
-    # Try matching raw_df on original name or lowercase
+def _get_player_raw(player_name, raw_df):
+    """Get raw distribution data for a player by lowercase name match."""
     raw_lower = raw_df.copy()
     raw_lower["_join_key"] = raw_lower["player_name"].str.lower().str.strip()
-    match = raw_lower[raw_lower["_join_key"] == player_name.lower().strip()]
-    if match.empty:
-        match = raw_df[raw_df["player_name"] == original_name]
-    return match
+    return raw_lower[raw_lower["_join_key"] == player_name.lower().strip()]
 
 
 def _build_raw_figure(player_raws, player_names):
@@ -183,9 +175,9 @@ def _build_raw_figure(player_raws, player_names):
     return fig
 
 
-def _build_adjusted_figure(player_names, adj_df, pred_map, raw_df):
+def _build_adjusted_figure(player_names, adj_df, pred_map):
     """Build 2x2 subplot with course-adjusted PDF curves, field avg overlay, and annotations."""
-    from scipy.stats import norm, t as t_dist
+    from scipy.stats import norm
 
     fig = make_subplots(
         rows=2, cols=2,
@@ -197,24 +189,15 @@ def _build_adjusted_figure(player_names, adj_df, pred_map, raw_df):
     axis_nums = [1, 2, 3, 4]
     multi = len(player_names) > 1
 
-    # Pre-compute field averages per category
+    # Pre-compute field averages per category (V2: mean, std * course mult)
     field_avgs = {}
     for cat in CATEGORIES:
         cat_all = adj_df[adj_df["category_clean"] == cat]
         if not cat_all.empty:
             field_avgs[cat] = {
-                "mean": cat_all["mean_adj"].mean(),
-                "std": cat_all["std_adj"].mean(),
+                "mean": cat_all["mean"].mean(),
+                "std": (cat_all["std"] * _COURSE_MULTS[cat]).mean(),
             }
-
-    # Build raw skew lookup: (lowercase_name, category) -> skew
-    raw_skew_map = {}
-    if not raw_df.empty:
-        tmp = raw_df.copy()
-        tmp["_key"] = tmp["player_name"].str.lower().str.strip()
-        for _, row in tmp.iterrows():
-            if "skew" in row.index and not pd.isna(row.get("skew")):
-                raw_skew_map[(row["_key"], row["category_clean"])] = float(row["skew"])
 
     x_range = np.linspace(-5, 5, 400)
 
@@ -236,23 +219,18 @@ def _build_adjusted_figure(player_names, adj_df, pred_map, raw_df):
             shift = 0.0
             if target is not None:
                 cat_sum = sum(
-                    float(player_adj[player_adj["category_clean"] == c]["mean_adj"].iloc[0])
+                    float(player_adj[player_adj["category_clean"] == c]["mean"].iloc[0])
                     for c in CATEGORIES
                     if not player_adj[player_adj["category_clean"] == c].empty
                 )
                 shift = (target - cat_sum) / 4.0
 
             rec = cat_data.iloc[0]
-            mean_adj = float(rec["mean_adj"]) + shift
-            std_adj = float(rec["std_adj"])
-            dist_type = str(rec.get("distribution", "normal")).lower()
+            mean_adj = float(rec["mean"]) + shift
+            std_adj = float(rec["std"]) * _COURSE_MULTS[cat]
 
-            # Course-adjusted PDF
-            if dist_type == "student_t" and "df_t" in rec.index and not pd.isna(rec["df_t"]):
-                df_t = float(rec["df_t"])
-                y_adj = t_dist.pdf(x_range, df=df_t, loc=mean_adj, scale=std_adj)
-            else:
-                y_adj = norm.pdf(x_range, loc=mean_adj, scale=std_adj)
+            # Course-adjusted PDF (always normal — V2 dropped Student-t)
+            y_adj = norm.pdf(x_range, loc=mean_adj, scale=std_adj)
 
             if multi:
                 color = COMPARE_COLORS[pi % len(COMPARE_COLORS)]
@@ -285,9 +263,9 @@ def _build_adjusted_figure(player_names, adj_df, pred_map, raw_df):
             if pi == 0:
                 primary_stats["mean"] = mean_adj
                 primary_stats["std"] = std_adj
-                skew_val = raw_skew_map.get((player_name.lower().strip(), cat))
-                if skew_val is not None:
-                    primary_stats["skew"] = skew_val
+                skew_val = rec.get("skew")
+                if skew_val is not None and not pd.isna(skew_val):
+                    primary_stats["skew"] = float(skew_val)
 
                 # Mean line for primary player
                 fig.add_vline(
@@ -333,16 +311,9 @@ def _build_adjusted_figure(player_names, adj_df, pred_map, raw_df):
 
 def _build_moments_table(player_name, mode, raw_df, adj_df, pred_map):
     """Build moments summary DataFrame for the AG Grid."""
-    rows = []
+    from scipy.stats import norm
 
-    # Build raw skew lookup for adjusted mode cross-reference
-    raw_skew_map = {}
-    if not raw_df.empty:
-        tmp = raw_df.copy()
-        tmp["_key"] = tmp["player_name"].str.lower().str.strip()
-        for _, r in tmp.iterrows():
-            if "skew" in r.index and not pd.isna(r.get("skew")):
-                raw_skew_map[(r["_key"], r["category_clean"])] = float(r["skew"])
+    rows = []
 
     if mode == "adjusted":
         player_data = adj_df[adj_df["player_name"] == player_name.lower().strip()]
@@ -354,7 +325,7 @@ def _build_moments_table(player_name, mode, raw_df, adj_df, pred_map):
             for cat in CATEGORIES:
                 cat_row = player_data[player_data["category_clean"] == cat]
                 if not cat_row.empty:
-                    cat_sum += float(cat_row["mean_adj"].iloc[0])
+                    cat_sum += float(cat_row["mean"].iloc[0])
             shift = (target - cat_sum) / 4.0
 
         total_mean = 0.0
@@ -365,25 +336,26 @@ def _build_moments_table(player_name, mode, raw_df, adj_df, pred_map):
                 rows.append({"Category": CAT_LABELS[cat]})
                 continue
             rec = cat_row.iloc[0]
-            mean_val = float(rec["mean_adj"]) + shift
-            std_val = float(rec["std_adj"])
+            mean_val = float(rec["mean"]) + shift
+            std_val = float(rec["std"]) * _COURSE_MULTS[cat]
             total_mean += mean_val
             total_var += std_val ** 2
-            # Cross-reference skew from raw distribution data
-            skew_lookup = raw_skew_map.get((player_name.lower().strip(), cat))
-            skew_val = round(skew_lookup, 3) if skew_lookup is not None else "—"
+            skew_val = round(float(rec["skew"]), 3) if "skew" in rec.index and not pd.isna(rec.get("skew")) else "—"
+            n_eff_val = round(float(rec["n_eff"]), 1) if "n_eff" in rec.index and not pd.isna(rec.get("n_eff")) else ""
+            # Compute quantiles from normal distribution
+            qs = norm.ppf([0.1, 0.25, 0.5, 0.75, 0.9], loc=mean_val, scale=std_val)
             rows.append({
                 "Category": CAT_LABELS[cat],
                 "Mean": round(mean_val, 3),
                 "Std": round(std_val, 3),
                 "Skew": skew_val,
-                "Kurtosis": round(float(rec["excess_kurtosis"]), 3) if "excess_kurtosis" in rec.index and not pd.isna(rec["excess_kurtosis"]) else "—",
-                "N_eff": int(rec["n"]) if "n" in rec.index and not pd.isna(rec["n"]) else "",
-                "Q10": round(float(rec["q10_adj"]), 2) if "q10_adj" in rec.index and not pd.isna(rec["q10_adj"]) else "—",
-                "Q25": round(float(rec["q25_adj"]), 2) if "q25_adj" in rec.index and not pd.isna(rec["q25_adj"]) else "—",
-                "Q50": round(float(rec["q50_adj"]), 2) if "q50_adj" in rec.index and not pd.isna(rec["q50_adj"]) else "—",
-                "Q75": round(float(rec["q75_adj"]), 2) if "q75_adj" in rec.index and not pd.isna(rec["q75_adj"]) else "—",
-                "Q90": round(float(rec["q90_adj"]), 2) if "q90_adj" in rec.index and not pd.isna(rec["q90_adj"]) else "—",
+                "Kurtosis": round(float(rec["excess_kurtosis"]), 3) if "excess_kurtosis" in rec.index and not pd.isna(rec.get("excess_kurtosis")) else "—",
+                "N_eff": n_eff_val,
+                "Q10": round(float(qs[0]), 2),
+                "Q25": round(float(qs[1]), 2),
+                "Q50": round(float(qs[2]), 2),
+                "Q75": round(float(qs[3]), 2),
+                "Q90": round(float(qs[4]), 2),
             })
         # Total row
         rows.append({
@@ -397,7 +369,7 @@ def _build_moments_table(player_name, mode, raw_df, adj_df, pred_map):
         })
     else:
         # Raw mode — use sg_dist_player.csv
-        player_raw = _get_player_raw(player_name, raw_df, adj_df)
+        player_raw = _get_player_raw(player_name, raw_df)
         total_mean = 0.0
         total_var = 0.0
         for cat in CATEGORIES:
@@ -509,7 +481,7 @@ def update_distributions(player, compare_players, mode):
         return empty_fig, None, None
 
     raw_df = get_sg_dist_player()
-    adj_df = get_this_week_dists_adjusted()
+    adj_df = get_v2_dists()
     _, pred_map = _load_field_players()
 
     # Build combined player list: primary + comparisons
@@ -526,7 +498,7 @@ def update_distributions(player, compare_players, mode):
     if mode == "adjusted":
         if adj_df.empty:
             return empty_fig, None, dbc.Alert("No course-adjusted data available.", color="warning")
-        fig = _build_adjusted_figure(all_players, adj_df, pred_map, raw_df)
+        fig = _build_adjusted_figure(all_players, adj_df, pred_map)
         title_suffix = " (Course-Adjusted)"
 
         # Warn if no predictions for recentering
@@ -542,7 +514,7 @@ def update_distributions(player, compare_players, mode):
         player_raws = []
         valid_names = []
         for p in all_players:
-            p_raw = _get_player_raw(p, raw_df, adj_df)
+            p_raw = _get_player_raw(p, raw_df)
             if not p_raw.empty:
                 player_raws.append(p_raw)
                 valid_names.append(p)

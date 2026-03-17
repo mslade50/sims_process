@@ -359,6 +359,49 @@ def blend_wind_with_climo(forecast_array, climo_array, lead_days=None, round_dat
     return blended, w_climo
 
 
+def fetch_realized_wind(lat, lon, date_str):
+    """
+    Fetch observed average wind (mph) for a course on a given date from
+    Open-Meteo archive. Averages hourly wind_speed_10m from 6 AM to 8 PM
+    local time (standard golf window).
+
+    Args:
+        lat: Course latitude
+        lon: Course longitude
+        date_str: Date string in YYYY-MM-DD format
+
+    Returns:
+        float (avg wind mph) or None on failure
+    """
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude={lat}&longitude={lon}"
+        f"&start_date={date_str}&end_date={date_str}"
+        f"&hourly=wind_speed_10m"
+        f"&windspeed_unit=mph&timezone=auto"
+    )
+    try:
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+        if "hourly" not in data or "wind_speed_10m" not in data["hourly"]:
+            print(f"  [realized wind] No hourly data for {date_str}")
+            return None
+        df = pd.DataFrame({
+            "datetime": pd.to_datetime(data["hourly"]["time"]),
+            "wind": data["hourly"]["wind_speed_10m"],
+        })
+        df["hour"] = df["datetime"].dt.hour
+        golf_window = df[(df["hour"] >= 6) & (df["hour"] <= 20)]
+        if golf_window.empty:
+            return None
+        avg = float(golf_window["wind"].mean())
+        print(f"  [realized wind] {date_str}: {avg:.1f} mph (6AM-8PM avg)")
+        return round(avg, 1)
+    except Exception as e:
+        print(f"  [realized wind] Fetch failed for {date_str}: {e}")
+        return None
+
+
 def get_round_dates():
     """
     Return [R1, R2, R3, R4] datetimes for the current week's tournament.

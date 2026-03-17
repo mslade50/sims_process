@@ -144,18 +144,18 @@ shot_rule = 0        # 10-shot rule: 0 = off, 10 = on
 ```
 
 ### 1.2 Generate Skill Predictions (external)
-Run the skill model outside this repo. It produces two files that are auto-pushed here:
+Run the skill model outside this repo. It produces:
 
-1. **`pre_course_fit_{tourney}.csv`** — early-week baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` as a fallback.
-2. **`final_predictions_{tourney}.csv`** — final model pass closer to Thursday (`my_pred`, `std_dev`, `dg_final_pred`). Preferred by `new_sim.py` and `live_stats_engine.py` when available.
+- **`pre_course_fit_{tourney}.csv`** — baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` for the first-pass sim.
 
-`new_sim.py` uses `final_predictions` if it exists, otherwise falls back to `pre_course_fit`. Both are auto-pushed to the repo by the external model.
+**`final_predictions_{tourney}.csv`** is NOT generated externally — it is produced by `mkt_regress.py` (see Phase 3.2) after the first sim pass. `new_sim.py` uses `final_predictions` if it exists, otherwise falls back to `pre_course_fit`.
 
 **Downstream consumers:**
 - `scoring_baseline.py` — reads `pre_course_fit` for field strength adjustment
 - `cat_dists_player.py` — checks `pre_course_fit` for hot players missing the sample cut
-- `live_stats_engine.py` — reads `final_predictions` for round=0 baseline
-- `new_sim.py` — reads predictions for Monte Carlo sim (`my_pred` per player)
+- `new_sim.py` — reads predictions for Monte Carlo sim (prefers `final_predictions`, falls back to `pre_course_fit`)
+- `mkt_regress.py` — reads first-pass sim outputs + market odds, produces `final_predictions`
+- `live_stats_engine.py` — reads `final_predictions` for round=0 baseline (live rounds only)
 - `sheets_storage.py` — reads `pre_course_fit` for `dg_id` lookup
 
 ### 1.3 Run Distribution Builder (if new SG data available)
@@ -171,35 +171,6 @@ python cat_dists_player.py
 - Minimum 20 observations per category
 
 **When to skip:** If no new historical data has been added since last run.
-
-### 1.4 Run Distribution Adjustment
-```bash
-python dists_thiswk.py
-```
-
-**What this does:**
-1. Fetches current field from DataGolf `/field-updates` API
-2. Filters `sg_dist_player.csv` to players in this week's field
-3. Applies course shape adjustments from `course_shape_adjustments_{course_id}.csv`:
-   - `delta_mu`: Mean shift per SG category
-   - `sigma_ratio`: Variance scaling
-   - `tail_ratio`: Kurtosis adjustment (Student-t df)
-4. Outputs:
-   - `this_week_dists.csv` (pre-adjustment)
-   - `this_week_dists_adjusted.csv` (post-adjustment)
-5. Syncs to OneDrive targets
-
-**Required input files:**
-- `sg_dist_player.csv` (from Step 1.2)
-- `course_shape_adjustments_{course_id}.csv` (in repo or permanent_data)
-
-**Verify:**
-```python
-import pandas as pd
-df = pd.read_csv("this_week_dists_adjusted.csv")
-print(f"Players: {df['player_name'].nunique()}")
-print(df[['player_name', 'sg_total_mean', 'sg_total_std']].head(10))
-```
 
 ---
 
@@ -276,51 +247,60 @@ Weather columns (dew/wind in the hourly tables) are auto-populated by `humidity.
 
 ---
 
-## Phase 3: Thursday (Round 1)
+## Phase 3: Pre-Tournament Simulation (Tue–Thu)
 
-### 3.1 Pre-Round: Generate Model Predictions
-Before R1 tee times, with `round=0` in the Google Sheet:
+The tournament sim is a **two-pass process**: first pass uses raw predictions, market regression adjusts them, second pass uses regressed predictions.
 
-```bash
-python live_stats_engine.py
-```
-
-**What this does (round=0):**
-- Reads config from Google Sheet (`round_config` tab)
-- Fetches field updates from DataGolf API
-- Generates `model_predictions_r1.csv` with pre-tournament skill estimates
-- No skill adjustments applied (pre-event baseline)
-
-> **IMPORTANT: `round=0` is used for ALL R1 operations** — both `live_stats_engine.py` (creates `model_predictions_r1.csv`) and `round_sim.py` (prices R1 matchups + score cards). The `expected_score_1` field in the sheet is the R1 expected scoring average. Do NOT change round to 1 until R1 is complete and you're ready to run the R2 pipeline.
-
-**Verify:**
-```python
-df = pd.read_csv("model_predictions_r1.csv")
-print(f"Players: {len(df)}")
-print(df[['player_name', 'my_pred', 'std_dev']].head(10))
-```
-
-### 3.2 Pre-Round: Run Tournament Sim
+### 3.1 First Pass: Run Tournament Sim
 ```bash
 python new_sim.py
 ```
 
+`new_sim.py` reads `final_predictions_{tourney}.csv` if it exists, otherwise falls back to `pre_course_fit_{tourney}.csv`. On the first pass, only `pre_course_fit` exists.
+
 **What this does:**
+- **DG override** (before sim): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `|pred| < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Same logic as `live_stats_engine.py` and `mkt_regress.py`.
 - Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total (category-first approach)
-- Uses `COURSE_CAT_MULTS` from `sim_inputs.py` / Google Sheet to scale per-category variance
+- Uses `COURSE_CAT_MULTS` from Google Sheet to scale per-category variance
 - Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
 - Fetches betting odds from DataGolf matchup/outright APIs
 - Runs Monte Carlo tournament simulation (matchups + finish positions)
-- Calculates edges vs book odds
-- Sends email report with filtered bets
+- Produces `pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`, matchup CSVs
+
+**Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
+
+**Simx edge decomposition:** The email reports a **Simx** column for matchups — this is the edge difference between the full category-first sim and a simple Normal CDF analytical model (`edge_on - edge_no_wx`). It captures the value added by skewness, correlation, and course variance multipliers. Stored as `wx_edge` in Sheets and the Parquet ledger for tracking. When weather arrays are populated, the true weather contribution can be isolated as `Wx = total_wx_edge - Simx_baseline` (where Simx_baseline is from a no-weather run).
+
+**Weekly setup** — update `COURSE_CAT_MULTS` in Google Sheet `round_config` tab when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
+
+### 3.2 Market Regression
+```bash
+python mkt_regress.py
+```
+
+**What this does:**
+1. Reads first-pass sim outputs (`pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`)
+2. **DG override**: replaces preds with DataGolf's `dg_final_pred` for players with `|pred| < 0.5` or in `dg_override_players` list (in `sim_inputs.py`)
+3. Applies three regression layers toward market prices:
+   - **mkt_adj** (max ±0.12 SG): outright win odds disagreement (sharp book avg vs sim win%)
+   - **mu_adj** (max ±0.13 SG): matchup edge disagreement (z-scored, inverted; boosted 1.5x for weak players)
+   - **c_adj_regress** (up to 30% of c_adj): extra regression when course-fit drives the edge
+4. Asymmetric dampening: upward adjustments dampened to 35% (UP ~40% accurate vs DOWN ~67%)
+5. Outputs: `final_predictions_{tourney}.csv` (slim) and `final_predictions_{tourney}_details.csv` (full detail)
+
+**Requires**: matchup odds CSV (`betcris_{tourney}.csv` or `betonline_odds_with_my_odds_tu.csv`)
+
+### 3.3 Second Pass: Re-Run Tournament Sim
+```bash
+python new_sim.py
+```
+
+Now picks up `final_predictions_{tourney}.csv` (regressed predictions). This is the **final sim** — edges, matchups, and finish positions are all based on market-regressed predictions.
+
 - **Auto-saves to Google Sheets** (Tournament Matchups, Finish Positions tabs)
 - **Auto-writes to Parquet ledger** (`permanent_data/bet_ledger.parquet`)
 - Stores all tournament matchups with edge > 3% (no pred/sample gate). Low-confidence bets are visible on the `/fragility` dashboard page. Email filters still apply (pred > 0.75, sample >= 20).
 - Uses single Google auth via `get_spreadsheet()` (1 connection, not 4)
-
-**Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
-
-**Weekly setup** — update `COURSE_CAT_MULTS` in `sim_inputs.py` when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
 
 **Verify bet storage:**
 ```python
@@ -332,7 +312,26 @@ print(df[df['event_name'] == 'att'][['bet_type', 'bet_on', 'bookmaker', 'edge']]
 print(f"Duplicates: {df.duplicated(subset=['event_id','bet_type','round','bet_on','opponent','bookmaker']).sum()}")
 ```
 
-### 3.3 Post-Round 1: Update Sheet & Run Skill Update
+---
+
+## Phase 4: Thursday (Round 1)
+
+### 4.1 Pre-Round: Generate Model Predictions
+Before R1 tee times, with `round=0` in the Google Sheet:
+
+```bash
+python live_stats_engine.py
+```
+
+**What this does (round=0):**
+- Reads config from Google Sheet (`round_config` tab)
+- Fetches field updates from DataGolf API
+- Generates `model_predictions_r1.csv` with pre-tournament skill estimates (reads `final_predictions_{tourney}.csv`)
+- No skill adjustments applied (pre-event baseline)
+
+> **IMPORTANT: `round=0` is used for ALL R1 operations** — both `live_stats_engine.py` (creates `model_predictions_r1.csv`) and `round_sim.py` (prices R1 matchups + score cards). The `expected_score_1` field in the sheet is the R1 expected scoring average. Do NOT change round to 1 until R1 is complete and you're ready to run the R2 pipeline.
+
+### 4.2 Post-Round 1: Update Sheet & Run Skill Update
 
 After R1 scores are final:
 
@@ -357,13 +356,13 @@ python live_stats_engine.py
   - `r1_live_model.csv` (R1 skill-adjusted model)
   - `model_predictions_r2.csv` (predictions for R2)
 
-### 3.3b R1 Round Sim (with round=0 still in the sheet)
+### 4.2b R1 Round Sim (with round=0 still in the sheet)
 ```bash
 python round_sim.py
 ```
 **Note:** `round=0` in the sheet means "R1 hasn't happened yet" — `round_sim.py` reads this and prices R1 matchups using `model_predictions_r1.csv` and `expected_score_1` as the R1 expected scoring average. Make sure `expected_score_1` is set to the R1 expected score (e.g., 72.6), not the generic baseline.
 
-### 3.4 Post-Round 1: Run R2 Matchup Pricing
+### 4.3 Post-Round 1: Run R2 Matchup Pricing
 ```bash
 python round_sim.py
 ```
@@ -385,9 +384,9 @@ python round_sim.py
 
 ---
 
-## Phase 4: Friday (Round 2)
+## Phase 5: Friday (Round 2)
 
-### 4.1 Update Sheet & Run Skill Update
+### 5.1 Update Sheet & Run Skill Update
 
 **Update Google Sheet:**
 
@@ -408,17 +407,17 @@ python live_stats_engine.py
 - Components: `residual_adj + residual2_adj + residual3_adj + avg_ott_adj + avg_putt_adj + avg_app_adj + avg_arg_adj + delta_app_adj`
 - Outputs: `r2_live_model.csv`, `model_predictions_r3.csv`
 
-### 4.2 Run R3 Matchup Pricing
+### 5.2 Run R3 Matchup Pricing
 ```bash
 python round_sim.py
 ```
-Same flow as Phase 3.4 but for R3.
+Same flow as Phase 4.3 but for R3.
 
 ---
 
-## Phase 5: Saturday (Round 3)
+## Phase 6: Saturday (Round 3)
 
-### 5.1 Update Sheet & Run Skill Update
+### 6.1 Update Sheet & Run Skill Update
 
 **Update Google Sheet:**
 
@@ -439,16 +438,16 @@ python live_stats_engine.py
 - Formula: `total_adjustment = fresh_adj - prior_sg - prior_resid`
 - Outputs: `r3_live_model.csv`, `model_predictions_r4.csv`
 
-### 5.2 Run R4 Matchup Pricing
+### 6.2 Run R4 Matchup Pricing
 ```bash
 python round_sim.py
 ```
 
 ---
 
-## Phase 6: Sunday (Round 4)
+## Phase 7: Sunday (Round 4)
 
-### 6.1 Optional: Run R4 Skill Update
+### 7.1 Optional: Run R4 Skill Update
 Only needed if you want final-round predictions for analysis.
 
 **Update Google Sheet:**
@@ -461,7 +460,7 @@ Only needed if you want final-round predictions for analysis.
 python live_stats_engine.py
 ```
 
-### 6.2 Post-Tournament: Grading is Automated
+### 7.2 Post-Tournament: Grading is Automated
 Grading runs automatically Monday morning via `monday-grading.yml` (see Phase 0.2). No manual action needed.
 
 To grade immediately (Sunday night):
@@ -469,7 +468,7 @@ To grade immediately (Sunday night):
 python monday_grading.py
 ```
 
-### 6.3 Review Results
+### 7.3 Review Results
 ```bash
 # Quick terminal summary
 python bet_query.py --event genesis --graded
@@ -491,14 +490,14 @@ python -m dashboard.app   # → localhost:8050
 
 ---
 
-## Phase 7: Post-Event SG Diagnostic
+## Phase 8: Post-Event SG Diagnostic
 
-### 7.1 When to Run
+### 8.1 When to Run
 Runs automatically as part of the Monday grading pipeline (`monday_grading.py`). Manual run only needed if you want the email report or need to override the event ID.
 
 **Note:** Requires `avg_expected_cat_sg_{tourney}.csv` which is deleted by Sunday cleanup. The Monday pipeline runs `--no-email` and gracefully skips if the file is missing (GitHub Actions). Works fully when run locally before cleanup.
 
-### 7.2 Run the Diagnostic
+### 8.2 Run the Diagnostic
 ```bash
 # Full run: fetch actuals, compare to predictions, store in Parquet, send email
 python sg_diagnostic.py
@@ -520,7 +519,7 @@ python sg_diagnostic.py --no-email
 
 **Note:** Only works for ShotLink-equipped events (~32/year). Non-ShotLink events will exit gracefully with a message.
 
-### 7.3 Accumulated Cross-Event Report
+### 8.3 Accumulated Cross-Event Report
 After 2+ events, view trends across tournaments:
 ```bash
 python sg_diagnostic.py --report
@@ -560,15 +559,18 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 ```bash
 # Pre-tournament pipeline
 python cat_dists_player.py                       # Step 1: SG distributions
-python dists_thiswk.py                           # Step 2: Field filter + course adjust
-python humidity.py                               # Step 3: Auto-populate weather to Sheet
-python update_sheet_courses.py                   # Step 3: Auto-populate course codes
-python scoring_baseline.py                       # Step 4: Scoring baselines + expected scores
-python write_base_rates.py                       # Step 5: Base rates reference tab
+python humidity.py                               # Step 2: Auto-populate weather to Sheet
+python update_sheet_courses.py                   # Step 2: Auto-populate course codes
+python scoring_baseline.py                       # Step 3: Scoring baselines + expected scores
+python write_base_rates.py                       # Step 4: Base rates reference tab
+
+# Pre-tournament sim (two-pass)
+python new_sim.py                                # First pass (pre_course_fit preds)
+python mkt_regress.py                            # Market regression -> final_predictions
+python new_sim.py                                # Second pass (regressed preds)
 
 # Live rounds
 python live_stats_engine.py                      # Skill update (reads round from Sheet)
-python new_sim.py                                # Tournament matchups + finish positions
 python round_sim.py                              # Round matchup pricing
 
 # Bet grading
@@ -620,7 +622,7 @@ python sg_diagnostic.py --report                 # Cross-event trends
 2. Check weather arrays have 15 elements each
 3. Run with `num_sims=1000` first to validate
 4. Check `model_predictions_r1.csv` has expected players and reasonable `my_pred` values
-5. Verify course shape adjustment file exists: `course_shape_adjustments_{course_id}.csv`
+5. Verify `COURSE_CAT_MULTS` in Google Sheet `round_config` tab are set for this course
 
 ### Bets not saving to Sheets
 1. Check `is_valid_run_time()` — storage only works after Monday 3 PM EST
@@ -655,10 +657,9 @@ python sg_diagnostic.py --report                 # Cross-event trends
 ```
 sim_inputs.py ──────────────────────┐
                                     ▼
-cat_dists_player.py ──► sg_dist_player.csv
-                              │
-                              ▼
-dists_thiswk.py ──► this_week_dists_adjusted.csv ──► pre_course_fit_{tourney}.csv
+cat_dists_player.py ──► sg_dist_player.csv + this_week_dists_v2.csv
+                                                              │
+                                              pre_course_fit_{tourney}.csv
                                                               │
 humidity.py ──► round_config (weather grid + formulas)        │
                               │                               │

@@ -4,8 +4,9 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Pipeline Execution Order
 
-**Pre-tournament**: `cat_dists_player.py` → `dists_thiswk.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`
-**Pre-event (round=0)**: `live_stats_engine.py` → `new_sim.py` (tournament matchups + finish positions)
+**Pre-tournament**: `cat_dists_player.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`
+**Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
+**Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
 **Live (R1-R4)**: Update Google Sheet (`round_config` tab) → `live_stats_engine.py` → `round_sim.py` (round matchups + score cards)
 **Post-event (Monday, automated)**: `monday_grading.py` → `grade_bets.py` → `sg_diagnostic.py` → `push_dashboard_data.py`
 **Deploy dashboard (manual)**: `push_dashboard_data.py` → triggers Render deploy. Pipeline scripts no longer auto-push.
@@ -78,7 +79,7 @@ The name is misleading. When summing R2 adjustment components, explicitly list c
 Convert: `expected_score = course_par - scores_r{N}`. A player with `scores_r2 = 0.83` at par 72 → expected 71.17.
 
 ### 5. Player names always lowercase
-Both sides of every join/merge must go through `name_replacements`. The `dists_thiswk.py` pattern is canonical.
+Both sides of every join/merge must go through `name_replacements`. The `cat_dists_player.py` pattern is canonical.
 
 ## Traps That Have Caused Bugs
 
@@ -90,7 +91,6 @@ Both sides of every join/merge must go through `name_replacements`. The `dists_t
 - **Bayesian wind blending**: Forecast wind arrays are blended with a climatological prior (monthly hourly avg from Open-Meteo archive, 2019-2025). Climo weight = `lead_days / 12`, clamped [5%, 50%]. Round dates are Thu–Sun of current week via `get_round_dates()`. Applied in `new_sim.py` and `live_stats_engine.py`. Functions in `api_utils.py`.
 - **R1 residual cap**: Capped at 0.2 if raw residual is negative; hard cap at 0.5 regardless.
 - **Tee time parsing**: Multiple formats in the wild (`%Y-%m-%d %H:%M`, `%I:%M%p`, `%m/%d/%Y %H:%M`). New formats cause `ValueError`.
-- **Course shape adjustment filenames**: Must match exactly `course_shape_adjustments_{course_id}.csv`.
 
 ## Bet Storage Architecture
 

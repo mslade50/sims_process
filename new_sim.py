@@ -36,7 +36,7 @@ _event_id        = _cfg["event_id"]
 
 # --- Stable model params from sim_inputs ---
 from sim_inputs import (
-    name_replacements,
+    name_replacements, dg_override_players,
     # R1 update sets
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
     # R2 update sets (pos buckets)
@@ -65,6 +65,7 @@ print("=" * 60)
 from api_utils import (
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
+    fetch_player_decompositions,
 )
 try:
     import pandas as _pd_coords
@@ -279,6 +280,22 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
+# --- DG override: replace low-confidence preds with DataGolf's estimate ---
+dg_decomp = fetch_player_decompositions(API_KEY)
+if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
+    model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
+    manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
+    mask = ((model_preds['my_pred'].abs() < 0.5) | manual_mask) & model_preds['dg_final_pred'].notna()
+    n_replaced = mask.sum()
+    if n_replaced > 0:
+        print(f"[DG override] Replacing {n_replaced} predictions (|pred| < 0.5 or manual list):")
+        for _, r in model_preds.loc[mask].iterrows():
+            print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
+        model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
+    else:
+        print("[DG override] No predictions needed replacement")
+    model_preds = model_preds.drop(columns=['dg_final_pred'])
+
 # Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
     pcf = pd.read_csv(_pre_course_path, usecols=['player_name', 'sample'])
@@ -455,7 +472,7 @@ print(f"\n[check] R1 total std (realized): {r1_total_std_realized:.3f}  (v1 blen
 print(f"[check] R1 category stds (realized): OTT={r1_cat_stds_realized[0]:.3f}, "
       f"APP={r1_cat_stds_realized[1]:.3f}, ARG={r1_cat_stds_realized[2]:.3f}, PUTT={r1_cat_stds_realized[3]:.3f}")
 # Realized skewness check
-from scipy.stats import skew as _skew_fn
+from scipy.stats import skew as _skew_fn, norm as _norm_dist
 r1_cat_skew_realized = np.array([_skew_fn(cats_r1[:, :, j].ravel()) for j in range(4)])
 print(f"[check] R1 category skew (realized): OTT={r1_cat_skew_realized[0]:+.3f}, "
       f"APP={r1_cat_skew_realized[1]:+.3f}, ARG={r1_cat_skew_realized[2]:+.3f}, PUTT={r1_cat_skew_realized[3]:+.3f}")
@@ -1280,7 +1297,8 @@ for m in match_list:
 # EMAIL: Tournament Sim Summary
 # ============================================================
 
-def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup):
+def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
+                                wx_lookup=None):
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
     # Section 1: Tournament Matchups
@@ -1326,6 +1344,15 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     else row.get('half_shot_p2', '')
                 )
 
+                # Weather edge decomposition
+                simx_e = row.get('wx_edge', 0) if pd.notna(row.get('wx_edge', None)) else 0
+                no_wx = row.get('edge_no_wx', edge) if pd.notna(row.get('edge_no_wx', None)) else edge
+                no_wx_color = (
+                    "#d4edda" if no_wx > 5 else
+                    "#fff3cd" if no_wx >= 0 else
+                    "#f8d7da"
+                )
+
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
@@ -1341,6 +1368,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{simx_e:+.1f}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:600; background:{no_wx_color};">{no_wx:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
                     <td style="padding:6px 10px; text-align:center;">{hs_str}</td>
@@ -1359,6 +1388,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Simx</th>
+                    <th style="padding:6px 10px; text-align:center;">Analytical</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
                     <th style="padding:6px 10px; text-align:center;">1/2 Shot</th>
@@ -1390,6 +1421,13 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 sample = int(row.get('sample', 0)) if pd.notna(row.get('sample')) else 0
                 book = str(row.get('bookmaker', ''))
 
+                # Weather context: total SG shift from weather
+                _fp_wx_sg = 0.0
+                if wx_lookup:
+                    _fp_wx_sg = wx_lookup.get(str(row.get('player_name', '')).lower().strip(), 0)
+                _fp_wx_color = "#d4edda" if abs(_fp_wx_sg) > 0.3 else "#ffffff"
+                _fp_wx_str = f"{_fp_wx_sg:+.2f}" if _fp_wx_sg != 0 else "0.00"
+
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
 
                 fp_rows += f"""
@@ -1402,6 +1440,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{_fp_wx_color};">{_fp_wx_str}</td>
                 </tr>"""
 
             fp_html = f"""
@@ -1418,6 +1457,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
                 {fp_rows}
             </table>"""
@@ -1437,6 +1477,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price (ties push) | Edge = expected return % |
+            Simx = sim complexity edge vs analytical (pp) | Analytical = edge from simple Normal CDF |
+            Wx SG = weather SG shift R1+R2 (positive = favorable) |
             Pred = model SG prediction | 1/2 Shot = value of half-shot spread (in edge pts)
         </p>
     </body>
@@ -1445,7 +1487,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
 
 def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                          attachment_paths=None):
+                          attachment_paths=None, wx_lookup=None):
     if not EMAIL_PASSWORD:
         print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
         return
@@ -1454,7 +1496,8 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
         return
 
     try:
-        html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup)
+        html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
+                                           wx_lookup=wx_lookup)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"Tournament Sim -- {tourney.replace('_', ' ').title()}"
@@ -1636,6 +1679,39 @@ if not df_match.empty:
         combined_df['wind_against'] = combined_df['bet_against'].str.lower().map(wind_lookup)
         combined_df['wind_diff'] = combined_df['wind_on'] - combined_df['wind_against']
 
+        # --- Weather edge decomposition (analytical Normal CDF) ---
+        # Total weather benefit per player = wind_adv + dew_adv (both centered, positive = helps player)
+        dew_lookup = dict(zip(wx['player_name'].str.lower(), wx['dew_adv_r1_2']))
+        combined_df['dew_on'] = combined_df['bet_on'].str.lower().map(dew_lookup)
+        combined_df['dew_against'] = combined_df['bet_against'].str.lower().map(dew_lookup)
+        combined_df['wx_on'] = combined_df['wind_on'] + combined_df['dew_on']
+        combined_df['wx_against'] = combined_df['wind_against'] + combined_df['dew_against']
+        combined_df['wx_diff'] = combined_df['wx_on'] - combined_df['wx_against']
+
+        # Skill diff per round (my_pred, no weather)
+        combined_df['skill_diff'] = combined_df['pred_on'] - combined_df['pred_against']
+
+        # Tournament: 4 rounds, diff ~ N(4*skill_diff, 8*STD_DEV^2)
+        _sigma_tourn = STD_DEV * np.sqrt(8)
+        combined_df['prob_no_wx'] = _norm_dist.cdf(
+            4 * combined_df['skill_diff'] / _sigma_tourn
+        )
+
+        # Edge without weather: edge = (prob * (dec - 1) - (1 - prob)) * 100
+        combined_df['odds_on'] = combined_df.apply(
+            lambda r: r['P1 Odds'] if r['edge_p1'] > r['edge_p2'] else r['P2 Odds'], axis=1
+        )
+        combined_df['dec_on'] = np.where(
+            combined_df['odds_on'] > 0,
+            combined_df['odds_on'] / 100 + 1,
+            100 / combined_df['odds_on'].abs() + 1,
+        )
+        combined_df['edge_no_wx'] = (
+            combined_df['prob_no_wx'] * (combined_df['dec_on'] - 1)
+            - (1 - combined_df['prob_no_wx'])
+        ) * 100
+        combined_df['wx_edge'] = combined_df['edge_on'] - combined_df['edge_no_wx']
+
         combined_csv_name = os.path.join(matchup_dir, f"matchups_ftsimp_{tourney}_{timestamp}.csv")
         combined_df.to_csv(combined_csv_name, index=False)
         print(f"[ok] combined matchups -> {combined_csv_name}")
@@ -1674,12 +1750,18 @@ if not df_match.empty:
             f"weather_impact_{tourney}.csv",
             f"finish_equity_{tourney}.csv",
         ] if os.path.exists(f)]
+        # Weather lookup for finish position context: total SG shift R1+R2
+        _wx_fp_lookup = dict(zip(
+            wx['player_name'].str.lower(),
+            wx['wind_adv_r1_2'] + wx['dew_adv_r1_2'],
+        ))
         send_tournament_email(
             sharp_mu_df=sharp_df,
             finish_df=_finish_for_email,
             sample_lookup=sample_lookup,
             my_pred_lookup=my_pred_lookup,
             attachment_paths=_attachments,
+            wx_lookup=_wx_fp_lookup,
         )
     else:
         print("[note] no bookmaker CSVs found to combine.")

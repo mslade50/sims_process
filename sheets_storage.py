@@ -82,7 +82,7 @@ TOURNAMENT_MU_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
-    "wind_on", "wind_diff",
+    "wind_on", "wind_diff", "wx_edge",
     "result", "units_won",
 ]
 
@@ -106,6 +106,7 @@ ROUND_MU_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
+    "wx_edge",
     "result", "p1_round_score", "p2_round_score", "units_won",
 ]
 
@@ -330,6 +331,7 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
             _safe(_get(r, "half_shot_p2"), round_digits=1),  # half_shot_p2
             _safe(_get(r, "wind_on"), round_digits=2),  # wind_on
             _safe(_get(r, "wind_diff"), round_digits=2), # wind_diff
+            _safe(_get(r, "wx_edge"), round_digits=1),  # wx_edge
             "",                                         # result (grading)
             "",                                         # units_won (grading)
         ])
@@ -504,6 +506,7 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             _safe(_get(r, "sample_on")),                # sample_on
             _safe(_get(r, "half_shot_p1"), round_digits=1),  # half_shot_p1
             _safe(_get(r, "half_shot_p2"), round_digits=1),  # half_shot_p2
+            _safe(_get(r, "wx_edge"), round_digits=1),  # wx_edge
             "",                                         # result (grading)
             "",                                         # p1_round_score (grading)
             "",                                         # p2_round_score (grading)
@@ -639,6 +642,7 @@ def _empty_ledger_record():
         "half_shot": np.nan,
         "wind_on": np.nan,
         "wind_diff": np.nan,
+        "wx_edge": np.nan,
         "book_category": "",
         "result": "",
         "actual_finish": "",
@@ -670,6 +674,10 @@ def _append_to_ledger(records):
         return
 
     new_df = pd.DataFrame(records)
+
+    # Coerce run_timestamp to datetime to match existing ledger dtype
+    if "run_timestamp" in new_df.columns:
+        new_df["run_timestamp"] = pd.to_datetime(new_df["run_timestamp"], errors="coerce")
 
     # Ensure permanent_data dir exists
     ledger_dir = os.path.dirname(LEDGER_PATH)
@@ -758,6 +766,7 @@ def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_look
                 "half_shot": _safe_float(hs),
                 "wind_on": _safe_float(_get(r, "wind_on", default=np.nan)),
                 "wind_diff": _safe_float(_get(r, "wind_diff", default=np.nan)),
+                "wx_edge": _safe_float(_get(r, "wx_edge", default=np.nan)),
                 "book_category": _categorize_book(bookmaker),
             })
             records.append(rec)
@@ -854,6 +863,7 @@ def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_i
                 "pred_on": _safe_float(_get(r, "pred_on", "p1_pred", default=np.nan)),
                 "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
                 "half_shot": _safe_float(hs),
+                "wx_edge": _safe_float(_get(r, "wx_edge", default=np.nan)),
                 "book_category": _categorize_book(bookmaker),
             })
             records.append(rec)

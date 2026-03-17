@@ -61,6 +61,7 @@ from api_utils import (
     fetch_player_decompositions,
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
+    fetch_realized_wind,
 )
 
 
@@ -1483,6 +1484,24 @@ def _read_dew_array_from_sheet(ws, round_num):
     return values
 
 
+def _write_param_to_sheet(ws, all_data, param_name, value):
+    """
+    Write a single value to the round_config A:B parameter area.
+    Finds the param row by name; creates it at the bottom if missing.
+    """
+    # Find existing row (1-indexed for gspread)
+    for i, row in enumerate(all_data):
+        if row and row[0].strip().lower() == param_name.lower():
+            ws.update_cell(i + 1, 2, str(value))
+            print(f"  [actuals] Wrote {param_name}={value} to row {i + 1}")
+            return
+    # Not found — append at bottom
+    next_row = len(all_data) + 1
+    ws.update_cell(next_row, 1, param_name)
+    ws.update_cell(next_row, 2, str(value))
+    print(f"  [actuals] Created {param_name}={value} at row {next_row}")
+
+
 def write_actuals_to_sheet(round_num):
     """
     Write realized weather actuals for a completed round to the config tab.
@@ -1527,20 +1546,49 @@ def write_actuals_to_sheet(round_num):
     realized_dew = sum(realized_dew_arr) / len(realized_dew_arr) if realized_dew_arr else 0.0
     print(f"  [actuals] R{round_num} realized dew (post-refresh): {realized_dew:.1f}F")
 
-    # 4. Read config values
+    # 4. Read config values and sheet grid (need grid for both param write-back and base_score read)
     config = load_config()
     realized_wind = config.get(f"realized_wind_r{round_num}")
     dewpoint_base = config.get("dewpoint_base", 0.0) or 0.0
     wind_factor = config.get("wind_override", 0.0) or 0.0
     dew_calc = config.get("dew_calculation", 0.0) or 0.0
 
+    all_data = ws.get_all_values()
+
+    # 4b. Auto-fetch realized wind from Open-Meteo archive if not in sheet
     if realized_wind is None:
-        print(f"  [actuals] No realized_wind_r{round_num} in sheet — skipping actuals row")
-        return
+        print(f"  [actuals] No realized_wind_r{round_num} in sheet — auto-fetching from Open-Meteo")
+        try:
+            from sim_inputs import course_id as _cid
+            coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
+            coords_df = pd.read_csv(coords_csv)
+            coords_row = coords_df[coords_df["course_id"] == _cid]
+            if coords_row.empty:
+                print(f"  [actuals] Course {_cid} not in course_coordinates.csv — skipping")
+                return
+            lat = float(coords_row["lat"].iloc[0])
+            lon = float(coords_row["lon"].iloc[0])
+            from datetime import timedelta
+            round_dates = get_round_dates()
+            round_date = round_dates[round_num - 1]
+            # If round dates are in the future (Monday backfill), use previous week
+            if round_date.date() > datetime.now().date():
+                round_date = round_date - timedelta(days=7)
+                print(f"  [actuals] Using previous week date: {round_date.strftime('%Y-%m-%d')}")
+            date_str = round_date.strftime("%Y-%m-%d")
+            realized_wind = fetch_realized_wind(lat, lon, date_str)
+            if realized_wind is None:
+                print(f"  [actuals] Could not fetch realized wind — skipping actuals row")
+                return
+            # Write back to sheet so it persists
+            param_name = f"realized_wind_r{round_num}"
+            _write_param_to_sheet(ws, all_data, param_name, realized_wind)
+        except Exception as e:
+            print(f"  [actuals] Auto-fetch realized wind failed: {e}")
+            return
 
     # 5. Read base_score and field_adj from pre-tourney breakdown (cols V-W of the round's row)
     # Row = 2 + round_num (R1=row3, R2=row4, etc.), Col V=22, W=23
-    all_data = ws.get_all_values()
     row_idx = 2 + round_num - 1  # 0-indexed
     base_score = 0.0
     field_adj = 0.0

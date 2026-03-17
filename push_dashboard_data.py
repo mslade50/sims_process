@@ -29,7 +29,7 @@ ROOT_FILES = [
     "simulated_probs_live.csv",
     "simulated_probs.csv",
     "sg_dist_player.csv",
-    "this_week_dists_adjusted.csv",
+    "this_week_dists_v2.csv",
 ]
 
 # Files in the tournament folder → flattened into dashboard_data/
