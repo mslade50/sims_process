@@ -83,6 +83,9 @@ player_var= 2
 tee_time_start="8:30" 
 tee_time_end="1:00"
 
+# Players to force-override with DG predictions (empty = auto only)
+dg_override_players = []
+
 #any names that cause trouble, want to ensure consistency
 name_replacements = {
     'echavarria, nico': 'echavarria, nicolas',
