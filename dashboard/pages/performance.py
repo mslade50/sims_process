@@ -289,9 +289,19 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         sharp_pattern = "|".join(SHARP_BOOKS)
         df = df[df["bookmaker"].str.lower().str.contains(sharp_pattern, na=False)]
     if analysis_mode in ("best_price", "sharp_best"):
+        # For each unique matchup side, keep only bets from the FIRST run,
+        # then pick the best edge among those. Later runs are duplicates.
         dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent"]
         existing = [c for c in dedup_cols if c in df.columns]
-        if existing:
+        if existing and "run_timestamp" in df.columns:
+            # Find earliest run_timestamp per matchup side
+            first_run = df.groupby(existing)["run_timestamp"].transform("min")
+            df = df[df["run_timestamp"] == first_run]
+            # Among first-run bets, keep the one with the best edge
+            if "edge" in df.columns:
+                df = df.sort_values("edge", ascending=False, na_position="last")
+            df = df.drop_duplicates(subset=existing, keep="first")
+        elif existing:
             df = df.drop_duplicates(subset=existing, keep="first")
 
     # Apply sample_on range filter
@@ -352,9 +362,10 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     if df.empty:
         return empty_return[:-1] + (player_options,)
 
-    # Separate graded vs all
+    # Separate graded vs all — exclude duplicates entirely
+    df = df[~df["result"].astype(str).str.strip().isin(["duplicate"])].copy()
     graded = df[df["result"].astype(str).str.strip() != ""].copy()
-    resolved = graded[~graded["result"].isin(["no_data", "unknown", "duplicate"])].copy()
+    resolved = graded[~graded["result"].isin(["no_data", "unknown"])].copy()
 
     # KPI cards
     total_bets = len(df)
@@ -563,7 +574,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             striped=True, bordered=True, hover=True, color="dark", size="sm",
         )
 
-    # ── Filtered bets detail table ──
+    # ── Filtered bets detail table (duplicates already removed from df above) ──
     detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round",
                    "edge", "raw_edge", "dec_odds", "pred_on", "result", "units_wagered", "units_won"]
     available_cols = [c for c in detail_cols if c in df.columns]

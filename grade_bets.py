@@ -379,9 +379,9 @@ def deduplicate_bets(df, bet_type):
 
     # Define key columns based on bet type
     if bet_type == "round_matchup":
-        key_cols = ["event_id", "player_1", "player_2", "bookmaker", "round"]
+        key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker", "round"]
     elif bet_type == "tournament_matchup":
-        key_cols = ["event_id", "player_1", "player_2", "bookmaker"]
+        key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker"]
     elif bet_type.startswith("finish_position"):
         key_cols = ["event_id", "player_name", "market_type", "sportsbook"]
     elif bet_type == "sharp":

@@ -30,30 +30,12 @@ UP_DAMPEN = 0.35            # dampen upward regression (UP is ~40% accurate vs ~
 # ---------------------------------------------------------------------------
 # Load sim outputs
 # ---------------------------------------------------------------------------
-merged_df = pd.read_csv(f'pre_sim_summary_{tourney}.csv')
+# init_sim_skill carries DG-overridden predictions from the first-pass new_sim run.
+# pred = DG-overridden skill estimate; c_adj and sample from pre_sim_summary.
+merged_df = pd.read_csv(f'init_sim_skill_{tourney}.csv')
 merged_df['player_name'] = merged_df['player_name'].str.lower().replace(name_replacements)
 
-# ---------------------------------------------------------------------------
-# DG override: replace low-confidence preds BEFORE regression
-# ---------------------------------------------------------------------------
-from api_utils import fetch_player_decompositions
-
 API_KEY = os.getenv("DATAGOLF_API_KEY")
-dg_decomp = fetch_player_decompositions(API_KEY)
-
-if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
-    merged_df = merged_df.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
-    manual_mask = merged_df['player_name'].isin([n.lower().strip() for n in dg_override_players])
-    mask = ((merged_df['pred'].abs() < 0.5) | manual_mask) & merged_df['dg_final_pred'].notna()
-    n_replaced = mask.sum()
-    if n_replaced > 0:
-        print(f"[DG override] Replacing {n_replaced} predictions (|pred| < 0.5 or manual list):")
-        for _, r in merged_df.loc[mask].iterrows():
-            print(f"  {r['player_name']}: {r['pred']:.3f} -> {r['dg_final_pred']:.3f}")
-        merged_df.loc[mask, 'pred'] = merged_df.loc[mask, 'dg_final_pred']
-    else:
-        print("[DG override] No predictions needed replacement")
-    merged_df = merged_df.drop(columns=['dg_final_pred'])
 
 player_statistics = pd.read_csv(f'finish_equity_{tourney}.csv')
 player_statistics['top_1_pct'] = player_statistics['simulated_win_prob'] * 100
@@ -183,6 +165,7 @@ edge_norm = edge_rel.clip(-1, 1)
 
 # Regression: up to 30% of c_adj at the tails, linear decline toward center
 merged_df['c_adj_regress'] = -CADJ_MAX_PCT * edge_norm * merged_df['c_adj']
+merged_df['c_adj_regress'] = merged_df['c_adj_regress'].fillna(0)
 
 # ---------------------------------------------------------------------------
 # Final prediction — asymmetric regression
@@ -201,7 +184,7 @@ merged_df['my_pred_final'] = merged_df['pred'] + merged_df['tot_rgrs']
 
 # Filter to active player pool only
 merged_df['player_name'] = merged_df['player_name'].replace(name_replacements)
-pool = pd.read_csv(f'pre_sim_summary_{tourney}.csv')
+pool = pd.read_csv(f'init_sim_skill_{tourney}.csv')
 pool['player_name'] = pool['player_name'].str.lower().replace(name_replacements)
 merged_df = merged_df[merged_df['player_name'].isin(pool['player_name'])]
 
@@ -246,9 +229,14 @@ print(f"\n[ok] Saved {detail_path}")
 pcf = pd.read_csv(f'pre_course_fit_{tourney}.csv', usecols=['player_name', 'r1_teetime', 'r2_teetime', 'std_dev', 'sample'])
 pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
 
-slim = merged_df[['player_name', 'my_pred_final']].rename(columns={'my_pred_final': 'pred'})
+slim = merged_df[['player_name', 'my_pred_final']].rename(columns={'my_pred_final': 'my_pred'})
 slim = slim.merge(pcf, on='player_name', how='left')
 
 slim_path = f'final_predictions_{tourney}.csv'
 slim.to_csv(slim_path, index=False)
 print(f"[ok] Saved {slim_path} ({len(slim)} players, cols: {list(slim.columns)})")
+
+# Copy to OneDrive for etr-golf-sims consumption
+_onedrive_path = os.path.join(os.path.expanduser("~"), "OneDrive", f"final_predictions_{tourney}.csv")
+slim.to_csv(_onedrive_path, index=False)
+print(f"[ok] Copied to {_onedrive_path}")

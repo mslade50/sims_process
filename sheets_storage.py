@@ -176,10 +176,19 @@ def get_spreadsheet():
 def _get_or_create_tab(spreadsheet, tab_name, headers):
     """
     Get an existing tab or create it with header row.
+    If the tab exists but its header row is missing columns from `headers`,
+    prints a warning so the mismatch is caught early.
     Returns the gspread Worksheet.
     """
     try:
         ws = spreadsheet.worksheet(tab_name)
+        # Check for header drift — warn if existing tab is missing expected columns
+        existing_headers = ws.row_values(1)
+        missing = [h for h in headers if h not in existing_headers]
+        if missing:
+            print(f"  [storage] WARNING: '{tab_name}' header is missing columns: {missing}")
+            print(f"  [storage]   Expected {len(headers)} cols, found {len(existing_headers)}")
+            print(f"  [storage]   Run fix_tournament_mu_headers.py to repair")
     except gspread.exceptions.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(
             title=tab_name, rows=1000, cols=len(headers)

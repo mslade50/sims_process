@@ -52,12 +52,21 @@ def _load_data(mode):
 
 
 def _compute_stats(df):
-    """Compute Win%, T5%, T10%, T20% from rank_probs for a single player."""
+    """Compute Win%, T5%, T10%, T20% from rank_probs for a single player.
+    Returns both dead-heat (prob_u) and non-dead-heat (prob_ndh) stats."""
+    has_ndh = "prob_ndh" in df.columns
     win = df.loc[df["rank"] == 1, "prob_u"].sum() * 100
     t5 = df.loc[df["rank"] <= 5, "prob_u"].sum() * 100
     t10 = df.loc[df["rank"] <= 10, "prob_u"].sum() * 100
     t20 = df.loc[df["rank"] <= 20, "prob_u"].sum() * 100
-    return win, t5, t10, t20
+    if has_ndh:
+        win_ndh = df.loc[df["rank"] == 1, "prob_ndh"].sum() * 100
+        t5_ndh = df.loc[df["rank"] <= 5, "prob_ndh"].sum() * 100
+        t10_ndh = df.loc[df["rank"] <= 10, "prob_ndh"].sum() * 100
+        t20_ndh = df.loc[df["rank"] <= 20, "prob_ndh"].sum() * 100
+    else:
+        win_ndh, t5_ndh, t10_ndh, t20_ndh = win, t5, t10, t20
+    return win, t5, t10, t20, win_ndh, t5_ndh, t10_ndh, t20_ndh
 
 
 def _make_figure(rank_df, players, max_rank):
@@ -97,10 +106,11 @@ def _make_figure(rank_df, players, max_rank):
     # Title with stats
     if len(players) == 1 and not rank_df[rank_df["player_name"] == players[0]].empty:
         pdf = rank_df[rank_df["player_name"] == players[0]]
-        win, t5, t10, t20 = _compute_stats(pdf)
+        win, t5, t10, t20, win_ndh, t5_ndh, t10_ndh, t20_ndh = _compute_stats(pdf)
         title_text = (
             f"<b>{players[0].title()}</b><br>"
-            f"<sup>Win: {win:.2f}% | T5: {t5:.1f}% | T10: {t10:.1f}% | T20: {t20:.1f}%</sup>"
+            f"<sup>DH: Win {win:.2f}% | T5 {t5:.1f}% | T10 {t10:.1f}% | T20 {t20:.1f}%</sup><br>"
+            f"<sup>Fair: Win {win_ndh:.2f}% | T5 {t5_ndh:.1f}% | T10 {t10_ndh:.1f}% | T20 {t20_ndh:.1f}%</sup>"
         )
     elif len(players) > 1:
         title_text = " vs ".join(p.title() for p in players)
@@ -261,23 +271,33 @@ def update_pricer(player, pos, side, mode):
         return ""
 
     pos = int(pos)
+    has_ndh = "prob_ndh" in pdf.columns
     if side == "better":
-        prob = pdf.loc[pdf["rank"] <= pos, "prob_u"].sum()
+        prob_dh = pdf.loc[pdf["rank"] <= pos, "prob_u"].sum()
+        prob_ndh = pdf.loc[pdf["rank"] <= pos, "prob_ndh"].sum() if has_ndh else prob_dh
         label = f"{pos}th or better (≤ {pos})"
     else:
-        prob = pdf.loc[pdf["rank"] >= pos, "prob_u"].sum()
+        prob_dh = pdf.loc[pdf["rank"] >= pos, "prob_u"].sum()
+        prob_ndh = pdf.loc[pdf["rank"] >= pos, "prob_ndh"].sum() if has_ndh else prob_dh
         label = f"{pos}th or worse (≥ {pos})"
 
-    pct = prob * 100
-    american = _prob_to_american(prob) if prob > 0 else "N/A"
-    decimal_odds = f"{1 / prob:.2f}" if prob > 0 else "N/A"
+    dh_pct = prob_dh * 100
+    dh_american = _prob_to_american(prob_dh) if prob_dh > 0 else "N/A"
+    ndh_pct = prob_ndh * 100
+    ndh_american = _prob_to_american(prob_ndh) if prob_ndh > 0 else "N/A"
+    ndh_decimal = f"{1 / prob_ndh:.2f}" if prob_ndh > 0 else "N/A"
 
     return dbc.Card(
         dbc.CardBody([
             html.Span(f"{player.title()}: ", style={"fontWeight": "bold"}),
             html.Span(f"{label}  "),
-            html.Span(f"{pct:.1f}%", style={"color": "gold", "fontWeight": "bold", "fontSize": "1.1em"}),
-            html.Span(f"  |  {american}  |  {decimal_odds} dec", style={"color": "#aaa"}),
+            html.Br(),
+            html.Span("DH: ", style={"color": "#aaa"}),
+            html.Span(f"{dh_pct:.1f}%  {dh_american}", style={"color": "#ff7f0e"}),
+            html.Span("  |  ", style={"color": "#555"}),
+            html.Span("Fair: ", style={"color": "#aaa"}),
+            html.Span(f"{ndh_pct:.1f}%  {ndh_american}  ({ndh_decimal} dec)",
+                       style={"color": "gold", "fontWeight": "bold"}),
         ]),
         color="dark",
         className="p-2",

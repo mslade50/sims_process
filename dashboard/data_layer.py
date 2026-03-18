@@ -102,7 +102,7 @@ _TOURNAMENT_MU_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
-    "wind_on", "wind_diff",
+    "wind_on", "wind_diff", "wx_edge",
     "result", "units_won",
 ]
 
@@ -238,7 +238,9 @@ def _load_all_bets_from_sheets():
     df = pd.concat(frames, ignore_index=True)
 
     # Dedup: keep FIRST occurrence by (event_id, bet_type, round, bet_on, opponent, bookmaker)
-    # First write wins — the original bet is the one we placed and grade against.
+    # Sort by timestamp first to match grade_bets.py's "first write wins" semantics.
+    if "run_timestamp" in df.columns:
+        df = df.sort_values("run_timestamp", na_position="last")
     dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker"]
     existing = [c for c in dedup_cols if c in df.columns]
     if existing:

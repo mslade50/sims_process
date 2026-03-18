@@ -65,7 +65,7 @@ print("=" * 60)
 from api_utils import (
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
-    fetch_player_decompositions,
+    fetch_player_decompositions, fetch_field_updates,
 )
 try:
     import pandas as _pd_coords
@@ -280,27 +280,90 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
-# --- DG override: replace low-confidence preds with DataGolf's estimate ---
-dg_decomp = fetch_player_decompositions(API_KEY)
-if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
-    model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
-    manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
-    mask = ((model_preds['my_pred'].abs() < 0.5) | manual_mask) & model_preds['dg_final_pred'].notna()
-    n_replaced = mask.sum()
-    if n_replaced > 0:
-        print(f"[DG override] Replacing {n_replaced} predictions (|pred| < 0.5 or manual list):")
-        for _, r in model_preds.loc[mask].iterrows():
-            print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
-        model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
+# --- DG override + init_sim_skill save (first pass only) ---
+# On second pass, final_predictions already has DG-overridden values with regression
+# applied on top from mkt_regress — re-applying here would undo the regression.
+if PRED_PATH != _final_pred_path:
+    dg_decomp = fetch_player_decompositions(API_KEY)
+    if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
+        model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
+        manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
+        threshold_mask = model_preds['my_pred'] < 0
+        mask = (threshold_mask | manual_mask) & model_preds['dg_final_pred'].notna()
+        n_replaced = mask.sum()
+        if n_replaced > 0:
+            print(f"[DG override] Replacing {n_replaced} predictions (pred < 0 or manual list):")
+            for _, r in model_preds.loc[mask].iterrows():
+                print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
+            model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
+        else:
+            print("[DG override] No predictions needed replacement")
+        model_preds = model_preds.drop(columns=['dg_final_pred'])
+
+    # Save init_sim_skill for mkt_regress: DG-overridden pred + c_adj + sample from pre_sim_summary
+    _pss_path = f"pre_sim_summary_{tourney}.csv"
+    if os.path.exists(_pss_path):
+        _pss_df = pd.read_csv(_pss_path)
+        _pss_df['player_name'] = _pss_df['player_name'].str.lower().str.strip().replace(name_replacements)
+        _init_skill = model_preds[['player_name', 'my_pred']].rename(columns={'my_pred': 'pred'})
+        _init_skill = _init_skill.merge(_pss_df[['player_name', 'c_adj', 'sample']], on='player_name', how='left')
+        _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
+        print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players)")
     else:
-        print("[DG override] No predictions needed replacement")
-    model_preds = model_preds.drop(columns=['dg_final_pred'])
+        print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
+else:
+    print("[DG override] Second pass — skipping (DG-overridden + regressed predictions already in final_predictions)")
 
 # Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
     pcf = pd.read_csv(_pre_course_path, usecols=['player_name', 'sample'])
     pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     model_preds = model_preds.merge(pcf, on='player_name', how='left')
+
+# --- Fetch tee times from DataGolf API ---
+for rnd_col in ['r1_teetime', 'r2_teetime']:
+    fu = fetch_field_updates(API_KEY, teetime_col=rnd_col)
+    if fu is not None and not fu.empty:
+        model_preds = model_preds.drop(columns=[rnd_col], errors='ignore')
+        model_preds = model_preds.merge(fu[['player_name', rnd_col]], on='player_name', how='left')
+        n_with_tt = model_preds[rnd_col].notna().sum()
+        print(f"[teetimes] Fetched {rnd_col}: {n_with_tt}/{len(model_preds)} players have tee times")
+    else:
+        print(f"[teetimes] WARNING: Could not fetch {rnd_col} from API")
+
+# --- Field mismatch check: stop if pred file has players not in DG field ---
+if fu is not None and not fu.empty:
+    dg_field = set(fu['player_name'].str.lower().str.strip())
+    our_field = set(model_preds['player_name'].str.lower().str.strip())
+    missing_from_dg = our_field - dg_field
+    extra_in_dg = dg_field - our_field
+    if missing_from_dg:
+        print(f"\n[FIELD MISMATCH] {len(missing_from_dg)} players in predictions but NOT in DG field:")
+        for p in sorted(missing_from_dg):
+            pred_val = model_preds.loc[model_preds['player_name'] == p, 'my_pred'].values
+            print(f"  {p}  (pred={pred_val[0]:.3f})" if len(pred_val) else f"  {p}")
+        if extra_in_dg:
+            print(f"\n[FIELD MISMATCH] {len(extra_in_dg)} players in DG field but NOT in predictions:")
+            for p in sorted(extra_in_dg):
+                print(f"  {p}")
+        print(f"\n[STOPPED] Re-run pre_course_fit generation with updated field, then re-run this sim.")
+        raise SystemExit(1)
+    if extra_in_dg:
+        print(f"[field] {len(extra_in_dg)} DG field players not in predictions (OK — likely late adds without skill data)")
+
+# Write tee times back to pre_course_fit file
+if os.path.exists(_pre_course_path):
+    pcf_full = pd.read_csv(_pre_course_path)
+    pcf_full['player_name'] = pcf_full['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
+    for col in ['r1_teetime', 'r2_teetime']:
+        if col in model_preds.columns:
+            pcf_full = pcf_full.drop(columns=[col], errors='ignore')
+            pcf_full = pcf_full.merge(
+                model_preds[['player_name', col]].drop_duplicates('player_name'),
+                on='player_name', how='left'
+            )
+    pcf_full.to_csv(_pre_course_path, index=False)
+    print(f"[teetimes] Updated {_pre_course_path} with fresh tee times")
 
 # --- Weather for SIM (R1/R2 only; sim waves centered) ---
 wind_r1_sim, wind_r2_sim, dew_r1_sim, dew_r2_sim = [], [], [], []
@@ -931,6 +994,15 @@ for i, p in enumerate(player_names):
 df_avg = pd.DataFrame(rows_avg)
 df_avg.to_csv(f"avg_expected_cat_sg_{tourney}.csv", index=False)
 
+# Non dead-heat rank probabilities (raw min-rank — ties share same position)
+rank_probs_ndh = (
+    long_df.groupby(['player_name', 'rank']).size()
+    .div(SIMULATIONS)
+    .rename('prob_ndh')
+    .reset_index()
+)
+rank_probs_ndh['rank'] = rank_probs_ndh['rank'].astype(int)
+
 # Dead-heat adjusted rank probabilities (ties split fractional credit across positions)
 long_df['tie_count'] = long_df.groupby(['simulation_id', 'rank'])['player_name'].transform('count')
 
@@ -956,13 +1028,15 @@ rank_probs = (
     all_rank_rows.groupby(['player_name', 'rank'])['weight']
     .sum()
     .div(SIMULATIONS)
-    .rename('prob')
+    .rename('prob_u')
     .reset_index()
 )
-rank_probs_updated = rank_probs.rename(columns={'prob': 'prob_u'}).copy()
-rank_probs_updated['rank'] = rank_probs_updated['rank'].astype(int)
+rank_probs['rank'] = rank_probs['rank'].astype(int)
+
+# Merge dead-heat and non-dead-heat into single parquet
+rank_probs_updated = rank_probs.merge(rank_probs_ndh, on=['player_name', 'rank'], how='outer').fillna(0)
 rank_probs_updated.to_parquet(f"rank_probs_updated_{tourney}.parquet", index=False)
-print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
+print(f"[ok] wrote rank_probs_updated_{tourney}.parquet (cols: prob_u, prob_ndh)")
 
 
 # ============================================================
