@@ -181,11 +181,14 @@ layout = dbc.Container([
         dbc.Col(dcc.Graph(id="perf-pnl-chart"), md=4),
         dbc.Col(dcc.Graph(id="perf-book-roi-chart"), md=4),
     ]),
-    # Charts — Row 2: Bucket breakdowns + Archetype P&L
+    # Charts — Row 2: Bucket breakdowns
     dbc.Row([
-        dbc.Col(dcc.Graph(id="perf-bucket-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-archetype-cumulative-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-archetype-bar-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-bucket-chart"), md=12),
+    ]),
+    # Charts — Row 3: Archetype P&L
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="perf-archetype-cumulative-chart"), md=6),
+        dbc.Col(dcc.Graph(id="perf-archetype-bar-chart"), md=6),
     ]),
 
     # Summary table
@@ -493,13 +496,8 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             text=[f"{r:.1f}%" for r in book_stats["roi"]], textposition="auto",
         ))
 
-    # ── Consolidated bucket chart: ROI by Raw Edge / Edge / Odds ──
-    fig_buckets = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=["ROI by Raw % Edge", "ROI by Edge Bucket", "ROI by Odds Bucket"],
-        horizontal_spacing=0.08,
-    )
-    fig_buckets.update_layout(**PLOT_LAYOUT, title=None, showlegend=False, height=300)
+    # ── ROI by Bucket (single bar chart, color = category) ──
+    fig_buckets = go.Figure(layout={**PLOT_LAYOUT, "title": "ROI by Bucket"})
 
     def _bucket_roi(data, col, buckets):
         labels, rois, counts = [], [], []
@@ -516,37 +514,32 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         return labels, rois, counts
 
     if not resolved.empty:
-        # Raw % Edge
+        bucket_groups = []
         if "raw_edge" in resolved.columns:
             labs, rois, cnts = _bucket_roi(resolved, "raw_edge",
                 [(0, 2, "0-2%"), (2, 4, "2-4%"), (4, 6, "4-6%"), (6, 100, "6%+")])
-            colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
-            fig_buckets.add_trace(go.Bar(
-                x=labs, y=rois, marker_color=colors,
-                text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
-            ), row=1, col=1)
+            bucket_groups.append(("Raw % Edge", "#1f77b4", labs, rois, cnts))
 
-        # Edge bucket
         labs, rois, cnts = _bucket_roi(resolved, "edge",
             [(3, 5, "3-5%"), (5, 8, "5-8%"), (8, 100, "8%+")])
-        colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
-        fig_buckets.add_trace(go.Bar(
-            x=labs, y=rois, marker_color=colors,
-            text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
-        ), row=1, col=2)
+        bucket_groups.append(("Edge Bucket", "#ff7f0e", labs, rois, cnts))
 
-        # Odds bucket
         if "dec_odds" in resolved.columns:
             labs, rois, cnts = _bucket_roi(resolved, "dec_odds",
                 [(0, 2.0, "<2.0"), (2.0, 2.5, "2.0-2.5"), (2.5, 3.5, "2.5-3.5"),
                  (3.5, 8.0, "3.5-8.0"), (8.0, 999, "8.0+")])
-            colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
-            fig_buckets.add_trace(go.Bar(
-                x=labs, y=rois, marker_color=colors,
-                text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
-            ), row=1, col=3)
+            bucket_groups.append(("Odds Bucket", "#2ca02c", labs, rois, cnts))
 
-    fig_buckets.update_yaxes(title_text="ROI %", row=1, col=1)
+        for group_name, color, labs, rois, cnts in bucket_groups:
+            fig_buckets.add_trace(go.Bar(
+                x=labs, y=rois, name=group_name,
+                marker_color=color,
+                text=[f"{r:+.0f}% n={n}" for r, n in zip(rois, cnts)],
+                textposition="outside", textfont=dict(size=10),
+            ))
+
+    fig_buckets.update_yaxes(title_text="ROI %")
+    fig_buckets.update_layout(barmode="group")
 
     # ── Archetype charts ──
     ARCHETYPE_COLORS = {
