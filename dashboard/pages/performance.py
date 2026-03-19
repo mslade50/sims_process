@@ -572,13 +572,52 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         )
 
     # ── Filtered bets detail table (duplicates already removed from df above) ──
-    detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round", "archetype",
-                   "edge", "raw_edge", "dec_odds", "pred_on", "result", "units_wagered", "units_won"]
+    detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round", "event_name",
+                   "archetype", "edge", "raw_edge", "dec_odds", "pred_on", "result",
+                   "units_wagered", "units_won"]
     available_cols = [c for c in detail_cols if c in df.columns]
     detail_df = df[available_cols].copy()
     for col in ["edge", "raw_edge", "dec_odds", "pred_on", "units_wagered", "units_won"]:
         if col in detail_df.columns:
             detail_df[col] = detail_df[col].round(2)
-    remaining_table = make_grid(detail_df, id_suffix="perf-remaining", height=500)
+
+    _edge_style = {
+        "function": "params.value > 0 ? {'color': '#4ecca3'} : params.value < 0 ? {'color': '#e74c3c'} : {}"
+    }
+    _result_style = {
+        "function": "params.value === 'win' || params.value === 'win_dh' ? {'color': '#4ecca3'} "
+                    ": params.value === 'loss' ? {'color': '#e74c3c'} : {}"
+    }
+    col_widths = {
+        "bet_on": 120, "opponent": 120, "bookmaker": 95, "bet_type": 85,
+        "round": 55, "event_name": 100, "archetype": 100,
+        "edge": 65, "raw_edge": 70, "dec_odds": 70, "pred_on": 65,
+        "result": 65, "units_wagered": 70, "units_won": 70,
+    }
+    col_headers = {
+        "bet_on": "Bet On", "opponent": "Opponent", "bookmaker": "Book",
+        "bet_type": "Type", "round": "R", "event_name": "Event",
+        "archetype": "Archetype", "edge": "Edge", "raw_edge": "Raw Edge",
+        "dec_odds": "Odds", "pred_on": "Pred", "result": "Result",
+        "units_wagered": "Wagered", "units_won": "Won",
+    }
+    detail_col_defs = []
+    for col in available_cols:
+        cd = {
+            "field": col,
+            "headerName": col_headers.get(col, col.replace("_", " ").title()),
+            "sortable": True, "filter": True, "resizable": True,
+            "width": col_widths.get(col, 90),
+        }
+        if detail_df[col].dtype in ("float64", "float32"):
+            cd["valueFormatter"] = {"function": "d3.format('.2f')(params.value)"}
+        if "edge" in col:
+            cd["cellStyle"] = _edge_style
+        if col == "result":
+            cd["cellStyle"] = _result_style
+        detail_col_defs.append(cd)
+
+    remaining_table = make_grid(detail_df, column_defs=detail_col_defs,
+                                id_suffix="perf-remaining", height=500)
 
     return kpi, fig1, fig2, fig5, fig_buckets, summary_content, remaining_table, player_options, archetype_options
