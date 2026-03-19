@@ -177,9 +177,8 @@ layout = dbc.Container([
 
     # Charts
     dbc.Row([
-        dbc.Col(dcc.Graph(id="perf-cumulative-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-book-roi-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-pnl-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-overview-chart"), md=8),
+        dbc.Col(dcc.Graph(id="perf-archetype-pnl-chart"), md=4),
     ]),
     dbc.Row([
         dbc.Col(dcc.Graph(id="perf-bucket-chart"), md=12),
@@ -242,9 +241,8 @@ def _convert_to_units(df):
 
 @callback(
     Output("perf-kpi-row", "children"),
-    Output("perf-cumulative-chart", "figure"),
-    Output("perf-book-roi-chart", "figure"),
-    Output("perf-pnl-chart", "figure"),
+    Output("perf-overview-chart", "figure"),
+    Output("perf-archetype-pnl-chart", "figure"),
     Output("perf-bucket-chart", "figure"),
     Output("perf-summary-table", "children"),
     Output("perf-remaining-table", "children"),
@@ -274,7 +272,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
                        archetype_filter, player_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [])
+    empty_return = (alert, empty_fig, empty_fig, empty_fig, alert, "", [], [])
 
     filters = {}
     if event:
@@ -412,9 +410,32 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         {"title": "ROI", "value": f"{roi:+.1f}%", "color": "success" if roi >= 0 else "danger"},
     ])
 
-    # ── Chart 1: P&L by Event (dot chart) ──
-    fig1 = go.Figure(layout={**PLOT_LAYOUT, "title": "P&L by Event"})
+    # ── Overview chart: Cumulative P&L | P&L by Event | ROI by Bookmaker ──
+    fig_overview = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=["Cumulative P&L", "P&L by Event", "ROI by Bookmaker"],
+        horizontal_spacing=0.07,
+        column_widths=[0.35, 0.35, 0.30],
+    )
+    fig_overview.update_layout(**PLOT_LAYOUT, title=None, height=350,
+                               legend=dict(orientation="h", y=-0.15, x=0.35))
+
     if not resolved.empty:
+        # -- Subplot 1: Cumulative P&L --
+        sorted_df = resolved.sort_values("run_timestamp").reset_index(drop=True)
+        cum_pnl = sorted_df["units_won"].cumsum()
+        fig_overview.add_trace(go.Scatter(
+            x=list(range(1, len(cum_pnl) + 1)), y=cum_pnl.values,
+            mode="lines", name="Cumulative",
+            line=dict(color="#4ecca3", width=2),
+            fill="tozeroy", fillcolor="rgba(78,204,163,0.15)",
+            showlegend=False,
+        ), row=1, col=1)
+        fig_overview.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=1, col=1)
+        fig_overview.update_xaxes(title_text="Bet #", row=1, col=1)
+        fig_overview.update_yaxes(title_text="Units", row=1, col=1)
+
+        # -- Subplot 2: P&L by Event (dot chart) --
         bet_types = [
             ("tournament_matchup", "Tourn MU", "#1f77b4", "circle"),
             ("round_matchup", "Round MU", "#ff7f0e", "diamond"),
@@ -424,7 +445,6 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             resolved.groupby("event_name")["run_timestamp"]
             .min().sort_values().index.tolist()
         )
-
         for bt, name, color, symbol in bet_types:
             sub = resolved[resolved["bet_type"] == bt]
             if sub.empty:
@@ -432,27 +452,23 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             event_pnl = sub.groupby("event_name")["units_won"].sum()
             events_with_data = [e for e in events_order if e in event_pnl.index]
             values = [event_pnl[e] for e in events_with_data]
-            fig1.add_trace(go.Scatter(
+            fig_overview.add_trace(go.Scatter(
                 x=events_with_data, y=values,
                 mode="markers", name=name,
-                marker=dict(color=color, size=12, symbol=symbol, line=dict(width=1, color="white")),
-            ))
+                marker=dict(color=color, size=10, symbol=symbol, line=dict(width=1, color="white")),
+            ), row=1, col=2)
 
-        # Total dot per event
         total_pnl = resolved.groupby("event_name")["units_won"].sum()
         total_vals = [total_pnl.get(e, 0) for e in events_order]
-        fig1.add_trace(go.Scatter(
+        fig_overview.add_trace(go.Scatter(
             x=events_order, y=total_vals,
             mode="markers", name="Total",
-            marker=dict(color="white", size=14, symbol="star", line=dict(width=1, color="#4ecca3")),
-        ))
+            marker=dict(color="white", size=12, symbol="star", line=dict(width=1, color="#4ecca3")),
+        ), row=1, col=2)
+        fig_overview.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=1, col=2)
+        fig_overview.update_yaxes(title_text="Units", row=1, col=2)
 
-        fig1.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-        fig1.update_yaxes(title_text="Units")
-
-    # ── Chart 2: ROI by bookmaker ──
-    fig2 = go.Figure(layout={**PLOT_LAYOUT, "title": "ROI by Bookmaker"})
-    if not resolved.empty:
+        # -- Subplot 3: ROI by Bookmaker --
         book_stats = (
             resolved.groupby("bookmaker")
             .agg(wagered=("units_wagered", "sum"), won=("units_won", "sum"), count=("bet_on", "count"))
@@ -461,21 +477,22 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         book_stats["roi"] = book_stats["won"] / book_stats["wagered"] * 100
         book_stats = book_stats[book_stats["count"] >= 3].sort_values("roi")
 
-        colors = []
+        bk_colors = []
         for _, row in book_stats.iterrows():
             b = str(row["bookmaker"]).lower()
             if any(s in b for s in ["pinnacle", "betonline", "betcris", "bookmaker"]):
-                colors.append(COLOR_SHARP)
+                bk_colors.append(COLOR_SHARP)
             elif any(r in b for r in ["fanduel", "draftkings", "caesars", "betmgm"]):
-                colors.append(COLOR_RETAIL)
+                bk_colors.append(COLOR_RETAIL)
             else:
-                colors.append("#7f7f7f")
+                bk_colors.append("#7f7f7f")
 
-        fig2.add_trace(go.Bar(
+        fig_overview.add_trace(go.Bar(
             y=book_stats["bookmaker"], x=book_stats["roi"],
-            orientation="h", marker_color=colors,
+            orientation="h", marker_color=bk_colors,
             text=[f"{r:.1f}%" for r in book_stats["roi"]], textposition="auto",
-        ))
+            showlegend=False,
+        ), row=1, col=3)
 
     # ── Consolidated bucket chart: ROI by Raw Edge / Edge / Odds ──
     fig_buckets = make_subplots(
@@ -532,21 +549,29 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
 
     fig_buckets.update_yaxes(title_text="ROI %", row=1, col=1)
 
-    # ── Chart 5: Cumulative P&L ──
-    fig5 = go.Figure(layout={**PLOT_LAYOUT, "title": "Cumulative P&L"})
-    if not resolved.empty:
-        sorted_df = resolved.sort_values("run_timestamp").reset_index(drop=True)
-        cum_pnl = sorted_df["units_won"].cumsum()
-        fig5.add_trace(go.Scatter(
-            x=list(range(1, len(cum_pnl) + 1)), y=cum_pnl.values,
-            mode="lines", name="Cumulative P&L",
-            line=dict(color="#4ecca3", width=2),
-            fill="tozeroy",
-            fillcolor="rgba(78,204,163,0.15)",
-        ))
-        fig5.add_hline(y=0, line_dash="dash", line_color="gray")
-        fig5.update_xaxes(title_text="Bet #")
-        fig5.update_yaxes(title_text="Units")
+    # ── Chart: Cumulative P&L by Archetype ──
+    ARCHETYPE_COLORS = {
+        "Stud": "#FFD700", "Ball Striker": "#1f77b4", "Long Accurate": "#2ca02c",
+        "Long Wild": "#ff7f0e", "Short Accurate": "#9467bd", "Elite Putter": "#e377c2",
+        "Short Game Specialist": "#17becf", "Balanced": "#7f7f7f", "Low Skill": "#d62728",
+        "Unknown": "#555555",
+    }
+    fig_arch_pnl = go.Figure(layout={**PLOT_LAYOUT, "title": "Cumulative P&L by Archetype"})
+    if not resolved.empty and "archetype" in resolved.columns:
+        for arch in sorted(resolved["archetype"].unique()):
+            sub = resolved[resolved["archetype"] == arch].sort_values("run_timestamp").reset_index(drop=True)
+            if sub.empty:
+                continue
+            cum = sub["units_won"].cumsum()
+            fig_arch_pnl.add_trace(go.Scatter(
+                x=list(range(1, len(cum) + 1)), y=cum.values,
+                mode="lines", name=arch,
+                line=dict(color=ARCHETYPE_COLORS.get(arch, "#aaaaaa"), width=2),
+            ))
+        fig_arch_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_arch_pnl.update_xaxes(title_text="Bet #")
+        fig_arch_pnl.update_yaxes(title_text="Units")
+        fig_arch_pnl.update_layout(height=350, legend=dict(font=dict(size=10)))
 
     # ── Summary table ──
     summary_content = dbc.Alert("No resolved bets.", color="secondary")
@@ -620,4 +645,4 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     remaining_table = make_grid(detail_df, column_defs=detail_col_defs,
                                 id_suffix="perf-remaining", height=500)
 
-    return kpi, fig1, fig2, fig5, fig_buckets, summary_content, remaining_table, player_options, archetype_options
+    return kpi, fig_overview, fig_arch_pnl, fig_buckets, summary_content, remaining_table, player_options, archetype_options
