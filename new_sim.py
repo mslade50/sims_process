@@ -288,7 +288,7 @@ if PRED_PATH != _final_pred_path:
     if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
         model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
         manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
-        threshold_mask = model_preds['my_pred'] < 0
+        threshold_mask = model_preds['my_pred'] < 0.5
         mask = (threshold_mask | manual_mask) & model_preds['dg_final_pred'].notna()
         n_replaced = mask.sum()
         if n_replaced > 0:
@@ -1322,49 +1322,18 @@ wx_out = wx_out.round(2)
 wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
 print(f"[ok] wrote weather_impact_{tourney}.csv")
 
-# --- Pull DataGolf tournament matchups ---
-params = {
-    'tour': 'pga',
-    'market': 'tournament_matchups',
-    'odds_format': 'american',
-    'file_format': 'json',
-    'key': API_KEY
-}
-try:
-    resp = requests.get(MATCHUPS_URL, params=params)
-    resp.raise_for_status()
-    data_tournament = resp.json()
-except Exception as e:
-    print(f"[warn] Failed to fetch matchups: {e}")
-    data_tournament = {}
-
-def norm_player(s: str) -> str:
-    if s is None: return None
-    x = str(s).lower().strip()
-    return name_replacements.get(x, x)
-
-rows_mu = []
-match_list = data_tournament.get('match_list', [])
-if not isinstance(match_list, list):
-    print(f"[info] No tournament matchups available: {match_list}")
-    match_list = []
-for m in match_list:
-    p1 = norm_player(m.get('p1_player_name'))
-    p2 = norm_player(m.get('p2_player_name'))
-    ties_handling = m.get('ties', 'unknown')
-    for book, odds in m.get('odds', {}).items():
-        if book == 'datagolf':
-            continue
-        rows_mu.append({
-            'Player 1': p1,
-            'Player 2': p2,
-            'Bookmaker': book,
-            'P1 Odds': odds.get('p1'),
-            'P2 Odds': odds.get('p2'),
-            'Datagolf Odds (P1)': m.get('odds', {}).get('datagolf', {}).get('p1'),
-            'Datagolf Odds (P2)': m.get('odds', {}).get('datagolf', {}).get('p2'),
-            'Ties': ties_handling
-        })
+# --- Pull tournament matchups (scraped → DataGolf fallback) ---
+from odds_loader import load_matchup_odds
+print("[info] Fetching tournament matchup odds (scraped -> DataGolf fallback)...")
+_mu_df = load_matchup_odds("tournament_matchups", api_key=API_KEY)
+if not _mu_df.empty:
+    # Rename DG columns to match legacy format
+    _mu_df = _mu_df.rename(columns={"DG_p1": "Datagolf Odds (P1)", "DG_p2": "Datagolf Odds (P2)"})
+    print(f"  Loaded {len(_mu_df)} matchup lines ({_mu_df['source'].iloc[0]})")
+    rows_mu = _mu_df.drop(columns=["source"], errors="ignore").to_dict("records")
+else:
+    print("[info] No tournament matchups available")
+    rows_mu = []
 
 
 # ============================================================
@@ -1418,20 +1387,13 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     else row.get('half_shot_p2', '')
                 )
 
-                # Weather edge decomposition
-                simx_e = row.get('wx_edge', 0) if pd.notna(row.get('wx_edge', None)) else 0
-                no_wx = row.get('edge_no_wx', edge) if pd.notna(row.get('edge_no_wx', None)) else edge
-                no_wx_color = (
-                    "#d4edda" if no_wx > 5 else
-                    "#fff3cd" if no_wx >= 0 else
-                    "#f8d7da"
-                )
+                # Weather SG differential
+                wx_sg = row.get('wx_diff', 0) if pd.notna(row.get('wx_diff', None)) else 0
 
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
                 fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
-                hs_str = f"{half_shot:.1f}" if pd.notna(half_shot) and half_shot != "" else ""
 
                 rows_html += f"""
                 <tr>
@@ -1442,11 +1404,9 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
-                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{simx_e:+.1f}</td>
-                    <td style="padding:6px 10px; text-align:center; font-weight:600; background:{no_wx_color};">{no_wx:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{wx_sg:+.2f}</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
-                    <td style="padding:6px 10px; text-align:center;">{hs_str}</td>
                 </tr>"""
 
             mu_html = f"""
@@ -1462,11 +1422,9 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
-                    <th style="padding:6px 10px; text-align:center;">Simx</th>
-                    <th style="padding:6px 10px; text-align:center;">Analytical</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
-                    <th style="padding:6px 10px; text-align:center;">1/2 Shot</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -1551,9 +1509,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price (ties push) | Edge = expected return % |
-            Simx = sim complexity edge vs analytical (pp) | Analytical = edge from simple Normal CDF |
-            Wx SG = weather SG shift R1+R2 (positive = favorable) |
-            Pred = model SG prediction | 1/2 Shot = value of half-shot spread (in edge pts)
+            Wx = R1+R2 weather SG advantage vs opponent (positive = favorable) |
+            Pred = model SG prediction
         </p>
     </body>
     </html>"""
@@ -1753,7 +1710,7 @@ if not df_match.empty:
         combined_df['wind_against'] = combined_df['bet_against'].str.lower().map(wind_lookup)
         combined_df['wind_diff'] = combined_df['wind_on'] - combined_df['wind_against']
 
-        # --- Weather edge decomposition (analytical Normal CDF) ---
+        # --- Weather SG differential (R1+R2) ---
         # Total weather benefit per player = wind_adv + dew_adv (both centered, positive = helps player)
         dew_lookup = dict(zip(wx['player_name'].str.lower(), wx['dew_adv_r1_2']))
         combined_df['dew_on'] = combined_df['bet_on'].str.lower().map(dew_lookup)
@@ -1761,30 +1718,6 @@ if not df_match.empty:
         combined_df['wx_on'] = combined_df['wind_on'] + combined_df['dew_on']
         combined_df['wx_against'] = combined_df['wind_against'] + combined_df['dew_against']
         combined_df['wx_diff'] = combined_df['wx_on'] - combined_df['wx_against']
-
-        # Skill diff per round (my_pred, no weather)
-        combined_df['skill_diff'] = combined_df['pred_on'] - combined_df['pred_against']
-
-        # Tournament: 4 rounds, diff ~ N(4*skill_diff, 8*STD_DEV^2)
-        _sigma_tourn = STD_DEV * np.sqrt(8)
-        combined_df['prob_no_wx'] = _norm_dist.cdf(
-            4 * combined_df['skill_diff'] / _sigma_tourn
-        )
-
-        # Edge without weather: edge = (prob * (dec - 1) - (1 - prob)) * 100
-        combined_df['odds_on'] = combined_df.apply(
-            lambda r: r['P1 Odds'] if r['edge_p1'] > r['edge_p2'] else r['P2 Odds'], axis=1
-        )
-        combined_df['dec_on'] = np.where(
-            combined_df['odds_on'] > 0,
-            combined_df['odds_on'] / 100 + 1,
-            100 / combined_df['odds_on'].abs() + 1,
-        )
-        combined_df['edge_no_wx'] = (
-            combined_df['prob_no_wx'] * (combined_df['dec_on'] - 1)
-            - (1 - combined_df['prob_no_wx'])
-        ) * 100
-        combined_df['wx_edge'] = combined_df['edge_on'] - combined_df['edge_no_wx']
 
         combined_csv_name = os.path.join(matchup_dir, f"matchups_ftsimp_{tourney}_{timestamp}.csv")
         combined_df.to_csv(combined_csv_name, index=False)

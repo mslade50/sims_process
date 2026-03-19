@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 
-from dashboard.data_layer import get_bet_ledger
+from dashboard.data_layer import get_bet_ledger, get_archetype_lookup
 from dashboard.components.stat_cards import stat_card_row
 from dashboard.components.filters import sportsbook_filter, bet_type_selector, edge_slider, event_selector, round_selector
 from dashboard.components.tables import make_grid
@@ -105,7 +105,7 @@ layout = dbc.Container([
         ], md=4),
     ], className="mb-2"),
 
-    # Filters — Row 3: Analysis mode, Raw Edge, Decimal Odds, Player
+    # Filters — Row 3: Analysis mode, Raw Edge, Decimal Odds, Archetype, Player
     dbc.Row([
         dbc.Col([
             html.Label("Analysis", className="form-label small text-muted"),
@@ -134,7 +134,7 @@ layout = dbc.Container([
                           value=None, step=0.5,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
-        ], md=3),
+        ], md=2),
         dbc.Col([
             html.Label("Decimal Odds", className="form-label small text-muted"),
             dbc.InputGroup([
@@ -147,6 +147,17 @@ layout = dbc.Container([
                           value=None, min=1.0, step=0.1,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
+        ], md=2),
+        dbc.Col([
+            html.Label("Archetype", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-archetype-filter",
+                options=[],
+                value=None,
+                multi=True,
+                placeholder="All archetypes",
+                className="dash-dropdown-dark",
+            ),
         ], md=3),
         dbc.Col([
             html.Label("Player", className="form-label small text-muted"),
@@ -158,7 +169,7 @@ layout = dbc.Container([
                 placeholder="All players",
                 className="dash-dropdown-dark",
             ),
-        ], md=4),
+        ], md=3),
     ], className="mb-3"),
 
     # KPI cards
@@ -171,9 +182,7 @@ layout = dbc.Container([
         dbc.Col(dcc.Graph(id="perf-pnl-chart"), md=4),
     ]),
     dbc.Row([
-        dbc.Col(dcc.Graph(id="perf-raw-edge-bucket-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-edge-bucket-chart"), md=4),
-        dbc.Col(dcc.Graph(id="perf-scatter-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-bucket-chart"), md=12),
     ]),
 
     # Summary table
@@ -236,12 +245,11 @@ def _convert_to_units(df):
     Output("perf-cumulative-chart", "figure"),
     Output("perf-book-roi-chart", "figure"),
     Output("perf-pnl-chart", "figure"),
-    Output("perf-raw-edge-bucket-chart", "figure"),
-    Output("perf-edge-bucket-chart", "figure"),
-    Output("perf-scatter-chart", "figure"),
+    Output("perf-bucket-chart", "figure"),
     Output("perf-summary-table", "children"),
     Output("perf-remaining-table", "children"),
     Output("perf-player-filter", "options"),
+    Output("perf-archetype-filter", "options"),
     Input("perf-event-filter", "value"),
     Input("perf-type-filter", "value"),
     Input("perf-book-filter", "value"),
@@ -256,17 +264,17 @@ def _convert_to_units(df):
     Input("perf-raw-edge-max", "value"),
     Input("perf-dec-odds-min", "value"),
     Input("perf-dec-odds-max", "value"),
+    Input("perf-archetype-filter", "value"),
     Input("perf-player-filter", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
-                       player_filter):
+                       archetype_filter, player_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig,
-                    empty_fig, alert, "", [])
+    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [])
 
     filters = {}
     if event:
@@ -333,6 +341,17 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     # Convert finish position dollar amounts to units ($200 = 1 unit)
     df = _convert_to_units(df)
 
+    # Join archetype from sg_diagnostic.parquet
+    arch_lookup = get_archetype_lookup()
+    if not arch_lookup.empty and "event_id" in df.columns:
+        df = df.merge(arch_lookup, left_on=["event_id", "bet_on"],
+                      right_on=["event_id", "player_name"],
+                      how="left", suffixes=("", "_arch"))
+        df.drop(columns=["player_name_arch"], errors="ignore", inplace=True)
+        df["archetype"] = df["archetype"].fillna("Unknown")
+    else:
+        df["archetype"] = "Unknown"
+
     # Pre-compute raw_edge and dec_odds on full df (before new filters)
     if "book_odds" in df.columns and "fair_odds" in df.columns:
         market_prob = _american_to_prob(df["book_odds"])
@@ -343,11 +362,13 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         df["raw_edge"] = np.nan
         df["dec_odds"] = np.nan
 
-    # Build player options BEFORE player filter is applied
+    # Build player + archetype options BEFORE filters are applied
     players = sorted(df["bet_on"].dropna().unique().tolist())
     player_options = [{"label": p.title(), "value": p} for p in players]
+    archetypes = sorted(df["archetype"].dropna().unique().tolist())
+    archetype_options = [{"label": a, "value": a} for a in archetypes]
 
-    # Apply new filters (raw_edge, dec_odds, player)
+    # Apply new filters (raw_edge, dec_odds, archetype, player)
     if raw_edge_min is not None:
         df = df[df["raw_edge"].fillna(0) >= raw_edge_min]
     if raw_edge_max is not None:
@@ -356,11 +377,13 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         df = df[df["dec_odds"].fillna(0) >= dec_odds_min]
     if dec_odds_max is not None:
         df = df[df["dec_odds"].fillna(999) <= dec_odds_max]
+    if archetype_filter:
+        df = df[df["archetype"].isin(archetype_filter)]
     if player_filter:
         df = df[df["bet_on"].isin(player_filter)]
 
     if df.empty:
-        return empty_return[:-1] + (player_options,)
+        return empty_return[:-2] + (player_options, archetype_options)
 
     # Separate graded vs all — exclude duplicates entirely
     df = df[~df["result"].astype(str).str.strip().isin(["duplicate"])].copy()
@@ -454,86 +477,60 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             text=[f"{r:.1f}%" for r in book_stats["roi"]], textposition="auto",
         ))
 
-    # ── Chart 3: Win rate + ROI by edge bucket ──
-    fig3 = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Edge Bucket"})
-    if not resolved.empty:
-        buckets = [(3, 5, "3-5%"), (5, 8, "5-8%"), (8, 100, "8%+")]
-        labels, wrs, rois_list = [], [], []
+    # ── Consolidated bucket chart: ROI by Raw Edge / Edge / Odds ──
+    fig_buckets = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=["ROI by Raw % Edge", "ROI by Edge Bucket", "ROI by Odds Bucket"],
+        horizontal_spacing=0.08,
+    )
+    fig_buckets.update_layout(**PLOT_LAYOUT, title=None, showlegend=False, height=300)
+
+    def _bucket_roi(data, col, buckets):
+        labels, rois, counts = [], [], []
+        valid = data.dropna(subset=[col])
         for lo, hi, label in buckets:
-            sub = resolved[(resolved["edge"] >= lo) & (resolved["edge"] < hi)]
+            sub = valid[(valid[col] >= lo) & (valid[col] < hi)]
             w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
             l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
-            wr = w / (w + l) * 100 if (w + l) > 0 else 0
             wag = sub["units_wagered"].sum() if not sub.empty else 0
-            r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
+            roi = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
             labels.append(label)
-            wrs.append(wr)
-            rois_list.append(r)
+            rois.append(roi)
+            counts.append(w + l)
+        return labels, rois, counts
 
-        fig3.add_trace(go.Bar(x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN))
-        fig3.add_trace(go.Bar(x=labels, y=rois_list, name="ROI %", marker_color="#d62728"))
-        fig3.update_layout(barmode="group")
+    if not resolved.empty:
+        # Raw % Edge
+        if "raw_edge" in resolved.columns:
+            labs, rois, cnts = _bucket_roi(resolved, "raw_edge",
+                [(0, 2, "0-2%"), (2, 4, "2-4%"), (4, 6, "4-6%"), (6, 100, "6%+")])
+            colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
+            fig_buckets.add_trace(go.Bar(
+                x=labs, y=rois, marker_color=colors,
+                text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
+            ), row=1, col=1)
 
-    # ── Chart 3b: Performance by Raw % Edge Bucket ──
-    fig3b = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Raw % Edge"})
-    if not resolved.empty and "raw_edge" in resolved.columns:
-        raw_valid = resolved.dropna(subset=["raw_edge"])
-        if not raw_valid.empty:
-            buckets = [(0, 2, "0-2%"), (2, 4, "2-4%"), (4, 6, "4-6%"), (6, 100, "6%+")]
-            labels, wrs, rois_list = [], [], []
-            for lo, hi, label in buckets:
-                sub = raw_valid[(raw_valid["raw_edge"] >= lo) & (raw_valid["raw_edge"] < hi)]
-                w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
-                l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
-                wr = w / (w + l) * 100 if (w + l) > 0 else 0
-                wag = sub["units_wagered"].sum() if not sub.empty else 0
-                r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
-                labels.append(label)
-                wrs.append(wr)
-                rois_list.append(r)
+        # Edge bucket
+        labs, rois, cnts = _bucket_roi(resolved, "edge",
+            [(3, 5, "3-5%"), (5, 8, "5-8%"), (8, 100, "8%+")])
+        colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
+        fig_buckets.add_trace(go.Bar(
+            x=labs, y=rois, marker_color=colors,
+            text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
+        ), row=1, col=2)
 
-            fig3b.add_trace(go.Bar(x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN))
-            fig3b.add_trace(go.Bar(x=labels, y=rois_list, name="ROI %", marker_color="#d62728"))
-            fig3b.update_layout(barmode="group")
-            fig3b.update_xaxes(title_text="Raw Prob Edge (pp)")
-            fig3b.update_yaxes(title_text="%")
+        # Odds bucket
+        if "dec_odds" in resolved.columns:
+            labs, rois, cnts = _bucket_roi(resolved, "dec_odds",
+                [(0, 2.0, "<2.0"), (2.0, 2.5, "2.0-2.5"), (2.5, 3.5, "2.5-3.5"),
+                 (3.5, 8.0, "3.5-8.0"), (8.0, 999, "8.0+")])
+            colors = [COLOR_WIN if r >= 0 else "#d62728" for r in rois]
+            fig_buckets.add_trace(go.Bar(
+                x=labs, y=rois, marker_color=colors,
+                text=[f"{r:+.0f}%<br>n={n}" for r, n in zip(rois, cnts)], textposition="auto",
+            ), row=1, col=3)
 
-    # ── Chart 4: Performance by Odds Bucket ──
-    fig4 = go.Figure(layout={**PLOT_LAYOUT, "title": "Performance by Odds Bucket"})
-    if not resolved.empty and "dec_odds" in resolved.columns:
-        odds_valid = resolved.dropna(subset=["dec_odds"])
-        if not odds_valid.empty:
-            buckets = [
-                (0, 2.0, "< 2.0"),
-                (2.0, 2.5, "2.0–2.5"),
-                (2.5, 3.5, "2.5–3.5"),
-                (3.5, 8.0, "3.5–8.0"),
-                (8.0, 999, "8.0+"),
-            ]
-            labels, wrs, rois_list, counts = [], [], [], []
-            for lo, hi, label in buckets:
-                sub = odds_valid[(odds_valid["dec_odds"] >= lo) & (odds_valid["dec_odds"] < hi)]
-                w = len(sub[sub["result"].isin(["win", "win_dh"])]) if not sub.empty else 0
-                l = len(sub[sub["result"] == "loss"]) if not sub.empty else 0
-                wr = w / (w + l) * 100 if (w + l) > 0 else 0
-                wag = sub["units_wagered"].sum() if not sub.empty else 0
-                r = sub["units_won"].sum() / wag * 100 if wag > 0 else 0
-                labels.append(label)
-                wrs.append(wr)
-                rois_list.append(r)
-                counts.append(w + l)
-
-            fig4.add_trace(go.Bar(
-                x=labels, y=wrs, name="Win Rate %", marker_color=COLOR_WIN,
-                text=[f"{v:.0f}%" for v in wrs], textposition="auto",
-            ))
-            fig4.add_trace(go.Bar(
-                x=labels, y=rois_list, name="ROI %", marker_color="#d62728",
-                text=[f"{v:+.0f}%" for v in rois_list], textposition="auto",
-            ))
-            fig4.update_layout(barmode="group")
-            fig4.update_xaxes(title_text="Decimal Odds")
-            fig4.update_yaxes(title_text="%")
+    fig_buckets.update_yaxes(title_text="ROI %", row=1, col=1)
 
     # ── Chart 5: Cumulative P&L ──
     fig5 = go.Figure(layout={**PLOT_LAYOUT, "title": "Cumulative P&L"})
@@ -575,7 +572,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         )
 
     # ── Filtered bets detail table (duplicates already removed from df above) ──
-    detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round",
+    detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round", "archetype",
                    "edge", "raw_edge", "dec_odds", "pred_on", "result", "units_wagered", "units_won"]
     available_cols = [c for c in detail_cols if c in df.columns]
     detail_df = df[available_cols].copy()
@@ -584,4 +581,4 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             detail_df[col] = detail_df[col].round(2)
     remaining_table = make_grid(detail_df, id_suffix="perf-remaining", height=500)
 
-    return kpi, fig1, fig2, fig5, fig3b, fig3, fig4, summary_content, remaining_table, player_options
+    return kpi, fig1, fig2, fig5, fig_buckets, summary_content, remaining_table, player_options, archetype_options

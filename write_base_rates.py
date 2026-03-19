@@ -13,6 +13,7 @@ import os
 import sqlite3
 import numpy as np
 import pandas as pd
+import yaml
 from datetime import datetime
 
 import sim_inputs
@@ -487,6 +488,50 @@ def build_rows():
 # Main
 # ---------------------------------------------------------------------------
 
+ETR_SIM_CONFIG = os.path.join(
+    os.path.expanduser("~"), "OneDrive", "etr-golf-sims", "sim_config.yaml"
+)
+
+
+def _update_etr_sim_config(cat_mults, cat_skew):
+    """Update sim_config.yaml with current event info, cat mults/skew, and clear skill docks."""
+    if not os.path.exists(ETR_SIM_CONFIG):
+        print(f"  [warn] {ETR_SIM_CONFIG} not found — skipping YAML update")
+        return
+
+    with open(ETR_SIM_CONFIG, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # Event info
+    cfg["event"]["event_ids"] = list(sim_inputs.event_ids)
+    cfg["event"]["tourney"] = sim_inputs.tourney
+    cfg["event"]["course_id"] = sim_inputs.course_id
+    cfg["event"]["course_par"] = sim_inputs.course_par
+
+    # Category-first mults and skew
+    cf = cfg.setdefault("category_first", {})
+    cf["course_cat_mults"] = {k: float(v) for k, v in cat_mults.items()}
+    cf["course_cat_skew"] = {k: float(v) for k, v in cat_skew.items()}
+
+    # Clear skill docks, keep one commented example
+    cf["skill_docks"] = []
+
+    with open(ETR_SIM_CONFIG, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+        # Append commented example for reference
+        f.write(
+            '    # - player: "last, first"\n'
+            '    #   sg_dock: 0.5\n'
+            '    #   dock_pct: 0.25\n'
+        )
+
+    print(f"  [ok] Updated {ETR_SIM_CONFIG}")
+    print(f"       event: {sim_inputs.tourney} (id={sim_inputs.event_ids}, course={sim_inputs.course_id}, par={sim_inputs.course_par})")
+    print(f"       cat_mults: { {k: v for k, v in cat_mults.items()} }")
+    print(f"       cat_skew:  { {k: v for k, v in cat_skew.items()} }")
+    print(f"       skill_docks: cleared")
+
+
 def main():
     print(f"\n{'='*70}")
     print(f"  BASE RATES REFERENCE")
@@ -498,6 +543,12 @@ def main():
 
     spreadsheet = get_spreadsheet()
     store_base_rates(rows, spreadsheet=spreadsheet)
+
+    # Update etr-golf-sims config
+    sheet_cfg = load_sheet_config()
+    cat_mults = sheet_cfg.get("course_cat_mults", {})
+    cat_skew = sheet_cfg.get("course_cat_skew", {})
+    _update_etr_sim_config(cat_mults, cat_skew)
 
     print(f"\n  Done — check 'Base Rates' tab in Google Sheets")
 

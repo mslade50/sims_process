@@ -1,17 +1,17 @@
 """
 One-time migration: fix Tournament Matchups tab column shift.
 
-Problem: wx_edge was added to TOURNAMENT_MU_HEADERS in sheets_storage.py
+Problem: wx_diff was added to TOURNAMENT_MU_HEADERS in sheets_storage.py
 but the existing Sheet tab header was never updated. New rows written with
-27 values have wx_edge landing in the 'result' column, shifting result and
+27 values have wx_diff landing in the 'result' column, shifting result and
 units_won right by one.
 
 Fix:
-  1. If header is missing wx_edge, insert it between wind_diff and result
+  1. If header is missing wx_diff, insert it between wind_diff and result
   2. For each data row:
      - If it has 27 values (shifted): the value at the old 'result' position
-       is actually wx_edge — reorder to put it in the right spot
-     - If it has 26 values (old format): insert empty wx_edge
+       is actually wx_diff — reorder to put it in the right spot
+     - If it has 26 values (old format): insert empty wx_diff
 """
 
 import sys
@@ -27,7 +27,7 @@ EXPECTED_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
-    "wind_on", "wind_diff", "wx_edge",
+    "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
 ]
 
@@ -48,9 +48,9 @@ def main():
     headers = all_data[0]
     print(f"Current headers ({len(headers)} cols): {headers}")
 
-    if "wx_edge" in headers:
-        print("wx_edge already in headers — checking for any shifted data rows...")
-        wx_idx = headers.index("wx_edge")
+    if "wx_diff" in headers:
+        print("wx_diff already in headers — checking for any shifted data rows...")
+        wx_idx = headers.index("wx_diff")
         result_idx = headers.index("result") if "result" in headers else None
         if result_idx is not None:
             # Check for rows where result has a numeric value (still shifted)
@@ -65,9 +65,9 @@ def main():
                 return
             print(f"Found {bad_rows} rows with non-standard result values — fixing...")
     else:
-        print("wx_edge NOT in headers — need to insert column and fix data.")
+        print("wx_diff NOT in headers — need to insert column and fix data.")
 
-    # Determine where wx_edge should be inserted
+    # Determine where wx_diff should be inserted
     # It goes between wind_diff and result
     if "wind_diff" in headers:
         insert_pos = headers.index("wind_diff") + 1
@@ -77,12 +77,12 @@ def main():
         print("ERROR: Cannot find wind_diff or result in headers. Manual fix needed.")
         return
 
-    print(f"wx_edge insert position: column {insert_pos + 1} (0-indexed: {insert_pos})")
+    print(f"wx_diff insert position: column {insert_pos + 1} (0-indexed: {insert_pos})")
 
     # Build new header row
     new_headers = list(headers)
-    if "wx_edge" not in headers:
-        new_headers.insert(insert_pos, "wx_edge")
+    if "wx_diff" not in headers:
+        new_headers.insert(insert_pos, "wx_diff")
 
     result_pos_new = new_headers.index("result") if "result" in new_headers else None
     units_won_pos_new = new_headers.index("units_won") if "units_won" in new_headers else None
@@ -96,28 +96,28 @@ def main():
     n_ok = 0
 
     for i, row in enumerate(all_data[1:], start=2):
-        if "wx_edge" not in headers and len(row) == len(new_headers):
+        if "wx_diff" not in headers and len(row) == len(new_headers):
             # Row has 27 values but header only has 26 — it's shifted.
-            # The value at insert_pos is wx_edge sitting in the result slot.
+            # The value at insert_pos is wx_diff sitting in the result slot.
             # Values are already in the right positional order for the NEW headers.
             new_row = list(row)
             n_shifted += 1
-        elif "wx_edge" not in headers and len(row) == len(headers):
-            # Old row with 26 values — insert empty wx_edge
+        elif "wx_diff" not in headers and len(row) == len(headers):
+            # Old row with 26 values — insert empty wx_diff
             new_row = list(row)
             new_row.insert(insert_pos, "")
             n_old += 1
-        elif "wx_edge" in headers:
-            # Header already has wx_edge but data might be shifted
+        elif "wx_diff" in headers:
+            # Header already has wx_diff but data might be shifted
             new_row = list(row)
-            # Check if result column has a numeric value (wx_edge leaked into it)
+            # Check if result column has a numeric value (wx_diff leaked into it)
             if result_pos_new is not None and len(row) > result_pos_new:
                 val = row[result_pos_new].strip()
                 if val and val not in VALID_RESULTS:
                     try:
                         float(val)
                         # It's a number in the result column — this row is shifted
-                        # The number is actually wx_edge; result is in units_won pos
+                        # The number is actually wx_diff; result is in units_won pos
                         # We need to un-shift: remove the extra value and reinsert
                         n_shifted += 1
                     except ValueError:

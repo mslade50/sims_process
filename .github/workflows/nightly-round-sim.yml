@@ -27,6 +27,18 @@ jobs:
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz
 
+    - name: Fetch scraped odds from golf_scraping repo
+      env:
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+      run: |
+        mkdir -p permanent_data/scraped_odds
+        for MARKET in tournament_matchups round_matchups; do
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
+            -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
+        done
+        ls -la permanent_data/scraped_odds/ || true
+
     - name: Run nightly round sim backup
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}

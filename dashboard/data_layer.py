@@ -102,7 +102,7 @@ _TOURNAMENT_MU_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
-    "wind_on", "wind_diff", "wx_edge",
+    "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
 ]
 
@@ -589,6 +589,19 @@ def get_sg_diagnostics():
     if os.path.exists(SG_DIAGNOSTIC_PATH):
         return _read_parquet_safe(SG_DIAGNOSTIC_PATH)
     return _read_parquet_safe(os.path.join(DASHBOARD_DATA, "sg_diagnostic.parquet"))
+
+
+def get_archetype_lookup():
+    """Return a (event_id, player_name) → archetype mapping from sg_diagnostic.parquet."""
+    diag = get_sg_diagnostics()
+    if diag.empty or "archetype" not in diag.columns:
+        return pd.DataFrame(columns=["event_id", "player_name", "archetype"])
+    lookup = diag.drop_duplicates(subset=["event_id", "player_name"])[
+        ["event_id", "player_name", "archetype"]
+    ].copy()
+    lookup["event_id"] = lookup["event_id"].astype(str).str.strip()
+    lookup["player_name"] = lookup["player_name"].astype(str).str.strip().str.lower()
+    return lookup
 
 
 # ── Available Rounds ─────────────────────────────────────────────────────────

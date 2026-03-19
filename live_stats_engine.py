@@ -901,12 +901,12 @@ def create_pre_event_predictions():
     dg_decomp = fetch_player_decompositions(API_KEY)
     if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
         preds = preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
-        mask = (preds['my_pred'].abs() < 0.5) & preds['dg_final_pred'].notna()
+        mask = pd.Series(False, index=preds.index)  # manual list only
         n_replaced = mask.sum()
         if n_replaced > 0:
             replaced = preds.loc[mask, ['player_name', 'my_pred', 'dg_final_pred']].copy()
             preds.loc[mask, 'my_pred'] = preds.loc[mask, 'dg_final_pred']
-            print(f"  [DG decomp] Replaced {n_replaced} predictions (|my_pred| < 0.5) with DG decomposition:")
+            print(f"  [DG decomp] Replaced {n_replaced} predictions (manual list) with DG decomposition:")
             for _, r in replaced.iterrows():
                 print(f"    {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
         else:

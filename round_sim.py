@@ -818,16 +818,24 @@ def compute_finish_probabilities(final_scores, player_names, made_cut_mask, num_
     long_df = df_long.melt(id_vars='simulation_id', var_name='player_name', value_name='score')
     long_df['rank'] = long_df.groupby('simulation_id')['score'].rank(method='min')
 
-    player_stats = {p: {"top_5": 0.0, "top_10": 0.0, "top_20": 0.0} for p in player_names}
+    player_stats = {p: {
+        "top_5": 0.0, "top_10": 0.0, "top_20": 0.0,
+        "top_5_nodh": 0.0, "top_10_nodh": 0.0, "top_20_nodh": 0.0,
+    } for p in player_names}
     for sim_id, group in long_df.groupby("simulation_id", sort=False):
         pos_counts = group['rank'].value_counts().to_dict()
         for _, row in group.iterrows():
             p = row['player_name']
             pos = int(row['rank'])
             tie_ct = pos_counts[pos]
+            # Dead-heat adjusted (traditional sportsbooks)
             player_stats[p]["top_5"] += dead_heat_factor(pos, tie_ct, 5)
             player_stats[p]["top_10"] += dead_heat_factor(pos, tie_ct, 10)
             player_stats[p]["top_20"] += dead_heat_factor(pos, tie_ct, 20)
+            # No dead-heat (Kalshi — ties all count as finishing inside)
+            player_stats[p]["top_5_nodh"] += 1.0 if pos <= 5 else 0.0
+            player_stats[p]["top_10_nodh"] += 1.0 if pos <= 10 else 0.0
+            player_stats[p]["top_20_nodh"] += 1.0 if pos <= 20 else 0.0
 
     topn_df = pd.DataFrame.from_dict(player_stats, orient='index')
     topn_df = topn_df.div(num_sims).reset_index().rename(columns={'index': 'player_name'})
@@ -981,6 +989,182 @@ def price_outrights(finish_probs, pred_lookup, sample_lookup):
         results[market_name] = df
 
     return results
+
+
+def _kalshi_taker_fee(price):
+    """Kalshi taker fee: 7% of price * (1 - price), matching scraper formula."""
+    if price <= 0 or price >= 1:
+        return 0.0
+    return 0.07 * price * (1 - price)
+
+
+def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
+    """
+    Price Kalshi outright markets using NO dead-heat probabilities.
+
+    Kalshi top-N markets pay out if the player finishes inside the threshold
+    regardless of ties (dead-heat-free). So we use top_N_nodh columns.
+
+    Computes 4 price points per line:
+      - Yes taker: buy Yes at ask + fee (existing)
+      - Yes mid: post Yes limit at mid (no fees)
+      - No taker (fade): buy No at 1-bid + fee
+      - No mid (fade): post No limit at 1-mid (no fees)
+
+    Returns DataFrame with 'side' ("yes"/"no") and 'pricing' ("taker"/"mid") columns.
+    """
+    import json
+    from pathlib import Path
+
+    # Load Kalshi outright lines from scraped data
+    search_paths = [
+        Path.home() / "Documents" / "golf_scraping" / "data",
+        Path(__file__).parent / "permanent_data" / "scraped_odds",
+    ]
+
+    kalshi_lines = None
+    for base in search_paths:
+        path = base / "kalshi_outrights_latest.json"
+        if path.exists():
+            with open(path) as f:
+                kalshi_lines = json.load(f)
+            print(f"  Loaded Kalshi outrights from {path.name}")
+            break
+
+    if not kalshi_lines:
+        return pd.DataFrame()
+
+    # Map Kalshi market types to nodh probability columns
+    type_to_col = {
+        "top_5": "top_5_nodh",
+        "top_10": "top_10_nodh",
+        "top_20": "top_20_nodh",
+        "make_cut": "top_20_nodh",  # placeholder — make_cut needs separate handling
+    }
+
+    try:
+        from sim_inputs import name_replacements
+    except ImportError:
+        name_replacements = {}
+
+    def norm(s):
+        x = s.strip().lower()
+        if "," not in x:
+            parts = x.rsplit(" ", 1)
+            if len(parts) == 2:
+                x = f"{parts[1]}, {parts[0]}"
+        return name_replacements.get(x, x)
+
+    lines = kalshi_lines.get("lines", [])
+    rows = []
+    for line in lines:
+        mtype = line.get("market_type", "")
+        prob_col = type_to_col.get(mtype)
+        if not prob_col or prob_col not in finish_probs.columns:
+            continue
+
+        player = norm(line["player"])
+
+        # Look up sim probability
+        match = finish_probs[finish_probs["player_name"] == player]
+        if match.empty:
+            continue
+
+        sim_yes = float(match.iloc[0][prob_col])
+        if sim_yes <= 0:
+            continue
+        sim_no = 1.0 - sim_yes
+
+        base_row = {
+            "player_name": player,
+            "market_type": mtype,
+            "bookmaker": "kalshi",
+            "my_pred": pred_lookup.get(player),
+            "sample": sample_lookup.get(player),
+        }
+
+        bid = line.get("bid", 0)
+        ask = line.get("ask", 0)
+        market_odds = line["odds"]  # taker (ask + fee) in american
+
+        # --- Yes taker (existing) ---
+        yes_taker_implied = american_to_implied(market_odds)
+        if yes_taker_implied:
+            yes_taker_edge = (sim_yes - yes_taker_implied) * 100
+            rows.append({
+                **base_row,
+                "side": "yes",
+                "pricing": "taker",
+                "american_odds": market_odds,
+                "sim_prob": sim_yes,
+                "implied_prob": yes_taker_implied,
+                "edge": round(yes_taker_edge, 1),
+                "my_fair": implied_to_american(min(max(sim_yes, 1e-4), 1 - 1e-4)),
+            })
+
+        # --- Yes mid (maker, no fees) ---
+        odds_mid = line.get("odds_mid")
+        if odds_mid and odds_mid != 0:
+            yes_mid_implied = american_to_implied(odds_mid)
+            if yes_mid_implied:
+                yes_mid_edge = (sim_yes - yes_mid_implied) * 100
+                rows.append({
+                    **base_row,
+                    "side": "yes",
+                    "pricing": "mid",
+                    "american_odds": odds_mid,
+                    "sim_prob": sim_yes,
+                    "implied_prob": yes_mid_implied,
+                    "edge": round(yes_mid_edge, 1),
+                    "my_fair": implied_to_american(min(max(sim_yes, 1e-4), 1 - 1e-4)),
+                })
+
+        # Fade (No) pricing requires bid > 0
+        if bid > 0:
+            # --- No taker (fade): buy No at 1 - bid + fee ---
+            no_taker_price = 1 - bid
+            no_taker_fee = _kalshi_taker_fee(no_taker_price)
+            no_taker_eff = min(no_taker_price + no_taker_fee, 0.99)
+            no_taker_american = implied_to_american(min(max(no_taker_eff, 1e-4), 1 - 1e-4))
+            if no_taker_american is not None:
+                no_taker_edge = (sim_no - no_taker_eff) * 100
+                rows.append({
+                    **base_row,
+                    "side": "no",
+                    "pricing": "taker",
+                    "american_odds": no_taker_american,
+                    "sim_prob": sim_no,
+                    "implied_prob": no_taker_eff,
+                    "edge": round(no_taker_edge, 1),
+                    "my_fair": implied_to_american(min(max(sim_no, 1e-4), 1 - 1e-4)),
+                })
+
+            # --- No mid (fade maker): buy No at 1 - yes_mid, no fees ---
+            if ask > 0:
+                yes_mid_price = (bid + ask) / 2
+                no_mid_price = 1 - yes_mid_price
+                no_mid_american = implied_to_american(min(max(no_mid_price, 1e-4), 1 - 1e-4))
+                if no_mid_american is not None:
+                    no_mid_edge = (sim_no - no_mid_price) * 100
+                    rows.append({
+                        **base_row,
+                        "side": "no",
+                        "pricing": "mid",
+                        "american_odds": no_mid_american,
+                        "sim_prob": sim_no,
+                        "implied_prob": no_mid_price,
+                        "edge": round(no_mid_edge, 1),
+                        "my_fair": implied_to_american(min(max(sim_no, 1e-4), 1 - 1e-4)),
+                    })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("edge", ascending=False)
+        taker_pos = ((df["pricing"] == "taker") & (df["edge"] > 0)).sum()
+        mid_pos = ((df["pricing"] == "mid") & (df["edge"] > 0)).sum()
+        print(f"  Kalshi outrights: {len(df)} lines priced, {taker_pos} taker edge, {mid_pos} maker edge")
+
+    return df
 
 
 def build_finish_outputs(priced_markets, pred_lookup, sample_lookup):
@@ -1572,9 +1756,8 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
         axis=1,
     )
 
-    # --- Weather edge decomposition (analytical Normal CDF) ---
+    # --- Weather SG differential ---
     if wx_lookup:
-        from scipy.stats import norm as _norm_dist
         df["wx_on"] = df["bet_on"].map(wx_lookup).fillna(0)
         df["wx_against"] = df.apply(
             lambda r: wx_lookup.get(
@@ -1583,28 +1766,6 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
             axis=1,
         )
         df["wx_diff"] = df["wx_on"] - df["wx_against"]
-
-        # Skill diff = total pred diff minus weather diff
-        df["skill_diff"] = (df["pred_on"] - df["wx_on"]) - (df["pred_against"] - df["wx_against"])
-
-        # Round: 1 round, diff ~ N(skill_diff, 2*STD_DEV^2)
-        _sigma_round = STD_DEV * np.sqrt(2)
-        df["prob_no_wx"] = _norm_dist.cdf(df["skill_diff"] / _sigma_round)
-
-        # Decimal odds for bet-on player
-        df["odds_on"] = df.apply(
-            lambda r: r["P1 Odds"] if r["edge_p1"] > r["edge_p2"] else r["P2 Odds"],
-            axis=1,
-        )
-        df["dec_on"] = np.where(
-            df["odds_on"] > 0,
-            df["odds_on"] / 100 + 1,
-            100 / df["odds_on"].abs() + 1,
-        )
-        df["edge_no_wx"] = (
-            df["prob_no_wx"] * (df["dec_on"] - 1) - (1 - df["prob_no_wx"])
-        ) * 100
-        df["wx_edge"] = df["edge_on"] - df["edge_no_wx"]
 
     # --- Combined: basic filters ---
     combined = df[df["edge_on"] > 3].copy()
@@ -1645,7 +1806,7 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
         "half_shot_p1", "half_shot_p2",
     ]
     # Add weather decomposition columns if available
-    for col in ["wx_edge", "edge_no_wx", "wx_diff"]:
+    for col in ["wx_diff"]:
         if col in combined.columns:
             display_cols.append(col)
     # Add spread columns if they exist
@@ -1743,12 +1904,144 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Step 3b: Price Score Lines vs FanDuel Market Odds
+# ══════════════════════════════════════════════════════════════════════════════
+
+def load_score_lines():
+    """Load scraped round score O/U lines (FanDuel etc.) via odds_loader paths."""
+    import json
+    from pathlib import Path
+
+    search_paths = [
+        Path.home() / "Documents" / "golf_scraping" / "data",
+        Path(__file__).parent / "permanent_data" / "scraped_odds",
+    ]
+
+    for base in search_paths:
+        path = base / "round_scores_latest.json"
+        if path.exists():
+            with open(path) as f:
+                data = json.load(f)
+            lines = data.get("lines", [])
+            if lines:
+                print(f"  Loaded {len(lines)} score lines from {path.name}")
+                return lines
+    return []
+
+
+def price_score_lines(score_card, market_lines):
+    """
+    Join sim fair card with scraped market O/U lines. Compute edges.
+
+    Args:
+        score_card: DataFrame from build_score_card() with columns:
+                    Player, Pred, "69.5", "70.5", ... (fair under odds)
+        market_lines: list of dicts from round_scores_latest.json, each:
+                    {player_name, round, line, odds: {fanduel: {over, under}}}
+
+    Returns:
+        DataFrame with columns:
+            Player, Line, Book, Mkt_Under, Mkt_Over, Fair_Under, Fair_Over,
+            Edge_Under, Edge_Over, Best_Edge, Best_Side
+    """
+    if score_card.empty or not market_lines:
+        return pd.DataFrame()
+
+    # Build lookup: normalized player name → row from score card
+    try:
+        from sim_inputs import name_replacements
+    except ImportError:
+        name_replacements = {}
+
+    def norm(s):
+        x = s.strip().lower()
+        # Handle "Last, First" → "last, first"
+        if "," not in x:
+            # "First Last" → "last, first"
+            parts = x.rsplit(" ", 1)
+            if len(parts) == 2:
+                x = f"{parts[1]}, {parts[0]}"
+        return name_replacements.get(x, x)
+
+    card_lookup = {}
+    for _, row in score_card.iterrows():
+        card_lookup[row["Player"]] = row
+
+    rows = []
+    for ml in market_lines:
+        player_norm = norm(ml["player_name"])
+        line = ml["line"]
+        line_str = str(line)
+
+        card_row = card_lookup.get(player_norm)
+        if card_row is None or line_str not in card_row.index:
+            continue
+
+        fair_under = card_row[line_str]
+        if fair_under is None or pd.isna(fair_under):
+            continue
+
+        # Convert fair under odds → implied prob → fair over
+        fair_under_prob = american_to_implied(fair_under)
+        if fair_under_prob is None:
+            continue
+        fair_over_prob = 1 - fair_under_prob
+        fair_over = implied_to_american(fair_over_prob)
+
+        for book, odds in ml.get("odds", {}).items():
+            mkt_under = int(odds.get("under", 0))
+            mkt_over = int(odds.get("over", 0))
+
+            if mkt_under == 0 and mkt_over == 0:
+                continue
+
+            # Edge = (fair_prob × (market_decimal - 1) - (1 - fair_prob)) × 100
+            mkt_under_imp = american_to_implied(mkt_under)
+            mkt_over_imp = american_to_implied(mkt_over)
+
+            if mkt_under_imp and fair_under_prob:
+                mkt_under_dec = 1 / mkt_under_imp
+                edge_under = (fair_under_prob * (mkt_under_dec - 1) - (1 - fair_under_prob)) * 100
+            else:
+                edge_under = 0
+
+            if mkt_over_imp and fair_over_prob:
+                mkt_over_dec = 1 / mkt_over_imp
+                edge_over = (fair_over_prob * (mkt_over_dec - 1) - (1 - fair_over_prob)) * 100
+            else:
+                edge_over = 0
+
+            best_edge = max(edge_under, edge_over)
+            best_side = "Under" if edge_under >= edge_over else "Over"
+
+            rows.append({
+                "Player": player_norm,
+                "Line": line,
+                "Book": book,
+                "Mkt_Under": mkt_under,
+                "Mkt_Over": mkt_over,
+                "Fair_Under": int(fair_under) if fair_under else None,
+                "Fair_Over": int(fair_over) if fair_over else None,
+                "Edge_Under": round(edge_under, 1),
+                "Edge_Over": round(edge_over, 1),
+                "Best_Edge": round(best_edge, 1),
+                "Best_Side": best_side,
+            })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Best_Edge", ascending=False)
+        print(f"  Priced {len(df)} score lines, {(df['Best_Edge'] > 5).sum()} with edge > 5%")
+    return df
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Step 4: Export
 # ══════════════════════════════════════════════════════════════════════════════
 
 def export_results(combined, sharp, score_card, sim_round,
                    outrights_combined=None, outrights_sharp=None, finish_probs=None,
-                   score_cards_by_course=None):
+                   score_cards_by_course=None, score_edges=None):
     """Save all outputs to an Excel workbook + CSV backup."""
     timestamp = datetime.now().strftime("%H%M")
     out_dir = f"./{tourney}"
@@ -1817,6 +2110,13 @@ def export_results(combined, sharp, score_card, sim_round,
             finish_probs.to_excel(writer, sheet_name="finish_probs", index=False)
             ws = writer.sheets["finish_probs"]
             for i, col in enumerate(finish_probs.columns):
+                ws.set_column(i, i, max(len(str(col)) + 2, 10))
+
+        # --- Score Line Edges ---
+        if score_edges is not None and not score_edges.empty:
+            score_edges.to_excel(writer, sheet_name="score_edges", index=False)
+            ws = writer.sheets["score_edges"]
+            for i, col in enumerate(score_edges.columns):
                 ws.set_column(i, i, max(len(str(col)) + 2, 10))
 
     print(f"\n  Saved {excel_path}")
@@ -1924,7 +2224,7 @@ def load_sample_data():
 
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
                              win_positive_top10=None, win_negative_top10=None,
-                             wx_lookup=None):
+                             wx_lookup=None, score_edges=None, kalshi_mids=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -1976,14 +2276,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     else row.get("half_shot_p2", "")
                 )
 
-                # Weather edge decomposition
-                wx_e = row.get("wx_edge", 0) if pd.notna(row.get("wx_edge", None)) else 0
-                no_wx = row.get("edge_no_wx", edge) if pd.notna(row.get("edge_no_wx", None)) else edge
-                no_wx_color = (
-                    "#d4edda" if no_wx > 5 else
-                    "#fff3cd" if no_wx >= 0 else
-                    "#f8d7da"
-                )
+                # Weather SG differential
+                wx_sg = row.get("wx_diff", 0) if pd.notna(row.get("wx_diff", None)) else 0
 
                 # Color coding
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
@@ -1992,7 +2286,6 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 # Format odds
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
                 fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
-                hs_str = f"{half_shot:.1f}" if pd.notna(half_shot) and half_shot != "" else ""
 
                 rows_html += f"""
                 <tr>
@@ -2003,11 +2296,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
-                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{wx_e:+.1f}</td>
-                    <td style="padding:6px 10px; text-align:center; font-weight:600; background:{no_wx_color};">{no_wx:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px;">{wx_sg:+.2f}</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
-                    <td style="padding:6px 10px; text-align:center;">{hs_str}</td>
                 </tr>"""
 
             matchups_html = f"""
@@ -2024,10 +2315,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Wx</th>
-                    <th style="padding:6px 10px; text-align:center;">No-Wx</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
-                    <th style="padding:6px 10px; text-align:center;">1/2 Shot</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -2049,6 +2338,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 player = row['player_name'].title()
                 market = row['market_type'].replace('_', ' ').title()
                 book = row.get('bookmaker', '')
+                side = row.get('side', '')
                 odds = row.get('american_odds', '')
                 fair = row.get('my_fair', '')
                 edge = row.get('edge', 0)
@@ -2064,6 +2354,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
                 edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
+                side_str = side.upper() if side else ""
+                side_color = "#e8f4fd" if side == "yes" else "#fde8e8" if side == "no" else "#ffffff"
 
                 odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
                 fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
@@ -2075,6 +2367,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -2092,6 +2385,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Market</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Side</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
@@ -2198,6 +2492,114 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 {rows_html}
             </table>"""
 
+    # Build score line edges table (>5% edge only)
+    score_edges_html = ""
+    if score_edges is not None and not score_edges.empty:
+        edge_rows = score_edges[score_edges["Best_Edge"] > 5].copy()
+        if not edge_rows.empty:
+            edge_rows = edge_rows.sort_values("Best_Edge", ascending=False)
+            rows_html = ""
+            for _, row in edge_rows.iterrows():
+                player = row["Player"].title() if "," not in row["Player"] else row["Player"].split(",")[1].strip().title() + " " + row["Player"].split(",")[0].strip().title()
+                line = row["Line"]
+                book = row["Book"]
+                side = row["Best_Side"]
+                mkt_odds = row["Mkt_Under"] if side == "Under" else row["Mkt_Over"]
+                fair_odds = row["Fair_Under"] if side == "Under" else row["Fair_Over"]
+                edge = row["Best_Edge"]
+
+                edge_color = "#d4edda" if edge > 8 else "#fff3cd"
+                mkt_str = f"{int(mkt_odds):+d}" if pd.notna(mkt_odds) else ""
+                fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
+
+                rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{side} {line}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{mkt_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                </tr>"""
+
+            score_edges_html = f"""
+            <h3 style="color:#2c5282; margin:30px 0 8px 0;">
+                Round Score O/U Edges (&gt;5%)
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Bet</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                </tr>
+                {rows_html}
+            </table>"""
+
+    # Build Kalshi Maker Opportunities table (mid pricing, no fees)
+    kalshi_mids_html = ""
+    if kalshi_mids is not None and not kalshi_mids.empty:
+        filtered_mids = kalshi_mids[
+            (kalshi_mids["edge"] > 0)
+            & (kalshi_mids["my_pred"].fillna(-1) > 0)
+        ].copy()
+        if not filtered_mids.empty:
+            filtered_mids = filtered_mids.sort_values("edge", ascending=False).head(20)
+            rows_html = ""
+            for _, row in filtered_mids.iterrows():
+                player = row["player_name"].title()
+                market = row["market_type"].replace("_", " ").title()
+                side = row.get("side", "yes")
+                odds = row.get("american_odds", "")
+                fair = row.get("my_fair", "")
+                edge = row.get("edge", 0)
+                pred = row.get("my_pred", 0)
+
+                _mk_wx_sg = 0.0
+                if wx_lookup:
+                    _mk_wx_sg = wx_lookup.get(str(row.get("player_name", "")).lower().strip(), 0)
+
+                edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
+                pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
+                side_color = "#e8f4fd" if side == "yes" else "#fde8e8"
+
+                odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
+                fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
+                pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
+                wx_str = f"{_mk_wx_sg:+.2f}" if _mk_wx_sg != 0 else "0.00"
+
+                rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{market}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side.upper()}</td>
+                    <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{wx_str}</td>
+                </tr>"""
+
+            kalshi_mids_html = f"""
+            <h3 style="color:#2c5282; margin:30px 0 8px 0;">
+                Kalshi Maker Opportunities (Mid Price, No Fees)
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Market</th>
+                    <th style="padding:6px 10px; text-align:center;">Side</th>
+                    <th style="padding:6px 10px; text-align:center;">Mid Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx SG</th>
+                </tr>
+                {rows_html}
+            </table>"""
+
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
@@ -2206,7 +2608,11 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
         {matchups_html}
 
+        {score_edges_html}
+
         {outrights_html}
+
+        {kalshi_mids_html}
 
         {win_pos_html}
 
@@ -2214,8 +2620,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price | Edge = expected return % |
-            Wx = weather edge contribution (pp) | No-Wx = edge without weather |
-            Wx SG = weather SG shift this round (positive = favorable) |
+            Wx = weather SG advantage vs opponent (positive = favorable) |
             Pred = model SG prediction | Stake = suggested Kelly stake
         </p>
         <p style="color:#999; font-size:11px;">
@@ -2232,7 +2637,7 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          win_edges_csv_path=None, bol_matchups_csv_path=None,
                          finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None,
-                         wx_lookup=None):
+                         wx_lookup=None, score_edges=None, kalshi_mids=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -2251,7 +2656,9 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
         html = build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp,
                                         win_positive_top10=win_positive_top10,
                                         win_negative_top10=win_negative_top10,
-                                        wx_lookup=wx_lookup)
+                                        wx_lookup=wx_lookup,
+                                        score_edges=score_edges,
+                                        kalshi_mids=kalshi_mids)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -2431,9 +2838,10 @@ def main():
         sim_dict = sim_dict_cf
 
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
-    print(f"\n  Fetching matchup odds from DataGolf...")
+    print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
     try:
-        matchup_df = fetch_matchup_odds()
+        from odds_loader import load_matchup_odds
+        matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY)
         matchup_df = price_matchups(matchup_df, sim_dict)
         matchup_df = calculate_edges(matchup_df)
         combined, sharp = build_matchup_outputs(
@@ -2471,9 +2879,19 @@ def main():
         print(f"\n  Building fair score card (expected avg = {expected_avg})...")
         score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
 
+    # ── Step 3b: Price score lines vs market ─────────────────────────────
+    score_edges = pd.DataFrame()
+    try:
+        market_lines = load_score_lines()
+        if market_lines:
+            score_edges = price_score_lines(score_card, market_lines)
+    except Exception as e:
+        print(f"  Warning: Score line pricing failed: {e}")
+
     # ── Step 4: Tournament Simulation (NEW) ──────────────────────────────
     outrights_combined = pd.DataFrame()
     outrights_sharp = pd.DataFrame()
+    kalshi_mids = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
     finish_equity_csv_path = None
@@ -2562,6 +2980,23 @@ def main():
                 else:
                     print(f"    No outright edges above threshold")
 
+                # Price Kalshi outrights (no dead-heat)
+                print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
+                kalshi_edges = price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup)
+                kalshi_mids = pd.DataFrame()
+                if not kalshi_edges.empty:
+                    # Split taker vs mid pricing
+                    kalshi_taker = kalshi_edges[kalshi_edges["pricing"] == "taker"].copy()
+                    kalshi_mids = kalshi_edges[kalshi_edges["pricing"] == "mid"].copy()
+
+                    # Merge taker rows into outrights_combined/sharp (existing flow)
+                    if not kalshi_taker.empty:
+                        outrights_combined = pd.concat([outrights_combined, kalshi_taker], ignore_index=True)
+                        kalshi_sharp = kalshi_taker[kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
+                        if not kalshi_sharp.empty:
+                            outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
+                            outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+
                 # --- Win market edge CSVs ---
                 print(f"\n    Building outright win edge CSVs...")
                 out_dir = f"./{tourney}"
@@ -2598,6 +3033,7 @@ def main():
         outrights_sharp=outrights_sharp,
         finish_probs=finish_probs,
         score_cards_by_course=score_cards_by_course if score_cards_by_course else None,
+        score_edges=score_edges,
     )
 
     # ── Step 6: Email ────────────────────────────────────────────────────
@@ -2616,6 +3052,8 @@ def main():
             win_positive_top10=win_positive_top10,
             win_negative_top10=win_negative_top10,
             wx_lookup=_wx_lookup,
+            score_edges=score_edges,
+            kalshi_mids=kalshi_mids,
         )
     else:
         print(f"\n  [dry-run] Skipping email")
