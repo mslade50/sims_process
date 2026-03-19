@@ -703,7 +703,7 @@ def _classify_archetypes(df, tour_population=None):
             return "Long Accurate"
         if dd < 35 and da >= 70:
             return "Short Accurate"
-        if bs >= 70 and sg < 50:
+        if bs >= 70:
             return "Ball Striker"
         if sg >= 70 and bs < 50:
             return "Short Game Specialist"
