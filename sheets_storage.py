@@ -80,7 +80,7 @@ TOURNAMENT_MU_HEADERS = [
     "bookmaker", "ties_rule",
     "p1_odds", "p2_odds", "fair_p1", "fair_p2",
     "edge_p1", "edge_p2",
-    "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
+    "bet_on", "type_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
     "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
@@ -92,7 +92,7 @@ FINISH_POS_HEADERS = [
     "market_type", "sportsbook",
     "decimal_odds", "american_odds", "my_fair",
     "sim_prob", "edge", "kelly_stake",
-    "my_pred", "sample",
+    "my_pred", "sample", "type_on",
     "result", "actual_finish", "units_won",
 ]
 
@@ -104,7 +104,7 @@ ROUND_MU_HEADERS = [
     "bookmaker", "ties_rule",
     "p1_odds", "p2_odds", "fair_p1", "fair_p2",
     "edge_p1", "edge_p2",
-    "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
+    "bet_on", "type_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
     "wx_diff",
     "result", "p1_round_score", "p2_round_score", "units_won",
@@ -332,6 +332,7 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
             _safe(_get(r, "edge_p1"), round_digits=1),  # edge_p1
             _safe(_get(r, "edge_p2"), round_digits=1),  # edge_p2
             _safe(_get(r, "bet_on")),                   # bet_on
+            _safe(_get(r, "type_on")),                  # type_on
             _safe(_get(r, "edge_on"), round_digits=1),  # edge_on
             _safe(_get(r, "pred_on"), round_digits=2),  # pred_on
             _safe(_get(r, "pred_against"), round_digits=2),  # pred_against
@@ -440,6 +441,7 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
             _safe(_get(r, "stake", "kelly_stake"), round_digits=2),  # kelly_stake
             _safe(_get(r, "my_pred"), round_digits=2),          # my_pred
             _safe(_get(r, "sample")),                           # sample
+            _safe(_get(r, "type_on")),                          # type_on
             "",                                                 # result (grading)
             "",                                                 # actual_finish (grading)
             "",                                                 # units_won (grading)
@@ -509,6 +511,7 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             _safe(_get(r, "edge_p1"), round_digits=1),  # edge_p1
             _safe(_get(r, "edge_p2"), round_digits=1),  # edge_p2
             _safe(_get(r, "bet_on")),                   # bet_on
+            _safe(_get(r, "type_on")),                  # type_on
             _safe(_get(r, "edge_on"), round_digits=1),  # edge_on
             _safe(_get(r, "pred_on", "p1_pred"), round_digits=2),     # pred_on
             _safe(_get(r, "pred_against", "p2_pred"), round_digits=2),# pred_against

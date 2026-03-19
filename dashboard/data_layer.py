@@ -100,7 +100,7 @@ _TOURNAMENT_MU_HEADERS = [
     "bookmaker", "ties_rule",
     "p1_odds", "p2_odds", "fair_p1", "fair_p2",
     "edge_p1", "edge_p2",
-    "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
+    "bet_on", "type_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
     "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
@@ -112,7 +112,7 @@ _ROUND_MU_HEADERS = [
     "bookmaker", "ties_rule",
     "p1_odds", "p2_odds", "fair_p1", "fair_p2",
     "edge_p1", "edge_p2",
-    "bet_on", "edge_on", "pred_on", "pred_against", "sample_on",
+    "bet_on", "type_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
     "result", "p1_round_score", "p2_round_score", "units_won",
 ]
@@ -123,7 +123,7 @@ _FINISH_POS_HEADERS = [
     "market_type", "sportsbook",
     "decimal_odds", "american_odds", "my_fair",
     "sim_prob", "edge", "kelly_stake",
-    "my_pred", "sample",
+    "my_pred", "sample", "type_on",
     "result", "actual_finish", "units_won",
 ]
 

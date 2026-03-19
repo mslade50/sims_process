@@ -1794,6 +1794,28 @@ if is_valid_run_time():
         # Build dg_id lookup from the predictions file
         dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
 
+        # Compute player archetypes for type_on column
+        try:
+            from sg_diagnostic import compute_rolling_archetypes
+            field_players = model_preds['player_name'].unique().tolist()
+            _arch_df = compute_rolling_archetypes(_event_id, field_players)
+            _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+            print(f"[storage] Computed archetypes for {len(_arch_map)} players")
+        except Exception as _arch_err:
+            print(f"[storage] Archetype computation skipped: {_arch_err}")
+            _arch_map = {}
+
+        # Add type_on to matchup and finish position DataFrames
+        if _arch_map:
+            if 'combined_df' in dir() and not combined_df.empty:
+                combined_df['type_on'] = (
+                    combined_df['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+                )
+            if 'combined_finish_df' in dir() and not combined_finish_df.empty:
+                combined_finish_df['type_on'] = (
+                    combined_finish_df['player_name'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+                )
+
         # 1. Tournament matchups (only if matchup data exists)
         if 'combined_df' in dir() and not combined_df.empty:
             store_tournament_matchups(

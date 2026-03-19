@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import requests
 import smtplib
+from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -1057,6 +1058,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
 
     lines = kalshi_lines.get("lines", [])
     rows = []
+    kalshi_mismatches = set()
     for line in lines:
         mtype = line.get("market_type", "")
         prob_col = type_to_col.get(mtype)
@@ -1068,6 +1070,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         # Look up sim probability
         match = finish_probs[finish_probs["player_name"] == player]
         if match.empty:
+            kalshi_mismatches.add(player)
             continue
 
         sim_yes = float(match.iloc[0][prob_col])
@@ -1163,6 +1166,10 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         taker_pos = ((df["pricing"] == "taker") & (df["edge"] > 0)).sum()
         mid_pos = ((df["pricing"] == "mid") & (df["edge"] > 0)).sum()
         print(f"  Kalshi outrights: {len(df)} lines priced, {taker_pos} taker edge, {mid_pos} maker edge")
+
+    if kalshi_mismatches:
+        print(f"  Warning: {len(kalshi_mismatches)} Kalshi outright players not found in sim")
+        df.attrs["name_mismatches"] = kalshi_mismatches
 
     return df
 
@@ -1368,6 +1375,22 @@ def implied_to_american(prob):
     if prob >= 0.5:
         return int(round(-100 * prob / (1 - prob)))
     return int(round(100 * (1 - prob) / prob))
+
+
+def _send_telegram(text):
+    """Send a Telegram message. Non-blocking — logs warning on failure."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception:
+        print("  Warning: Telegram alert failed")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1617,13 +1640,21 @@ def price_matchups(matchup_df, sim_dict):
     Two probability modes per side:
         my_odds_pN       — ties are a push (excluded from total)
         my_odds_pN_tl    — ties count as losses
+
+    Tracks name mismatches in matchup_df._name_mismatches (set of (player, bookmaker)).
     """
     cols = {"fair_p1": [], "fair_p2": [], "tl_p1": [], "tl_p2": []}
+    name_mismatches = defaultdict(set)  # player -> set of bookmakers
 
     for _, row in matchup_df.iterrows():
         p1, p2 = row["Player 1"], row["Player 2"]
+        book = row.get("Bookmaker", "unknown")
 
         if p1 not in sim_dict or p2 not in sim_dict:
+            if p1 not in sim_dict:
+                name_mismatches[p1].add(book)
+            if p2 not in sim_dict:
+                name_mismatches[p2].add(book)
             for k in cols:
                 cols[k].append(None)
             continue
@@ -1644,6 +1675,11 @@ def price_matchups(matchup_df, sim_dict):
     matchup_df["my_odds_p2"] = cols["fair_p2"]
     matchup_df["my_odds_p1_tl"] = cols["tl_p1"]
     matchup_df["my_odds_p2_tl"] = cols["tl_p2"]
+
+    if name_mismatches:
+        print(f"  Warning: {len(name_mismatches)} scraped players not found in sim")
+        matchup_df.attrs["name_mismatches"] = dict(name_mismatches)
+
     return matchup_df
 
 
@@ -2892,6 +2928,7 @@ def main():
     outrights_combined = pd.DataFrame()
     outrights_sharp = pd.DataFrame()
     kalshi_mids = pd.DataFrame()
+    kalshi_edges = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
     finish_equity_csv_path = None
@@ -3026,6 +3063,32 @@ def main():
     else:
         print(f"\n  Skipping tournament simulation (round_num < 1)")
 
+    # ── Name mismatch alert ─────────────────────────────────────────────
+    # Collect mismatches from matchup pricing + Kalshi outrights and alert
+    _all_mismatches = {}
+    try:
+        if matchup_df is not None and hasattr(matchup_df, 'attrs') and matchup_df.attrs.get("name_mismatches"):
+            _all_mismatches.update(matchup_df.attrs["name_mismatches"])
+    except NameError:
+        pass
+    try:
+        if kalshi_edges is not None and not kalshi_edges.empty and kalshi_edges.attrs.get("name_mismatches"):
+            for name in kalshi_edges.attrs["name_mismatches"]:
+                _all_mismatches.setdefault(name, set()).add("kalshi_outrights")
+    except NameError:
+        pass
+
+    if _all_mismatches and not args.dry_run:
+        _mm_lines = [f"<b>R{sim_round} Name Mismatches — {tourney.replace('_', ' ').title()}</b>", ""]
+        _mm_lines.append(f"{len(_all_mismatches)} scraped players not found in sim:")
+        for name, books in sorted(_all_mismatches.items()):
+            book_str = ", ".join(sorted(books)) if isinstance(books, set) else str(books)
+            _mm_lines.append(f"  • {name}  ({book_str})")
+        _mm_lines.append("")
+        _mm_lines.append("Fix: add to name_replacements in sim_inputs.py")
+        _send_telegram("\n".join(_mm_lines))
+        print(f"  Sent Telegram alert for {len(_all_mismatches)} name mismatches")
+
     # ── Step 5: Export ───────────────────────────────────────────────────
     excel_path, card_csv = export_results(
         combined, sharp, score_card, sim_round,
@@ -3076,6 +3139,25 @@ def main():
 
                 # Build dg_id lookup (may not have all round-sim players, but best effort)
                 dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
+
+                # Compute player archetypes for type_on column
+                try:
+                    from sg_diagnostic import compute_rolling_archetypes
+                    _field = model_preds['player_name'].unique().tolist() if model_preds is not None else []
+                    _arch_df = compute_rolling_archetypes(_event_id, _field)
+                    _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+                    print(f"[storage] Computed archetypes for {len(_arch_map)} players")
+                    if not combined.empty:
+                        combined['type_on'] = (
+                            combined['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+                        )
+                    if not outrights_combined.empty:
+                        combined_finish_df_name = 'player_name' if 'player_name' in outrights_combined.columns else 'Player'
+                        outrights_combined['type_on'] = (
+                            outrights_combined[combined_finish_df_name].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+                        )
+                except Exception as _arch_err:
+                    print(f"[storage] Archetype computation skipped: {_arch_err}")
 
                 # 1. All filtered round matchups
                 store_round_matchups(
