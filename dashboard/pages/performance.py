@@ -158,7 +158,18 @@ layout = dbc.Container([
                 placeholder="All archetypes",
                 className="dash-dropdown-dark",
             ),
-        ], md=3),
+        ], md=2),
+        dbc.Col([
+            html.Label("Arch. Against", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-archetype-against-filter",
+                options=[],
+                value=None,
+                multi=True,
+                placeholder="All archetypes",
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
         dbc.Col([
             html.Label("Player", className="form-label small text-muted"),
             dcc.Dropdown(
@@ -169,7 +180,7 @@ layout = dbc.Container([
                 placeholder="All players",
                 className="dash-dropdown-dark",
             ),
-        ], md=3),
+        ], md=2),
     ], className="mb-3"),
 
     # KPI cards
@@ -258,6 +269,7 @@ def _convert_to_units(df):
     Output("perf-remaining-table", "children"),
     Output("perf-player-filter", "options"),
     Output("perf-archetype-filter", "options"),
+    Output("perf-archetype-against-filter", "options"),
     Input("perf-event-filter", "value"),
     Input("perf-type-filter", "value"),
     Input("perf-book-filter", "value"),
@@ -273,16 +285,17 @@ def _convert_to_units(df):
     Input("perf-dec-odds-min", "value"),
     Input("perf-dec-odds-max", "value"),
     Input("perf-archetype-filter", "value"),
+    Input("perf-archetype-against-filter", "value"),
     Input("perf-player-filter", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
-                       archetype_filter, player_filter):
+                       archetype_filter, archetype_against_filter, player_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [])
+    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
 
     filters = {}
     if event:
@@ -349,7 +362,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     # Convert finish position dollar amounts to units ($200 = 1 unit)
     df = _convert_to_units(df)
 
-    # Join archetype from sg_diagnostic.parquet
+    # Join archetype from sg_diagnostic.parquet (bet_on + opponent)
     arch_lookup = get_archetype_lookup()
     if not arch_lookup.empty and "event_id" in df.columns:
         df = df.merge(arch_lookup, left_on=["event_id", "bet_on"],
@@ -357,8 +370,17 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
                       how="left", suffixes=("", "_arch"))
         df.drop(columns=["player_name_arch"], errors="ignore", inplace=True)
         df["archetype"] = df["archetype"].fillna("Unknown")
+
+        # Join opponent archetype for matchup bets
+        opp_lookup = arch_lookup.rename(columns={"player_name": "opp_name", "archetype": "archetype_against"})
+        df = df.merge(opp_lookup, left_on=["event_id", "opponent"],
+                      right_on=["event_id", "opp_name"],
+                      how="left", suffixes=("", "_opp"))
+        df.drop(columns=["opp_name"], errors="ignore", inplace=True)
+        df["archetype_against"] = df["archetype_against"].fillna("")
     else:
         df["archetype"] = "Unknown"
+        df["archetype_against"] = ""
 
     # Pre-compute raw_edge and dec_odds on full df (before new filters)
     if "book_odds" in df.columns and "fair_odds" in df.columns:
@@ -375,8 +397,11 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     player_options = [{"label": p.title(), "value": p} for p in players]
     archetypes = sorted(df["archetype"].dropna().unique().tolist())
     archetype_options = [{"label": a, "value": a} for a in archetypes]
+    archetypes_against = sorted(df["archetype_against"].dropna().unique().tolist())
+    archetypes_against = [a for a in archetypes_against if a]  # exclude empty
+    archetype_against_options = [{"label": a, "value": a} for a in archetypes_against]
 
-    # Apply new filters (raw_edge, dec_odds, archetype, player)
+    # Apply new filters (raw_edge, dec_odds, archetype, archetype_against, player)
     if raw_edge_min is not None:
         df = df[df["raw_edge"].fillna(0) >= raw_edge_min]
     if raw_edge_max is not None:
@@ -387,11 +412,13 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         df = df[df["dec_odds"].fillna(999) <= dec_odds_max]
     if archetype_filter:
         df = df[df["archetype"].isin(archetype_filter)]
+    if archetype_against_filter:
+        df = df[df["archetype_against"].isin(archetype_against_filter)]
     if player_filter:
         df = df[df["bet_on"].isin(player_filter)]
 
     if df.empty:
-        return empty_return[:-2] + (player_options, archetype_options)
+        return empty_return[:-3] + (player_options, archetype_options, archetype_against_options)
 
     # Separate graded vs all — exclude duplicates entirely
     df = df[~df["result"].astype(str).str.strip().isin(["duplicate"])].copy()
@@ -605,8 +632,8 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
 
     # ── Filtered bets detail table (duplicates already removed from df above) ──
     detail_cols = ["bet_on", "opponent", "bookmaker", "bet_type", "round", "event_name",
-                   "archetype", "edge", "raw_edge", "dec_odds", "pred_on", "result",
-                   "units_wagered", "units_won"]
+                   "archetype", "archetype_against", "edge", "raw_edge", "dec_odds", "pred_on",
+                   "result", "units_wagered", "units_won"]
     available_cols = [c for c in detail_cols if c in df.columns]
     detail_df = df[available_cols].copy()
     for col in ["edge", "raw_edge", "dec_odds", "pred_on", "units_wagered", "units_won"]:
@@ -623,7 +650,8 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     col_headers = {
         "bet_on": "Bet On", "opponent": "Opponent", "bookmaker": "Book",
         "bet_type": "Type", "round": "R", "event_name": "Event",
-        "archetype": "Archetype", "edge": "Edge", "raw_edge": "Raw Edge",
+        "archetype": "Archetype", "archetype_against": "Arch. Against",
+        "edge": "Edge", "raw_edge": "Raw Edge",
         "dec_odds": "Odds", "pred_on": "Pred", "result": "Result",
         "units_wagered": "Wagered", "units_won": "Won",
     }
@@ -645,4 +673,4 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     remaining_table = make_grid(detail_df, column_defs=detail_col_defs,
                                 id_suffix="perf-remaining", height=500)
 
-    return kpi, fig_cum, fig_pnl, fig_book, fig_buckets, fig_arch_cum, fig_arch_bar, summary_content, remaining_table, player_options, archetype_options
+    return kpi, fig_cum, fig_pnl, fig_book, fig_buckets, fig_arch_cum, fig_arch_bar, summary_content, remaining_table, player_options, archetype_options, archetype_against_options
