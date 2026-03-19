@@ -78,7 +78,8 @@ def make_grid(df, column_defs=None, id_suffix="", height=600, page_size=25):
             "sortable": True,
             "filter": True,
             "resizable": True,
-            "minWidth": 80,
+            "minWidth": 70,
+            "flex": 1,
         },
         dashGridOptions={
             "pagination": True,
