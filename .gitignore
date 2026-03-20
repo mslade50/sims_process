@@ -194,7 +194,7 @@ backups/
 # Simulation output files (should go to Drive)
 rd_*_results_*.csv
 hole_lvl_*.csv
-model_predictions_*.csv
+# model_predictions committed via push_dashboard_data.py to dashboard_data/
 r*_live_model.csv
 pre_sim_summary_*.csv
 round_scores.xlsx
