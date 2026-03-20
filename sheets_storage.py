@@ -60,6 +60,7 @@ TAB_ROUND_MU = "Round Matchups"
 TAB_BASE_RATES = "Base Rates"
 TAB_LIVE = "Live"
 TAB_DETAILS = "Details"
+TAB_SCORE_EDGES = "Score Edges"
 
 DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
 
@@ -94,6 +95,13 @@ FINISH_POS_HEADERS = [
     "sim_prob", "edge", "kelly_stake",
     "my_pred", "sample", "type_on",
     "result", "actual_finish", "units_won",
+]
+
+SCORE_EDGES_HEADERS = [
+    "run_timestamp", "event_name", "year", "event_id", "round",
+    "player", "line", "book", "best_side",
+    "mkt_under", "mkt_over", "fair_under", "fair_over",
+    "edge_under", "edge_over", "best_edge",
 ]
 
 BASE_RATES_HEADERS = ["category", "parameter", "base_rate", "this_week", "delta", "notes"]
@@ -534,6 +542,57 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
     # Parquet write-through
     _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
 
+
+def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=None):
+    """Store round score O/U edges to the 'Score Edges' tab.
+
+    Args:
+        score_edges_df: DataFrame from price_score_lines() with columns:
+            Player, Line, Book, Mkt_Under, Mkt_Over, Fair_Under, Fair_Over,
+            Edge_Under, Edge_Over, Best_Edge, Best_Side
+        sim_round: current round number
+        tourney: tournament slug
+        event_id: DataGolf event ID
+    """
+    if score_edges_df is None or score_edges_df.empty:
+        print("  [storage] No score edges to store.")
+        return
+
+    # Only store edges > 5% (matches email table filter)
+    score_edges_df = score_edges_df[score_edges_df["Best_Edge"] > 5].copy()
+    if score_edges_df.empty:
+        print("  [storage] No score edges above 5% threshold.")
+        return
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    year = datetime.now().year
+
+    rows = []
+    for _, r in score_edges_df.iterrows():
+        rows.append([
+            ts,                                          # run_timestamp
+            tourney,                                     # event_name
+            year,                                        # year
+            event_id,                                    # event_id
+            sim_round,                                   # round
+            _safe(r.get("Player")),                      # player
+            _safe(r.get("Line")),                        # line
+            _safe(r.get("Book")),                        # book
+            _safe(r.get("Best_Side")),                   # best_side
+            _safe(r.get("Mkt_Under")),                   # mkt_under
+            _safe(r.get("Mkt_Over")),                    # mkt_over
+            _safe(r.get("Fair_Under")),                  # fair_under
+            _safe(r.get("Fair_Over")),                   # fair_over
+            _safe(r.get("Edge_Under"), round_digits=1),  # edge_under
+            _safe(r.get("Edge_Over"), round_digits=1),   # edge_over
+            _safe(r.get("Best_Edge"), round_digits=1),   # best_edge
+        ])
+
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
+    _append_rows(ws, rows)
+    print(f"  [storage] Wrote {len(rows)} score edge rows to '{TAB_SCORE_EDGES}'")
 
 
 

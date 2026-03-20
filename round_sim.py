@@ -1040,7 +1040,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         "top_5": "top_5_nodh",
         "top_10": "top_10_nodh",
         "top_20": "top_20_nodh",
-        "make_cut": "top_20_nodh",  # placeholder — make_cut needs separate handling
+        "winner": "simulated_win_prob",
     }
 
     try:
@@ -2306,6 +2306,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 edge = row["edge_on"]
                 pred = row["pred_on"]
                 sample = int(row["sample_on"])
+                archetype = row.get("type_on", "")
                 half_shot = (
                     row.get("half_shot_p1", "")
                     if row["bet_on"] == row["Player 1"]
@@ -2327,6 +2328,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{bet_player}</td>
                     <td style="padding:6px 10px; color:#666;">vs {opponent}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{ties}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
@@ -2345,6 +2347,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 <tr style="background:#343a40; color:white;">
                     <th style="padding:6px 10px; text-align:left;">Bet On</th>
                     <th style="padding:6px 10px; text-align:left;">Opponent</th>
+                    <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Ties</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
@@ -2380,6 +2383,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 edge = row.get('edge', 0)
                 pred = row.get('my_pred', 0)
                 stake = row.get('stake', 0)
+                archetype = row.get('type_on', '')
 
                 # Weather context
                 _fp_wx_sg = 0.0
@@ -2390,7 +2394,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
                 edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
-                side_str = side.upper() if side else ""
+                side_str = str(side).upper() if side and pd.notna(side) else ""
                 side_color = "#e8f4fd" if side == "yes" else "#fde8e8" if side == "no" else "#ffffff"
 
                 odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
@@ -2404,6 +2408,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -2422,6 +2427,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Market</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Side</th>
+                    <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
@@ -3094,6 +3100,38 @@ def main():
         _send_telegram("\n".join(_mm_lines))
         print(f"  Sent Telegram alert for {len(_all_mismatches)} name mismatches")
 
+    # ── Compute archetypes (before export + email so type_on appears everywhere) ──
+    try:
+        from sg_diagnostic import compute_rolling_archetypes
+        _field = model_preds['player_name'].unique().tolist() if model_preds is not None else []
+        _arch_df = compute_rolling_archetypes(_event_id, _field)
+        _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+        print(f"  Computed archetypes for {len(_arch_map)} players")
+        if not combined.empty:
+            combined['type_on'] = (
+                combined['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
+        if not sharp.empty:
+            sharp['type_on'] = (
+                sharp['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
+        if not outrights_combined.empty:
+            _fp_name_col = 'player_name' if 'player_name' in outrights_combined.columns else 'Player'
+            outrights_combined['type_on'] = (
+                outrights_combined[_fp_name_col].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
+        if not outrights_sharp.empty:
+            _fp_name_col = 'player_name' if 'player_name' in outrights_sharp.columns else 'Player'
+            outrights_sharp['type_on'] = (
+                outrights_sharp[_fp_name_col].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
+        if not kalshi_mids.empty:
+            kalshi_mids['type_on'] = (
+                kalshi_mids['player_name'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
+    except Exception as _arch_err:
+        print(f"  Archetype computation skipped: {_arch_err}")
+
     # ── Step 5: Export ───────────────────────────────────────────────────
     excel_path, card_csv = export_results(
         combined, sharp, score_card, sim_round,
@@ -3133,6 +3171,7 @@ def main():
             get_spreadsheet,
             store_round_matchups,
             store_finish_positions,
+            store_score_edges,
             load_dg_id_lookup,
         )
 
@@ -3144,25 +3183,6 @@ def main():
 
                 # Build dg_id lookup (may not have all round-sim players, but best effort)
                 dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
-
-                # Compute player archetypes for type_on column
-                try:
-                    from sg_diagnostic import compute_rolling_archetypes
-                    _field = model_preds['player_name'].unique().tolist() if model_preds is not None else []
-                    _arch_df = compute_rolling_archetypes(_event_id, _field)
-                    _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
-                    print(f"[storage] Computed archetypes for {len(_arch_map)} players")
-                    if not combined.empty:
-                        combined['type_on'] = (
-                            combined['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
-                        )
-                    if not outrights_combined.empty:
-                        combined_finish_df_name = 'player_name' if 'player_name' in outrights_combined.columns else 'Player'
-                        outrights_combined['type_on'] = (
-                            outrights_combined[combined_finish_df_name].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
-                        )
-                except Exception as _arch_err:
-                    print(f"[storage] Archetype computation skipped: {_arch_err}")
 
                 # 1. All filtered round matchups
                 store_round_matchups(
@@ -3178,6 +3198,13 @@ def main():
                         dg_id_lookup=dg_id_lookup,
                         spreadsheet=spreadsheet,
                         tab_name="Live",
+                    )
+
+                # 3. Score edges (round O/U)
+                if score_edges is not None and not score_edges.empty:
+                    store_score_edges(
+                        score_edges, sim_round, tourney, _event_id,
+                        spreadsheet=spreadsheet,
                     )
 
                 print("[storage] Done.")
