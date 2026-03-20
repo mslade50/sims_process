@@ -1810,6 +1810,136 @@ def main():
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")
 
+    # Step 3: Update expected scoring averages for remaining rounds
+    if round_num < 4:
+        try:
+            update_expected_scores(round_num)
+        except Exception as e:
+            print(f"\n[warn] Expected score update failed: {e}")
+            import traceback; traceback.print_exc()
+
+
+def update_expected_scores(completed_round):
+    """
+    Recompute expected scoring averages for future rounds using current
+    wind forecasts from the Sheet, and write them back to expected_score_r{N}.
+
+    Formula: expected_score = baseline - field_strength + avg_wind * wind_factor
+
+    Uses:
+      - Baselines from scoring_baseline_{tourney}.csv (FINAL rows)
+      - Field strength from final_predictions or pre_course_fit CSV
+      - Wind factor from compute_wind_factor()
+      - Per-round wind arrays from WIND_ARRAYS (already loaded from Sheet)
+    """
+    import os
+    from api_utils import compute_wind_factor
+    from scoring_baseline import _compute_field_avg_wind
+
+    print(f"\n{'='*60}")
+    print(f"  UPDATING EXPECTED SCORES (R{completed_round + 1}-R4)")
+    print(f"{'='*60}")
+
+    api_key = os.getenv("DATAGOLF_API_KEY")
+
+    # 1. Load baselines from scoring_baseline CSV
+    baseline_file = f"scoring_baseline_{tourney}.csv"
+    if not os.path.exists(baseline_file):
+        print(f"  {baseline_file} not found — cannot update expected scores")
+        return
+
+    baseline_df = pd.read_csv(baseline_file)
+    finals = baseline_df[baseline_df["year"] == "FINAL"]
+    if finals.empty:
+        print(f"  No FINAL rows in {baseline_file}")
+        return
+
+    baselines = {}
+    for _, row in finals.iterrows():
+        rnd = int(row["round_num"])
+        baselines[rnd] = float(row["baseline"])
+    print(f"  Baselines: {baselines}")
+
+    # 2. Field strength from predictions
+    field_strength = 0.0
+    for pred_file in [f"final_predictions_{tourney}.csv", f"pre_course_fit_{tourney}.csv"]:
+        path = _resolve_csv(pred_file)
+        if os.path.exists(path):
+            pred_df = pd.read_csv(path)
+            col = "my_pred" if "my_pred" in pred_df.columns else "pred"
+            if col in pred_df.columns:
+                field_strength = pred_df[col].mean()
+                print(f"  Field strength: {field_strength:+.4f} (from {path})")
+            break
+    if field_strength == 0.0:
+        print(f"  WARNING: No prediction file found — field_strength = 0.0")
+
+    # 3. Wind factor
+    wf = compute_wind_factor(event_ids, wind_override, baseline_wind)
+    print(f"  Wind factor: {wf:.4f}")
+
+    # 4. Cut adjustment for R3/R4
+    try:
+        from sim_inputs import CUT_LINE
+        cut_adj = 0.25 if CUT_LINE < 120 else 0.0
+    except ImportError:
+        cut_adj = 0.25
+
+    # 5. Compute for future rounds
+    future_rounds = range(completed_round + 1, 5)
+    adjusted = {}
+
+    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind Avg':>8} | {'Wind Eff':>8} | {'Field':>8} | {'Expected':>8}")
+    print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
+
+    for rnd in future_rounds:
+        base = baselines.get(rnd)
+        if base is None:
+            print(f"  R{rnd}: no baseline — skipping")
+            continue
+
+        wind_arr = WIND_ARRAYS.get(rnd, [])
+        avg_wind = _compute_field_avg_wind(wind_arr, api_key, rnd) if wind_arr else 0.0
+        wind_effect = avg_wind * wf
+
+        fld = -field_strength
+        if rnd >= 3:
+            fld -= cut_adj
+
+        expected = base + fld + wind_effect
+        adjusted[rnd] = round(expected, 1)
+
+        print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>8.1f} | {wind_effect:>+8.3f} | {fld:>+8.3f} | {adjusted[rnd]:>8.1f}")
+
+    if not adjusted:
+        print("  No rounds to update.")
+        return
+
+    # 6. Write to Sheet
+    try:
+        from sheets_storage import get_spreadsheet
+        spreadsheet = get_spreadsheet()
+        ws = spreadsheet.worksheet("round_config")
+
+        all_values = ws.get("A:C")
+        param_rows = {}
+        for i, row in enumerate(all_values):
+            if row and row[0].strip():
+                param_rows[row[0].strip().lower()] = i + 1
+
+        for rnd, value in adjusted.items():
+            param_name = f"expected_score_r{rnd}"
+            row_idx = param_rows.get(param_name)
+            if row_idx:
+                ws.update_cell(row_idx, 2, str(value))
+                ws.update_cell(row_idx, 3, f"Updated by live_stats_engine (after R{completed_round})")
+                print(f"  Wrote {param_name} = {value}")
+            else:
+                print(f"  WARNING: {param_name} row not found in Sheet")
+
+        print(f"  Expected scores updated in Sheet.")
+    except Exception as e:
+        print(f"  WARNING: Could not write to Sheet: {e}")
 
 
 if __name__ == "__main__":
