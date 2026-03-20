@@ -1,0 +1,37 @@
+player_name,category,mean,std,skew,excess_kurtosis,notes
+_ANCHOR_SG_OTT,sg_ott_adj,-0.143,1.031,-0.715,0.842,REFERENCE ONLY - field avg | std range: p25=0.885 med=1.000 p75=1.135
+_ANCHOR_SG_APP,sg_app_adj,-0.201,1.584,-0.112,0.086,REFERENCE ONLY - field avg | std range: p25=1.435 med=1.581 p75=1.707
+_ANCHOR_SG_ARG,sg_arg_adj,-0.064,1.057,-0.131,0.561,REFERENCE ONLY - field avg | std range: p25=0.947 med=1.038 p75=1.149
+_ANCHOR_SG_PUTT,sg_putt_adj,-0.144,1.657,-0.005,-0.063,REFERENCE ONLY - field avg | std range: p25=1.516 med=1.647 p75=1.781
+"Penge, Marco",sg_ott_adj,0.477033261,1.414054965,-0.828105742,0.510808342,
+"Penge, Marco",sg_app_adj,0.083618902,1.692614068,0.006164185,-0.258409043,
+"Penge, Marco",sg_arg_adj,-0.113662407,0.848654825,0.50276654,0.421824056,
+"Penge, Marco",sg_putt_adj,0.110926019,1.676175098,-0.06647813,-0.509868071,
+"keefer, johnny",sg_ott_adj,0.42,1.25,-0.5,0.510808342,
+"keefer, johnny",sg_app_adj,0.2,1.584999539,-0.535217872,0.502576312,
+"keefer, johnny",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"keefer, johnny",sg_putt_adj,0.02,1.657,-0.005,-0.063,
+"neergaard-petersen, rasmus",sg_ott_adj,0.25,1.414054965,-0.5,0.510808342,
+"neergaard-petersen, rasmus",sg_app_adj,0.336835776,1.584999539,-0.535217872,0.502576312,
+"neergaard-petersen, rasmus",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"neergaard-petersen, rasmus",sg_putt_adj,-0.05,1.657,-0.005,-0.063,
+"parry, john",sg_ott_adj,0.1,0.787970534,-0.043389715,0.771389623,
+"parry, john",sg_app_adj,0.27,1.584999539,-0.535217872,0.502576312,
+"parry, john",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"parry, john",sg_putt_adj,0.05,1.657,-0.005,-0.063,
+"reitan, kristoffer",sg_ott_adj,0.477033261,1.414054965,-0.828105742,0.510808342,
+"reitan, kristoffer",sg_app_adj,-0.05,1.584999539,-0.535217872,0.502576312,
+"reitan, kristoffer",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"reitan, kristoffer",sg_putt_adj,0.805865065,1.753729936,-0.380288472,0.17666452,
+"blanchet, chandler",sg_ott_adj,-0.1,0.787970534,-0.043389715,0.771389623,
+"blanchet, chandler",sg_app_adj,-0.05,1.584999539,-0.535217872,0.502576312,
+"blanchet, chandler",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"blanchet, chandler",sg_putt_adj,-0.144,1.657,-0.005,-0.063,
+"brennan, michael",sg_ott_adj,0.42,1.25,-0.5,0.510808342,
+"brennan, michael",sg_app_adj,0.2,1.584999539,-0.535217872,0.502576312,
+"brennan, michael",sg_arg_adj,-0.064,1.057,-0.131,0.561,
+"brennan, michael",sg_putt_adj,0.02,1.657,-0.005,-0.063,
+"ewart, a.j.",sg_ott_adj,-0.163,1.041,-0.609,-0.263,copied from hubbard
+"ewart, a.j.",sg_app_adj,-0.222,1.381,0.113,0.228,copied from hubbard
+"ewart, a.j.",sg_arg_adj,-0.027,0.884,0.044,-0.118,copied from hubbard
+"ewart, a.j.",sg_putt_adj,0.013,1.590,-0.215,0.624,copied from hubbard
