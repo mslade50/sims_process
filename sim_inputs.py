@@ -102,7 +102,15 @@ name_replacements = {
     'ayora, angel': 'ayora fanegas, angel',
     'capan, frankie' : 'capan iii, frankie',
     'stallings, stephen jr' : 'stallings jr., stephen',
-    'bauchou, zachary' : 'bauchou, zach'
+    'bauchou, zachary' : 'bauchou, zach',
+    'chassart, adrien dumont de': 'dumont de chassart, adrien',
+    'keefer, john': 'keefer, johnny',
+    'kim, seonghyeon': 'kim, s.h.',
+    'mccarty, matthew': 'mccarty, matt',
+    'petersen, rasmus neergaard': 'neergaard-petersen, rasmus',
+    'rooyen, erik van': 'van rooyen, erik',
+    'smith, jordan l.': 'smith, jordan',
+    'brown, daniel': 'brown, dan',
 }
 
 #regression informed coefficients for base model
