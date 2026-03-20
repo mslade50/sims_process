@@ -1897,6 +1897,44 @@ def build_betonline_all_matchups_csv(matchup_df, sim_round, out_dir):
     return path
 
 
+def build_all_books_fair_csv(matchup_df, sim_round, out_dir):
+    """
+    Build a CSV with fair price vs book odds for every matchup line across
+    betonline, pinnacle, and betcris. No filters — all edges, all samples.
+
+    Sorted by Bookmaker then edge_on descending.
+    """
+    target_books = {"betonline", "pinnacle", "betcris"}
+    mask = matchup_df["Bookmaker"].str.lower().isin(target_books)
+    df = matchup_df[mask].copy()
+    if df.empty:
+        print("  No betonline/pinnacle/betcris matchups found")
+        return None
+
+    for col in ["edge_p1", "edge_p2", "edge_on", "p1_pred", "p2_pred",
+                "pred_on", "half_shot_p1", "half_shot_p2"]:
+        if col in df.columns:
+            df[col] = df[col].round(2)
+
+    display_cols = [
+        "Bookmaker", "Player 1", "Player 2", "Ties",
+        "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
+        "edge_p1", "edge_p2", "edge_on", "bet_on",
+        "p1_pred", "p2_pred", "pred_on",
+        "Sample_P1", "Sample_P2", "sample_on",
+        "half_shot_p1", "half_shot_p2",
+        "p1_+0.5", "p2_+0.5", "p1_-0.5", "p2_-0.5",
+    ]
+    df = df[[c for c in display_cols if c in df.columns]]
+    df = df.sort_values(["Bookmaker", "edge_on"], ascending=[True, False])
+
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"all_books_fair_matchups_r{sim_round}.csv")
+    df.to_csv(path, index=False)
+    print(f"  All-books fair matchups: {len(df)} rows ({df['Bookmaker'].nunique()} books) -> {path}")
+    return path
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 3: Score Line Fair Card
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2677,6 +2715,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          excel_path=None, card_csv_path=None, outrights_sharp=None,
                          win_edges_csv_path=None, bol_matchups_csv_path=None,
+                         all_books_csv_path=None,
                          finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None,
                          wx_lookup=None, score_edges=None, kalshi_mids=None):
@@ -2740,6 +2779,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                 att.add_header(
                     "Content-Disposition", "attachment",
                     filename=os.path.basename(bol_matchups_csv_path),
+                )
+                msg.attach(att)
+
+        # Attach all-books fair matchups CSV (betonline + pinnacle + betcris)
+        if all_books_csv_path and os.path.exists(all_books_csv_path):
+            with open(all_books_csv_path, "rb") as f:
+                att = MIMEApplication(f.read(), _subtype="csv")
+                att.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(all_books_csv_path),
                 )
                 msg.attach(att)
 
@@ -2899,11 +2948,16 @@ def main():
         bol_matchups_csv = build_betonline_all_matchups_csv(
             matchup_df, sim_round, out_dir
         )
+        # Build fair price vs all 3 scraped books CSV
+        all_books_csv = build_all_books_fair_csv(
+            matchup_df, sim_round, out_dir
+        )
     except Exception as e:
         print(f"  Warning: Matchup pricing failed: {e}")
         combined = pd.DataFrame()
         sharp = pd.DataFrame()
         bol_matchups_csv = None
+        all_books_csv = None
 
     # ── Step 3: Score card ───────────────────────────────────────────────
     # Multi-course: build separate score cards per course
@@ -3154,6 +3208,7 @@ def main():
             outrights_sharp=outrights_sharp,
             win_edges_csv_path=win_edges_csv_path,
             bol_matchups_csv_path=bol_matchups_csv,
+            all_books_csv_path=all_books_csv,
             finish_equity_csv_path=finish_equity_csv_path,
             win_positive_top10=win_positive_top10,
             win_negative_top10=win_negative_top10,

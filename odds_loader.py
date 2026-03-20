@@ -33,13 +33,15 @@ logger = logging.getLogger(__name__)
 # Paths to check for scraped odds (in priority order)
 SIMS_ROOT = Path(__file__).parent
 SCRAPED_PATHS = [
-    # Local: sibling golf_scraping repo (Documents)
-    Path.home() / "Documents" / "golf_scraping" / "data",
-    # Local: sibling golf_scraping repo (relative)
-    SIMS_ROOT.parent / "golf_scraping" / "data",
     # CI: fetched into permanent_data before sim runs
     SIMS_ROOT / "permanent_data" / "scraped_odds",
 ]
+
+# GitHub API URL for scraped odds (primary source — always fresh from CI)
+# Uses GitHub API (works for private repos when GH_TOKEN is set)
+GITHUB_REPO = "mslade50/golf_scraping"
+GITHUB_BRANCH = "master"
+GITHUB_DATA_PATH = "data"
 
 DATAGOLF_BASE = "https://feeds.datagolf.com/betting-tools/matchups"
 MAX_AGE_HOURS = 6  # ignore scraped files older than this
@@ -48,20 +50,60 @@ MAX_AGE_HOURS = 6  # ignore scraped files older than this
 SCRAPED_BOOKS = {"betonline", "pinnacle", "betcris"}
 
 
-def _find_scraped_json(market: str) -> Path | None:
-    """Find the most recent scraped JSON file for the given market."""
+def _fetch_scraped_json(market: str) -> dict | None:
+    """Fetch scraped odds JSON from GitHub, falling back to local paths.
+
+    Returns parsed JSON dict or None if unavailable/stale.
+    """
     filename = f"{market}_latest.json"
+
+    # 1. Try GitHub API (always has the latest CI-committed data)
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_DATA_PATH}/{filename}?ref={GITHUB_BRANCH}"
+    try:
+        headers = {"Accept": "application/vnd.github.raw+json"}
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        # Check freshness via last_updated field
+        last_updated = data.get("last_updated", "")
+        if last_updated:
+            try:
+                ts = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+                age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                if age_hours > MAX_AGE_HOURS:
+                    logger.info(f"GitHub scraped odds stale ({age_hours:.1f}h old)")
+                else:
+                    logger.info(f"Fetched scraped odds from GitHub ({age_hours:.1f}h old, {len(data.get('match_list', []))} matchups)")
+                    return data
+            except ValueError:
+                # Can't parse timestamp, use it anyway
+                logger.info(f"Fetched scraped odds from GitHub (unknown age)")
+                return data
+        else:
+            logger.info(f"Fetched scraped odds from GitHub (no timestamp)")
+            return data
+    except Exception as e:
+        logger.warning(f"GitHub fetch failed for {filename}: {e}")
+
+    # 2. Fall back to local paths
     for base in SCRAPED_PATHS:
         path = base / filename
         if path.exists():
-            # Check freshness
             mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
             age_hours = (datetime.now(timezone.utc) - mtime).total_seconds() / 3600
             if age_hours > MAX_AGE_HOURS:
-                logger.info(f"Scraped odds stale ({age_hours:.1f}h old): {path}")
+                logger.info(f"Local scraped odds stale ({age_hours:.1f}h old): {path}")
                 continue
-            logger.info(f"Found scraped odds ({age_hours:.1f}h old): {path}")
-            return path
+            logger.info(f"Found local scraped odds ({age_hours:.1f}h old): {path}")
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to parse {path}: {e}")
+
     return None
 
 
@@ -158,18 +200,16 @@ def load_matchup_odds(
     scraped_df = pd.DataFrame()
     api_df = pd.DataFrame()
 
-    # 1. Load scraped odds for our books
+    # 1. Load scraped odds for our books (GitHub -> local fallback)
     if not force_api:
-        path = _find_scraped_json(market)
-        if path:
+        scraped_data = _fetch_scraped_json(market)
+        if scraped_data:
             try:
-                with open(path) as f:
-                    data = json.load(f)
-                scraped_df = _parse_datagolf_json(data)
+                scraped_df = _parse_datagolf_json(scraped_data)
                 scraped_df["source"] = "scraped"
-                logger.info(f"Scraped: {len(scraped_df)} lines from {path.name}")
+                logger.info(f"Scraped: {len(scraped_df)} lines")
             except Exception as e:
-                logger.warning(f"Failed to parse {path}: {e}")
+                logger.warning(f"Failed to parse scraped data: {e}")
 
     # 2. Always fetch DataGolf API (for non-scraped books + DG model odds)
     if api_key:
