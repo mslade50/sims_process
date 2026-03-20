@@ -42,6 +42,17 @@ matplotlib.use("Agg")  # Non-interactive backend for PDF generation
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
+def _resolve_csv(filename):
+    """Find a CSV in root first, then dashboard_data/ fallback."""
+    if os.path.exists(filename):
+        return filename
+    alt = os.path.join("dashboard_data", filename)
+    if os.path.exists(alt):
+        print(f"  [resolve] {filename} not in root, using {alt}")
+        return alt
+    return filename  # let caller handle FileNotFoundError
+
+
 from sim_inputs import (
     tourney, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
@@ -232,7 +243,7 @@ def _merge_r1(df):
     R1 merge: load model_predictions_r1.csv (created pre-event).
     Source: live_stats.py lines 148-162
     """
-    preds = pd.read_csv("model_predictions_r1.csv")
+    preds = pd.read_csv(_resolve_csv("model_predictions_r1.csv"))
     preds = clean_names(preds)
     preds["pred"] = preds["my_pred"]
 
@@ -253,7 +264,7 @@ def _merge_r2(df):
     Source: live_stats_r2.py lines 65-95
     """
     # --- Load R1 model for stat averaging ---
-    r1_model = pd.read_csv("r1_live_model.csv")
+    r1_model = pd.read_csv(_resolve_csv("r1_live_model.csv"))
     r1_model = clean_names(r1_model)
     r1_stats = ["great_shots", "poor_shots", "sg_app", "sg_arg", "sg_ott", "sg_putt"]
     r1_keep = ["player_name"] + r1_stats
@@ -273,7 +284,7 @@ def _merge_r2(df):
         df["sg_app_delta"] = df["sg_app"] - df["sg_app_r1"]
 
     # --- Load R2 predictions (created by prior round's weather step) ---
-    r2_preds = pd.read_csv("model_predictions_r2.csv")
+    r2_preds = pd.read_csv(_resolve_csv("model_predictions_r2.csv"))
     r2_preds = clean_names(r2_preds)
     r2_merge = ["player_name", "r2_teetime", "wind_adj2", "dew_adj2", "my_pred2"]
     r2_merge = [c for c in r2_merge if c in r2_preds.columns]
@@ -297,10 +308,10 @@ def _merge_r3r4(df, round_num):
     """
     prior_round = round_num - 1
     prior_file = f"r{prior_round}_live_model.csv"
-    pred_file = f"model_predictions_r{round_num}.csv"
+    pred_file = _resolve_csv(f"model_predictions_r{round_num}.csv")
 
     # --- Prior round model (for carried-forward skill + adjustments) ---
-    prior = pd.read_csv(prior_file)
+    prior = pd.read_csv(_resolve_csv(prior_file))
     prior = clean_names(prior)
     prior_cols = [
         "player_name", f"updated_pred_r{round_num}",
@@ -713,7 +724,7 @@ def create_next_round_predictions(round_num):
     print(f"{'='*60}")
 
     # --- Load skill from live model ---
-    live_model = pd.read_csv(f"r{round_num}_live_model.csv")
+    live_model = pd.read_csv(_resolve_csv(f"r{round_num}_live_model.csv"))
     live_model = clean_names(live_model)
 
     # Determine the skill column name

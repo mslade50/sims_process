@@ -2821,9 +2821,14 @@ def main():
     # ── Load predictions ─────────────────────────────────────────────────
     pred_file = f"model_predictions_r{sim_round}.csv"
     if not os.path.exists(pred_file):
-        raise FileNotFoundError(
-            f"{pred_file} not found. Run live_stats_engine.py first."
-        )
+        alt = os.path.join("dashboard_data", pred_file)
+        if os.path.exists(alt):
+            print(f"  [resolve] {pred_file} not in root, using {alt}")
+            pred_file = alt
+        else:
+            raise FileNotFoundError(
+                f"{pred_file} not found. Run live_stats_engine.py first."
+            )
 
     model_preds = pd.read_csv(pred_file)
     model_preds["player_name"] = (
