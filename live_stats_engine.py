@@ -171,6 +171,7 @@ _R2_COL_MAP = {
 _R3R4_COL_MAP = {
     "sg_ott_avg": "sg_ott_avg", "sg_putt_avg": "sg_putt_avg",
     "sg_app_avg": "sg_app_avg", "sg_arg_avg": "sg_arg_avg",
+    "avg_great_shots": "great_shots_avg",
 }
 
 COL_MAPS = {1: _R1_COL_MAP, 2: _R2_COL_MAP, 3: _R3R4_COL_MAP, 4: _R3R4_COL_MAP}
@@ -283,6 +284,10 @@ def _merge_r2(df):
     if "sg_app_r1" in df.columns and "sg_app" in df.columns:
         df["sg_app_delta"] = df["sg_app"] - df["sg_app_r1"]
 
+    # --- Average great_shots across R1 + R2 ---
+    if "great_shots_r1" in df.columns and "great_shots" in df.columns:
+        df["great_shots_avg"] = df[["great_shots", "great_shots_r1"]].mean(axis=1)
+
     # --- Load R2 predictions (created by prior round's weather step) ---
     r2_preds = pd.read_csv(_resolve_csv("model_predictions_r2.csv"))
     r2_preds = clean_names(r2_preds)
@@ -316,10 +321,19 @@ def _merge_r3r4(df, round_num):
     prior_cols = [
         "player_name", f"updated_pred_r{round_num}",
         "sg_app_avg", "sg_ott_avg", "sg_arg_avg", "sg_putt_avg",
+        "great_shots_avg",
         "tot_resid_adj", "tot_sg_adj",
     ]
     prior_cols = [c for c in prior_cols if c in prior.columns]
     df = df.merge(prior[prior_cols], on="player_name", how="left")
+
+    # --- great_shots_avg ---
+    # Loaded from prior round CSV (computed during R2 as avg of R1+R2).
+    # If not present (e.g., first time running with this feature), fall back
+    # to current round's great_shots.
+    if "great_shots_avg" not in df.columns or df["great_shots_avg"].isna().all():
+        if "great_shots" in df.columns:
+            df["great_shots_avg"] = df["great_shots"].fillna(0)
 
     # --- Current round predictions (wind/dew/teetime) ---
     if os.path.exists(pred_file):
@@ -591,7 +605,8 @@ def _totals_r3r4(df, round_num):
     so that Post = Pre + total_adjustment (consistent with R1/R2).
     """
     # This round's fresh SG adjustments
-    adj_cols = ["sg_ott_avg_adj", "sg_putt_avg_adj", "sg_app_avg_adj", "sg_arg_avg_adj"]
+    adj_cols = ["sg_ott_avg_adj", "sg_putt_avg_adj", "sg_app_avg_adj", "sg_arg_avg_adj",
+                "avg_great_shots_adj"]
     adj_cols = [c for c in adj_cols if c in df.columns]
     fresh_adj = df[adj_cols].sum(axis=1) if adj_cols else 0
 
@@ -1004,7 +1019,8 @@ def export_results(df, round_num):
         ]
     else:
         adj_cols = [f"{c}_adj_r{round_num}" for c in
-                    ["sg_ott_avg", "sg_putt_avg", "sg_app_avg", "sg_arg_avg"]]
+                    ["sg_ott_avg", "sg_putt_avg", "sg_app_avg", "sg_arg_avg",
+                     "avg_great_shots"]]
         next_pred = f"updated_pred_r{round_num + 1}" if round_num < 4 else "updated_pred_final"
         summary_cols = ["player_name"] + adj_cols + [f"updated_pred_r{round_num}", next_pred]
 
@@ -1125,6 +1141,7 @@ def _get_component_columns(df, round_num):
             ("sg_putt_avg_adj", "Avg Putt Adj"),
             ("sg_app_avg_adj", "Avg APP Adj"),
             ("sg_arg_avg_adj", "Avg ARG Adj"),
+            ("avg_great_shots_adj", "Avg Great Shots Adj"),
         ]
 
     # Only return columns that actually exist in the DataFrame

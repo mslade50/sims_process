@@ -255,6 +255,7 @@ coefficients_r3 = {
     'sg_putt_avg': -0.14,
     'sg_app_avg': -0.02,
     'sg_arg_avg': -0.3,
+    'avg_great_shots': 0.106,
 }
 
 coefficients_r3_mid = {
@@ -262,6 +263,7 @@ coefficients_r3_mid = {
     'sg_putt_avg': -0.02,
     'sg_app_avg': -0.07,
     'sg_arg_avg': -0.13,
+    'avg_great_shots': -0.013,
 }
 
 coefficients_r3_high = {
@@ -269,6 +271,7 @@ coefficients_r3_high = {
     'sg_putt_avg': -0.00,
     'sg_app_avg': 0.05,
     'sg_arg_avg': -0.01,
+    'avg_great_shots': 0.020,
 }
 
 pressure_curves_r3 = {
