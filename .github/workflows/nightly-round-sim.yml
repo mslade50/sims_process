@@ -47,3 +47,30 @@ jobs:
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python nightly_round_sim.py
+
+    - name: Detect sim cache for Actions cache
+      id: cache-key
+      run: |
+        # Find the most recently written sim cache parquet
+        CACHE_FILE=$(find . -name "sim_cache_r*.parquet" -newer /tmp -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2 || true)
+        if [ -n "$CACHE_FILE" ]; then
+          # Extract tourney dir and round from path like ./tourney_name/sim_cache_r2.parquet
+          TOURNEY_DIR=$(dirname "$CACHE_FILE")
+          ROUND=$(echo "$CACHE_FILE" | grep -oP 'r\d+')
+          echo "cache_key=sim-cache-${TOURNEY_DIR##*/}-${ROUND}" >> $GITHUB_OUTPUT
+          echo "cache_path=${TOURNEY_DIR}" >> $GITHUB_OUTPUT
+          echo "Found cache: $CACHE_FILE (key=sim-cache-${TOURNEY_DIR##*/}-${ROUND})"
+        else
+          echo "cache_key=" >> $GITHUB_OUTPUT
+          echo "cache_path=" >> $GITHUB_OUTPUT
+          echo "No sim cache found"
+        fi
+
+    - name: Save sim cache to Actions cache
+      if: steps.cache-key.outputs.cache_key != ''
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ steps.cache-key.outputs.cache_path }}/sim_cache_r*.parquet
+          ${{ steps.cache-key.outputs.cache_path }}/sim_cache_r*_meta.json
+        key: ${{ steps.cache-key.outputs.cache_key }}

@@ -2041,8 +2041,13 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
 # Step 3b: Price Score Lines vs FanDuel Market Odds
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_score_lines():
-    """Load scraped round score O/U lines (FanDuel etc.) via odds_loader paths."""
+def load_score_lines(round_num=None):
+    """Load scraped round score O/U lines (FanDuel etc.) via odds_loader paths.
+
+    Args:
+        round_num: If provided, filter lines to only this round number.
+                   Prevents stale lines from a completed round generating fake edges.
+    """
     import json
     from pathlib import Path
 
@@ -2057,8 +2062,11 @@ def load_score_lines():
             with open(path) as f:
                 data = json.load(f)
             lines = data.get("lines", [])
+            if round_num is not None:
+                lines = [l for l in lines if l.get("round") == round_num]
             if lines:
-                print(f"  Loaded {len(lines)} score lines from {path.name}")
+                print(f"  Loaded {len(lines)} score lines from {path.name}"
+                      + (f" (filtered to R{round_num})" if round_num else ""))
                 return lines
     return []
 
@@ -2874,6 +2882,182 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Reprice: dedup + store + alert helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
+    """Return only rows from combined that aren't already in the Round Matchups sheet.
+
+    Dedup key: (player_1, player_2, bookmaker, p1_odds, p2_odds) for this event+round.
+    """
+    if combined is None or combined.empty:
+        return combined
+
+    from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
+    existing = ws.get_all_records()
+
+    # Build set of existing keys for this event+round
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
+            key = (
+                str(row.get("player_1", "")).lower().strip(),
+                str(row.get("player_2", "")).lower().strip(),
+                str(row.get("bookmaker", "")).lower().strip(),
+                str(row.get("p1_odds", "")),
+                str(row.get("p2_odds", "")),
+            )
+            existing_keys.add(key)
+
+    if not existing_keys:
+        return combined
+
+    # Filter combined to new rows only
+    mask = []
+    for _, r in combined.iterrows():
+        key = (
+            str(r.get("Player 1", "")).lower().strip(),
+            str(r.get("Player 2", "")).lower().strip(),
+            str(r.get("Bookmaker", "")).lower().strip(),
+            str(r.get("P1 Odds", "")),
+            str(r.get("P2 Odds", "")),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = combined[mask].copy()
+    print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new (deduped {len(combined) - len(new_rows)})")
+    return new_rows
+
+
+def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
+    """Return only score edge rows not already in the Score Edges sheet.
+
+    Dedup key: (player, line, book, mkt_under, mkt_over) for this event+round.
+    """
+    if score_edges is None or score_edges.empty:
+        return score_edges
+
+    from sheets_storage import TAB_SCORE_EDGES, SCORE_EDGES_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
+    existing = ws.get_all_records()
+
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
+            key = (
+                str(row.get("player", "")).lower().strip(),
+                str(row.get("line", "")),
+                str(row.get("book", "")).lower().strip(),
+                str(row.get("mkt_under", "")),
+                str(row.get("mkt_over", "")),
+            )
+            existing_keys.add(key)
+
+    if not existing_keys:
+        return score_edges
+
+    mask = []
+    for _, r in score_edges.iterrows():
+        key = (
+            str(r.get("Player", "")).lower().strip(),
+            str(r.get("Line", "")),
+            str(r.get("Book", "")).lower().strip(),
+            str(r.get("Mkt_Under", "")),
+            str(r.get("Mkt_Over", "")),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = score_edges[mask].copy()
+    print(f"  [reprice] Score edges: {len(score_edges)} total, {len(new_rows)} new (deduped {len(score_edges) - len(new_rows)})")
+    return new_rows
+
+
+def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
+    """Format and send Telegram alert for new/moved reprice bets."""
+    lines = []
+    title = f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>"
+    lines.append(title)
+    lines.append("")
+
+    if new_mu is not None and not new_mu.empty:
+        lines.append(f"<b>New Matchups ({len(new_mu)}):</b>")
+        for _, r in new_mu.head(15).iterrows():
+            bet = r.get("bet_on", "?")
+            edge = r.get("edge_on", "?")
+            book = r.get("Bookmaker", "?")
+            opp = r.get("Player 1", "") if str(r.get("bet_on", "")).lower() != str(r.get("Player 1", "")).lower() else r.get("Player 2", "")
+            lines.append(f"  {bet} vs {opp} ({book}) edge={edge}%")
+        if len(new_mu) > 15:
+            lines.append(f"  ... +{len(new_mu) - 15} more")
+        lines.append("")
+
+    if new_se is not None and not new_se.empty:
+        lines.append(f"<b>New Score Edges ({len(new_se)}):</b>")
+        for _, r in new_se.head(10).iterrows():
+            player = r.get("Player", "?")
+            line = r.get("Line", "?")
+            side = r.get("Best_Side", "?")
+            edge = r.get("Best_Edge", "?")
+            book = r.get("Book", "?")
+            lines.append(f"  {player} {side} {line} ({book}) edge={edge}%")
+        if len(new_se) > 10:
+            lines.append(f"  ... +{len(new_se) - 10} more")
+        lines.append("")
+
+    if (new_mu is None or new_mu.empty) and (new_se is None or new_se.empty):
+        lines.append("No new or moved bets found.")
+
+    _send_telegram("\n".join(lines))
+
+
+def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, event_id):
+    """Orchestrate dedup against Sheets, store new rows, send Telegram."""
+    from sheets_storage import (
+        get_spreadsheet,
+        store_round_matchups,
+        store_score_edges,
+        load_dg_id_lookup,
+    )
+
+    spreadsheet = get_spreadsheet()
+
+    # Dedup
+    new_mu = _dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
+    new_se = _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round)
+
+    # Build dg_id lookup
+    try:
+        dg_id_lookup = load_dg_id_lookup(tourney_name, name_replacements)
+    except Exception:
+        dg_id_lookup = {}
+
+    # Store only new rows
+    if new_mu is not None and not new_mu.empty:
+        store_round_matchups(
+            new_mu, sim_round, tourney_name, event_id,
+            dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
+        )
+    else:
+        print("  [reprice] No new matchup rows to store.")
+
+    if new_se is not None and not new_se.empty:
+        store_score_edges(
+            new_se, sim_round, tourney_name, event_id,
+            spreadsheet=spreadsheet,
+        )
+    else:
+        print("  [reprice] No new score edge rows to store.")
+
+    # Alert
+    _send_reprice_alert(new_mu, new_se, sim_round, tourney_name)
+
+    n_mu = len(new_mu) if new_mu is not None and not new_mu.empty else 0
+    n_se = len(new_se) if new_se is not None and not new_se.empty else 0
+    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges. Telegram sent.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2904,7 +3088,13 @@ def main():
                         help="Run simulation only, cache score arrays to parquet, skip pricing")
     parser.add_argument("--price-only", action="store_true",
                         help="Load cached sim arrays, re-price matchups + score lines with fresh odds")
+    parser.add_argument("--reprice", action="store_true",
+                        help="Like --price-only but dedup against Sheets and Telegram only new/changed bets")
     args = parser.parse_args()
+
+    # --reprice implies --price-only
+    if args.reprice:
+        args.price_only = True
 
     if args.sim_only and args.price_only:
         parser.error("Cannot use --sim-only and --price-only together")
@@ -2989,7 +3179,14 @@ def main():
     # ── Step 1: Simulate scores (or load from cache) ────────────────────
     if args.price_only:
         print(f"\n  Loading cached sim arrays (--price-only)...")
-        sim_dict, cache_meta = load_sim_cache(sim_round)
+        try:
+            sim_dict, cache_meta = load_sim_cache(sim_round)
+        except FileNotFoundError as e:
+            if args.reprice:
+                print(f"  No sim cache for R{sim_round} — nothing to reprice.")
+                _send_telegram(f"Reprice: no sim cache for R{sim_round} {tourney}. Run nightly sim first.")
+                return
+            raise
         # Restore pred_lookup from cache if available
         if cache_meta.get("pred_lookup"):
             pred_lookup = {k: v for k, v in cache_meta["pred_lookup"].items()}
@@ -3069,11 +3266,24 @@ def main():
     # ── Step 3b: Price score lines vs market ─────────────────────────────
     score_edges = pd.DataFrame()
     try:
-        market_lines = load_score_lines()
+        market_lines = load_score_lines(round_num=sim_round)
         if market_lines:
             score_edges = price_score_lines(score_card, market_lines)
     except Exception as e:
         print(f"  Warning: Score line pricing failed: {e}")
+
+    # ── Reprice early exit ────────────────────────────────────────────────
+    if args.reprice:
+        print(f"\n  [reprice] Dedup + store + alert...")
+        try:
+            _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id)
+        except Exception as e:
+            print(f"  [reprice] Warning: {e}")
+            import traceback; traceback.print_exc()
+        print(f"\n{'='*60}")
+        print(f"  Reprice complete.")
+        print(f"{'='*60}")
+        return
 
     # ── Step 4: Tournament Simulation (NEW) ──────────────────────────────
     outrights_combined = pd.DataFrame()
