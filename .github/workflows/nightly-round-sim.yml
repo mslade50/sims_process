@@ -39,12 +39,9 @@ jobs:
         done
         ls -la permanent_data/scraped_odds/ || true
 
-    - name: Run nightly round sim backup
+    - name: Run sim-only (cache arrays for reprice)
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
-        EMAIL_USER: ${{ secrets.EMAIL_USER }}
-        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python nightly_round_sim.py
 

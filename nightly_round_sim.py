@@ -256,34 +256,30 @@ def main():
     # Step 5: Run round_sim.py (simulates matchups, stores to Sheets)
     # ------------------------------------------------------------------
     success = _run_subprocess(
-        [python, "round_sim.py"],
-        "round_sim.py",
+        [python, "round_sim.py", "--sim-only"],
+        "round_sim.py --sim-only",
     )
     if not success:
         print("  round_sim.py failed.")
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Step 6: Verify bets were stored
+    # Step 6: Verify sim cache was created
     # ------------------------------------------------------------------
-    print("\n  Verifying bet storage...")
-    time.sleep(5)  # brief pause for Sheets propagation
-
-    spreadsheet = get_spreadsheet()
-    stored = _count_round_bets(spreadsheet, event_id, sim_round)
-
-    if stored == 0:
-        print(f"  WARNING: No R{sim_round} bets found after running pipeline.")
-        print("  Matchup odds may not be available yet from DataGolf.")
+    from sheet_config import load_config as _lc
+    _tourney = _lc()["tourney"]
+    cache_path = os.path.join(project_root, _tourney, f"sim_cache_r{sim_round}.parquet")
+    if os.path.exists(cache_path):
+        print(f"\n  Verified: sim cache created at {cache_path}")
+    else:
+        print(f"  WARNING: sim cache not found at {cache_path}")
         sys.exit(1)
-
-    print(f"  Verified: {stored} R{sim_round} matchup bets stored.")
 
     # ------------------------------------------------------------------
     # Done
     # ------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print(f"  ROUND SIM BACKUP COMPLETE — R{sim_round}")
+    print(f"  SIM CACHE COMPLETE — R{sim_round}")
     print("=" * 60 + "\n")
     sys.exit(0)
 
