@@ -12,6 +12,8 @@ NEW (v2): Also simulates remaining rounds through R4 for outright/finish positio
 Usage:
     python round_sim.py                        (reads config from Google Sheet)
     python round_sim.py --cli --sim-round 2 --expected-avg 72.2
+    python round_sim.py --sim-only             (sim + cache arrays, no pricing)
+    python round_sim.py --price-only           (load cached arrays, re-price with fresh odds)
 
 Outputs (saved to {tourney}/ folder):
     round_{N}_sim_{timestamp}.xlsx    — Matchup tabs + Score Card tab + Outrights tabs
@@ -1508,6 +1510,64 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     return sim_dict
 
 
+def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup):
+    """Save sim_dict to parquet + JSON sidecar for --price-only re-use.
+
+    Stores {tourney}/sim_cache_r{N}.parquet (players × sims) and
+    {tourney}/sim_cache_r{N}_meta.json (round, expected_avg, timestamp, pred_lookup).
+    """
+    import json as _json
+    out_dir = f"./{tourney}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Build DataFrame: rows=players, columns=sim iterations
+    players = sorted(sim_dict.keys())
+    data = np.column_stack([sim_dict[p] for p in players])  # (num_sims, n_players)
+    df = pd.DataFrame(data.T, index=players)  # (n_players, num_sims)
+    df.index.name = "player_name"
+
+    parquet_path = os.path.join(out_dir, f"sim_cache_r{sim_round}.parquet")
+    df.to_parquet(parquet_path)
+
+    meta = {
+        "sim_round": sim_round,
+        "expected_avg": expected_avg,
+        "num_sims": len(next(iter(sim_dict.values()))),
+        "num_players": len(players),
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "pred_lookup": {k: round(v, 4) for k, v in pred_lookup.items()},
+    }
+    meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
+    with open(meta_path, "w") as f:
+        _json.dump(meta, f, indent=2)
+
+    print(f"  Saved sim cache: {parquet_path} ({len(players)} players × {meta['num_sims']:,} sims)")
+    return parquet_path
+
+
+def load_sim_cache(sim_round):
+    """Load cached sim_dict + metadata from parquet. Returns (sim_dict, meta) or raises FileNotFoundError."""
+    import json as _json
+    out_dir = f"./{tourney}"
+    parquet_path = os.path.join(out_dir, f"sim_cache_r{sim_round}.parquet")
+    meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
+
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(f"No sim cache found at {parquet_path}. Run --sim-only first.")
+
+    df = pd.read_parquet(parquet_path)
+    sim_dict = {player: df.loc[player].values for player in df.index}
+
+    meta = {}
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = _json.load(f)
+
+    print(f"  Loaded sim cache: {parquet_path} ({len(sim_dict)} players × {len(next(iter(sim_dict.values()))):,} sims)")
+    print(f"  Cache saved at: {meta.get('saved_at', 'unknown')}")
+    return sim_dict, meta
+
+
 def print_catfirst_comparison(sim_old, sim_cf, model_preds, pred_col, expected_avg):
     """Print a console comparison table between standard and category-first sims."""
     common = sorted(set(sim_old.keys()) & set(sim_cf.keys()))
@@ -2840,7 +2900,14 @@ def main():
                         help="Skip email sending and bet storage")
     parser.add_argument("--legacy", action="store_true",
                         help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
+    parser.add_argument("--sim-only", action="store_true",
+                        help="Run simulation only, cache score arrays to parquet, skip pricing")
+    parser.add_argument("--price-only", action="store_true",
+                        help="Load cached sim arrays, re-price matchups + score lines with fresh odds")
     args = parser.parse_args()
+
+    if args.sim_only and args.price_only:
+        parser.error("Cannot use --sim-only and --price-only together")
 
     # ── Config ───────────────────────────────────────────────────────────
     sheet_config = None
@@ -2894,13 +2961,15 @@ def main():
     pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
     sample_lookup = load_sample_data()
 
+    _mode = "PRICE-ONLY" if args.price_only else ("SIM-ONLY" if args.sim_only else "FULL")
     print(f"\n{'='*60}")
-    print(f"  ROUND {sim_round} SIMULATION - {tourney}")
+    print(f"  ROUND {sim_round} {'SIMULATION' if not args.price_only else 'RE-PRICING'} - {tourney} [{_mode}]")
     print(f"{'='*60}")
     print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
     print(f"  Expected avg: {expected_avg}")
-    print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
-    print(f"  Simulations:  {NUM_SIMULATIONS:,}")
+    if not args.price_only:
+        print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
+        print(f"  Simulations:  {NUM_SIMULATIONS:,}")
     print(f"  Pred column:  {pred_col}")
 
     # ── Build weather lookup from model predictions ─────────────────────
@@ -2917,21 +2986,38 @@ def main():
     else:
         print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
 
-    # ── Step 1: Simulate scores ──────────────────────────────────────────
-    print(f"\n  Simulating R{sim_round} scores...")
-
-    # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
-    sim_dict_cf = simulate_round_scores_catfirst(
-        model_preds, sim_round, expected_avg, _wx_lookup
-    )
-
-    if args.legacy:
-        sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
-        print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
-        print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
-        sim_dict = sim_dict_legacy
+    # ── Step 1: Simulate scores (or load from cache) ────────────────────
+    if args.price_only:
+        print(f"\n  Loading cached sim arrays (--price-only)...")
+        sim_dict, cache_meta = load_sim_cache(sim_round)
+        # Restore pred_lookup from cache if available
+        if cache_meta.get("pred_lookup"):
+            pred_lookup = {k: v for k, v in cache_meta["pred_lookup"].items()}
+            print(f"  Restored pred_lookup from cache ({len(pred_lookup)} players)")
     else:
-        sim_dict = sim_dict_cf
+        print(f"\n  Simulating R{sim_round} scores...")
+
+        # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
+        sim_dict_cf = simulate_round_scores_catfirst(
+            model_preds, sim_round, expected_avg, _wx_lookup
+        )
+
+        if args.legacy:
+            sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
+            print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
+            print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
+            sim_dict = sim_dict_legacy
+        else:
+            sim_dict = sim_dict_cf
+
+        # Always cache sim arrays for future --price-only runs
+        save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup)
+
+    if args.sim_only:
+        print(f"\n{'='*60}")
+        print(f"  Sim complete (--sim-only). Cache saved for --price-only.")
+        print(f"{'='*60}")
+        return
 
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
@@ -3000,7 +3086,7 @@ def main():
     win_positive_top10 = pd.DataFrame()
     win_negative_top10 = pd.DataFrame()
 
-    if not args.skip_tournament_sim and round_num >= 1:
+    if not args.skip_tournament_sim and not args.price_only and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
         try:
             # Load tournament config from sheet
