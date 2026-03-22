@@ -1,9 +1,9 @@
 name: Weekly Data Cleanup
 
-# Runs every Sunday at midnight UTC (7pm EST Saturday / 8pm EDT Saturday)
+# Runs Sunday night / Monday morning after tournament is complete
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Every Sunday at 00:00 UTC
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC = Sunday 1:00 AM EST
   
   # Also allow manual trigger for testing
   workflow_dispatch:

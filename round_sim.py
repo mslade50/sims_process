@@ -1528,7 +1528,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     return sim_dict
 
 
-def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup):
+def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=None):
     """Save sim_dict to parquet + JSON sidecar for --price-only re-use.
 
     Stores {tourney}/sim_cache_r{N}.parquet (players × sims) and
@@ -1554,6 +1554,7 @@ def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup):
         "num_players": len(players),
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "pred_lookup": {k: round(v, 4) for k, v in pred_lookup.items()},
+        "wx_lookup": {k: round(v, 6) for k, v in wx_lookup.items()} if wx_lookup else {},
     }
     meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
     with open(meta_path, "w") as f:
@@ -3163,53 +3164,13 @@ def main():
         expected_avg = args.expected_avg or PAR
         round_num = sim_round - 1
 
-    # ── Load predictions ─────────────────────────────────────────────────
-    pred_file = f"model_predictions_r{sim_round}.csv"
-    if not os.path.exists(pred_file):
-        alt = os.path.join("dashboard_data", pred_file)
-        if os.path.exists(alt):
-            print(f"  [resolve] {pred_file} not in root, using {alt}")
-            pred_file = alt
-        else:
-            raise FileNotFoundError(
-                f"{pred_file} not found. Run live_stats_engine.py first."
-            )
-
-    model_preds = pd.read_csv(pred_file)
-    model_preds["player_name"] = (
-        model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
-    )
-
-    pred_col = find_pred_col(model_preds, sim_round)
-    pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
+    # ── Load predictions (or restore from cache in price-only mode) ─────
+    model_preds = None
+    pred_lookup = {}
+    _wx_lookup = {}
     sample_lookup = load_sample_data()
 
-    _mode = "PRICE-ONLY" if args.price_only else ("SIM-ONLY" if args.sim_only else "FULL")
-    print(f"\n{'='*60}")
-    print(f"  ROUND {sim_round} {'SIMULATION' if not args.price_only else 'RE-PRICING'} - {tourney} [{_mode}]")
-    print(f"{'='*60}")
-    print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
-    print(f"  Expected avg: {expected_avg}")
-    if not args.price_only:
-        print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
-        print(f"  Simulations:  {NUM_SIMULATIONS:,}")
-    print(f"  Pred column:  {pred_col}")
-
-    # ── Build weather lookup from model predictions ─────────────────────
-    _wind_col = f"wind_adj{sim_round}"
-    _dew_col = f"dew_adj{sim_round}"
-    _wx_lookup = {}
-    if _wind_col in model_preds.columns and _dew_col in model_preds.columns:
-        _avg_wind = model_preds[_wind_col].mean()
-        _wx_lookup = dict(zip(
-            model_preds["player_name"],
-            _avg_wind - model_preds[_wind_col] + model_preds[_dew_col],
-        ))
-        print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
-    else:
-        print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
-
-    # ── Step 1: Simulate scores (or load from cache) ────────────────────
+    # In --price-only / --reprice, try cache first so we don't need the CSV
     if args.price_only:
         print(f"\n  Loading cached sim arrays (--price-only)...")
         try:
@@ -3224,6 +3185,65 @@ def main():
         if cache_meta.get("pred_lookup"):
             pred_lookup = {k: v for k, v in cache_meta["pred_lookup"].items()}
             print(f"  Restored pred_lookup from cache ({len(pred_lookup)} players)")
+        if cache_meta.get("wx_lookup"):
+            _wx_lookup = {k: v for k, v in cache_meta["wx_lookup"].items()}
+            print(f"  Restored wx_lookup from cache ({len(_wx_lookup)} players)")
+
+    # Load model_predictions CSV (required for sim, optional for price-only)
+    pred_file = f"model_predictions_r{sim_round}.csv"
+    _pred_file_found = False
+    if not os.path.exists(pred_file):
+        alt = os.path.join("dashboard_data", pred_file)
+        if os.path.exists(alt):
+            print(f"  [resolve] {pred_file} not in root, using {alt}")
+            pred_file = alt
+            _pred_file_found = True
+    else:
+        _pred_file_found = True
+
+    if _pred_file_found:
+        model_preds = pd.read_csv(pred_file)
+        model_preds["player_name"] = (
+            model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
+        )
+        pred_col = find_pred_col(model_preds, sim_round)
+        pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
+
+        # Build weather lookup from model predictions
+        _wind_col = f"wind_adj{sim_round}"
+        _dew_col = f"dew_adj{sim_round}"
+        if _wind_col in model_preds.columns and _dew_col in model_preds.columns:
+            _avg_wind = model_preds[_wind_col].mean()
+            _wx_lookup = dict(zip(
+                model_preds["player_name"],
+                _avg_wind - model_preds[_wind_col] + model_preds[_dew_col],
+            ))
+            print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
+        else:
+            print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
+    elif not args.price_only:
+        raise FileNotFoundError(
+            f"{pred_file} not found. Run live_stats_engine.py first."
+        )
+    else:
+        print(f"  {pred_file} not found — using cached pred_lookup + wx_lookup")
+
+    _mode = "PRICE-ONLY" if args.price_only else ("SIM-ONLY" if args.sim_only else "FULL")
+    print(f"\n{'='*60}")
+    print(f"  ROUND {sim_round} {'SIMULATION' if not args.price_only else 'RE-PRICING'} - {tourney} [{_mode}]")
+    print(f"{'='*60}")
+    if model_preds is not None:
+        print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
+    else:
+        print(f"  Predictions:  from cache ({len(pred_lookup)} players)")
+    print(f"  Expected avg: {expected_avg}")
+    if not args.price_only:
+        print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
+        print(f"  Simulations:  {NUM_SIMULATIONS:,}")
+
+    # ── Step 1: Simulate scores (or already loaded from cache above) ───
+    if args.price_only:
+        pass  # sim_dict already loaded above
     else:
         print(f"\n  Simulating R{sim_round} scores...")
 
@@ -3241,7 +3261,7 @@ def main():
             sim_dict = sim_dict_cf
 
         # Always cache sim arrays for future --price-only runs
-        save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup)
+        save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)
 
     if args.sim_only:
         print(f"\n{'='*60}")
