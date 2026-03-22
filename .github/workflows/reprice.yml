@@ -80,7 +80,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
         mkdir -p permanent_data/scraped_odds
-        for MARKET in round_matchups round_scores; do
+        for MARKET in round_matchups round_scores kalshi_outrights; do
           curl -sL -H "Authorization: token $GH_TOKEN" \
             "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
             -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
