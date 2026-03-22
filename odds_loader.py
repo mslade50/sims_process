@@ -223,8 +223,16 @@ def load_matchup_odds(
     if not scraped_df.empty and not api_df.empty:
         # Keep scraped lines for books we scrape
         scraped_lines = scraped_df[scraped_df["Bookmaker"].isin(SCRAPED_BOOKS)]
-        # Keep API lines for books we DON'T scrape
-        api_other = api_df[~api_df["Bookmaker"].isin(SCRAPED_BOOKS)]
+        # For scraped books missing from scraped data, fall back to API
+        scraped_books_present = set(scraped_lines["Bookmaker"].unique())
+        missing_scraped = SCRAPED_BOOKS - scraped_books_present
+        # Keep API lines for books we DON'T scrape + any scraped books that are missing
+        api_other = api_df[
+            (~api_df["Bookmaker"].isin(SCRAPED_BOOKS)) |
+            (api_df["Bookmaker"].isin(missing_scraped))
+        ]
+        if missing_scraped:
+            logger.info(f"Scraped data missing {missing_scraped} — falling back to API for those")
 
         # Also grab DG model odds from API for matchups the scraper found
         # (our scraped JSON won't have datagolf model odds)
