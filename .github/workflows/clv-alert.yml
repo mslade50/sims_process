@@ -1,0 +1,50 @@
+name: Morning CLV Alert
+
+on:
+  schedule:
+    # 6:30 AM EST = 11:30 UTC
+    # Fri morning (R1 bets), Sat morning (R2 bets), Sun morning (R3 bets)
+    - cron: '30 11 * * 5'   # Friday
+    - cron: '30 11 * * 6'   # Saturday
+    - cron: '30 11 * * 0'   # Sunday
+
+  workflow_dispatch:
+
+jobs:
+  clv:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz
+
+    - name: Fetch scraped odds for closing lines
+      env:
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+      run: |
+        mkdir -p permanent_data/scraped_odds
+        for MARKET in round_matchups; do
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
+            -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
+        done
+        echo "Fetched odds files:"
+        ls -la permanent_data/scraped_odds/ || true
+
+    - name: Run CLV alert
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python clv_alert.py
