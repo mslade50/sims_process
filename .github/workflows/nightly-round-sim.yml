@@ -25,7 +25,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz patsy statsmodels scikit-learn matplotlib
 
     - name: Fetch scraped odds from golf_scraping repo
       env:
