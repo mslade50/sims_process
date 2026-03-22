@@ -115,9 +115,14 @@ def main():
     # ------------------------------------------------------------------
     pred_file = f"model_predictions_r{sim_round}.csv"
     pred_path = os.path.join(project_root, pred_file)
+    alt_path = os.path.join(project_root, "dashboard_data", pred_file)
 
     if os.path.exists(pred_path):
         print(f"\n  {pred_file} already exists, skipping live_stats_engine.py")
+    elif os.path.exists(alt_path):
+        import shutil
+        shutil.copy2(alt_path, pred_path)
+        print(f"\n  {pred_file} found in dashboard_data/, copied to root. Skipping live_stats_engine.py")
     else:
         success = _run_subprocess(
             [python, "live_stats_engine.py"],
