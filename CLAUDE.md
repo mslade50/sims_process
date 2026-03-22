@@ -8,6 +8,7 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
 **Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
 **Live (R1-R4)**: Update Google Sheet (`round_config` tab) → `live_stats_engine.py` → `round_sim.py` (round matchups + score cards)
+**Reprice (automated, triggered by scraper)**: `nightly-round-sim.yml` (sim + cache) → `reprice.yml` (load cache + fresh odds → dedup + store + Telegram alert)
 **Post-event (Monday, automated)**: `monday_grading.py` → `grade_bets.py` → `sg_diagnostic.py` → `push_dashboard_data.py`
 **Deploy dashboard (manual)**: `push_dashboard_data.py` → triggers Render deploy. Pipeline scripts no longer auto-push.
 
@@ -91,6 +92,9 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - **Bayesian wind blending**: Forecast wind arrays are blended with a climatological prior (monthly hourly avg from Open-Meteo archive, 2019-2025). Climo weight = `lead_days / 12`, clamped [5%, 50%]. Round dates are Thu–Sun of current week via `get_round_dates()`. Applied in `new_sim.py` and `live_stats_engine.py`. Functions in `api_utils.py`.
 - **R1 residual cap**: Capped at 0.2 if raw residual is negative; hard cap at 0.5 regardless.
 - **Tee time parsing**: Multiple formats in the wild (`%Y-%m-%d %H:%M`, `%I:%M%p`, `%m/%d/%Y %H:%M`). New formats cause `ValueError`.
+- **Scraped odds loading**: `odds_loader.py`, `price_kalshi_outrights()`, and `load_score_lines()` all fetch from `mslade50/golf_scraping` GitHub API first, fall back to `permanent_data/scraped_odds/` local files. Any new scraped odds loader must follow this pattern — local-only paths break on machines without the scraping repo cloned.
+- **Kalshi bid=0 lines are phantom**: Kalshi markets with `bid=0` have no real liquidity. These are filtered out in `price_kalshi_outrights()`. Without this filter, 1-cent ask prices generate fake 30%+ edges.
+- **Nightly sim cache path**: `actions/cache` uses the path as part of cache identity. The save path must exactly match the restore path (e.g., `valspar/` not `./valspar/`).
 
 ## Bet Storage Architecture
 
