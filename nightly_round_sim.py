@@ -124,29 +124,26 @@ def main():
         print("  MODE: DRY RUN")
 
     # ------------------------------------------------------------------
-    # Step 1: Auto-detect completed round from DataGolf
+    # Step 1: Detect completed round from Sheet config
     # ------------------------------------------------------------------
-    print("\n  Auto-detecting completed round from DataGolf...")
+    print("\n  Reading round from Sheet config...")
     try:
-        api_key = os.getenv("DATAGOLF_API_KEY")
-        if not api_key:
-            print("  ERROR: DATAGOLF_API_KEY not set")
-            sys.exit(1)
-
-        from api_utils import detect_completed_round
-        detected_round = detect_completed_round(api_key)
+        from sheet_config import load_config as _load_cfg
+        _pre_config = _load_cfg()
+        detected_round = _pre_config["round_num"]
     except Exception as e:
-        print(f"  ERROR: Could not detect round from DataGolf: {e}")
+        print(f"  ERROR: Could not read round from Sheet config: {e}")
         sys.exit(1)
 
-    print(f"  Detected round: R{detected_round}")
+    print(f"  Sheet round: R{detected_round} complete")
 
-    # Pre-event (round=0) or R4 done — nothing to sim
+    # Pre-event (round=0) — nothing to sim
     if detected_round == 0:
         print("\n  Pre-event (no round data). No round sim needed.")
         sys.exit(0)
 
-    if detected_round == 4:
+    # R4 done — nothing to sim
+    if detected_round >= 4:
         print("\n  Tournament complete (R4 done). No round sim needed.")
         sys.exit(0)
 
@@ -176,52 +173,9 @@ def main():
         sys.exit(0)
 
     # ------------------------------------------------------------------
-    # Step 3: Read Sheet config and update primary fields if stale
+    # Step 3: Use Sheet config (already loaded in Step 1)
     # ------------------------------------------------------------------
-    print("\n  Reading Sheet config...")
-    try:
-        from sheet_config import load_config, write_primary_fields
-        config = load_config()
-    except Exception as e:
-        print(f"  ERROR: Could not read Sheet config: {e}")
-        sys.exit(1)
-
-    sheet_round = config["round_num"]
-
-    if sheet_round == detected_round:
-        # Sheet already up to date — user updated manually. Don't overwrite.
-        print(f"  Sheet round ({sheet_round}) matches detected round. Using user config.")
-    else:
-        # Sheet is stale — update primary fields from per-round fallbacks
-        print(f"  Sheet round ({sheet_round}) is stale (detected: {detected_round}).")
-        print(f"  Updating Sheet primary fields from R{sim_round} fallbacks...")
-
-        expected_score, wind_str, dew_str = _get_fallback_values(config, sim_round)
-
-        if expected_score is None:
-            print(f"  WARNING: No expected_score_r{sim_round} in Sheet. Using current expected_score_1.")
-            expected_score = config["expected_score_1"]
-
-        # Fall back to primary wind/dew if per-round not available
-        if not wind_str:
-            print(f"  WARNING: No wind_r{sim_round} in Sheet. Using current primary 'wind'.")
-            wind_str = ",".join(str(int(v)) for v in config["wind"]) if config["wind"] else ""
-
-        if not dew_str:
-            print(f"  WARNING: No dew_r{sim_round} in Sheet. Using current primary 'dew'.")
-            dew_str = ",".join(str(int(v)) for v in config["dew"]) if config["dew"] else ""
-
-        print(f"  -> round: {detected_round}")
-        print(f"  -> expected_score_1: {expected_score}")
-        print(f"  -> wind: {wind_str[:40]}{'...' if len(wind_str) > 40 else ''}")
-        print(f"  -> dew: {dew_str[:40]}{'...' if len(dew_str) > 40 else ''}")
-
-        if not args.dry_run:
-            try:
-                write_primary_fields(detected_round, expected_score, wind_str, dew_str)
-            except Exception as e:
-                print(f"  ERROR: Could not update Sheet: {e}")
-                sys.exit(1)
+    config = _pre_config
 
     print(f"\n  No R{sim_round} bets found. Running full pipeline...")
 
