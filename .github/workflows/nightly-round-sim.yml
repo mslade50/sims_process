@@ -52,7 +52,7 @@ jobs:
         CACHE_FILE=$(find . -name "sim_cache_r*.parquet" -newer /tmp -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2 || true)
         if [ -n "$CACHE_FILE" ]; then
           # Extract tourney dir and round from path like ./tourney_name/sim_cache_r2.parquet
-          TOURNEY_DIR=$(dirname "$CACHE_FILE")
+          TOURNEY_DIR=$(dirname "$CACHE_FILE" | sed 's|^\./||')
           ROUND=$(echo "$CACHE_FILE" | grep -oP 'r\d+')
           echo "cache_key=sim-cache-${TOURNEY_DIR##*/}-${ROUND}" >> $GITHUB_OUTPUT
           echo "cache_path=${TOURNEY_DIR}" >> $GITHUB_OUTPUT
