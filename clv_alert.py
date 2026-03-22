@@ -287,15 +287,16 @@ def main():
         sim_round = args.round
     else:
         # Sheet round_num = last completed round
-        # CLV check is for bets placed for that round (placed night before)
+        # Bets placed last night are for round_num + 1 (today's round)
+        # Closing odds in the feed are also for today's round
         round_num = cfg["round_num"]
-        if round_num < 1:
+        if round_num < 0:
             print("  Pre-event — no round bets to check CLV on.")
             sys.exit(0)
-        sim_round = round_num  # check CLV on the round that just completed
-        # But the bets were stored as sim_round (the round being simulated)
-        # e.g. R1 bets are stored with round=1, placed night before R1
-        # Morning after R1, round_num=1, we want CLV on round=1 bets
+        if round_num >= 4:
+            print("  Tournament complete — no more rounds to check CLV on.")
+            sys.exit(0)
+        sim_round = round_num + 1
 
     print(f"\n  CLV Alert: R{sim_round} — {tourney}")
     print(f"  Event ID: {event_id}")
