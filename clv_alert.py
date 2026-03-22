@@ -96,6 +96,10 @@ def load_round_bets(sim_round, event_id=None):
     df["bet_on"] = df["bet_on"].str.lower().str.strip()
     df["bookmaker"] = df["bookmaker"].str.lower().str.strip()
 
+    # Only include sharp books for CLV tracking
+    sharp_books = {"betonline", "betcris", "pinnacle"}
+    df = df[df["bookmaker"].isin(sharp_books)]
+
     # Dedup: same matchup + book → keep first (earliest bet placed)
     df = df.drop_duplicates(subset=["player_1", "player_2", "bet_on", "bookmaker"], keep="first")
 
