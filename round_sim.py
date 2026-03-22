@@ -3027,16 +3027,17 @@ def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
         lines.append("")
 
     if new_se is not None and not new_se.empty:
+        se_limit = 3
         lines.append(f"<b>New Score Edges ({len(new_se)}):</b>")
-        for _, r in new_se.head(10).iterrows():
+        for _, r in new_se.head(se_limit).iterrows():
             player = r.get("Player", "?")
             line = r.get("Line", "?")
             side = r.get("Best_Side", "?")
             edge = r.get("Best_Edge", "?")
             book = r.get("Book", "?")
             lines.append(f"  {player} {side} {line} ({book}) edge={edge}%")
-        if len(new_se) > 10:
-            lines.append(f"  ... +{len(new_se) - 10} more")
+        if len(new_se) > se_limit:
+            lines.append(f"  ... +{len(new_se) - se_limit} more")
         lines.append("")
 
     if (new_mu is None or new_mu.empty) and (new_se is None or new_se.empty):
