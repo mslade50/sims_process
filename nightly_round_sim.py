@@ -36,32 +36,6 @@ def _setup_env():
     return project_root
 
 
-def _get_event_id():
-    """Get current event_id from Google Sheet."""
-    from sheet_config import load_config
-    cfg = load_config()
-    return str(cfg["event_id"])
-
-
-def _count_round_bets(spreadsheet, event_id, sim_round):
-    """
-    Count existing round matchup bets for this event + round.
-
-    Reads the Round Matchups tab, filters to event_id and round.
-    """
-    from grade_bets import read_sheet_as_df
-
-    df = read_sheet_as_df(spreadsheet, "Round Matchups")
-    if df.empty:
-        return 0
-
-    # Filter to this event and round
-    mask = (
-        (df["event_id"].astype(str) == str(event_id)) &
-        (df["round"].astype(str) == str(sim_round))
-    )
-    return int(mask.sum())
-
 
 def _run_subprocess(cmd, label):
     """Run a subprocess. Returns True on success."""
@@ -78,32 +52,6 @@ def _run_subprocess(cmd, label):
     print(f"  {label} completed successfully.")
     return True
 
-
-def _get_fallback_values(config, sim_round):
-    """
-    Extract per-round fallback values from Sheet config for the round to simulate.
-
-    Returns (expected_score, wind_str, dew_str) where:
-        expected_score: float or None (pre-tournament scoring estimate)
-        wind_str: comma-separated hourly wind, or "" if unavailable
-        dew_str: comma-separated hourly dew, or "" if unavailable
-    """
-    # Per-round expected scoring (e.g. expected_score_r2 = [70.5])
-    score_key = f"expected_score_r{sim_round}"
-    score_list = config.get(score_key, [])
-    expected_score = score_list[0] if score_list else None
-
-    # Per-round wind (e.g. wind_r2 = [5, 6, 7, ...])
-    wind_key = f"wind_r{sim_round}"
-    wind_list = config.get(wind_key, [])
-    wind_str = ",".join(str(int(v)) for v in wind_list) if wind_list else ""
-
-    # Per-round dew (e.g. dew_r2 = [36, 38, ...])
-    dew_key = f"dew_r{sim_round}"
-    dew_list = config.get(dew_key, [])
-    dew_str = ",".join(str(int(v)) for v in dew_list) if dew_list else ""
-
-    return expected_score, wind_str, dew_str
 
 
 def main():
@@ -151,33 +99,11 @@ def main():
     print(f"  Round to simulate: R{sim_round}")
 
     # ------------------------------------------------------------------
-    # Step 2: Check if bets already stored for this round
-    # ------------------------------------------------------------------
-    print("\n  Checking for existing round matchup bets...")
-    try:
-        event_id = _get_event_id()
-    except Exception as e:
-        print(f"  ERROR: Could not read event_id from sim_inputs: {e}")
-        sys.exit(1)
-
-    from sheets_storage import get_spreadsheet
-    spreadsheet = get_spreadsheet()
-
-    existing = _count_round_bets(spreadsheet, event_id, sim_round)
-    print(f"  Event {event_id}, R{sim_round}: {existing} round matchup bets found")
-
-    if existing > 0:
-        print(f"\n  Already stored: {existing} R{sim_round} matchup bets exist.")
-        print("  Skipping — nothing to do.")
-        print("=" * 60 + "\n")
-        sys.exit(0)
-
-    # ------------------------------------------------------------------
-    # Step 3: Use Sheet config (already loaded in Step 1)
+    # Step 2: Use Sheet config (already loaded in Step 1)
     # ------------------------------------------------------------------
     config = _pre_config
 
-    print(f"\n  No R{sim_round} bets found. Running full pipeline...")
+    print(f"\n  Running sim to populate cache for R{sim_round}...")
 
     if args.dry_run:
         print("\n  [DRY RUN] Would run: live_stats_engine.py -> round_sim.py")
