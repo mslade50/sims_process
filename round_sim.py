@@ -1019,22 +1019,38 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     import json
     from pathlib import Path
 
-    # Load Kalshi outright lines from scraped data
-    search_paths = [
-        Path.home() / "Documents" / "golf_scraping" / "data",
-        Path(__file__).parent / "permanent_data" / "scraped_odds",
-    ]
-
+    # Load Kalshi outright lines: GitHub API first, then local fallback
     kalshi_lines = None
-    for base in search_paths:
-        path = base / "kalshi_outrights_latest.json"
-        if path.exists():
-            with open(path) as f:
-                kalshi_lines = json.load(f)
-            print(f"  Loaded Kalshi outrights from {path.name}")
-            break
+
+    # 1. Try GitHub API (always has latest CI-committed data)
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    api_url = "https://api.github.com/repos/mslade50/golf_scraping/contents/data/kalshi_outrights_latest.json?ref=master"
+    try:
+        headers = {"Accept": "application/vnd.github.raw+json"}
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        kalshi_lines = resp.json()
+        print(f"  Loaded Kalshi outrights from GitHub API")
+    except Exception as e:
+        print(f"  GitHub fetch failed for Kalshi outrights: {e}")
+
+    # 2. Fall back to local paths
+    if not kalshi_lines:
+        search_paths = [
+            Path(__file__).parent / "permanent_data" / "scraped_odds",
+        ]
+        for base in search_paths:
+            path = base / "kalshi_outrights_latest.json"
+            if path.exists():
+                with open(path) as f:
+                    kalshi_lines = json.load(f)
+                print(f"  Loaded Kalshi outrights from {path.name}")
+                break
 
     if not kalshi_lines:
+        print("  No Kalshi outright odds available")
         return pd.DataFrame()
 
     # Map Kalshi market types to nodh probability columns
@@ -1059,6 +1075,8 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         return name_replacements.get(x, x)
 
     lines = kalshi_lines.get("lines", [])
+    # Skip lines with no bid — no real market / untradeable
+    lines = [l for l in lines if l.get("bid", 0) and l["bid"] > 0]
     rows = []
     kalshi_mismatches = set()
     for line in lines:
@@ -2051,24 +2069,39 @@ def load_score_lines(round_num=None):
     import json
     from pathlib import Path
 
-    search_paths = [
-        Path.home() / "Documents" / "golf_scraping" / "data",
-        Path(__file__).parent / "permanent_data" / "scraped_odds",
-    ]
+    data = None
 
-    for base in search_paths:
-        path = base / "round_scores_latest.json"
+    # 1. Try GitHub API
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    api_url = "https://api.github.com/repos/mslade50/golf_scraping/contents/data/round_scores_latest.json?ref=master"
+    try:
+        headers = {"Accept": "application/vnd.github.raw+json"}
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        print(f"  Loaded score lines from GitHub API")
+    except Exception as e:
+        print(f"  GitHub fetch failed for score lines: {e}")
+
+    # 2. Fall back to local path
+    if not data:
+        path = Path(__file__).parent / "permanent_data" / "scraped_odds" / "round_scores_latest.json"
         if path.exists():
             with open(path) as f:
                 data = json.load(f)
-            lines = data.get("lines", [])
-            if round_num is not None:
-                lines = [l for l in lines if l.get("round") == round_num]
-            if lines:
-                print(f"  Loaded {len(lines)} score lines from {path.name}"
-                      + (f" (filtered to R{round_num})" if round_num else ""))
-                return lines
-    return []
+            print(f"  Loaded score lines from {path.name}")
+
+    if not data:
+        return []
+
+    lines = data.get("lines", [])
+    if round_num is not None:
+        lines = [l for l in lines if l.get("round") == round_num]
+    if lines:
+        print(f"  {len(lines)} score lines" + (f" (filtered to R{round_num})" if round_num else ""))
+    return lines
 
 
 def price_score_lines(score_card, market_lines):
