@@ -89,9 +89,13 @@ jobs:
           ! -name "dashboard_data" \
           -exec rm -rf {} + 2>/dev/null || true
 
-        # Clear dashboard_data/ contents (keep .gitkeep so the folder stays committed)
-        echo "🗑️  Clearing dashboard_data/ contents..."
-        find ./dashboard_data -type f ! -name ".gitkeep" -delete 2>/dev/null || true
+        # Clear tournament-specific dashboard_data/ files (keep persistent data for Render)
+        echo "🗑️  Clearing tournament-specific dashboard_data/ files..."
+        find ./dashboard_data -type f \
+          ! -name ".gitkeep" \
+          ! -name "sg_diagnostic.parquet" \
+          ! -name "luck_attribution.parquet" \
+          -delete 2>/dev/null || true
         
         echo ""
         echo "✅ Cleanup complete!"
@@ -111,7 +115,7 @@ jobs:
         echo "✅ Deleted all Excel workbooks"
         echo "✅ Deleted all text files"
         echo "✅ Deleted all tournament folders"
-        echo "✅ Cleared dashboard_data/ (kept .gitkeep)"
+        echo "✅ Cleared tournament files from dashboard_data/ (kept sg_diagnostic, luck_attribution)"
         echo ""
         echo "📁 Protected folders:"
         echo "  - permanent_data/ (correlation matrices, reference data)"
