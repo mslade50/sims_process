@@ -25,14 +25,14 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz patsy statsmodels scikit-learn matplotlib
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz patsy statsmodels scikit-learn matplotlib boto3
 
     - name: Fetch scraped odds from golf_scraping repo
       env:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
         mkdir -p permanent_data/scraped_odds
-        for MARKET in tournament_matchups round_matchups; do
+        for MARKET in tournament_matchups round_matchups round_scores kalshi_outrights; do
           curl -sL -H "Authorization: token $GH_TOKEN" \
             "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
             -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
@@ -44,6 +44,16 @@ jobs:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python nightly_round_sim.py
+
+    - name: Push odds screen data to R2
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      run: python push_odds_screen.py || echo "Odds screen push failed (non-fatal)"
 
     - name: Detect sim cache for Actions cache
       id: cache-key

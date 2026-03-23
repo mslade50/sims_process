@@ -469,6 +469,8 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
             ("tournament_matchup", "Tourn MU", "#1f77b4", "circle"),
             ("round_matchup", "Round MU", "#ff7f0e", "diamond"),
             ("finish_position", "Finish Pos", "#2ca02c", "square"),
+            ("finish_position_live", "Finish Live", "#17becf", "star"),
+            ("score_bet", "Score Bet", "#9467bd", "triangle-up"),
         ]
         events_order = (
             resolved.groupby("event_name")["run_timestamp"]

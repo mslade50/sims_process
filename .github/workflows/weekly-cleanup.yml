@@ -1,9 +1,9 @@
 name: Weekly Data Cleanup
 
-# Runs Sunday night / Monday morning after tournament is complete
+# Runs Monday afternoon AFTER the grading pipeline (9/10 AM EST)
 on:
   schedule:
-    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC = Sunday 1:00 AM EST
+    - cron: '0 17 * * 1'  # Every Monday at 17:00 UTC = 12:00 PM EST
   
   # Also allow manual trigger for testing
   workflow_dispatch:

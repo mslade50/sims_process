@@ -136,6 +136,8 @@ def bet_type_selector(id_prefix):
         {"label": "Tournament Matchup", "value": "tournament_matchup"},
         {"label": "Round Matchup", "value": "round_matchup"},
         {"label": "Finish Position", "value": "finish_position"},
+        {"label": "Finish Position (Live)", "value": "finish_position_live"},
+        {"label": "Score Bet", "value": "score_bet"},
     ]
     return dbc.Col([
         html.Label("Bet Type", className="form-label small text-muted"),

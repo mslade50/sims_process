@@ -1007,7 +1007,7 @@ def update_ledger_grades(graded_bets):
         rd = str(rd).lower().strip()
 
         # Determine opponent
-        if bt == "finish_position":
+        if bt.startswith("finish_position"):
             opponent = str(bet.get("market_type", bet.get("opponent", ""))).lower().strip()
         else:
             opponent = str(bet.get("opponent", "")).lower().strip()

@@ -39,7 +39,7 @@ jobs:
     - name: Install dependencies
       if: steps.window.outputs.skip != 'true'
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz boto3
 
     - name: Detect round from sheet config
       id: detect
@@ -111,3 +111,14 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python round_sim.py --reprice
+
+    - name: Push odds screen data to R2
+      if: steps.window.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true'
+      env:
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      run: python push_odds_screen.py || echo "Odds screen push failed (non-fatal)"

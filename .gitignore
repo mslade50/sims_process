@@ -183,6 +183,7 @@ cleanup_backup_*.tar.gz
 !.git/
 !dashboard/
 !dashboard_data/
+!odds_screen/
 
 # Backup files
 backups/
@@ -240,3 +241,6 @@ permanent_data/*.parquet
 # Git configuration
 !.gitignore
 !.gitattributes
+
+# Local-only utility scripts
+local_cleanup.sh
