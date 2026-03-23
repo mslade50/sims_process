@@ -99,7 +99,8 @@ name_replacements = {
     'ayora, angel': 'ayora fanegas, angel',
     'capan, frankie' : 'capan iii, frankie',
     'stallings, stephen jr' : 'stallings jr., stephen',
-    'bauchou, zachary' : 'bauchou, zach'
+    'bauchou, zachary' : 'bauchou, zach',
+    'kim, s.h.': 'kim, seonghyeon'
 }
 
 #regression informed coefficients for base model
@@ -162,7 +163,8 @@ overrides_sd = {
 
 manual_boosts={
 }
-# manual_boosts = { }
+
+dg_override_players = []
 
 
 #for etr export to sheet
