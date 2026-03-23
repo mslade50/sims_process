@@ -196,7 +196,7 @@ def update_diagnostics(event_id):
                 z=z_abs_normed,
                 x=[c.upper() for c in cats_available],
                 y=abs_pivot.index.tolist(),
-                colorscale="YlOrRd",
+                colorscale=[[0, "#ffffff"], [1, "#b71c1c"]],
                 zmin=0, zmax=1,
                 showscale=False,
                 text=np.round(raw_abs, 3),
