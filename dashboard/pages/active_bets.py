@@ -95,7 +95,7 @@ layout = dbc.Container([
         sportsbook_filter("bets"),
         dbc.Col([
             html.Label("Event", className="form-label small text-muted"),
-            dcc.Dropdown(id="bets-event-filter", placeholder="Current tournament", className="dash-dropdown-dark"),
+            dcc.Dropdown(id="bets-event-filter", placeholder="Current tournament", multi=True, className="dash-dropdown-dark"),
         ], md=3),
         dbc.Col([
             dbc.Button("Export CSV", id="bets-export-btn", color="secondary", size="sm", className="mt-4"),
@@ -147,7 +147,7 @@ def populate_events(_):
     config = get_tournament_config()
     current = config.get("tourney", events[-1] if events else None)
     options = [{"label": e.title(), "value": e} for e in events]
-    value = current if current in events else (events[-1] if events else None)
+    value = [current] if current in events else ([events[-1]] if events else [])
     return options, value
 
 

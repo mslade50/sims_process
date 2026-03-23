@@ -34,15 +34,14 @@ def round_selector(id_prefix, available_rounds=None, default=None):
             options.append({"label": "Tournament", "value": "tourn"})
         else:
             options.append({"label": f"Round {r}", "value": r})
-    value = default or (available_rounds[-1] if available_rounds else None)
 
     return dbc.Col([
         html.Label("Round", className="form-label small text-muted"),
         dcc.Dropdown(
             id=f"{id_prefix}-round-filter",
             options=options,
-            value=value,
-            clearable=False,
+            multi=True,
+            placeholder="All rounds",
             className="dash-dropdown-dark",
         ),
     ], md=2)
@@ -112,7 +111,7 @@ def sharp_toggle(id_prefix):
 
 
 def event_selector(id_prefix, events=None):
-    """Event name selector."""
+    """Event name selector (multi-select)."""
     if events is None:
         events = []
     options = [{"label": e.title(), "value": e} for e in events]
@@ -122,7 +121,7 @@ def event_selector(id_prefix, events=None):
         dcc.Dropdown(
             id=f"{id_prefix}-event-filter",
             options=options,
-            value=None,
+            multi=True,
             placeholder="All events",
             className="dash-dropdown-dark",
         ),
@@ -130,9 +129,8 @@ def event_selector(id_prefix, events=None):
 
 
 def bet_type_selector(id_prefix):
-    """Bet type selector."""
+    """Bet type selector (multi-select)."""
     options = [
-        {"label": "All Types", "value": "all"},
         {"label": "Tournament Matchup", "value": "tournament_matchup"},
         {"label": "Round Matchup", "value": "round_matchup"},
         {"label": "Finish Position", "value": "finish_position"},
@@ -144,8 +142,8 @@ def bet_type_selector(id_prefix):
         dcc.Dropdown(
             id=f"{id_prefix}-type-filter",
             options=options,
-            value="all",
-            clearable=False,
+            multi=True,
+            placeholder="All types",
             className="dash-dropdown-dark",
         ),
     ], md=2)

@@ -48,9 +48,7 @@ def populate_rounds(_):
             options.append({"label": "Tournament", "value": "tourn"})
         else:
             options.append({"label": f"Round {r}", "value": r})
-    numeric = [r for r in rounds if isinstance(r, int)]
-    default = max(numeric) if numeric else (rounds[-1] if rounds else None)
-    return options, default
+    return options, []
 
 
 @callback(
@@ -66,9 +64,12 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
     if not round_num:
         return dbc.Alert("Select a round.", color="info"), ""
 
-    df = get_matchups(round_num)
-    if df.empty:
-        return dbc.Alert(f"No matchup data for Round {round_num}.", color="warning"), ""
+    rounds = round_num if isinstance(round_num, list) else [round_num]
+    frames = [get_matchups(r) for r in rounds]
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return dbc.Alert(f"No matchup data for selected rounds.", color="warning"), ""
+    df = pd.concat(frames, ignore_index=True)
 
     # Normalize Bookmaker column name
     if "Bookmaker" not in df.columns and "bookmaker" in df.columns:

@@ -39,7 +39,7 @@ layout = dbc.Container([
         round_selector("pricer", available_rounds=get_available_rounds() or [1, 2, 3, 4]),
         dbc.Col([
             html.Label("Player", className="form-label small text-muted"),
-            dcc.Dropdown(id="pricer-player-dropdown", placeholder="Select player...", className="dash-dropdown-dark"),
+            dcc.Dropdown(id="pricer-player-dropdown", placeholder="Select player...", multi=True, className="dash-dropdown-dark"),
         ], md=4),
         dbc.Col([
             html.Label("Score Line", className="form-label small text-muted"),
@@ -97,7 +97,11 @@ layout = dbc.Container([
 def update_player_list(round_num):
     if not round_num:
         return []
-    df = get_model_predictions(round_num)
+    # Use first selected round for player list
+    rn = round_num[0] if isinstance(round_num, list) and round_num else round_num
+    if not rn:
+        return []
+    df = get_model_predictions(rn)
     if df.empty:
         return []
 
@@ -129,11 +133,16 @@ def update_pricer(round_num, player, score_line):
     if not round_num or not player or score_line is None:
         return empty
 
-    df = get_model_predictions(round_num)
+    rn = round_num[0] if isinstance(round_num, list) and round_num else round_num
+    p = player[0] if isinstance(player, list) and player else player
+    if not rn or not p:
+        return empty
+
+    df = get_model_predictions(rn)
     if df.empty:
         return empty
 
-    player_row = df[df["player_name"] == player]
+    player_row = df[df["player_name"] == p]
     if player_row.empty:
         return empty
 
@@ -141,7 +150,7 @@ def update_pricer(round_num, player, score_line):
 
     # Get expected score: scores_r{N} is strokes gained (relative),
     # so expected_score = course_par - scores_r{N}
-    score_col = f"scores_r{round_num}"
+    score_col = f"scores_r{rn}"
     if score_col not in row.index:
         return empty
     sg_value = float(row[score_col])

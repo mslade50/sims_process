@@ -311,9 +311,14 @@ def get_bet_ledger(**filters):
         return df
 
     if filters.get("event"):
-        df = df[df["event_name"].str.contains(str(filters["event"]), case=False, na=False)]
+        events = filters["event"] if isinstance(filters["event"], list) else [filters["event"]]
+        df = df[df["event_name"].str.lower().isin([str(e).lower() for e in events])]
     if filters.get("bet_type"):
-        df = df[df["bet_type"] == filters["bet_type"]]
+        bt = filters["bet_type"]
+        if isinstance(bt, list):
+            df = df[df["bet_type"].isin(bt)]
+        else:
+            df = df[df["bet_type"] == bt]
     if filters.get("book"):
         df = df[df["bookmaker"].str.contains(str(filters["book"]), case=False, na=False)]
     if filters.get("books"):

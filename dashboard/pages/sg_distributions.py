@@ -429,7 +429,7 @@ layout = dbc.Container([
         ], md=3),
         dbc.Col([
             dbc.Label("Player"),
-            dcc.Dropdown(id="sgdist-player", placeholder="Select player...", className="mb-2"),
+            dcc.Dropdown(id="sgdist-player", placeholder="Select player...", multi=True, className="mb-2"),
         ], md=4),
         dbc.Col([
             dbc.Label("Compare (optional)"),
@@ -485,9 +485,10 @@ def update_distributions(player, compare_players, mode):
     _, pred_map = _load_field_players()
 
     # Build combined player list: primary + comparisons
-    all_players = [player]
+    primary = player if isinstance(player, list) else ([player] if player else [])
+    all_players = list(primary)
     if compare_players:
-        all_players.extend([p for p in compare_players if p != player])
+        all_players.extend([p for p in compare_players if p not in all_players])
 
     warning = None
 

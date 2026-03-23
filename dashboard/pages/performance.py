@@ -300,7 +300,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     filters = {}
     if event:
         filters["event"] = event
-    if bet_type and bet_type != "all":
+    if bet_type:
         filters["bet_type"] = bet_type
     if min_edge:
         filters["min_edge"] = min_edge
@@ -310,8 +310,9 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     df = get_bet_ledger(**filters)
 
     # Apply round filter
-    if round_filter and round_filter != "all" and "round" in df.columns:
-        df = df[df["round"].astype(str).str.strip() == str(round_filter)]
+    if round_filter and "round" in df.columns:
+        round_strs = [str(r) for r in round_filter] if isinstance(round_filter, list) else [str(round_filter)]
+        df = df[df["round"].astype(str).str.strip().isin(round_strs)]
 
     # Apply analysis mode: sharp filtering + best-price dedup
     if analysis_mode in ("sharp_only", "sharp_best") and "bookmaker" in df.columns:

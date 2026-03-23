@@ -123,7 +123,7 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             dbc.Label("Event"),
-            dcc.Dropdown(id="hdist-event", options=_build_event_options(), placeholder="Select event...", className="mb-2"),
+            dcc.Dropdown(id="hdist-event", options=_build_event_options(), placeholder="Select event...", multi=True, className="mb-2"),
         ], md=4),
         dbc.Col([
             dbc.Label("Data Source"),
@@ -140,7 +140,7 @@ layout = dbc.Container([
         ], md=2),
         dbc.Col([
             dbc.Label("Player"),
-            dcc.Dropdown(id="hdist-player", placeholder="Select player...", className="mb-2"),
+            dcc.Dropdown(id="hdist-player", placeholder="Select player...", multi=True, className="mb-2"),
         ], md=3),
         dbc.Col([
             dbc.Label("Compare (optional)"),
@@ -215,9 +215,11 @@ def _load_hist_data(event_value, mode):
     Input("hdist-mode", "value"),
 )
 def populate_players(event_value, mode):
-    df = _load_hist_data(event_value, mode)
+    # Handle multi-select: use first selected event for player list
+    ev = event_value[0] if isinstance(event_value, list) and event_value else event_value
+    df = _load_hist_data(ev, mode)
     if df.empty:
-        return [], None, []
+        return [], [], []
 
     win_probs = df[df["rank"] == 1].groupby("player_name")["prob_u"].sum().sort_values(ascending=False)
     sorted_players = win_probs.index.tolist()
@@ -227,9 +229,8 @@ def populate_players(event_value, mode):
     sorted_players.extend(remaining)
 
     options = [{"label": p.title(), "value": p} for p in sorted_players]
-    default = sorted_players[0] if sorted_players else None
 
-    return options, default, options
+    return options, [], options
 
 
 @callback(
@@ -245,7 +246,8 @@ def update_chart(player, compare_players, event_value, mode):
         fig.update_layout(**PLOT_LAYOUT, title="Select an event and player")
         return fig
 
-    df = _load_hist_data(event_value, mode)
+    ev = event_value[0] if isinstance(event_value, list) and event_value else event_value
+    df = _load_hist_data(ev, mode)
     if df.empty:
         fig = go.Figure()
         fig.update_layout(**PLOT_LAYOUT, title="No distribution data available")
@@ -253,9 +255,10 @@ def update_chart(player, compare_players, event_value, mode):
 
     max_rank = int(df["rank"].max())
 
-    players = [player]
+    primary = player if isinstance(player, list) else ([player] if player else [])
+    players = list(primary)
     if compare_players:
-        players.extend([p for p in compare_players if p != player])
+        players.extend([p for p in compare_players if p not in players])
 
     return _make_figure(df, players, max_rank)
 
@@ -272,11 +275,16 @@ def update_pricer(player, pos, side, event_value, mode):
     if not player or not pos or not event_value:
         return ""
 
-    df = _load_hist_data(event_value, mode)
+    ev = event_value[0] if isinstance(event_value, list) and event_value else event_value
+    p = player[0] if isinstance(player, list) and player else player
+    if not p:
+        return ""
+
+    df = _load_hist_data(ev, mode)
     if df.empty:
         return ""
 
-    pdf = df[df["player_name"] == player]
+    pdf = df[df["player_name"] == p]
     if pdf.empty:
         return ""
 

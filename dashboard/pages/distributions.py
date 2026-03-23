@@ -153,7 +153,7 @@ layout = dbc.Container([
         ], md=3),
         dbc.Col([
             dbc.Label("Player"),
-            dcc.Dropdown(id="dist-player", placeholder="Select player...", className="mb-2"),
+            dcc.Dropdown(id="dist-player", placeholder="Select player...", multi=True, className="mb-2"),
         ], md=4),
         dbc.Col([
             dbc.Label("Compare (optional)"),
@@ -244,9 +244,10 @@ def update_chart(player, compare_players, mode):
     max_rank = int(df["rank"].max())
 
     # Build player list: primary + comparisons
-    players = [player]
+    primary = player if isinstance(player, list) else ([player] if player else [])
+    players = list(primary)
     if compare_players:
-        players.extend([p for p in compare_players if p != player])
+        players.extend([p for p in compare_players if p not in players])
 
     return _make_figure(df, players, max_rank)
 

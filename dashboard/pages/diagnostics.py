@@ -29,7 +29,7 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Label("Event", className="form-label small text-muted"),
-            dcc.Dropdown(id="diag-event-filter", placeholder="All events", className="dash-dropdown-dark"),
+            dcc.Dropdown(id="diag-event-filter", placeholder="All events", multi=True, className="dash-dropdown-dark"),
         ], md=3),
     ], className="mb-3"),
 
@@ -46,6 +46,7 @@ layout = dbc.Container([
             dcc.Dropdown(
                 id="diag-archetype-filter",
                 placeholder="Biggest Misses (default)",
+                multi=True,
                 className="dash-dropdown-dark",
             ),
         ], md=3),
@@ -58,7 +59,7 @@ layout = dbc.Container([
     html.H5("Player Deep Dive", className="mt-4 mb-2"),
     dbc.Row([
         dbc.Col([
-            dcc.Dropdown(id="diag-player-dropdown", placeholder="Select player...", className="dash-dropdown-dark"),
+            dcc.Dropdown(id="diag-player-dropdown", placeholder="Select player...", multi=True, className="dash-dropdown-dark"),
         ], md=3),
     ], className="mb-2"),
     html.Div(id="diag-player-detail"),
@@ -111,7 +112,8 @@ def update_diagnostics(event_id):
         return empty_fig, empty_fig, empty_fig, [], alert, []
 
     if event_id:
-        df = df[df["event_id"] == event_id]
+        eids = event_id if isinstance(event_id, list) else [event_id]
+        df = df[df["event_id"].isin(eids)]
 
     if df.empty:
         alert = dbc.Alert("No data for this event.", color="info")
@@ -253,7 +255,8 @@ def update_player_explorer(archetype, event_id):
         return dbc.Alert("No SG diagnostic data.", color="warning")
 
     if event_id:
-        df = df[df["event_id"] == event_id]
+        eids = event_id if isinstance(event_id, list) else [event_id]
+        df = df[df["event_id"].isin(eids)]
     if df.empty:
         return dbc.Alert("No data for this event.", color="info")
 
@@ -267,16 +270,17 @@ def update_player_explorer(archetype, event_id):
     if not miss_col or miss_col not in df.columns:
         return dbc.Alert("Miss column not found.", color="info")
 
-    if not archetype or archetype == "__biggest__":
+    arch_list = archetype if isinstance(archetype, list) else ([archetype] if archetype else [])
+    if not arch_list or "__biggest__" in arch_list:
         # Default: biggest misses (top 20 by absolute centered miss)
         df["abs_miss"] = df[miss_col].abs()
         top = df.nlargest(20, "abs_miss")
         display_cols = ["player_name", "round", "category", miss_col, "abs_miss", "archetype"]
     else:
-        # Filter to selected archetype — one row per player per event
-        arch_df = df[df["archetype"] == archetype]
+        # Filter to selected archetype(s) — one row per player per event
+        arch_df = df[df["archetype"].isin(arch_list)]
         if arch_df.empty:
-            return dbc.Alert(f"No players classified as {archetype}.", color="info")
+            return dbc.Alert(f"No players classified as {', '.join(arch_list)}.", color="info")
 
         # Total miss per player-event
         total_miss = (
@@ -313,21 +317,24 @@ def update_player_detail(player, event_id):
         return dbc.Alert("No data.", color="warning")
 
     if event_id:
-        df = df[df["event_id"] == event_id]
+        eids = event_id if isinstance(event_id, list) else [event_id]
+        df = df[df["event_id"].isin(eids)]
 
-    player_df = df[df["player_name"] == player]
+    players = player if isinstance(player, list) else [player]
+    player_df = df[df["player_name"].isin(players)]
     if player_df.empty:
-        return dbc.Alert(f"No data for {player}.", color="info")
+        return dbc.Alert(f"No data for {', '.join(players)}.", color="info")
 
     # Always recompute field-centered miss for player detail
     full_df = get_sg_diagnostics()
     if event_id:
-        full_df = full_df[full_df["event_id"] == event_id]
+        eids = event_id if isinstance(event_id, list) else [event_id]
+        full_df = full_df[full_df["event_id"].isin(eids)]
     if "miss" in full_df.columns:
         full_df["miss_centered"] = full_df.groupby(["event_id", "round", "category"])["miss"].transform(
             lambda x: x - x.mean()
         )
-    player_df = full_df[full_df["player_name"] == player]
+    player_df = full_df[full_df["player_name"].isin(players)]
 
     # Show per-round, per-category predicted vs actual
     pred_col = next((c for c in ["predicted_sg", "predicted"] if c in player_df.columns), None)

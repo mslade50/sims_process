@@ -91,6 +91,7 @@ layout = dbc.Container([
                 id="luck-event-filter",
                 options=[],
                 value=None,
+                multi=True,
                 placeholder="All events",
                 className="dash-dropdown-dark",
             ),
@@ -100,14 +101,13 @@ layout = dbc.Container([
             dcc.Dropdown(
                 id="luck-type-filter",
                 options=[
-                    {"label": "All Types", "value": "all"},
                     {"label": "Matchups Only", "value": "matchups"},
                     {"label": "Tournament Matchup", "value": "tournament_matchup"},
                     {"label": "Round Matchup", "value": "round_matchup"},
                     {"label": "Finish Position", "value": "finish_position"},
                 ],
-                value="matchups",
-                clearable=False,
+                multi=True,
+                placeholder="All types",
                 className="dash-dropdown-dark",
             ),
         ], md=2),
@@ -116,15 +116,14 @@ layout = dbc.Container([
             dcc.Dropdown(
                 id="luck-round-filter",
                 options=[
-                    {"label": "All Rounds", "value": "all"},
                     {"label": "R1", "value": "1"},
                     {"label": "R2", "value": "2"},
                     {"label": "R3", "value": "3"},
                     {"label": "R4", "value": "4"},
                     {"label": "Tournament", "value": "tournament"},
                 ],
-                value="all",
-                clearable=False,
+                multi=True,
+                placeholder="All rounds",
                 className="dash-dropdown-dark",
             ),
         ], md=2),
@@ -135,10 +134,9 @@ layout = dbc.Container([
                 options=[
                     {"label": "Losses", "value": "loss"},
                     {"label": "Wins", "value": "win"},
-                    {"label": "All Results", "value": "all"},
                 ],
-                value="loss",
-                clearable=False,
+                multi=True,
+                placeholder="All results",
                 className="dash-dropdown-dark",
             ),
         ], md=2),
@@ -218,13 +216,21 @@ def update_luck(event, bet_type, round_filter, sg_result_filter):
 
     # Apply filters
     if event:
-        df = df[df["event_name"] == event]
-    if bet_type == "matchups":
-        df = df[df["bet_type"].isin(["tournament_matchup", "round_matchup"])]
-    elif bet_type != "all":
-        df = df[df["bet_type"] == bet_type]
-    if round_filter != "all":
-        df = df[df["round"].astype(str) == round_filter]
+        events = event if isinstance(event, list) else [event]
+        df = df[df["event_name"].isin(events)]
+    if bet_type:
+        bts = bet_type if isinstance(bet_type, list) else [bet_type]
+        # Expand "matchups" shorthand
+        expanded = []
+        for bt in bts:
+            if bt == "matchups":
+                expanded.extend(["tournament_matchup", "round_matchup"])
+            else:
+                expanded.append(bt)
+        df = df[df["bet_type"].isin(expanded)]
+    if round_filter:
+        rounds = [str(r) for r in (round_filter if isinstance(round_filter, list) else [round_filter])]
+        df = df[df["round"].astype(str).isin(rounds)]
 
     if df.empty:
         return empty
@@ -382,15 +388,18 @@ def update_luck(event, bet_type, round_filter, sg_result_filter):
         fig_scatter = go.Figure().update_layout(**PLOT_LAYOUT, title="Margin vs Odds — No data")
 
     # ── SG result filter ────────────────────────────────────────────────
-    if sg_result_filter == "loss":
-        sg_df = df[df["result"] == "loss"]
-        sg_label = "Losses"
-    elif sg_result_filter == "win":
-        sg_df = df[df["result"].isin(["win", "win_dh"])]
-        sg_label = "Wins"
-    else:
+    sg_filters = sg_result_filter if isinstance(sg_result_filter, list) else ([sg_result_filter] if sg_result_filter else [])
+    if not sg_filters:
         sg_df = df[df["result"].isin(["win", "win_dh", "loss"])]
         sg_label = "All"
+    else:
+        result_vals = []
+        if "loss" in sg_filters:
+            result_vals.append("loss")
+        if "win" in sg_filters:
+            result_vals.extend(["win", "win_dh"])
+        sg_df = df[df["result"].isin(result_vals)]
+        sg_label = " & ".join(sg_filters).title()
 
     fig_waterfall = _sg_waterfall(sg_df, f"SG Delta in {sg_label} (Opp - Us)")
     fig_heatmap = _sg_heatmap(sg_df, f"SG Delta in {sg_label} by Event (Opp - Us)")
@@ -412,12 +421,10 @@ def update_luck(event, bet_type, round_filter, sg_result_filter):
         sharp_df = sharp_df.drop(columns=["book_odds_num"])
 
         # Apply same result filter
-        if sg_result_filter == "loss":
-            sharp_sg = sharp_df[sharp_df["result"] == "loss"]
-        elif sg_result_filter == "win":
-            sharp_sg = sharp_df[sharp_df["result"].isin(["win", "win_dh"])]
-        else:
+        if not sg_filters:
             sharp_sg = sharp_df[sharp_df["result"].isin(["win", "win_dh", "loss"])]
+        else:
+            sharp_sg = sharp_df[sharp_df["result"].isin(result_vals)]
 
         n_sharp = len(sharp_df)
         fig_wf_sharp = _sg_waterfall(sharp_sg, f"Best Sharp R2-R4 — {sg_label} (n={n_sharp})")
