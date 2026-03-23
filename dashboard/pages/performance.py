@@ -14,7 +14,7 @@ from dashboard.components.filters import sportsbook_filter, bet_type_selector, e
 from dashboard.components.tables import make_grid
 from dashboard.config import SHARP_BOOKS, COLOR_WIN, COLOR_LOSS, COLOR_PUSH, COLOR_SHARP, COLOR_RETAIL
 
-dash.register_page(__name__, path="/", title="Performance", order=1)
+dash.register_page(__name__, path="/performance", title="Performance", order=6)
 
 PLOT_LAYOUT = dict(
     template="plotly_dark",

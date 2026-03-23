@@ -11,7 +11,7 @@ def make_navbar():
             dbc.NavbarToggler(id="navbar-toggler"),
             dbc.Collapse(
                 dbc.Nav([
-                    dbc.NavItem(dbc.NavLink("Performance", href="/")),
+                    dbc.NavItem(dbc.NavLink("Home", href="/")),
                     dbc.NavItem(dbc.NavLink("Matchups", href="/matchups")),
                     dbc.NavItem(dbc.NavLink("Outrights (Live)", href="/outrights-live")),
                     dbc.NavItem(dbc.NavLink("Distributions", href="/distributions")),
@@ -19,6 +19,7 @@ def make_navbar():
                     dbc.NavItem(dbc.NavLink("History", href="/historical-distributions")),
                     dbc.NavItem(dbc.NavLink("Pricer", href="/pricer")),
                     dbc.NavItem(dbc.NavLink("Bets", href="/bets")),
+                    dbc.NavItem(dbc.NavLink("Performance", href="/performance")),
                     dbc.NavItem(dbc.NavLink("Luck", href="/luck")),
                     dbc.NavItem(dbc.NavLink("Diagnostics", href="/diagnostics")),
                     dbc.NavItem(dbc.NavLink("Weather", href="/weather")),
