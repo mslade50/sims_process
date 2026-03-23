@@ -234,7 +234,7 @@ def _convert_to_units(df):
     """
     df = df.copy()
 
-    is_finish = df["bet_type"] == "finish_position"
+    is_finish = df["bet_type"].str.startswith("finish_position")
 
     if "units_wagered" in df.columns:
         df.loc[is_finish, "units_wagered"] = df.loc[is_finish, "units_wagered"] / UNIT_SIZE
