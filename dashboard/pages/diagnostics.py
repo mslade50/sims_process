@@ -161,10 +161,10 @@ def update_diagnostics(event_id):
         cats_available = [c for c in SG_CATEGORIES if c in dir_pivot.columns]
         if cats_available and not dir_pivot.empty:
             raw_vals = dir_pivot[cats_available].values
-            # Normalize each column independently so no category dominates the color scale
-            col_max = np.nanmax(np.abs(raw_vals), axis=0, keepdims=True)
-            col_max[col_max == 0] = 1.0
-            z_normed = raw_vals / col_max
+            # Normalize each column to [-1, 1] independently using per-column max(|val|)
+            col_absmax = np.nanmax(np.abs(raw_vals), axis=0, keepdims=True)
+            col_absmax[col_absmax == 0] = 1.0
+            z_normed = raw_vals / col_absmax
             dir_fig = go.Figure(data=go.Heatmap(
                 z=z_normed,
                 x=[c.upper() for c in cats_available],
@@ -188,10 +188,12 @@ def update_diagnostics(event_id):
         cats_available = [c for c in SG_CATEGORIES if c in abs_pivot.columns]
         if cats_available and not abs_pivot.empty:
             raw_abs = abs_pivot[cats_available].values
-            # Normalize each column independently
-            col_max_abs = np.nanmax(raw_abs, axis=0, keepdims=True)
-            col_max_abs[col_max_abs == 0] = 1.0
-            z_abs_normed = raw_abs / col_max_abs
+            # Min-max normalize each column independently for full contrast
+            col_min = np.nanmin(raw_abs, axis=0, keepdims=True)
+            col_max = np.nanmax(raw_abs, axis=0, keepdims=True)
+            col_range = col_max - col_min
+            col_range[col_range == 0] = 1.0
+            z_abs_normed = (raw_abs - col_min) / col_range
             abs_fig = go.Figure(data=go.Heatmap(
                 z=z_abs_normed,
                 x=[c.upper() for c in cats_available],

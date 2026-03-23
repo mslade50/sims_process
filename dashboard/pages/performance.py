@@ -66,14 +66,13 @@ layout = dbc.Container([
             dcc.Dropdown(
                 id="perf-round-filter",
                 options=[
-                    {"label": "All Rounds", "value": "all"},
                     {"label": "R1", "value": "1"},
                     {"label": "R2", "value": "2"},
                     {"label": "R3", "value": "3"},
                     {"label": "R4", "value": "4"},
                 ],
-                value="all",
-                clearable=False,
+                multi=True,
+                placeholder="All rounds",
                 className="dash-dropdown-dark",
             ),
         ], md=2),
