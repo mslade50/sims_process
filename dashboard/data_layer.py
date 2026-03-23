@@ -93,6 +93,8 @@ _SHEETS_CACHE_TTL = 300  # 5 minutes
 _TAB_TOURNAMENT_MU = "Tournament Matchups"
 _TAB_ROUND_MU = "Round Matchups"
 _TAB_FINISH_POS = "Finish Positions"
+_TAB_LIVE = "Live"
+_TAB_SCORE_EDGES = "Score Edges"
 
 _TOURNAMENT_MU_HEADERS = [
     "run_timestamp", "event_name", "year", "event_id",
@@ -127,6 +129,14 @@ _FINISH_POS_HEADERS = [
     "result", "actual_finish", "units_won",
 ]
 
+_SCORE_EDGES_HEADERS = [
+    "run_timestamp", "event_name", "year", "event_id", "round",
+    "player", "line", "book", "best_side",
+    "mkt_under", "mkt_over", "fair_under", "fair_over",
+    "edge_under", "edge_over", "best_edge",
+    "result", "actual_score", "units_won",
+]
+
 
 def _read_sheets_tab(spreadsheet, tab_name, headers):
     """Read a Google Sheets tab into a DataFrame."""
@@ -150,6 +160,25 @@ def _normalize_tab(tab_df, bet_type):
     n["event_id"] = tab_df.get("event_id", "")
     n["bet_type"] = bet_type
     n["round"] = tab_df.get("round", "0")
+
+    # --- Score bets have a different column layout ---
+    if bet_type == "score_bet":
+        n["bet_on"] = tab_df.get("player", "")
+        best_side = tab_df.get("best_side", pd.Series(dtype=str)).astype(str).str.lower()
+        line = tab_df.get("line", "")
+        n["opponent"] = best_side + "_" + line.astype(str)
+        n["bookmaker"] = tab_df.get("book", "")
+        # Pick odds for the side we bet
+        is_under = best_side == "under"
+        n["book_odds"] = np.where(is_under, tab_df.get("mkt_under", ""), tab_df.get("mkt_over", ""))
+        n["fair_odds"] = np.where(is_under, tab_df.get("fair_under", ""), tab_df.get("fair_over", ""))
+        n["edge"] = tab_df.get("best_edge", "")
+        n["pred_on"] = ""
+        n["sample_on"] = ""
+        n["kelly_stake"] = ""
+        n["result"] = tab_df.get("result", "")
+        n["units_won"] = tab_df.get("units_won", "")
+        return n
 
     # bet_on: matchup tabs have "bet_on", finish pos has "player_name"
     n["bet_on"] = tab_df.get("bet_on", tab_df.get("player_name", ""))
@@ -225,6 +254,8 @@ def _load_all_bets_from_sheets():
         (_TAB_TOURNAMENT_MU, _TOURNAMENT_MU_HEADERS, "tournament_matchup"),
         (_TAB_ROUND_MU, _ROUND_MU_HEADERS, "round_matchup"),
         (_TAB_FINISH_POS, _FINISH_POS_HEADERS, "finish_position"),
+        (_TAB_LIVE, _FINISH_POS_HEADERS, "finish_position_live"),
+        (_TAB_SCORE_EDGES, _SCORE_EDGES_HEADERS, "score_bet"),
     ]:
         tab_df = _read_sheets_tab(spreadsheet, tab, headers)
         if not tab_df.empty:
@@ -258,7 +289,7 @@ def _load_all_bets_from_sheets():
 
     # Filter out tiny finish position bets (kelly_stake < $1)
     if "kelly_stake" in df.columns:
-        small_finish = (df["bet_type"] == "finish_position") & (df["kelly_stake"] < 1.0)
+        small_finish = df["bet_type"].str.startswith("finish_position") & (df["kelly_stake"] < 1.0)
         n_dropped = small_finish.sum()
         if n_dropped > 0:
             df = df[~small_finish]
