@@ -151,7 +151,7 @@ def update_diagnostics(event_id):
             bias_fig.update_yaxes(title_text="Avg Centered Miss (Total SG)")
             bias_fig.update_xaxes(tickangle=-30)
 
-    # ── Directional heatmap (avg miss — shows systematic over/under by archetype x category) ──
+    # ── Directional heatmap (avg miss — normalized per category column) ──
     dir_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Directional Bias by Archetype", "height": 350})
     if miss_col and "archetype" in df.columns and "category" in df.columns:
         dir_pivot = df.pivot_table(
@@ -160,20 +160,25 @@ def update_diagnostics(event_id):
         )
         cats_available = [c for c in SG_CATEGORIES if c in dir_pivot.columns]
         if cats_available and not dir_pivot.empty:
-            z_vals = dir_pivot[cats_available].values
+            raw_vals = dir_pivot[cats_available].values
+            # Normalize each column independently so no category dominates the color scale
+            col_max = np.nanmax(np.abs(raw_vals), axis=0, keepdims=True)
+            col_max[col_max == 0] = 1.0
+            z_normed = raw_vals / col_max
             dir_fig = go.Figure(data=go.Heatmap(
-                z=z_vals,
+                z=z_normed,
                 x=[c.upper() for c in cats_available],
                 y=dir_pivot.index.tolist(),
                 colorscale="RdBu",
-                zmid=0,
-                text=np.round(z_vals, 3),
+                zmid=0, zmin=-1, zmax=1,
+                showscale=False,
+                text=np.round(raw_vals, 3),
                 texttemplate="%{text}",
-                hovertemplate="<b>%{y}</b><br>%{x}: %{z:+.3f}<extra></extra>",
+                hovertemplate="<b>%{y}</b><br>%{x}: %{text:+.3f}<extra></extra>",
             ))
             dir_fig.update_layout(**PLOT_LAYOUT, title="Avg Miss by Archetype (+ = under, - = over)")
 
-    # ── Absolute heatmap (avg |miss| — shows magnitude regardless of direction) ──
+    # ── Absolute heatmap (avg |miss| — normalized per category column) ──
     abs_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Miss Magnitude by Archetype", "height": 350})
     if miss_col and "archetype" in df.columns and "category" in df.columns:
         abs_pivot = df.pivot_table(
@@ -182,14 +187,21 @@ def update_diagnostics(event_id):
         )
         cats_available = [c for c in SG_CATEGORIES if c in abs_pivot.columns]
         if cats_available and not abs_pivot.empty:
+            raw_abs = abs_pivot[cats_available].values
+            # Normalize each column independently
+            col_max_abs = np.nanmax(raw_abs, axis=0, keepdims=True)
+            col_max_abs[col_max_abs == 0] = 1.0
+            z_abs_normed = raw_abs / col_max_abs
             abs_fig = go.Figure(data=go.Heatmap(
-                z=abs_pivot[cats_available].values,
+                z=z_abs_normed,
                 x=[c.upper() for c in cats_available],
                 y=abs_pivot.index.tolist(),
                 colorscale="YlOrRd",
-                text=np.round(abs_pivot[cats_available].values, 3),
+                zmin=0, zmax=1,
+                showscale=False,
+                text=np.round(raw_abs, 3),
                 texttemplate="%{text}",
-                hovertemplate="<b>%{y}</b><br>%{x}: %{z:.3f}<extra></extra>",
+                hovertemplate="<b>%{y}</b><br>%{x}: %{text:.3f}<extra></extra>",
             ))
             abs_fig.update_layout(**PLOT_LAYOUT, title="Avg |Miss| by Archetype & Category")
 
