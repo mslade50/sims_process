@@ -14,21 +14,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Skip if outside tournament window (Thu night – Sun morning)
+      run: |
+        DOW=$(date -u +%u)  # 1=Mon ... 7=Sun
+        if [ "$DOW" -ge 1 ] && [ "$DOW" -le 4 ]; then
+          echo "Day $DOW is outside Thu-Sun window, skipping."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
+      id: window
+
     - name: Checkout repository
+      if: steps.window.outputs.skip != 'true'
       uses: actions/checkout@v4
 
     - name: Set up Python
+      if: steps.window.outputs.skip != 'true'
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
 
     - name: Install dependencies
+      if: steps.window.outputs.skip != 'true'
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz
 
     - name: Detect round from sheet config
       id: detect
+      if: steps.window.outputs.skip != 'true'
       env:
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: |
@@ -49,7 +64,7 @@ jobs:
 
     - name: Restore sim cache
       id: cache
-      if: steps.detect.outputs.tourney != ''
+      if: steps.window.outputs.skip != 'true' && steps.detect.outputs.tourney != ''
       uses: actions/cache/restore@v4
       with:
         path: |
@@ -58,7 +73,7 @@ jobs:
         key: sim-cache-${{ steps.detect.outputs.tourney }}-r${{ steps.detect.outputs.sim_round }}
 
     - name: Verify cache exists
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.window.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true'
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -75,7 +90,7 @@ jobs:
         exit 0
 
     - name: Fetch fresh odds from golf_scraping
-      if: steps.cache.outputs.cache-hit == 'true'
+      if: steps.window.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true'
       env:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
@@ -89,7 +104,7 @@ jobs:
         ls -la permanent_data/scraped_odds/ || true
 
     - name: Run reprice
-      if: steps.cache.outputs.cache-hit == 'true'
+      if: steps.window.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true'
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
