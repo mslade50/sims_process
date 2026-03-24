@@ -462,7 +462,7 @@ def populate_players(mode):
     if not players:
         return [], None, []
     options = [{"label": p.title(), "value": p} for p in players]
-    return options, players[0] if players else None, options
+    return options, [players[0]] if players else [], options
 
 
 @callback(
@@ -484,8 +484,11 @@ def update_distributions(player, compare_players, mode):
     adj_df = get_v2_dists()
     _, pred_map = _load_field_players()
 
-    # Build combined player list: primary + comparisons
+    # Normalize player to list (multi=True dropdown)
     primary = player if isinstance(player, list) else ([player] if player else [])
+    if not primary:
+        return empty_fig, None, None
+    primary_player = primary[0]  # first selected player for moments table / annotations
     all_players = list(primary)
     if compare_players:
         all_players.extend([p for p in compare_players if p not in all_players])
@@ -503,7 +506,7 @@ def update_distributions(player, compare_players, mode):
         title_suffix = " (Course-Adjusted)"
 
         # Warn if no predictions for recentering
-        if not pred_map or player.lower().strip() not in pred_map:
+        if not pred_map or primary_player.lower().strip() not in pred_map:
             warning = dbc.Alert(
                 "model_predictions_r1.csv not found — showing un-recentered means.",
                 color="info", dismissable=True,
@@ -520,7 +523,7 @@ def update_distributions(player, compare_players, mode):
                 player_raws.append(p_raw)
                 valid_names.append(p)
         if not player_raws:
-            return empty_fig, None, dbc.Alert(f"No data found for {player.title()}.", color="warning")
+            return empty_fig, None, dbc.Alert(f"No data found for {primary_player.title()}.", color="warning")
         fig = _build_raw_figure(player_raws, valid_names)
         title_suffix = " (Raw)"
 
@@ -528,7 +531,7 @@ def update_distributions(player, compare_players, mode):
     if len(all_players) > 1:
         title_text = " vs ".join(p.title() for p in all_players) + title_suffix
     else:
-        title_text = f"<b>{player.title()}</b>{title_suffix}"
+        title_text = f"<b>{primary_player.title()}</b>{title_suffix}"
 
     fig.update_layout(
         **PLOT_LAYOUT,
@@ -539,7 +542,7 @@ def update_distributions(player, compare_players, mode):
     )
 
     # Build moments table (primary player only)
-    moments_df = _build_moments_table(player, mode, raw_df, adj_df, pred_map)
+    moments_df = _build_moments_table(primary_player, mode, raw_df, adj_df, pred_map)
     if moments_df.empty:
         table = dbc.Alert("No moment data available.", color="info")
     else:
