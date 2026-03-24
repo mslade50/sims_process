@@ -9,7 +9,6 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "campbell, brian",0.0,0.0,0.0,0.0,0.0,0.0
 "campos, rafael",0.0,0.0,0.0,0.0,0.0,0.0
 "castillo, ricky",0.0,0.0,0.0,0.0,0.0,0.0
-"cauley, bud",0.0,0.0,0.0,0.0,0.0,0.0
 "chatfield, davis",0.0,0.0,0.0,0.0,0.0,0.0
 "clanton, luke",0.0,0.0,0.0,0.0,0.0,0.0
 "clark, wyndham",0.0,0.0,0.0,0.0,0.0,0.0
@@ -58,13 +57,14 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "kanaya, takumi",0.0,0.0,0.0,0.0,0.0,0.0
 "kang, jeffrey",0.0,0.0,0.0,0.0,0.0,0.0
 "keefer, johnny",0.0,0.0,0.0,0.0,0.0,0.0
-"kim, seonghyeon",0.0,0.0,0.0,0.0,0.0,0.0
+"kim, s.h.",0.0,0.0,0.0,0.0,0.0,0.0
 "kim, tom",0.0,0.0,0.0,0.0,0.0,0.0
 "kirk, chris",0.0,0.0,0.0,0.0,0.0,0.0
 "kitayama, kurt",0.0,0.0,0.0,0.0,0.0,0.0
 "kizzire, patton",0.0,0.0,0.0,0.0,0.0,0.0
 "knapp, jake",0.0,0.0,0.0,0.0,0.0,0.0
 "koepka, brooks",0.0,0.0,0.0,0.0,0.0,0.0
+"kuchar, matt",0.0,0.0,0.0,0.0,0.0,0.0
 "lamprecht, christo",0.0,0.0,0.0,0.0,0.0,0.0
 "lebioda, hank",0.0,0.0,0.0,0.0,0.0,0.0
 "lee, kyounghoon",0.0,0.0,0.0,0.0,0.0,0.0
@@ -89,6 +89,8 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "phillips, chandler",0.0,0.0,0.0,0.0,0.0,0.0
 "poston, j.t.",0.0,0.0,0.0,0.0,0.0,0.0
 "potgieter, aldrich",0.0,0.0,0.0,0.0,0.0,0.0
+"power, seamus",0.0,0.0,0.0,0.0,0.0,0.0
+"putnam, andrew",0.0,0.0,0.0,0.0,0.0,0.0
 "rai, aaron",0.0,0.0,0.0,0.0,0.0,0.0
 "ramey, chad",0.0,0.0,0.0,0.0,0.0,0.0
 "reitan, kristoffer",0.0,0.0,0.0,0.0,0.0,0.0
@@ -97,10 +99,10 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "roy, kevin",0.0,0.0,0.0,0.0,0.0,0.0
 "rozo, marcelo",0.0,0.0,0.0,0.0,0.0,0.0
 "russell, casey",0.0,0.0,0.0,0.0,0.0,0.0
+"ryder, sam",0.0,0.0,0.0,0.0,0.0,0.0
 "saddier, adrien",0.0,0.0,0.0,0.0,0.0,0.0
 "salinda, isaiah",0.0,0.0,0.0,0.0,0.0,0.0
 "sargent, gordon",0.0,0.0,0.0,0.0,0.0,0.0
-"scheffler, scottie",0.0,0.0,0.0,0.0,0.0,0.0
 "schenk, adam",0.0,0.0,0.0,0.0,0.0,0.0
 "schmid, matthias",0.0,0.0,0.0,0.0,0.0,0.0
 "scott, adam",0.0,0.0,0.0,0.0,0.0,0.0
@@ -109,6 +111,7 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "smith, jordan",0.0,0.0,0.0,0.0,0.0,0.0
 "stanger, jimmy",0.0,0.0,0.0,0.0,0.0,0.0
 "stevens, samuel",0.0,0.0,0.0,0.0,0.0,0.0
+"suber, jackson",0.0,0.0,0.0,0.0,0.0,0.0
 "svensson, adam",0.0,0.0,0.0,0.0,0.0,0.0
 "svensson, jesper",0.0,0.0,0.0,0.0,0.0,0.0
 "theegala, sahith",0.0,0.0,0.0,0.0,0.0,0.0
@@ -118,6 +121,7 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "van rooyen, erik",0.0,0.0,0.0,0.0,0.0,0.0
 "vanderlaan, john",0.0,0.0,0.0,0.0,0.0,0.0
 "vegas, jhonattan",0.0,0.0,0.0,0.0,0.0,0.0
+"ventura, kristoffer",0.0,0.0,0.0,0.0,0.0,0.0
 "vilips, karl",0.0,0.0,0.0,0.0,0.0,0.0
 "walker, danny",0.0,0.0,0.0,0.0,0.0,0.0
 "wallace, matt",0.0,0.0,0.0,0.0,0.0,0.0
