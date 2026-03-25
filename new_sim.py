@@ -122,8 +122,9 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 # Tournament sim email filter thresholds
 EMAIL_MU_MIN_PRED = 0.75
-EMAIL_MU_MIN_SAMPLE = 20
+EMAIL_MU_MIN_SAMPLE = 8
 EMAIL_FP_MIN_PRED = 0.0
+MIN_DIST_ROUNDS = 20  # minimum rounds in player distribution (from cat_dists_player.py)
 
 # Sharp books for matchup filtering
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
@@ -425,6 +426,9 @@ if missing:
 
 # V2 reads RAW (un-scaled) distributions — course variance scaling is applied
 # via COURSE_CAT_MULTS below, so using 'mean'/'std' avoids double-counting.
+# Build dist_rounds lookup: min rounds across all 4 categories per player
+dist_rounds_lookup = dists.groupby('player_name')['n'].min().to_dict()
+
 mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean')
 std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
 skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
@@ -1323,9 +1327,14 @@ wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
 print(f"[ok] wrote weather_impact_{tourney}.csv")
 
 # --- Pull tournament matchups (scraped → DataGolf fallback) ---
-from odds_loader import load_matchup_odds
+from odds_loader import load_matchup_odds, scrape_betonline_live
+
 print("[info] Fetching tournament matchup odds (scraped -> DataGolf fallback)...")
 _mu_df = load_matchup_odds("tournament_matchups", api_key=API_KEY)
+if _mu_df.empty:
+    print("[info] No matchups from normal pipeline — scraping BetOnline live...")
+    _mu_df = scrape_betonline_live("tournament_matchup")
+
 if not _mu_df.empty:
     # Rename DG columns to match legacy format
     _mu_df = _mu_df.rename(columns={"DG_p1": "Datagolf Odds (P1)", "DG_p2": "Datagolf Odds (P2)"})
@@ -1337,11 +1346,152 @@ else:
 
 
 # ============================================================
+# KALSHI OUTRIGHT PRICING
+# ============================================================
+
+def _kalshi_taker_fee(price):
+    """Kalshi taker fee: 7% of price * (1 - price)."""
+    if price <= 0 or price >= 1:
+        return 0.0
+    return 0.07 * price * (1 - price)
+
+
+def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
+    """Price Kalshi outright markets using mid pricing (no fees).
+
+    Returns DataFrame with yes-mid edges for finish position and win markets.
+    """
+    import json as _json
+    from pathlib import Path
+
+    # Load Kalshi outright lines: GitHub API first, then local fallback
+    kalshi_lines = None
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    api_url = "https://api.github.com/repos/mslade50/golf_scraping/contents/data/kalshi_outrights_latest.json?ref=master"
+    try:
+        headers = {"Accept": "application/vnd.github.raw+json"}
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        kalshi_lines = resp.json()
+        print(f"  Loaded Kalshi outrights from GitHub API")
+    except Exception as e:
+        print(f"  GitHub fetch failed for Kalshi outrights: {e}")
+
+    if not kalshi_lines:
+        for base in [Path(__file__).parent / "permanent_data" / "scraped_odds"]:
+            path = base / "kalshi_outrights_latest.json"
+            if path.exists():
+                with open(path) as f:
+                    kalshi_lines = _json.load(f)
+                print(f"  Loaded Kalshi outrights from {path.name}")
+                break
+
+    if not kalshi_lines:
+        print("  No Kalshi outright odds available")
+        return pd.DataFrame()
+
+    # Build nodh probabilities from rank_probs parquet (Kalshi pays without dead-heat reduction)
+    _rp_path = f"rank_probs_updated_{tourney}.parquet"
+    if os.path.exists(_rp_path):
+        _rp = pd.read_parquet(_rp_path)
+        _nodh = _rp.groupby("player_name").apply(
+            lambda g: pd.Series({
+                "top_5_nodh": g.loc[g["rank"] <= 5, "prob_ndh"].sum(),
+                "top_10_nodh": g.loc[g["rank"] <= 10, "prob_ndh"].sum(),
+                "top_20_nodh": g.loc[g["rank"] <= 20, "prob_ndh"].sum(),
+                "win_nodh": g.loc[g["rank"] == 1, "prob_ndh"].sum(),
+            })
+        ).reset_index()
+        finish_probs = finish_probs.merge(_nodh, on="player_name", how="left")
+        print(f"  Built nodh probs from {_rp_path} ({len(_nodh)} players)")
+
+    type_to_col = {
+        "top_5": "top_5_nodh",
+        "top_10": "top_10_nodh",
+        "top_20": "top_20_nodh",
+        "winner": "win_nodh",
+    }
+    # Fall back to dead-heat columns if nodh not available
+    for mtype, col in list(type_to_col.items()):
+        if col not in finish_probs.columns:
+            fallback = {"top_5_nodh": "top_5", "top_10_nodh": "top_10",
+                        "top_20_nodh": "top_20", "win_nodh": "simulated_win_prob"}
+            type_to_col[mtype] = fallback.get(col, col)
+
+    def norm(s):
+        x = s.strip().lower()
+        if "," not in x:
+            parts = x.rsplit(" ", 1)
+            if len(parts) == 2:
+                x = f"{parts[1]}, {parts[0]}"
+        return name_replacements.get(x, x)
+
+    lines = kalshi_lines.get("lines", [])
+    lines = [l for l in lines if l.get("bid", 0) and l["bid"] > 0]
+    rows = []
+    for line in lines:
+        mtype = line.get("market_type", "")
+        prob_col = type_to_col.get(mtype)
+        if not prob_col or prob_col not in finish_probs.columns:
+            continue
+
+        player = norm(line["player"])
+        match = finish_probs[finish_probs["player_name"] == player]
+        if match.empty:
+            continue
+
+        sim_yes = float(match.iloc[0][prob_col])
+        if sim_yes <= 0:
+            continue
+
+        bid = line.get("bid", 0)
+        ask = line.get("ask", 0)
+        if bid <= 0 or ask <= 0:
+            continue
+
+        # Liquidity filter: skip markets with spread > 10 cents
+        spread = ask - bid
+        if spread > 0.10:
+            continue
+
+        # Mid pricing (maker, no fees)
+        mid_price = (bid + ask) / 2
+        mid_american = implied_prob_to_american_odds(mid_price)
+        if mid_american is None:
+            continue
+
+        mid_edge = (sim_yes - mid_price) * 100
+        fair_american = prob_to_american(sim_yes)
+
+        rows.append({
+            "player_name": player,
+            "market_type": mtype,
+            "bookmaker": "kalshi",
+            "mid_price": mid_price,
+            "american_odds": mid_american,
+            "sim_prob": sim_yes,
+            "edge": round(mid_edge, 1),
+            "my_fair": fair_american,
+            "my_pred": pred_lookup.get(player),
+            "sample": sample_lookup.get(player),
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("edge", ascending=False)
+        n_pos = (df["edge"] > 0).sum()
+        print(f"  Kalshi outrights: {len(df)} lines priced, {n_pos} with +edge")
+    return df
+
+
+# ============================================================
 # EMAIL: Tournament Sim Summary
 # ============================================================
 
 def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                                wx_lookup=None):
+                                wx_lookup=None, kalshi_df=None):
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
     # Section 1: Tournament Matchups
@@ -1353,9 +1503,11 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
         if 'pred_on' not in filtered.columns:
             filtered['pred_on'] = filtered['bet_on'].str.lower().map(my_pred_lookup).fillna(0)
 
+        filtered['dist_rounds_on'] = filtered['bet_on'].str.lower().map(dist_rounds_lookup).fillna(0)
         filtered = filtered[
             (filtered['pred_on'] > EMAIL_MU_MIN_PRED) &
-            (filtered['sample_on'] >= EMAIL_MU_MIN_SAMPLE)
+            (filtered['sample_on'] >= EMAIL_MU_MIN_SAMPLE) &
+            (filtered['dist_rounds_on'] >= MIN_DIST_ROUNDS)
         ]
 
         if not filtered.empty:
@@ -1433,15 +1585,21 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
     else:
         mu_html = "<p>No tournament matchup data available.</p>"
 
-    # Section 2: Finish Positions
+    # Section 2: Finish Positions (sharp books only, best price, no edge filter)
+    SHARP_FP_BOOKS = {"pinnacle", "betonline", "betcris"}
+    SHARP_FP_MIN_EDGE = 0.4
     fp_html = ""
     if finish_df is not None and not finish_df.empty:
         fp_filtered = finish_df[
-            (finish_df['my_pred'].fillna(0) > EMAIL_FP_MIN_PRED) &
-            (finish_df['edge'] > EDGE_THRESHOLD_WIN)
+            finish_df['bookmaker'].str.lower().isin(SHARP_FP_BOOKS)
         ].copy()
+        # Best price per player/market (highest edge), minimum 0.4% edge
         if not fp_filtered.empty:
             fp_filtered = fp_filtered.sort_values('edge', ascending=False)
+            fp_filtered = fp_filtered.drop_duplicates(subset=['player_name', 'market_type'], keep='first')
+            fp_filtered = fp_filtered[fp_filtered['edge'] >= SHARP_FP_MIN_EDGE]
+            fp_filtered = fp_filtered.sort_values('edge', ascending=False)
+
             fp_rows = ""
             for _, row in fp_filtered.iterrows():
                 player = str(row.get('player_name', '')).title()
@@ -1453,7 +1611,6 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 sample = int(row.get('sample', 0)) if pd.notna(row.get('sample')) else 0
                 book = str(row.get('bookmaker', ''))
 
-                # Weather context: total SG shift from weather
                 _fp_wx_sg = 0.0
                 if wx_lookup:
                     _fp_wx_sg = wx_lookup.get(str(row.get('player_name', '')).lower().strip(), 0)
@@ -1477,7 +1634,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
             fp_html = f"""
             <h3 style="color:#2c5282; margin:20px 0 8px 0;">
-                Finish Position Edges (pred &gt; {EMAIL_FP_MIN_PRED})
+                Finish Positions — Sharp Books (best price)
             </h3>
             <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
                 <tr style="background:#343a40; color:white;">
@@ -1494,9 +1651,74 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 {fp_rows}
             </table>"""
         else:
-            fp_html = f"<p>No finish position edges passed email filters (edge &gt; {EDGE_THRESHOLD_WIN}pp, pred &gt; {EMAIL_FP_MIN_PRED}).</p>"
+            fp_html = "<p>No finish position data from sharp books.</p>"
     else:
         fp_html = "<p>No finish position data available.</p>"
+
+    # Section 3: Kalshi Outrights
+    kalshi_html = ""
+    if kalshi_df is not None and not kalshi_df.empty:
+        _kalshi_header = """
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Market</th>
+                    <th style="padding:6px 10px; text-align:center;">Mid</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Sim Prob</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                </tr>"""
+
+        def _kalshi_row_html(row):
+            player = str(row.get('player_name', '')).title()
+            market = str(row.get('market_type', ''))
+            mid_str = f"{int(row['american_odds']):+d}" if pd.notna(row.get('american_odds')) else ""
+            fair_str = f"{int(row['my_fair']):+d}" if pd.notna(row.get('my_fair')) else ""
+            edge = row.get('edge', 0)
+            pred = row.get('my_pred', 0) or 0
+            sim_prob = row.get('sim_prob', 0)
+            edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
+            return f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center;">{market}</td>
+                    <td style="padding:6px 10px; text-align:center;">{mid_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center;">{sim_prob:.1%}</td>
+                    <td style="padding:6px 10px; text-align:center;">{pred:.2f}</td>
+                </tr>"""
+
+        # Table 1: Best edges at midpoint (top 10)
+        kalshi_top = kalshi_df[kalshi_df['edge'] > 0].head(10)
+        if not kalshi_top.empty:
+            rows_html = "".join(_kalshi_row_html(r) for _, r in kalshi_top.iterrows())
+            kalshi_html += f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                Kalshi Outrights — Best Edges at Mid (top 10)
+            </h3>
+            {_kalshi_header}{rows_html}</table>"""
+
+        # Table 2: Top 20 by equity per market, then filter to edge > 0.5%
+        equity_rows = []
+        for mtype in ["top_5", "top_10", "top_20"]:
+            mkt_df = kalshi_df[kalshi_df['market_type'] == mtype]
+            if not mkt_df.empty:
+                # First: take top 20 by sim_prob (highest equity = most liquid)
+                mkt_top20 = mkt_df.sort_values('sim_prob', ascending=False).head(20)
+                # Then: filter to only those with meaningful edge
+                with_edge = mkt_top20[mkt_top20['edge'] > 0.5]
+                if not with_edge.empty:
+                    equity_rows.append(with_edge)
+        if equity_rows:
+            equity_df = pd.concat(equity_rows).sort_values('edge', ascending=False).head(20)
+            rows_html = "".join(_kalshi_row_html(r) for _, r in equity_df.iterrows())
+            kalshi_html += f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                Kalshi — Top Equity Players (edge &gt; 0.5%, top 20 per market)
+            </h3>
+            {_kalshi_header}{rows_html}</table>"""
 
     html = f"""
     <html>
@@ -1506,6 +1728,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
         {mu_html}
         {fp_html}
+        {kalshi_html}
 
         <p style="color:#999; font-size:11px; margin-top:30px;">
             Fair = our no-vig price (ties push) | Edge = expected return % |
@@ -1518,7 +1741,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
 
 def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                          attachment_paths=None, wx_lookup=None):
+                          attachment_paths=None, wx_lookup=None, kalshi_df=None):
     if not EMAIL_PASSWORD:
         print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
         return
@@ -1528,7 +1751,7 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
 
     try:
         html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                                           wx_lookup=wx_lookup)
+                                           wx_lookup=wx_lookup, kalshi_df=kalshi_df)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"Tournament Sim -- {tourney.replace('_', ' ').title()}"
@@ -1762,6 +1985,12 @@ if not df_match.empty:
             wx['player_name'].str.lower(),
             wx['wind_adv_r1_2'] + wx['dew_adv_r1_2'],
         ))
+        # Price Kalshi outrights for email
+        _kalshi_df = pd.DataFrame()
+        try:
+            _kalshi_df = price_kalshi_outrights_tourney(finish_equity_df, my_pred_lookup, sample_lookup)
+        except Exception as _ke:
+            print(f"  [warn] Kalshi pricing failed: {_ke}")
         send_tournament_email(
             sharp_mu_df=sharp_df,
             finish_df=_finish_for_email,
@@ -1769,6 +1998,7 @@ if not df_match.empty:
             my_pred_lookup=my_pred_lookup,
             attachment_paths=_attachments,
             wx_lookup=_wx_fp_lookup,
+            kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
         )
     else:
         print("[note] no bookmaker CSVs found to combine.")
