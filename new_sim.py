@@ -1663,6 +1663,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 <tr style="background:#343a40; color:white;">
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Market</th>
+                    <th style="padding:6px 10px; text-align:center;">Mid ¢</th>
                     <th style="padding:6px 10px; text-align:center;">Mid</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
@@ -1673,6 +1674,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
         def _kalshi_row_html(row):
             player = str(row.get('player_name', '')).title()
             market = str(row.get('market_type', ''))
+            mid_cents = f"{row['mid_price'] * 100:.0f}¢" if pd.notna(row.get('mid_price')) else ""
             mid_str = f"{int(row['american_odds']):+d}" if pd.notna(row.get('american_odds')) else ""
             fair_str = f"{int(row['my_fair']):+d}" if pd.notna(row.get('my_fair')) else ""
             edge = row.get('edge', 0)
@@ -1683,6 +1685,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
+                    <td style="padding:6px 10px; text-align:center;">{mid_cents}</td>
                     <td style="padding:6px 10px; text-align:center;">{mid_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -1708,7 +1711,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 # First: take top 20 by sim_prob (highest equity = most liquid)
                 mkt_top20 = mkt_df.sort_values('sim_prob', ascending=False).head(20)
                 # Then: filter to only those with meaningful edge
-                with_edge = mkt_top20[mkt_top20['edge'] > 0.5]
+                with_edge = mkt_top20[mkt_top20['edge'] > 1.0]
                 if not with_edge.empty:
                     equity_rows.append(with_edge)
         if equity_rows:
@@ -1716,7 +1719,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             rows_html = "".join(_kalshi_row_html(r) for _, r in equity_df.iterrows())
             kalshi_html += f"""
             <h3 style="color:#2c5282; margin:20px 0 8px 0;">
-                Kalshi — Top Equity Players (edge &gt; 0.5%, top 20 per market)
+                Kalshi — Top Equity Players (edge &gt; 1%, top 20 per market)
             </h3>
             {_kalshi_header}{rows_html}</table>"""
 
