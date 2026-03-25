@@ -1720,6 +1720,17 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             </h3>
             {_kalshi_header}{rows_html}</table>"""
 
+        # Table 3: Kalshi winner market — all edges > 0.5%
+        winner_df = kalshi_df[(kalshi_df['market_type'] == 'winner') & (kalshi_df['edge'] > 0.5)]
+        if not winner_df.empty:
+            winner_df = winner_df.sort_values('edge', ascending=False)
+            rows_html = "".join(_kalshi_row_html(r) for _, r in winner_df.iterrows())
+            kalshi_html += f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                Kalshi — Outright Winner (edge &gt; 0.5%)
+            </h3>
+            {_kalshi_header}{rows_html}</table>"""
+
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
