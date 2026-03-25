@@ -7,6 +7,7 @@ Reads CSV/Parquet files from the project root.
 import os
 import sys
 import glob
+import json
 
 import pandas as pd
 import numpy as np
@@ -999,3 +1000,21 @@ def get_mkt_regress_diagnostics():
     merged["regress_helped"] = merged["error_regressed"].abs() < merged["error_raw"].abs()
 
     return merged
+
+
+# ── Round Score Distributions ─────────────────────────────────────────────────
+
+def get_round_score_probs(round_num):
+    """Load round_score_probs_r{N}.parquet — pre-aggregated score distributions.
+
+    Returns DataFrame with columns: player_name, score, prob, sg_ott, sg_app, sg_arg, sg_putt, expected_avg.
+    Same pattern as rank_probs — small file, fast to load.
+    """
+    fname = f"round_score_probs_r{round_num}.parquet"
+    config = get_tournament_config()
+    tourney = config.get("tourney", "")
+    if tourney:
+        path = os.path.join(PROJECT_ROOT, tourney, fname)
+        if os.path.exists(path):
+            return _read_parquet_safe(path)
+    return _read_parquet_safe(os.path.join(DASHBOARD_DATA, fname))

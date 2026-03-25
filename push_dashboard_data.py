@@ -51,6 +51,14 @@ TOURNEY_RENAMED = [
     ("weather_impact_{tourney}.csv", "weather_impact.csv"),
 ]
 
+# Round score distribution files (pre-aggregated, ~200KB each)
+ROUND_SCORE_PROBS = [
+    "round_score_probs_r1.parquet",
+    "round_score_probs_r2.parquet",
+    "round_score_probs_r3.parquet",
+    "round_score_probs_r4.parquet",
+]
+
 # Parquet from permanent_data/
 PERMANENT_FILES = [
     ("permanent_data/sg_diagnostic.parquet", "sg_diagnostic.parquet"),
@@ -140,6 +148,20 @@ def copy_files(dry_run=False):
             copied.append(label)
     else:
         print("  Warning: Could not import tourney from sim_inputs.py — skipping tournament folder files")
+
+    # Round score distribution files (from tournament folder)
+    if tourney:
+        found_any = False
+        for fname in ROUND_SCORE_PROBS:
+            src = os.path.join(PROJECT_ROOT, tourney, fname)
+            if os.path.exists(src):
+                found_any = True
+                dst = os.path.join(DASHBOARD_DATA, fname)
+                if not dry_run:
+                    shutil.copy2(src, dst)
+                copied.append(f"{tourney}/{fname}")
+        if not found_any:
+            skipped.append("round_score_probs_r*.parquet (none found)")
 
     # Archive rank_probs into permanent_data/historical_dists/
     event_id = get_event_id()

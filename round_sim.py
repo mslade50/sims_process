@@ -84,7 +84,8 @@ EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
 
 # Matchup email filter thresholds
 EMAIL_MIN_PRED = 0.75
-EMAIL_MIN_SAMPLE = 20
+EMAIL_MIN_SAMPLE = 8
+MIN_DIST_ROUNDS = 20  # minimum rounds in player distribution (from cat_dists_player.py)
 
 # Outright market filter thresholds
 EDGE_THRESHOLD_WIN = 2.0     # minimum edge (pp) sim_prob - implied_prob
@@ -110,6 +111,14 @@ RNG = np.random.default_rng(42)
 
 # ── Category-first sim constants ─────────────────────────────────────────────
 DISTS_FILE_V2 = "this_week_dists_v2.csv"
+
+# Build dist_rounds lookup: min rounds across all 4 categories per player
+dist_rounds_lookup = {}
+if os.path.exists(DISTS_FILE_V2):
+    _dists_tmp = pd.read_csv(DISTS_FILE_V2)
+    _dists_tmp['player_name'] = _dists_tmp['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
+    if 'n' in _dists_tmp.columns:
+        dist_rounds_lookup = _dists_tmp.groupby('player_name')['n'].min().to_dict()
 
 COURSE_CAT_MULTS = _cfg.get("course_cat_mults", {})
 COURSE_CAT_SKEW  = _cfg.get("course_cat_skew", {})
@@ -1440,6 +1449,7 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
     has_course_adj = "course_score_adj" in model_preds.columns
 
     sim_dict = {}
+    cat_means = {}  # player -> [sg_ott, sg_app, sg_arg, sg_putt] (None for legacy)
     for _, row in model_preds.iterrows():
         player = row["player_name"]
         skill = row[scores_col]
@@ -1457,9 +1467,10 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
         raw = np.random.normal(loc=skill, scale=STD_DEV, size=num_sims)
         scores = np.round(player_avg - raw).astype(int)
         sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12, int(round(player_avg)) + 12)
+        cat_means[player] = None  # legacy sim has no category decomposition
 
     print(f"  Simulated {len(sim_dict)} players × {num_sims:,} iterations")
-    return sim_dict
+    return sim_dict, cat_means
 
 
 def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
@@ -1487,6 +1498,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     has_course_adj = "course_score_adj" in model_preds.columns
 
     sim_dict = {}
+    cat_means = {}  # player -> [sg_ott, sg_app, sg_arg, sg_putt]
     for idx, (_, row) in enumerate(model_preds.iterrows()):
         player = row["player_name"]
         scores_rn = row[scores_col]
@@ -1521,11 +1533,12 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         scores = np.rint(player_avg - sg_total).astype(int)
         sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12,
                                    int(round(player_avg)) + 12)
+        cat_means[player] = cat_mu.tolist()  # [sg_ott, sg_app, sg_arg, sg_putt]
 
     print(f"  [catfirst] Simulated {len(sim_dict)} players × {num_sims:,} iterations")
     print(f"  [catfirst] Course mults: OTT={_course_mults_cf[0]:.3f}, APP={_course_mults_cf[1]:.3f}, "
           f"ARG={_course_mults_cf[2]:.3f}, PUTT={_course_mults_cf[3]:.3f}")
-    return sim_dict
+    return sim_dict, cat_means
 
 
 def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=None):
@@ -1585,6 +1598,49 @@ def load_sim_cache(sim_round):
     print(f"  Loaded sim cache: {parquet_path} ({len(sim_dict)} players × {len(next(iter(sim_dict.values()))):,} sims)")
     print(f"  Cache saved at: {meta.get('saved_at', 'unknown')}")
     return sim_dict, meta
+
+
+def save_round_score_probs(sim_dict, cat_means, sim_round, expected_avg):
+    """Save pre-aggregated round score distributions for the dashboard.
+
+    Writes {tourney}/round_score_probs_r{N}.parquet with columns:
+        player_name, score, prob, sg_ott, sg_app, sg_arg, sg_putt, expected_avg
+    Same pattern as rank_probs_updated — small file (~200KB), fast to load.
+    """
+    out_dir = f"./{tourney}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    rows = []
+    num_sims = len(next(iter(sim_dict.values())))
+    for player, scores in sim_dict.items():
+        # Count occurrences of each score
+        unique, counts = np.unique(scores, return_counts=True)
+        probs = counts / num_sims
+
+        # Get category means (None for legacy sim)
+        cm = cat_means.get(player)
+        sg_ott = round(cm[0], 4) if cm else None
+        sg_app = round(cm[1], 4) if cm else None
+        sg_arg = round(cm[2], 4) if cm else None
+        sg_putt = round(cm[3], 4) if cm else None
+
+        for score, prob in zip(unique, probs):
+            rows.append({
+                "player_name": player,
+                "score": int(score),
+                "prob": round(float(prob), 6),
+                "sg_ott": sg_ott,
+                "sg_app": sg_app,
+                "sg_arg": sg_arg,
+                "sg_putt": sg_putt,
+            })
+
+    df = pd.DataFrame(rows)
+    df["expected_avg"] = expected_avg
+    path = os.path.join(out_dir, f"round_score_probs_r{sim_round}.parquet")
+    df.to_parquet(path, index=False)
+    print(f"  Saved round score probs: {path} ({len(sim_dict)} players, {len(df)} rows)")
+    return path
 
 
 def print_catfirst_comparison(sim_old, sim_cf, model_preds, pred_col, expected_avg):
@@ -1884,7 +1940,11 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
 
     # --- Combined: basic filters ---
     combined = df[df["edge_on"] > 3].copy()
-    combined = combined[combined["sample_on"].fillna(0) >= 20]
+    combined["dist_rounds_on"] = combined["bet_on"].str.lower().map(dist_rounds_lookup).fillna(0)
+    combined = combined[
+        (combined["sample_on"].fillna(0) >= EMAIL_MIN_SAMPLE) &
+        (combined["dist_rounds_on"] >= MIN_DIST_ROUNDS)
+    ]
     combined = combined[
         ((combined["pred_on"] > 0) & (combined["edge_on"] > 7))
         | (combined["pred_on"] > 1)
@@ -2414,12 +2474,14 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         # Filter: pred and sample thresholds on the bet_on side
         filtered = sharp_df.copy()
         filtered["sample_on"] = filtered["bet_on"].map(sample_lookup).fillna(0)
+        filtered["dist_rounds_on"] = filtered["bet_on"].str.lower().map(dist_rounds_lookup).fillna(0)
         filtered = filtered[
             (
                 (filtered["pred_on"] > EMAIL_MIN_PRED)
                 | ((filtered["pred_on"] > 0) & (filtered["edge_on"] > 7))
             )
             & (filtered["sample_on"] >= EMAIL_MIN_SAMPLE)
+            & (filtered["dist_rounds_on"] >= MIN_DIST_ROUNDS)
         ]
 
         if not filtered.empty:
@@ -3249,20 +3311,25 @@ def main():
         print(f"\n  Simulating R{sim_round} scores...")
 
         # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
-        sim_dict_cf = simulate_round_scores_catfirst(
+        sim_dict_cf, cat_means_cf = simulate_round_scores_catfirst(
             model_preds, sim_round, expected_avg, _wx_lookup
         )
 
         if args.legacy:
-            sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
+            sim_dict_legacy, cat_means_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
             print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
             print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
             sim_dict = sim_dict_legacy
+            cat_means = cat_means_legacy
         else:
             sim_dict = sim_dict_cf
+            cat_means = cat_means_cf
 
         # Always cache sim arrays for future --price-only runs
         save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)
+
+        # Save pre-aggregated score distributions for dashboard
+        save_round_score_probs(sim_dict, cat_means, sim_round, expected_avg)
 
     if args.sim_only:
         print(f"\n{'='*60}")
