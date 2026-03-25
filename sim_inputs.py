@@ -22,7 +22,7 @@ dewpoint_wave = -0.035
 dew_calculation = .6*baseline_dew + .4*dewpoint_wave
 wind_speed_base=12.2
 
-start_yr=2019 #first year of data you want to consider in your course baslines
+start_yr=2020 #first year of data you want to consider in your course baslines
 tour='pga'
 event_ids = [20]
 course_id = 897
@@ -100,8 +100,11 @@ name_replacements = {
     'capan, frankie' : 'capan iii, frankie',
     'stallings, stephen jr' : 'stallings jr., stephen',
     'bauchou, zachary' : 'bauchou, zach',
-    'kim, s.h.': 'kim, seonghyeon'
+    'kim, seonghyeon' : 'kim, s.h.'
 }
+
+# Players whose predictions come from DataGolf override (2nd pass skips these)
+dg_override_players = []
 
 #regression informed coefficients for base model
 coefficients = {
@@ -163,8 +166,7 @@ overrides_sd = {
 
 manual_boosts={
 }
-
-dg_override_players = []
+# manual_boosts = { }
 
 
 #for etr export to sheet
