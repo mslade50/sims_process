@@ -1456,23 +1456,28 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if spread > 0.10:
             continue
 
-        # Mid pricing (maker, no fees)
-        mid_price = (bid + ask) / 2
-        mid_american = implied_prob_to_american_odds(mid_price)
-        if mid_american is None:
+        # Winner markets: use ask + taker fee (taker cost); others: mid pricing
+        if mtype == "winner":
+            taker_cost = ask + _kalshi_taker_fee(ask)
+            price_used = taker_cost
+        else:
+            price_used = (bid + ask) / 2
+
+        american_odds = implied_prob_to_american_odds(price_used)
+        if american_odds is None:
             continue
 
-        mid_edge = (sim_yes - mid_price) * 100
+        edge = (sim_yes - price_used) * 100
         fair_american = prob_to_american(sim_yes)
 
         rows.append({
             "player_name": player,
             "market_type": mtype,
             "bookmaker": "kalshi",
-            "mid_price": mid_price,
-            "american_odds": mid_american,
+            "mid_price": price_used,
+            "american_odds": american_odds,
             "sim_prob": sim_yes,
-            "edge": round(mid_edge, 1),
+            "edge": round(edge, 1),
             "my_fair": fair_american,
             "my_pred": pred_lookup.get(player),
             "sample": sample_lookup.get(player),
