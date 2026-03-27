@@ -3078,28 +3078,40 @@ def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
 
     if new_mu is not None and not new_mu.empty:
         lines.append(f"<b>New Matchups ({len(new_mu)}):</b>")
-        for _, r in new_mu.head(15).iterrows():
+        for _, r in new_mu.iterrows():
             bet = r.get("bet_on", "?")
             edge = r.get("edge_on", "?")
             book = r.get("Bookmaker", "?")
-            opp = r.get("Player 1", "") if str(r.get("bet_on", "")).lower() != str(r.get("Player 1", "")).lower() else r.get("Player 2", "")
-            lines.append(f"  {bet} vs {opp} ({book}) edge={edge}%")
-        if len(new_mu) > 15:
-            lines.append(f"  ... +{len(new_mu) - 15} more")
+            is_p1 = str(r.get("bet_on", "")).lower() == str(r.get("Player 1", "")).lower()
+            opp = r.get("Player 2", "") if is_p1 else r.get("Player 1", "")
+            mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
+            fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
+            # Format odds with + prefix for positive
+            mkt_str = f"+{int(mkt_odds)}" if isinstance(mkt_odds, (int, float)) and mkt_odds > 0 else str(int(mkt_odds)) if isinstance(mkt_odds, (int, float)) else str(mkt_odds)
+            fair_str = f"+{int(fair_odds)}" if isinstance(fair_odds, (int, float)) and fair_odds > 0 else str(int(fair_odds)) if isinstance(fair_odds, (int, float)) else str(fair_odds)
+            lines.append(f"  {bet} vs {opp}")
+            lines.append(f"    {book} {mkt_str} (fair {fair_str}) edge={edge}%")
         lines.append("")
 
     if new_se is not None and not new_se.empty:
-        se_limit = 3
         lines.append(f"<b>New Score Edges ({len(new_se)}):</b>")
-        for _, r in new_se.head(se_limit).iterrows():
+        for _, r in new_se.iterrows():
             player = r.get("Player", "?")
-            line = r.get("Line", "?")
+            line_val = r.get("Line", "?")
             side = r.get("Best_Side", "?")
             edge = r.get("Best_Edge", "?")
             book = r.get("Book", "?")
-            lines.append(f"  {player} {side} {line} ({book}) edge={edge}%")
-        if len(new_se) > se_limit:
-            lines.append(f"  ... +{len(new_se) - se_limit} more")
+            # Show market odds and fair odds for the recommended side
+            if side == "Under":
+                mkt_odds = r.get("Mkt_Under", "?")
+                fair_odds = r.get("Fair_Under", "?")
+            else:
+                mkt_odds = r.get("Mkt_Over", "?")
+                fair_odds = r.get("Fair_Over", "?")
+            mkt_str = f"+{int(mkt_odds)}" if isinstance(mkt_odds, (int, float)) and mkt_odds > 0 else str(int(mkt_odds)) if isinstance(mkt_odds, (int, float)) else str(mkt_odds)
+            fair_str = f"+{int(fair_odds)}" if isinstance(fair_odds, (int, float)) and fair_odds > 0 else str(int(fair_odds)) if isinstance(fair_odds, (int, float)) else str(fair_odds)
+            lines.append(f"  {player} {side} {line_val}")
+            lines.append(f"    {book} {mkt_str} (fair {fair_str}) edge={edge}%")
         lines.append("")
 
     if (new_mu is None or new_mu.empty) and (new_se is None or new_se.empty):
