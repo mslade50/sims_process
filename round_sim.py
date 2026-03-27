@@ -3708,6 +3708,23 @@ def main():
         except Exception as e:
             print(f"  [dashboard push] Warning: {e}")
 
+    # Trigger nightly sim on GitHub to populate Actions cache for reprice
+    # Only after a real sim (not price-only) and only when running locally
+    if not args.price_only and not args.dry_run and not os.environ.get("GITHUB_ACTIONS"):
+        try:
+            import subprocess
+            print(f"\n  Triggering nightly-round-sim on GitHub (cache for reprice)...")
+            result = subprocess.run(
+                ["gh", "workflow", "run", "nightly-round-sim.yml"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                print(f"  Nightly sim triggered successfully.")
+            else:
+                print(f"  [gh trigger] Warning: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"  [gh trigger] Warning: {e}")
+
 
 if __name__ == "__main__":
     main()
