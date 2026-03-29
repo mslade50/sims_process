@@ -3029,7 +3029,8 @@ def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
 def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
     """Return only score edge rows not already in the Score Edges sheet.
 
-    Dedup key: (player, line, book, mkt_under, mkt_over) for this event+round.
+    Dedup key: (player, line, book) for this event+round.
+    Market odds are excluded so reprices of the same bet don't resurface.
     """
     if score_edges is None or score_edges.empty:
         return score_edges
@@ -3045,8 +3046,6 @@ def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
                 str(row.get("player", "")).lower().strip(),
                 str(row.get("line", "")),
                 str(row.get("book", "")).lower().strip(),
-                str(row.get("mkt_under", "")),
-                str(row.get("mkt_over", "")),
             )
             existing_keys.add(key)
 
@@ -3059,8 +3058,6 @@ def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
             str(r.get("Player", "")).lower().strip(),
             str(r.get("Line", "")),
             str(r.get("Book", "")).lower().strip(),
-            str(r.get("Mkt_Under", "")),
-            str(r.get("Mkt_Over", "")),
         )
         mask.append(key not in existing_keys)
 
@@ -3199,6 +3196,8 @@ def main():
                         help="Load cached sim arrays, re-price matchups + score lines with fresh odds")
     parser.add_argument("--reprice", action="store_true",
                         help="Like --price-only but dedup against Sheets and Telegram only new/changed bets")
+    parser.add_argument("--email", action="store_true",
+                        help="Send email report (used with --reprice to optionally include email)")
     args = parser.parse_args()
 
     # --reprice implies --price-only
@@ -3413,6 +3412,23 @@ def main():
         except Exception as e:
             print(f"  [reprice] Warning: {e}")
             import traceback; traceback.print_exc()
+
+        # Send reprice email (matchups + score edges only, no outrights)
+        if args.email:
+            print(f"\n  Sending reprice email...")
+            try:
+                send_round_sim_email(
+                    sharp_df=sharp,
+                    sim_round=sim_round,
+                    sample_lookup=sample_lookup,
+                    wx_lookup=_wx_lookup,
+                    score_edges=score_edges,
+                    bol_matchups_csv_path=bol_matchups_csv,
+                    all_books_csv_path=all_books_csv,
+                )
+            except Exception as e:
+                print(f"  Warning: Reprice email failed: {e}")
+
         print(f"\n{'='*60}")
         print(f"  Reprice complete.")
         print(f"{'='*60}")
