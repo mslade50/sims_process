@@ -33,7 +33,7 @@ Q_LIST      = [0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
 HIST_BINS   = np.arange(-10.0, 10.25, 0.25)  # fixed 1/4-stroke bins
 CLIP_TAILS  = True
 CLIP_RANGE  = (-8.0, 8.0)                    # applied if CLIP_TAILS=True
-MIN_OBS     = 20
+MIN_OBS     = 12
 EMA_SPAN    = 50                             # recency emphasis (≈ half-life ~17 rounds)
 OUT_CSV     = "sg_dist_player.csv"
 

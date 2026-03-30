@@ -19,9 +19,11 @@ Usage:
     df = load_matchup_odds("tournament_matchups")
 """
 
+import asyncio
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -268,4 +270,67 @@ def load_matchup_odds(
     if not df.empty:
         df = df.drop_duplicates(subset=["Player 1", "Player 2", "Bookmaker"], keep="first")
 
+    return df
+
+
+def scrape_betonline_live(market_type: str = "tournament_matchup") -> pd.DataFrame:
+    """Run BetOnline scraper directly via Playwright for fresh odds.
+
+    Used on Mondays before 5 PM EST when scraped JSONs and DataGolf API
+    don't have lines yet but BetOnline has already posted.
+
+    Returns DataFrame in standard format: Player 1, Player 2, Bookmaker,
+    P1 Odds, P2 Odds, source.
+    """
+    # Import scraper from golf_scraping repo
+    scraping_repo = Path(r"C:\Users\mckin\Documents\golf_scraping")
+    if str(scraping_repo) not in sys.path:
+        sys.path.insert(0, str(scraping_repo))
+
+    try:
+        from scrapers.betonline import BetOnlineScraper
+    except ImportError as e:
+        logger.error(f"Cannot import BetOnlineScraper: {e}")
+        return pd.DataFrame()
+
+    scraper = BetOnlineScraper(headless=True)
+    try:
+        matchups = asyncio.run(scraper.scrape(market_type=market_type))
+    except Exception as e:
+        logger.error(f"BetOnline live scrape failed: {e}")
+        return pd.DataFrame()
+
+    if not matchups:
+        logger.info("BetOnline live scrape returned no matchups")
+        return pd.DataFrame()
+
+    from utils.names import to_last_first
+
+    rows = []
+    for m in matchups:
+        rows.append({
+            "Player 1": to_last_first(m.player_a).lower(),
+            "Player 2": to_last_first(m.player_b).lower(),
+            "Bookmaker": "betonline",
+            "P1 Odds": m.odds_a,
+            "P2 Odds": m.odds_b,
+            "DG_p1": None,
+            "DG_p2": None,
+            "Ties": "no_tie",
+            "source": "betonline_live",
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        try:
+            from sim_inputs import name_replacements
+            df["Player 1"] = df["Player 1"].replace(name_replacements)
+            df["Player 2"] = df["Player 2"].replace(name_replacements)
+        except ImportError:
+            pass
+        df["P1 Odds"] = pd.to_numeric(df["P1 Odds"], errors="coerce")
+        df["P2 Odds"] = pd.to_numeric(df["P2 Odds"], errors="coerce")
+        df = df.drop_duplicates(subset=["Player 1", "Player 2", "Bookmaker"], keep="first")
+
+    logger.info(f"BetOnline live scrape: {len(df)} tournament matchup lines")
     return df

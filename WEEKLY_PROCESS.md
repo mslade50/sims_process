@@ -259,7 +259,7 @@ python new_sim.py
 `new_sim.py` reads `final_predictions_{tourney}.csv` if it exists, otherwise falls back to `pre_course_fit_{tourney}.csv`. On the first pass, only `pre_course_fit` exists.
 
 **What this does:**
-- **DG override** (before sim): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `|pred| < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Same logic as `live_stats_engine.py` and `mkt_regress.py`.
+- **DG override** (before sim, first pass only): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Skipped on second pass (when `final_predictions` exists). `live_stats_engine.py` does NOT apply threshold overrides — manual list only.
 - Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total (category-first approach)
 - Uses `COURSE_CAT_MULTS` from Google Sheet to scale per-category variance
 - Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
@@ -280,7 +280,7 @@ python mkt_regress.py
 
 **What this does:**
 1. Reads first-pass sim outputs (`pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`)
-2. **DG override**: replaces preds with DataGolf's `dg_final_pred` for players with `|pred| < 0.5` or in `dg_override_players` list (in `sim_inputs.py`)
+2. **DG override**: replaces preds with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`)
 3. Applies three regression layers toward market prices:
    - **mkt_adj** (max ±0.12 SG): outright win odds disagreement (sharp book avg vs sim win%)
    - **mu_adj** (max ±0.13 SG): matchup edge disagreement (z-scored, inverted; boosted 1.5x for weak players)
@@ -380,7 +380,7 @@ python round_sim.py
 - **Auto-writes to Parquet ledger**
 - Uses single Google auth (1 connection, not 2)
 
-**Backup:** If you forget to run this, `nightly-round-sim.yml` runs at 9:45 PM EST (Thu/Fri/Sat). It's fully self-sufficient: auto-detects the completed round from DataGolf, updates the Sheet's primary fields from per-round fallbacks (set during Phase 2.1b), and runs `live_stats_engine.py` -> `round_sim.py`. If bets already exist, it exits cleanly.
+**Backup & reprice cache:** `round_sim.py` automatically triggers the `nightly-round-sim.yml` GitHub Actions workflow after every successful local sim. This runs the sim on the GitHub runner and saves the cache to Actions cache, so the overnight `reprice.yml` workflow can load it and re-price with fresh odds for CLV checking. The nightly workflow also runs on schedule at 9:45 PM EST (Thu/Fri/Sat) as a fallback — it's fully self-sufficient: auto-detects the completed round from DataGolf, updates the Sheet's primary fields from per-round fallbacks (set during Phase 2.1b), and runs `live_stats_engine.py` -> `round_sim.py`. If bets already exist, it exits cleanly.
 
 ---
 

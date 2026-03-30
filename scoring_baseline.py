@@ -1526,7 +1526,8 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
         print(f"  {r['year']:>4}  {r['qual_players']:>4}  ", end="")
         for name in CAT_NAMES:
             s = r.get(f"{name}_skew")
-            print(f"{s if s is not None else 'N/A':>+7}  ", end="")
+            val = f"{s:>+7}" if s is not None else f"{'N/A':>7}"
+            print(f"{val}  ", end="")
         print()
     print(f"  {'WtAvg':>4}  {'':>4}  ", end="")
     for name in CAT_NAMES:
