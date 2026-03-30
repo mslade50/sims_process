@@ -162,6 +162,7 @@ overrides_sd = {
 }
 
 manual_boosts={
+    'thorbjornsen, michael': 0.35,
 }
 
 dg_override_players = []
