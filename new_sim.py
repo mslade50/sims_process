@@ -997,6 +997,9 @@ for i, p in enumerate(player_names):
 
 df_avg = pd.DataFrame(rows_avg)
 df_avg.to_csv(f"avg_expected_cat_sg_{tourney}.csv", index=False)
+# Persist a copy in permanent_data/ so Monday grading pipeline can access it
+os.makedirs("permanent_data", exist_ok=True)
+df_avg.to_csv(f"permanent_data/avg_expected_cat_sg_{tourney}.csv", index=False)
 
 # Non dead-heat rank probabilities (raw min-rank — ties share same position)
 rank_probs_ndh = (

@@ -197,8 +197,9 @@ layout = dbc.Container([
     ]),
     # Charts — Row 3: Archetype P&L
     dbc.Row([
-        dbc.Col(dcc.Graph(id="perf-archetype-cumulative-chart"), md=6),
-        dbc.Col(dcc.Graph(id="perf-archetype-bar-chart"), md=6),
+        dbc.Col(dcc.Graph(id="perf-archetype-cumulative-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-archetype-bar-chart"), md=4),
+        dbc.Col(dcc.Graph(id="perf-archetype-against-bar-chart"), md=4),
     ]),
 
     # Summary table
@@ -264,6 +265,7 @@ def _convert_to_units(df):
     Output("perf-bucket-chart", "figure"),
     Output("perf-archetype-cumulative-chart", "figure"),
     Output("perf-archetype-bar-chart", "figure"),
+    Output("perf-archetype-against-bar-chart", "figure"),
     Output("perf-summary-table", "children"),
     Output("perf-remaining-table", "children"),
     Output("perf-player-filter", "options"),
@@ -294,7 +296,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
                        archetype_filter, archetype_against_filter, player_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
-    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
+    empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
 
     filters = {}
     if event:
@@ -609,6 +611,21 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
         fig_arch_bar.update_xaxes(title_text="Units")
         fig_arch_bar.update_layout(showlegend=False)
 
+    # Total P&L by Archetype Against (bar chart)
+    fig_arch_against_bar = go.Figure(layout={**PLOT_LAYOUT, "title": "Total P&L by Archetype Against"})
+    if not resolved.empty and "archetype_against" in resolved.columns:
+        against_resolved = resolved[resolved["archetype_against"].fillna("").str.len() > 0]
+        if not against_resolved.empty:
+            arch_ag_pnl = against_resolved.groupby("archetype_against")["units_won"].sum().sort_values()
+            bar_colors = [ARCHETYPE_COLORS.get(a, "#aaaaaa") for a in arch_ag_pnl.index]
+            fig_arch_against_bar.add_trace(go.Bar(
+                y=arch_ag_pnl.index, x=arch_ag_pnl.values,
+                orientation="h", marker_color=bar_colors,
+                text=[f"{v:+.1f}u" for v in arch_ag_pnl.values], textposition="auto",
+            ))
+            fig_arch_against_bar.update_xaxes(title_text="Units")
+            fig_arch_against_bar.update_layout(showlegend=False)
+
     # ── Summary table ──
     summary_content = dbc.Alert("No resolved bets.", color="secondary")
     if not resolved.empty:
@@ -675,4 +692,4 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     remaining_table = make_grid(detail_df, column_defs=detail_col_defs,
                                 id_suffix="perf-remaining", height=500)
 
-    return kpi, fig_cum, fig_pnl, fig_book, fig_buckets, fig_arch_cum, fig_arch_bar, summary_content, remaining_table, player_options, archetype_options, archetype_against_options
+    return kpi, fig_cum, fig_pnl, fig_book, fig_buckets, fig_arch_cum, fig_arch_bar, fig_arch_against_bar, summary_content, remaining_table, player_options, archetype_options, archetype_against_options

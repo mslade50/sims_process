@@ -2460,7 +2460,8 @@ def load_sample_data():
 
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
                              win_positive_top10=None, win_negative_top10=None,
-                             wx_lookup=None, score_edges=None, kalshi_mids=None):
+                             wx_lookup=None, score_edges=None, kalshi_mids=None,
+                             kalshi_win=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -2586,6 +2587,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred = row.get('my_pred', 0)
                 stake = row.get('stake', 0)
                 archetype = row.get('type_on', '')
+                implied = row.get('implied_prob', 0)
+                price_c = implied * 100
+                fair_c = price_c + edge  # edge = (sim_prob - implied_prob) * 100
 
                 # Weather context
                 _fp_wx_sg = 0.0
@@ -2603,6 +2607,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
                 pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
                 stake_str = f"${stake:.0f}" if pd.notna(stake) and stake > 0 else ""
+                price_c_str = f"{price_c:.0f}\u00a2" if price_c > 0 else ""
+                fair_c_str = f"{fair_c:.1f}\u00a2" if fair_c > 0 else ""
 
                 rows_html += f"""
                 <tr>
@@ -2612,7 +2618,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{price_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{stake_str}</td>
@@ -2631,7 +2639,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Side</th>
                     <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Price</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair \u00a2</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Stake</th>
@@ -2652,6 +2662,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             edge = row.get('edge', 0)
             sim_prob = row.get('simulated_win_prob', 0)
             kelly = row.get('kelly', 0)
+            implied = row.get('implied_prob', 0)
+            price_c = implied * 100
+            fair_c = price_c + edge
 
             edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
 
@@ -2659,13 +2672,17 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
             sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
             kelly_str = f"${kelly:.0f}" if pd.notna(kelly) and kelly > 0 else "$0"
+            price_c_str = f"{price_c:.0f}\u00a2" if price_c > 0 else ""
+            fair_c_str = f"{fair_c:.1f}\u00a2" if fair_c > 0 else ""
 
             rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{price_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{kelly_str}</td>
@@ -2680,7 +2697,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Price</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair \u00a2</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Kelly</th>
@@ -2700,6 +2719,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             edge = row.get('edge', 0)
             sim_prob = row.get('simulated_win_prob', 0)
             implied = row.get('implied_prob', 0)
+            price_c = implied * 100
+            fair_c = price_c + edge
 
             edge_color = "#f8d7da" if edge < -10 else "#fff3cd" if edge < -5 else "#ffffff"
 
@@ -2707,13 +2728,17 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
             sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
             impl_str = f"{implied*100:.2f}%" if pd.notna(implied) else ""
+            price_c_str = f"{price_c:.0f}\u00a2" if price_c > 0 else ""
+            fair_c_str = f"{fair_c:.1f}\u00a2" if fair_c > 0 else ""
 
             rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{price_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{impl_str}</td>
@@ -2728,7 +2753,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Price</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair \u00a2</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Mkt Implied%</th>
@@ -2800,6 +2827,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 fair = row.get("my_fair", "")
                 edge = row.get("edge", 0)
                 pred = row.get("my_pred", 0)
+                implied = row.get("implied_prob", 0)
+                price_c = implied * 100
+                fair_c = price_c + edge
 
                 _mk_wx_sg = 0.0
                 if wx_lookup:
@@ -2813,6 +2843,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
                 pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
                 wx_str = f"{_mk_wx_sg:+.2f}" if _mk_wx_sg != 0 else "0.00"
+                price_c_str = f"{price_c:.0f}\u00a2" if price_c > 0 else ""
+                fair_c_str = f"{fair_c:.1f}\u00a2" if fair_c > 0 else ""
 
                 rows_html += f"""
                 <tr>
@@ -2820,7 +2852,9 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
                     <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side.upper()}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{price_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{wx_str}</td>
@@ -2836,8 +2870,79 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Market</th>
                     <th style="padding:6px 10px; text-align:center;">Side</th>
                     <th style="padding:6px 10px; text-align:center;">Mid Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Price</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair \u00a2</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                    <th style="padding:6px 10px; text-align:center;">Wx SG</th>
+                </tr>
+                {rows_html}
+            </table>"""
+
+    # Build Kalshi Win Outrights table (taker pricing, bets + fades)
+    kalshi_win_html = ""
+    if kalshi_win is not None and not kalshi_win.empty:
+        filtered_kw = kalshi_win[kalshi_win["edge"] > 0.25].copy()
+        if not filtered_kw.empty:
+            filtered_kw = filtered_kw.sort_values("edge", ascending=False)
+            rows_html = ""
+            for _, row in filtered_kw.iterrows():
+                player = row["player_name"].title()
+                side = row.get("side", "yes")
+                odds = row.get("american_odds", "")
+                fair = row.get("my_fair", "")
+                edge = row.get("edge", 0)
+                pred = row.get("my_pred", 0)
+                implied = row.get("implied_prob", 0)
+                price_c = implied * 100
+                fair_c = price_c + edge
+                sim_prob = row.get("sim_prob", 0)
+
+                _kw_wx_sg = 0.0
+                if wx_lookup:
+                    _kw_wx_sg = wx_lookup.get(str(row.get("player_name", "")).lower().strip(), 0)
+
+                edge_color = "#d4edda" if edge > 5 else "#fff3cd" if edge > 2 else "#ffffff"
+                pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
+                side_color = "#e8f4fd" if side == "yes" else "#fde8e8"
+
+                odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
+                fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
+                pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
+                price_c_str = f"{price_c:.0f}\u00a2" if price_c > 0 else ""
+                fair_c_str = f"{fair_c:.1f}\u00a2" if fair_c > 0 else ""
+                sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) and sim_prob > 0 else ""
+                wx_str = f"{_kw_wx_sg:+.2f}" if _kw_wx_sg != 0 else "0.00"
+
+                rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side.upper()}</td>
+                    <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{price_c_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_c_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
+                    <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{wx_str}</td>
+                </tr>"""
+
+            kalshi_win_html = f"""
+            <h3 style="color:#2c5282; margin:30px 0 8px 0;">
+                Kalshi Win Outrights (Bid/Ask Taker)
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Player</th>
+                    <th style="padding:6px 10px; text-align:center;">Side</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Price</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair \u00a2</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
@@ -2857,6 +2962,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         {outrights_html}
 
         {kalshi_mids_html}
+
+        {kalshi_win_html}
 
         {win_pos_html}
 
@@ -2882,7 +2989,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          all_books_csv_path=None,
                          finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None,
-                         wx_lookup=None, score_edges=None, kalshi_mids=None):
+                         wx_lookup=None, score_edges=None, kalshi_mids=None,
+                         kalshi_win=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -2903,7 +3011,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                                         win_negative_top10=win_negative_top10,
                                         wx_lookup=wx_lookup,
                                         score_edges=score_edges,
-                                        kalshi_mids=kalshi_mids)
+                                        kalshi_mids=kalshi_mids,
+                                        kalshi_win=kalshi_win)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -3439,6 +3548,7 @@ def main():
     outrights_sharp = pd.DataFrame()
     kalshi_mids = pd.DataFrame()
     kalshi_edges = pd.DataFrame()
+    kalshi_win = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
     finish_equity_csv_path = None
@@ -3543,6 +3653,12 @@ def main():
                         if not kalshi_sharp.empty:
                             outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
                             outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+
+                    # Kalshi win outrights table (taker, both yes+no, edge > 0.25%)
+                    kalshi_win = kalshi_taker[kalshi_taker["market_type"] == "winner"].copy()
+                    if not kalshi_win.empty:
+                        kalshi_win = kalshi_win[kalshi_win["edge"] > 0.25].sort_values("edge", ascending=False)
+                        print(f"    Kalshi win outrights: {len(kalshi_win)} lines (edge > 0.25%)")
 
                 # --- Win market edge CSVs ---
                 print(f"\n    Building outright win edge CSVs...")
@@ -3660,6 +3776,7 @@ def main():
             wx_lookup=_wx_lookup,
             score_edges=score_edges,
             kalshi_mids=kalshi_mids,
+            kalshi_win=kalshi_win,
         )
     else:
         print(f"\n  [dry-run] Skipping email")

@@ -57,11 +57,14 @@ def load_predictions(tourney_name):
     Input cols:  player_name, r1_ott_mean, r1_app_mean, ..., r4_total_mean
     Output cols: player_name, round (1-4), category, predicted_sg
     """
-    path = os.path.join(
-        os.path.dirname(__file__), f"avg_expected_cat_sg_{tourney_name}.csv"
-    )
+    base_dir = os.path.dirname(__file__)
+    path = os.path.join(base_dir, f"avg_expected_cat_sg_{tourney_name}.csv")
     if not os.path.exists(path):
-        print(f"  Prediction file not found: {path}")
+        # Fallback to permanent_data/ (survives weekly cleanup)
+        path = os.path.join(base_dir, "permanent_data", f"avg_expected_cat_sg_{tourney_name}.csv")
+    if not os.path.exists(path):
+        print(f"  Prediction file not found: avg_expected_cat_sg_{tourney_name}.csv")
+        print(f"  (checked repo root and permanent_data/)")
         return pd.DataFrame()
 
     df = pd.read_csv(path)
