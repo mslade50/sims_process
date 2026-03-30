@@ -4,7 +4,7 @@ import numpy as np
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.75
-PAR           = 70
+PAR           = 72
 CUT_LINE      = 65
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.15  # must match your main script
@@ -24,10 +24,10 @@ wind_speed_base=12.2
 
 start_yr=2020 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [20]
-course_id = 897
-tourney = 'houston'
-course_par = 70
+event_ids = [41]
+course_id = 770
+tourney = 'valero'
+course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
@@ -35,7 +35,7 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=897
+course_id_1=770
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -103,9 +103,6 @@ name_replacements = {
     'kim, seonghyeon' : 'kim, s.h.'
 }
 
-# Players whose predictions come from DataGolf override (2nd pass skips these)
-dg_override_players = []
-
 #regression informed coefficients for base model
 coefficients = {
     'adj_skill_est': 1.0757,
@@ -166,7 +163,8 @@ overrides_sd = {
 
 manual_boosts={
 }
-# manual_boosts = { }
+
+dg_override_players = []
 
 
 #for etr export to sheet
