@@ -103,6 +103,8 @@ name_replacements = {
     'kim, seonghyeon' : 'kim, s.h.'
 }
 
+dg_override_players = []
+
 #regression informed coefficients for base model
 coefficients = {
     'adj_skill_est': 1.0757,
