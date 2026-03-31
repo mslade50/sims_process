@@ -33,10 +33,13 @@ COURSE_CAT_MULTS = _cfg["course_cat_mults"]
 COURSE_CAT_SKEW  = _cfg["course_cat_skew"]
 TOP_K            = 20  # hardcode — never changes
 _event_id        = _cfg["event_id"]
+# Player adjustments from Sheet (survives sim_inputs overwrites)
+_sheet_manual_boosts = _cfg.get("manual_boosts", {})
+dg_override_players  = _cfg.get("dg_override_players", [])
 
 # --- Stable model params from sim_inputs ---
 from sim_inputs import (
-    name_replacements, dg_override_players,
+    name_replacements,
     # R1 update sets
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
     # R2 update sets (pos buckets)
@@ -314,6 +317,20 @@ if PRED_PATH != _final_pred_path:
         print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
 else:
     print("[DG override] Second pass — skipping (DG-overridden + regressed predictions already in final_predictions)")
+
+# --- Manual boosts from Google Sheet ---
+if _sheet_manual_boosts:
+    _boost_applied = 0
+    for name, boost in _sheet_manual_boosts.items():
+        mask = model_preds['player_name'] == name
+        if mask.any():
+            old_val = model_preds.loc[mask, 'my_pred'].iloc[0]
+            model_preds.loc[mask, 'my_pred'] += boost
+            print(f"[boost] {name}: {old_val:.3f} -> {old_val + boost:.3f} ({boost:+.3f})")
+            _boost_applied += 1
+        else:
+            print(f"[boost] Warning: {name} not found in field")
+    print(f"[boost] Applied {_boost_applied} manual boosts from Sheet")
 
 # Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):

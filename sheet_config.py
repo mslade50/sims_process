@@ -278,6 +278,28 @@ def load_config():
     dew_r3 = _parse_array(params.get("dew_r3", ""))
     dew_r4 = _parse_array(params.get("dew_r4", ""))
 
+    # Manual boosts: "player, name:0.35, other, player:-0.10"
+    _raw_boosts = params.get("manual_boosts", "").strip()
+    manual_boosts = {}
+    if _raw_boosts:
+        for chunk in _raw_boosts.split("|"):
+            chunk = chunk.strip()
+            if ":" not in chunk:
+                continue
+            # Last colon separates name from value (names can contain commas)
+            idx = chunk.rfind(":")
+            name = chunk[:idx].strip().lower()
+            try:
+                manual_boosts[name] = float(chunk[idx+1:].strip())
+            except ValueError:
+                pass
+
+    # DG override players: "player, name | other, player"
+    _raw_overrides = params.get("dg_override_players", "").strip()
+    dg_override_players = []
+    if _raw_overrides:
+        dg_override_players = [p.strip().lower() for p in _raw_overrides.split("|") if p.strip()]
+
     # Realized wind (manual entry) and dewpoint base (from humidity.py)
     realized_wind_r1 = _parse_numeric(params.get("realized_wind_r1"), default=None)
     realized_wind_r2 = _parse_numeric(params.get("realized_wind_r2"), default=None)
@@ -326,6 +348,9 @@ def load_config():
         "realized_wind_r3": realized_wind_r3,
         "realized_wind_r4": realized_wind_r4,
         "dewpoint_base": dewpoint_base,
+        # Player adjustments
+        "manual_boosts": manual_boosts,
+        "dg_override_players": dg_override_players,
     }
 
     # --- Print summary ---
@@ -351,6 +376,10 @@ def load_config():
     print(f"  Cat mults: " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_mults.items()))
     if course_cat_skew:
         print(f"  Cat skew:  " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_skew.items()))
+    if manual_boosts:
+        print(f"  Boosts:    " + " | ".join(f"{n}: {v:+.2f}" for n, v in manual_boosts.items()))
+    if dg_override_players:
+        print(f"  DG overrides: {', '.join(dg_override_players)}")
 
     return config
 
