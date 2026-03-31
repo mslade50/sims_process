@@ -1334,9 +1334,14 @@ from odds_loader import load_matchup_odds, scrape_betonline_live
 
 print("[info] Fetching tournament matchup odds (scraped -> DataGolf fallback)...")
 _mu_df = load_matchup_odds("tournament_matchups", api_key=API_KEY)
-if _mu_df.empty:
-    print("[info] No matchups from normal pipeline — scraping BetOnline live...")
-    _mu_df = scrape_betonline_live("tournament_matchup")
+if _mu_df.empty or len(_mu_df) < 5:
+    if not _mu_df.empty:
+        print(f"[info] Only {len(_mu_df)} lines from pipeline — too few, trying live scrape...")
+    else:
+        print("[info] No matchups from normal pipeline — scraping BetOnline live...")
+    _live = scrape_betonline_live("tournament_matchup")
+    if not _live.empty:
+        _mu_df = _live
 
 if not _mu_df.empty:
     # Rename DG columns to match legacy format
@@ -1499,7 +1504,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
 # ============================================================
 
 def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                                wx_lookup=None, kalshi_df=None):
+                                wx_lookup=None, kalshi_df=None, arch_map=None):
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
     # Section 1: Tournament Matchups
@@ -1550,6 +1555,15 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 # Weather SG differential
                 wx_sg = row.get('wx_diff', 0) if pd.notna(row.get('wx_diff', None)) else 0
 
+                # Archetypes (bet_on + opponent)
+                archetype = arch_map.get(str(row.get('bet_on', '')).lower().strip(), "") if arch_map else ""
+                _opp_name = (
+                    str(row['Player 2']).lower().strip()
+                    if str(row.get('bet_on', '')).lower() == str(row['Player 1']).lower()
+                    else str(row['Player 1']).lower().strip()
+                )
+                arch_against = arch_map.get(_opp_name, "") if arch_map else ""
+
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
@@ -1561,6 +1575,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; color:#666;">vs {opponent}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{ties}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{arch_against}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -1579,6 +1595,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:left;">Opponent</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Ties</th>
+                    <th style="padding:6px 10px; text-align:center;">Type</th>
+                    <th style="padding:6px 10px; text-align:center;">Vs Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
@@ -1625,6 +1643,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 _fp_wx_color = "#d4edda" if abs(_fp_wx_sg) > 0.3 else "#ffffff"
                 _fp_wx_str = f"{_fp_wx_sg:+.2f}" if _fp_wx_sg != 0 else "0.00"
 
+                archetype = arch_map.get(str(row.get('player_name', '')).lower().strip(), "") if arch_map else ""
+
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
 
                 fp_rows += f"""
@@ -1632,6 +1652,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -1649,6 +1670,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Market</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
@@ -1763,7 +1785,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
 
 def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                          attachment_paths=None, wx_lookup=None, kalshi_df=None):
+                          attachment_paths=None, wx_lookup=None, kalshi_df=None,
+                          arch_map=None):
     if not EMAIL_PASSWORD:
         print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
         return
@@ -1773,7 +1796,8 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
 
     try:
         html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
-                                           wx_lookup=wx_lookup, kalshi_df=kalshi_df)
+                                           wx_lookup=wx_lookup, kalshi_df=kalshi_df,
+                                           arch_map=arch_map)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"Tournament Sim -- {tourney.replace('_', ' ').title()}"
@@ -1846,6 +1870,11 @@ if not df_match.empty:
 
     df_match['P1 Odds'] = pd.to_numeric(df_match['P1 Odds'], errors='coerce')
     df_match['P2 Odds'] = pd.to_numeric(df_match['P2 Odds'], errors='coerce')
+    # Drop rows with missing odds or probabilities
+    _before = len(df_match)
+    df_match = df_match.dropna(subset=['P1 Odds', 'P2 Odds', 'my_odds_p1', 'my_odds_p2']).copy()
+    if len(df_match) < _before:
+        print(f"  [matchups] Dropped {_before - len(df_match)} rows with missing odds/probs")
 
     df_match['p1_dec'] = np.where(
         df_match['P1 Odds'] > 0,
@@ -1993,6 +2022,17 @@ if not df_match.empty:
             sharp_df.to_csv(sharp_filename, index=False)
             print(f"[ok] sharp filtered -> {sharp_filename}")
 
+        # --- Compute archetypes (before email so type_on appears in tables) ---
+        _arch_map = {}
+        try:
+            from sg_diagnostic import compute_rolling_archetypes
+            field_players = model_preds['player_name'].unique().tolist()
+            _arch_df = compute_rolling_archetypes(_event_id, field_players)
+            _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+            print(f"[archetypes] Computed for {len(_arch_map)} players")
+        except Exception as _arch_err:
+            print(f"[archetypes] Computation skipped: {_arch_err}")
+
         # --- Send tournament email ---
         print("\n[email] Building tournament sim email...")
         _finish_for_email = combined_finish_df if ('combined_finish_df' in dir() and not combined_finish_df.empty) else None
@@ -2021,6 +2061,7 @@ if not df_match.empty:
             attachment_paths=_attachments,
             wx_lookup=_wx_fp_lookup,
             kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+            arch_map=_arch_map,
         )
     else:
         print("[note] no bookmaker CSVs found to combine.")
@@ -2046,16 +2087,16 @@ if is_valid_run_time():
         # Build dg_id lookup from the predictions file
         dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
 
-        # Compute player archetypes for type_on column
-        try:
-            from sg_diagnostic import compute_rolling_archetypes
-            field_players = model_preds['player_name'].unique().tolist()
-            _arch_df = compute_rolling_archetypes(_event_id, field_players)
-            _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
-            print(f"[storage] Computed archetypes for {len(_arch_map)} players")
-        except Exception as _arch_err:
-            print(f"[storage] Archetype computation skipped: {_arch_err}")
-            _arch_map = {}
+        # Reuse archetypes computed before email (or compute if not yet done)
+        if not _arch_map:
+            try:
+                from sg_diagnostic import compute_rolling_archetypes
+                field_players = model_preds['player_name'].unique().tolist()
+                _arch_df = compute_rolling_archetypes(_event_id, field_players)
+                _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+                print(f"[storage] Computed archetypes for {len(_arch_map)} players")
+            except Exception as _arch_err:
+                print(f"[storage] Archetype computation skipped: {_arch_err}")
 
         # Add type_on to matchup and finish position DataFrames
         if _arch_map:
