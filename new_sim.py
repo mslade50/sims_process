@@ -406,8 +406,8 @@ weather_delta_r1 = (model_preds['wind_adj_r1_sim'] + model_preds['dew_adj_r1_sim
 weather_delta_r2 = (model_preds['wind_adj_r2_sim'] + model_preds['dew_adj_r2_sim']).to_numpy(dtype=float)
 
 # Round-level means for SIM (used for skill update math — same as v1)
-model_preds['r1_pred'] = model_preds['my_pred'] + model_preds['wind_adj_r1_sim'] + model_preds['dew_adj_r1_sim']
-model_preds['r2_pred'] = model_preds['my_pred'] + model_preds['wind_adj_r2_sim'] + model_preds['dew_adj_r2_sim']
+model_preds['r1_pred'] = model_preds['my_pred'] - model_preds['wind_adj_r1_sim'] - model_preds['dew_adj_r1_sim']
+model_preds['r2_pred'] = model_preds['my_pred'] - model_preds['wind_adj_r2_sim'] - model_preds['dew_adj_r2_sim']
 model_preds['r3_pred'] = model_preds['my_pred']   # no wave
 model_preds['r4_pred'] = model_preds['my_pred']   # no wave
 
@@ -538,7 +538,7 @@ sg_r1 = np.empty((n_players, SIMULATIONS), dtype=float)
 
 for i, (mu, std_c) in enumerate(player_params_v2):
     # Category means shifted by weather delta
-    cat_mu = mu + weather_delta_r1[i] * WEATHER_CAT_SPLIT
+    cat_mu = mu - weather_delta_r1[i] * WEATHER_CAT_SPLIT
     Z = RNG.standard_normal(size=(SIMULATIONS, 4))
     corr_z = Z @ L_corr.T                          # correlated unit-variance draws
     for j in range(4):                              # apply per-player skewness
@@ -611,9 +611,9 @@ sg_r2 = np.empty((n_players, SIMULATIONS), dtype=float)
 
 for i, (mu, std_c) in enumerate(player_params_v2):
     # Category means shifted by weather delta
-    cat_mu = mu + weather_delta_r2[i] * WEATHER_CAT_SPLIT
+    cat_mu = mu - weather_delta_r2[i] * WEATHER_CAT_SPLIT
     # Skill update shift: distribute evenly across 4 categories
-    base_total_mu = mu.sum() + weather_delta_r2[i]
+    base_total_mu = mu.sum() - weather_delta_r2[i]
     skill_shift = sg_r2_mean[i] - base_total_mu  # shape (SIMULATIONS,)
     cat_mu_shifted = cat_mu + skill_shift[:, None] / 4.0
     Z = RNG.standard_normal(size=(SIMULATIONS, 4))
