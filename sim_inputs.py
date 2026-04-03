@@ -100,7 +100,12 @@ name_replacements = {
     'capan, frankie' : 'capan iii, frankie',
     'stallings, stephen jr' : 'stallings jr., stephen',
     'bauchou, zachary' : 'bauchou, zach',
-    'kim, seonghyeon' : 'kim, s.h.'
+    'kim, seonghyeon' : 'kim, s.h.',
+    'chassart, adrien dumont de': 'dumont de chassart, adrien',
+    'keefer, john': 'keefer, johnny',
+    'kim, sh': 'kim, s.h.',
+    'rooyen, erik van': 'van rooyen, erik',
+    'spaun, jj': 'spaun, j.j.',
 }
 
 #regression informed coefficients for base model
