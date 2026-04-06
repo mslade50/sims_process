@@ -12,8 +12,6 @@ def make_navbar():
             dbc.Collapse(
                 dbc.Nav([
                     dbc.NavItem(dbc.NavLink("Home", href="/")),
-                    dbc.NavItem(dbc.NavLink("Matchups", href="/matchups")),
-                    dbc.NavItem(dbc.NavLink("Outrights (Live)", href="/outrights-live")),
                     dbc.NavItem(dbc.NavLink("Distributions", href="/distributions")),
                     dbc.NavItem(dbc.NavLink("SG Dists", href="/sg-distributions")),
                     dbc.NavItem(dbc.NavLink("Round Scores", href="/round-distributions")),

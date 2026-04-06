@@ -13,7 +13,7 @@ SG_DIAGNOSTIC_PATH = os.path.join(PERMANENT_DATA, "sg_diagnostic.parquet")
 # Sportsbook lists (mirrors round_sim.py)
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "barstool", "espn", "pointsbet"]
-BOOKS_TO_USE = ["betcris", "betmgm", "betonline", "bovada", "caesars", "draftkings", "fanduel", "pinnacle", "unibet"]
+BOOKS_TO_USE = ["betcris", "betmgm", "betonline", "bovada", "caesars", "draftkings", "fanduel", "kalshi", "novig", "pinnacle", "unibet"]
 
 # Edge thresholds (matches round_sim.py)
 EDGE_THRESHOLD_WIN = 2.0

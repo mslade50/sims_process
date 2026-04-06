@@ -148,49 +148,47 @@ def main():
 
     if ungraded_count == 0:
         print(f"\n  Already graded: 0 ungraded bets for {event_name}.")
-        print("  Skipping grading pipeline — nothing to do.")
-        print("=" * 60 + "\n")
-        sys.exit(0)
+        print("  Skipping grade_bets.py — nothing to grade.")
+    else:
+        print(f"\n  Found {ungraded_count} ungraded bets for {event_name}.")
 
-    print(f"\n  Found {ungraded_count} ungraded bets for {event_name}.")
+        if args.dry_run:
+            print("\n  [DRY RUN] Would run: grade_bets.py, sg_diagnostic.py, push_dashboard_data.py")
+            print("=" * 60 + "\n")
+            sys.exit(0)
 
-    if args.dry_run:
-        print("\n  [DRY RUN] Would run: grade_bets.py, sg_diagnostic.py, push_dashboard_data.py")
-        print("=" * 60 + "\n")
-        sys.exit(0)
+        # ------------------------------------------------------------------
+        # Step 3: Run grade_bets.py
+        # ------------------------------------------------------------------
+        success = _run_subprocess(
+            [python, "grade_bets.py"],
+            "grade_bets.py",
+        )
 
-    # ------------------------------------------------------------------
-    # Step 3: Run grade_bets.py
-    # ------------------------------------------------------------------
-    success = _run_subprocess(
-        [python, "grade_bets.py"],
-        "grade_bets.py",
-    )
+        if not success:
+            print("  grade_bets.py reported failure.")
+            sys.exit(1)
 
-    if not success:
-        print("  grade_bets.py reported failure.")
-        sys.exit(1)
+        # ------------------------------------------------------------------
+        # Step 4: Verify grading succeeded
+        # ------------------------------------------------------------------
+        import time
+        print("\n  Verifying grading results...")
+        time.sleep(5)  # brief pause for Sheets propagation
 
-    # ------------------------------------------------------------------
-    # Step 4: Verify grading succeeded
-    # ------------------------------------------------------------------
-    import time
-    print("\n  Verifying grading results...")
-    time.sleep(5)  # brief pause for Sheets propagation
+        # Reconnect to get fresh data (cache may be stale)
+        spreadsheet = get_spreadsheet()
+        remaining = _count_ungraded(spreadsheet, event_id)
 
-    # Reconnect to get fresh data (cache may be stale)
-    spreadsheet = get_spreadsheet()
-    remaining = _count_ungraded(spreadsheet, event_id)
+        if remaining > 0:
+            print(f"\n  WARNING: {remaining} bets still ungraded after running grade_bets.py.")
+            print("  This may indicate DataGolf data was incomplete.")
+            sys.exit(1)
 
-    if remaining > 0:
-        print(f"\n  WARNING: {remaining} bets still ungraded after running grade_bets.py.")
-        print("  This may indicate DataGolf data was incomplete.")
-        sys.exit(1)
-
-    print(f"\n  Verification passed: all bets graded for {event_name}.")
+        print(f"\n  Verification passed: all bets graded for {event_name}.")
 
     # ------------------------------------------------------------------
-    # Step 5: Run sg_diagnostic.py --no-email (graceful skip)
+    # Step 5: Run sg_diagnostic.py --no-email (always runs)
     # ------------------------------------------------------------------
     _run_subprocess(
         [python, "sg_diagnostic.py", "--no-email"],
@@ -199,7 +197,7 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # Step 6: Run push_dashboard_data.py (graceful skip)
+    # Step 6: Run push_dashboard_data.py (always runs)
     # ------------------------------------------------------------------
     _run_subprocess(
         [python, "push_dashboard_data.py"],

@@ -352,12 +352,20 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     if df.empty:
         return empty_return
 
-    # Derive units_wagered from kelly_stake for finish pos, default 1.0 for matchups
+    # Derive units_wagered:
+    #   - Finish positions: from kelly_stake (raw dollars, converted to units later)
+    #   - Matchups/score bets: from book_odds (risk 1u at + money, risk |odds|/100 at - money)
     if "units_wagered" not in df.columns:
+        df["units_wagered"] = 1.0
         if "kelly_stake" in df.columns:
-            df["units_wagered"] = df["kelly_stake"].fillna(1.0)
-        else:
-            df["units_wagered"] = 1.0
+            has_kelly = df["kelly_stake"].notna()
+            df.loc[has_kelly, "units_wagered"] = df.loc[has_kelly, "kelly_stake"]
+        # For matchup/score bets: derive from book_odds (same logic as grade_bets.py)
+        if "book_odds" in df.columns:
+            is_matchup = ~df["bet_type"].str.startswith("finish_position")
+            odds = pd.to_numeric(df.loc[is_matchup, "book_odds"], errors="coerce")
+            minus_money = is_matchup & (odds <= -100)
+            df.loc[minus_money, "units_wagered"] = odds[minus_money].abs() / 100.0
     if "units_won" not in df.columns:
         df["units_won"] = np.nan
 
