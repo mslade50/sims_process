@@ -167,8 +167,7 @@ overrides_sd = {
 
 manual_boosts={
 }
-
-dg_override_players = []
+# manual_boosts = { }
 
 
 #for etr export to sheet
