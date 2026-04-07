@@ -42,6 +42,11 @@ course_id_2=0
 cutline = CUT_LINE
 shot_rule=0
 
+# Playoff config
+playoff_format = "sudden_death"   # "sudden_death" or "aggregate"
+playoff_holes = [18, 10]          # hole sequence (repeats for sudden death, then SD after aggregate)
+aggregate_holes = 3               # holes in aggregate playoff (ignored for sudden_death)
+
 #for players who we don't have a birthday (monday q guys etc.)
 default_birthday = datetime(1995, 1, 1)
 
