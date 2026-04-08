@@ -103,16 +103,7 @@ def _make_figure(rank_df, players, max_rank):
                 showarrow=False, font=dict(color=color, size=11),
             )
 
-    # Title with stats
-    if len(players) == 1 and not rank_df[rank_df["player_name"] == players[0]].empty:
-        pdf = rank_df[rank_df["player_name"] == players[0]]
-        win, t5, t10, t20, win_ndh, t5_ndh, t10_ndh, t20_ndh = _compute_stats(pdf)
-        title_text = (
-            f"<b>{players[0].title()}</b><br>"
-            f"<sup>DH: Win {win:.2f}% | T5 {t5:.1f}% | T10 {t10:.1f}% | T20 {t20:.1f}%</sup><br>"
-            f"<sup>Fair: Win {win_ndh:.2f}% | T5 {t5_ndh:.1f}% | T10 {t10_ndh:.1f}% | T20 {t20_ndh:.1f}%</sup>"
-        )
-    elif len(players) > 1:
+    if len(players) >= 1:
         title_text = " vs ".join(p.title() for p in players)
     else:
         title_text = "Select a player"
@@ -165,6 +156,8 @@ layout = dbc.Container([
     ], className="mb-3"),
 
     dcc.Graph(id="dist-chart", style={"height": "550px"}),
+
+    html.Div(id="dist-stats-table", className="mb-3"),
 
     html.Hr(),
 
@@ -225,6 +218,7 @@ def populate_players(mode):
 
 @callback(
     Output("dist-chart", "figure"),
+    Output("dist-stats-table", "children"),
     Input("dist-player", "value"),
     Input("dist-compare", "value"),
     Input("dist-mode", "value"),
@@ -233,13 +227,13 @@ def update_chart(player, compare_players, mode):
     if not player:
         fig = go.Figure()
         fig.update_layout(**PLOT_LAYOUT, title="Select a player to view distribution")
-        return fig
+        return fig, ""
 
     df = _load_data(mode)
     if df.empty:
         fig = go.Figure()
         fig.update_layout(**PLOT_LAYOUT, title="No distribution data available")
-        return fig
+        return fig, ""
 
     max_rank = int(df["rank"].max())
 
@@ -249,7 +243,49 @@ def update_chart(player, compare_players, mode):
     if compare_players:
         players.extend([p for p in compare_players if p not in players])
 
-    return _make_figure(df, players, max_rank)
+    fig = _make_figure(df, players, max_rank)
+
+    # Build stats tables (dead heat + non dead heat)
+    dh_rows = []
+    ndh_rows = []
+    for p in players:
+        pdf = df[df["player_name"] == p]
+        if pdf.empty:
+            continue
+        win, t5, t10, t20, win_ndh, t5_ndh, t10_ndh, t20_ndh = _compute_stats(pdf)
+        dh_rows.append({
+            "Player": p.title(),
+            "Win %": f"{win:.2f}%", "Win": _prob_to_american(win / 100),
+            "T5 %": f"{t5:.1f}%", "T5": _prob_to_american(t5 / 100),
+            "T10 %": f"{t10:.1f}%", "T10": _prob_to_american(t10 / 100),
+            "T20 %": f"{t20:.1f}%", "T20": _prob_to_american(t20 / 100),
+        })
+        ndh_rows.append({
+            "Player": p.title(),
+            "Win %": f"{win_ndh:.2f}%", "Win": _prob_to_american(win_ndh / 100),
+            "T5 %": f"{t5_ndh:.1f}%", "T5": _prob_to_american(t5_ndh / 100),
+            "T10 %": f"{t10_ndh:.1f}%", "T10": _prob_to_american(t10_ndh / 100),
+            "T20 %": f"{t20_ndh:.1f}%", "T20": _prob_to_american(t20_ndh / 100),
+        })
+
+    if not dh_rows:
+        return fig, ""
+
+    dh_table = dbc.Table.from_dataframe(pd.DataFrame(dh_rows), striped=True, bordered=True,
+                                         hover=True, color="dark", size="sm")
+    ndh_table = dbc.Table.from_dataframe(pd.DataFrame(ndh_rows), striped=True, bordered=True,
+                                          hover=True, color="dark", size="sm")
+    tables = dbc.Row([
+        dbc.Col([
+            html.H6("Dead Heat", className="mt-2 mb-1", style={"color": "#ff7f0e"}),
+            dh_table,
+        ], md=6),
+        dbc.Col([
+            html.H6("Non Dead Heat", className="mt-2 mb-1", style={"color": "gold"}),
+            ndh_table,
+        ], md=6),
+    ])
+    return fig, tables
 
 
 @callback(

@@ -1220,23 +1220,22 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
 
         Args:
             ob_levels: raw levels from the OPPOSITE side of the book.
-                       For buying YES: pass NO levels (no_price, qty).
-                       For buying NO:  pass YES levels (yes_price, qty).
+                       For buying YES: pass NO levels (no_price_dollars, qty).
+                       For buying NO:  pass YES levels (yes_price_dollars, qty).
             sim_prob:  our probability for the side we're betting.
 
         Returns dict with effective_price, target, filled, vwap, avg_fee,
         or None if no edge at best price.
         """
-        # Convert to (cost_cents, qty) sorted cheapest-first
+        # Convert to (cost_dollars, qty) sorted cheapest-first
         fill_levels = sorted(
-            [(100 - p, qty) for p, qty in ob_levels],
+            [(1.0 - p, qty) for p, qty in ob_levels],
         )
         if not fill_levels:
             return None
 
         # Check edge at best available price
-        best_cents = fill_levels[0][0]
-        best = best_cents / 100.0
+        best = fill_levels[0][0]
         fee_at_best = _kalshi_taker_fee(best)
         eff_best = best + fee_at_best
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
@@ -1248,8 +1247,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         filled = 0
         cost_sum = 0.0   # dollars
         fee_sum = 0.0     # dollars
-        for price_cents, qty in fill_levels:
-            price = price_cents / 100.0
+        for price, qty in fill_levels:
             fee = _kalshi_taker_fee(price)
             take = min(qty, target - filled)
             filled += take
@@ -2301,8 +2299,8 @@ def calculate_edges(df):
     prob_p2 = np.where(use_tl, df["my_odds_p2_tl"], df["my_odds_p2"])
 
     # Edge = (prob × (decimal − 1) − (1 − prob)) × 100
-    df["edge_p1"] = (prob_p1 * (df["p1_dec"] - 1) - (1 - prob_p1)) * 100
-    df["edge_p2"] = (prob_p2 * (df["p2_dec"] - 1) - (1 - prob_p2)) * 100
+    df["edge_p1"] = (prob_p1 - 1.0 / df["p1_dec"]) * 100
+    df["edge_p2"] = (prob_p2 - 1.0 / df["p2_dec"]) * 100
 
     # Fair American odds (ties push)
     df["Fair_p1"] = df["my_odds_p1"].apply(

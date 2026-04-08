@@ -164,6 +164,7 @@ __marimo__/
 # Credentials and secrets (NEVER commit these)
 credentials.json
 *.json.bak
+*.pem
 .env
 .env.local
 .env.*.local

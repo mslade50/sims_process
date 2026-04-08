@@ -15,7 +15,11 @@ import numpy as np
 import requests
 from scipy.stats import zscore
 from dotenv import load_dotenv
-from sim_inputs import tourney, name_replacements, dg_override_players
+from sim_inputs import tourney, name_replacements
+try:
+    from sim_inputs import dg_override_players
+except ImportError:
+    dg_override_players = []
 
 load_dotenv()
 
@@ -229,7 +233,9 @@ print(f"\n[ok] Saved {detail_path}")
 pcf = pd.read_csv(f'pre_course_fit_{tourney}.csv', usecols=['player_name', 'r1_teetime', 'r2_teetime', 'std_dev', 'sample'])
 pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
 
-slim = merged_df[['player_name', 'my_pred_final']].rename(columns={'my_pred_final': 'my_pred'})
+slim = merged_df[['player_name', 'pred', 'my_pred_final', 'tot_rgrs']].rename(
+    columns={'my_pred_final': 'my_pred', 'pred': 'pre_regress_pred', 'tot_rgrs': 'regress'}
+)
 slim = slim.merge(pcf, on='player_name', how='left')
 
 slim_path = f'final_predictions_{tourney}.csv'

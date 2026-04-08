@@ -204,21 +204,42 @@ def copy_files(dry_run=False):
 
 
 def git_push(dry_run=False):
-    """Stage dashboard_data/, commit, and push."""
+    """Stage dashboard_data/, commit, and push (with pull+rebase retry)."""
+    import subprocess
+
     if dry_run:
         return
 
-    os.system(f'cd "{PROJECT_ROOT}" && git add dashboard_data/')
-    os.system(f'cd "{PROJECT_ROOT}" && git add sim_inputs.py')
+    def _run(cmd):
+        return subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+
+    _run(["git", "add", "dashboard_data/"])
+    _run(["git", "add", "sim_inputs.py"])
 
     # Check if there are staged changes
-    ret = os.system(f'cd "{PROJECT_ROOT}" && git diff --staged --quiet')
-    if ret == 0:
+    ret = _run(["git", "diff", "--staged", "--quiet"])
+    if ret.returncode == 0:
         print("\n  No changes to commit.")
         return
 
-    os.system(f'cd "{PROJECT_ROOT}" && git commit -m "Update dashboard data for Render deploy"')
-    os.system(f'cd "{PROJECT_ROOT}" && git push')
+    _run(["git", "commit", "-m", "Update dashboard data for Render deploy"])
+
+    # Push with up to 3 retries (pull+rebase on rejection)
+    for attempt in range(3):
+        result = _run(["git", "push"])
+        if result.returncode == 0:
+            break
+        if "rejected" in (result.stderr or "") or "non-fast-forward" in (result.stderr or ""):
+            print(f"  Push rejected (attempt {attempt + 1}/3), pulling with rebase...")
+            rebase = _run(["git", "pull", "--rebase"])
+            if rebase.returncode != 0:
+                print(f"  ERROR: pull --rebase failed: {rebase.stderr.strip()}")
+                break
+        else:
+            print(f"  ERROR: git push failed: {result.stderr.strip()}")
+            break
+    else:
+        print("  ERROR: push failed after 3 attempts.")
 
 
 def main():

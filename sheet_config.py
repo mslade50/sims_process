@@ -300,6 +300,22 @@ def load_config():
     if _raw_overrides:
         dg_override_players = [p.strip().lower() for p in _raw_overrides.split("|") if p.strip()]
 
+    # Archetype boosts: archetype_boost_<type> → float SG adjustment
+    ARCHETYPE_KEYS = [
+        "stud", "ball_striker", "long_wild", "long_accurate",
+        "short_accurate", "short_game_specialist", "elite_putter",
+        "low_skill", "balanced",
+    ]
+    archetype_boosts = {}
+    for key in ARCHETYPE_KEYS:
+        val = _parse_numeric(params.get(f"archetype_boost_{key}"), default=None)
+        if val is not None and val != 0:
+            # Convert key back to display label: "ball_striker" → "Ball Striker"
+            label = key.replace("_", " ").title()
+            if label == "Short Game Specialist":
+                label = "Short Game Specialist"  # already correct from title()
+            archetype_boosts[label] = val
+
     # Realized wind (manual entry) and dewpoint base (from humidity.py)
     realized_wind_r1 = _parse_numeric(params.get("realized_wind_r1"), default=None)
     realized_wind_r2 = _parse_numeric(params.get("realized_wind_r2"), default=None)
@@ -351,6 +367,7 @@ def load_config():
         # Player adjustments
         "manual_boosts": manual_boosts,
         "dg_override_players": dg_override_players,
+        "archetype_boosts": archetype_boosts,
     }
 
     # --- Print summary ---
@@ -376,6 +393,8 @@ def load_config():
     print(f"  Cat mults: " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_mults.items()))
     if course_cat_skew:
         print(f"  Cat skew:  " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_skew.items()))
+    if archetype_boosts:
+        print(f"  Arch boost: " + " | ".join(f"{n}: {v:+.2f}" for n, v in archetype_boosts.items()))
     if manual_boosts:
         print(f"  Boosts:    " + " | ".join(f"{n}: {v:+.2f}" for n, v in manual_boosts.items()))
     if dg_override_players:

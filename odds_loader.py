@@ -122,14 +122,10 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
         ties = match.get("ties", "unknown")
 
         for book, odds in match.get("odds", {}).items():
-            if book == "datagolf":
-                continue
-            # Kalshi H2H: use mid odds (maker) when available — liquidity too thin for taker
+            if book in ("datagolf", "kalshi"):
+                continue  # Kalshi H2H handled separately by price_kalshi_matchups_tourney
             p1_odds = odds.get("p1")
             p2_odds = odds.get("p2")
-            if book == "kalshi" and odds.get("p1_mid"):
-                p1_odds = odds["p1_mid"]
-                p2_odds = odds.get("p2_mid", p2_odds)
             rows.append({
                 "Player 1": p1,
                 "Player 2": p2,
