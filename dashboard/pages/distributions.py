@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
-from dashboard.data_layer import get_rank_probs_pre, get_rank_probs_live
+from dashboard.data_layer import get_rank_probs_pre, get_rank_probs_live, get_h2h_matrix
 
 dash.register_page(__name__, path="/distributions", title="Distributions", order=5)
 
@@ -275,17 +275,60 @@ def update_chart(player, compare_players, mode):
                                          hover=True, color="dark", size="sm")
     ndh_table = dbc.Table.from_dataframe(pd.DataFrame(ndh_rows), striped=True, bordered=True,
                                           hover=True, color="dark", size="sm")
-    tables = dbc.Row([
-        dbc.Col([
-            html.H6("Dead Heat", className="mt-2 mb-1", style={"color": "#ff7f0e"}),
-            dh_table,
-        ], md=6),
-        dbc.Col([
-            html.H6("Non Dead Heat", className="mt-2 mb-1", style={"color": "gold"}),
-            ndh_table,
-        ], md=6),
-    ])
-    return fig, tables
+    tables_children = [
+        dbc.Row([
+            dbc.Col([
+                html.H6("Dead Heat", className="mt-2 mb-1", style={"color": "#ff7f0e"}),
+                dh_table,
+            ], md=6),
+            dbc.Col([
+                html.H6("Non Dead Heat", className="mt-2 mb-1", style={"color": "gold"}),
+                ndh_table,
+            ], md=6),
+        ]),
+    ]
+
+    # H2H matchup table when 2+ players selected
+    if len(players) >= 2:
+        h2h_df = get_h2h_matrix()
+        if not h2h_df.empty:
+            h2h_rows = []
+            for i, p1 in enumerate(players):
+                for p2 in players[i + 1:]:
+                    # Look up in both directions
+                    match = h2h_df[
+                        ((h2h_df["player_a"] == p1) & (h2h_df["player_b"] == p2))
+                        | ((h2h_df["player_a"] == p2) & (h2h_df["player_b"] == p1))
+                    ]
+                    if match.empty:
+                        continue
+                    row = match.iloc[0]
+                    if row["player_a"] == p1:
+                        prob_1 = row["prob_a"]
+                    else:
+                        prob_1 = 1.0 - row["prob_a"]
+                    prob_2 = 1.0 - prob_1
+                    h2h_rows.append({
+                        "Matchup": f"{p1.title()} vs {p2.title()}",
+                        f"{p1.title()} %": f"{prob_1 * 100:.1f}%",
+                        f"{p1.title()}": _prob_to_american(prob_1),
+                        f"{p2.title()} %": f"{prob_2 * 100:.1f}%",
+                        f"{p2.title()}": _prob_to_american(prob_2),
+                    })
+            if h2h_rows:
+                h2h_table = dbc.Table.from_dataframe(
+                    pd.DataFrame(h2h_rows), striped=True, bordered=True,
+                    hover=True, color="dark", size="sm",
+                )
+                tables_children.append(
+                    html.Div([
+                        html.H6("Head-to-Head (ties pushed)", className="mt-3 mb-1",
+                                 style={"color": "#1f77b4"}),
+                        h2h_table,
+                    ])
+                )
+
+    return fig, html.Div(tables_children)
 
 
 @callback(

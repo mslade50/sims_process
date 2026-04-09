@@ -785,6 +785,28 @@ r3_r4[~made_cut_mask] = 200
 final_scores = r1_r2_scores + r3_r4
 np.save(f"final_scores_{tourney}.npy", final_scores)
 
+# ── Precompute H2H matchup matrix for dashboard ──────────────────────
+_h2h_rows = []
+_n_players = len(player_names)
+for i in range(_n_players):
+    for j in range(i + 1, _n_players):
+        s_i = final_scores[i]
+        s_j = final_scores[j]
+        wins_i = int(np.sum(s_i < s_j))
+        wins_j = int(np.sum(s_i > s_j))
+        denom = wins_i + wins_j
+        if denom == 0:
+            continue
+        prob_i = wins_i / denom
+        _h2h_rows.append({
+            "player_a": player_names[i],
+            "player_b": player_names[j],
+            "prob_a": round(prob_i, 6),
+        })
+_h2h_df = pd.DataFrame(_h2h_rows)
+_h2h_df.to_parquet(f"h2h_matrix_{tourney}.parquet", index=False)
+print(f"[ok] wrote h2h_matrix_{tourney}.parquet ({len(_h2h_rows)} pairs)")
+
 
 # ======================
 # Validation checks

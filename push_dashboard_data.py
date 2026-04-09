@@ -48,6 +48,7 @@ TOURNEY_RENAMED = [
     ("finish_equity_{tourney}.csv", "finish_equity_pre.csv"),
     ("rank_probs_updated_{tourney}.parquet", "rank_probs_pre.parquet"),
     ("rank_probs_live_{tourney}.parquet", "rank_probs_live.parquet"),
+    ("h2h_matrix_{tourney}.parquet", "h2h_matrix.parquet"),
     ("weather_impact_{tourney}.csv", "weather_impact.csv"),
 ]
 

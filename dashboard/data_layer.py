@@ -560,6 +560,19 @@ def get_rank_probs_pre(tourney=None):
     return _read_parquet_safe(os.path.join(DASHBOARD_DATA, "rank_probs_pre.parquet"))
 
 
+def get_h2h_matrix(tourney=None):
+    """Read h2h_matrix_{tourney}.parquet — pairwise H2H win probabilities."""
+    if tourney is None:
+        config = get_tournament_config()
+        tourney = config.get("tourney", "")
+    if not tourney:
+        return pd.DataFrame()
+    path = os.path.join(PROJECT_ROOT, f"h2h_matrix_{tourney}.parquet")
+    if os.path.exists(path):
+        return _read_parquet_safe(path)
+    return _read_parquet_safe(os.path.join(DASHBOARD_DATA, "h2h_matrix.parquet"))
+
+
 def get_rank_probs_live(tourney=None):
     """Read rank_probs_live_{tourney}.parquet (live finish distributions)."""
     if tourney is None:
