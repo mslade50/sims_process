@@ -223,7 +223,7 @@ def load_config():
     dew = _parse_array(params.get("dew", ""))
 
     # Scoring adjustments (course 1 required, 2 & 3 optional for multi-course)
-    expected_score_1 = _parse_numeric(params.get("expected_score_1"), default=0)
+    expected_score_1 = _parse_numeric(params.get("expected_score_1"), default=None)
     expected_score_2 = _parse_numeric(params.get("expected_score_2"), default=None)
     expected_score_3 = _parse_numeric(params.get("expected_score_3"), default=None)
 

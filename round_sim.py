@@ -2298,9 +2298,9 @@ def calculate_edges(df):
     prob_p1 = np.where(use_tl, df["my_odds_p1_tl"], df["my_odds_p1"])
     prob_p2 = np.where(use_tl, df["my_odds_p2_tl"], df["my_odds_p2"])
 
-    # Edge = (prob × (decimal − 1) − (1 − prob)) × 100
-    df["edge_p1"] = (prob_p1 - 1.0 / df["p1_dec"]) * 100
-    df["edge_p2"] = (prob_p2 - 1.0 / df["p2_dec"]) * 100
+    # Kelly edge = (prob × (decimal − 1) − (1 − prob)) × 100
+    df["edge_p1"] = (prob_p1 * (df["p1_dec"] - 1) - (1 - prob_p1)) * 100
+    df["edge_p2"] = (prob_p2 * (df["p2_dec"] - 1) - (1 - prob_p2)) * 100
 
     # Fair American odds (ties push)
     df["Fair_p1"] = df["my_odds_p1"].apply(
@@ -3795,6 +3795,17 @@ def main():
     else:
         print(f"  {pred_file} not found — using cached pred_lookup + wx_lookup")
 
+    # Adjust expected_avg: user enters expected field scoring average, but the sim
+    # formula is score = expected_avg - player_skill.  Player skills are absolute SG
+    # (not relative to field), so we must add avg field skill to convert expected_avg
+    # from "what the field averages" to "what a 0-SG player would shoot".
+    scores_col = f"scores_r{sim_round}"
+    if model_preds is not None and scores_col in model_preds.columns:
+        avg_field_skill = model_preds[scores_col].mean()
+        expected_avg += avg_field_skill
+        print(f"  Field avg skill (scores_r{sim_round}): {avg_field_skill:.3f}")
+        print(f"  Adjusted expected avg: {expected_avg:.2f}  (input + field skill)")
+
     _mode = "PRICE-ONLY" if args.price_only else ("SIM-ONLY" if args.sim_only else "FULL")
     print(f"\n{'='*60}")
     print(f"  ROUND {sim_round} {'SIMULATION' if not args.price_only else 'RE-PRICING'} - {tourney} [{_mode}]")
@@ -3803,7 +3814,7 @@ def main():
         print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
     else:
         print(f"  Predictions:  from cache ({len(pred_lookup)} players)")
-    print(f"  Expected avg: {expected_avg}")
+    print(f"  Expected avg: {expected_avg:.2f}")
     if not args.price_only:
         print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
         print(f"  Simulations:  {NUM_SIMULATIONS:,}")
