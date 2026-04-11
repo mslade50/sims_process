@@ -1435,7 +1435,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     return df
 
 
-def price_novig_outrights(finish_probs, pred_lookup, sample_lookup):
+def price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=None):
     """Price NoVig outright markets using live GraphQL API (no auth needed).
 
     Uses the `available` field (best offer / ask price) on each outcome.
@@ -1515,10 +1515,10 @@ def price_novig_outrights(finish_probs, pred_lookup, sample_lookup):
 
         # Get tournaments, pick one with most child events
         data = gql("""query {
-  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_eq: "OPEN_PREGAME"}}
+  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}
         order_by: {scheduled_start: asc}) {
     id description
-    child_events_aggregate: events_aggregate(where: {status: {_eq: "OPEN_PREGAME"}}) {
+    child_events_aggregate: events_aggregate(where: {status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}) {
       aggregate { count }
     }
   }
@@ -1527,11 +1527,24 @@ def price_novig_outrights(finish_probs, pred_lookup, sample_lookup):
         if not events:
             print("  No open PGA tournament on NoVig")
             return pd.DataFrame()
-        best = max(events, key=lambda e: e.get("child_events_aggregate", {})
-                   .get("aggregate", {}).get("count", 0))
+
+        # Fuzzy-match to tourney name from sim_inputs
+        best = None
+        if tourney_name:
+            from rapidfuzz import fuzz
+            query = tourney_name.replace("_", " ").lower()
+            scored = [(e, fuzz.token_set_ratio(query, e["description"].lower())) for e in events]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            if scored[0][1] >= 50:
+                best = scored[0][0]
+                print(f"  NoVig tournament: {best['description']} (fuzzy={scored[0][1]})")
+        if best is None:
+            best = max(events, key=lambda e: e.get("child_events_aggregate", {})
+                       .get("aggregate", {}).get("count", 0))
+            print(f"  NoVig tournament: {best['description']}")
+
         tourn_id = best["id"]
         tourn_name = best["description"]
-        print(f"  NoVig tournament: {tourn_name}")
     except Exception as e:
         print(f"  [warn] NoVig tournament lookup failed: {e}")
         return pd.DataFrame()
@@ -4076,7 +4089,7 @@ def main():
                 # Price NoVig outrights (no dead-heat)
                 print(f"\n    Pricing NoVig outrights (no dead-heat)...")
                 try:
-                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup)
+                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=tourney)
                     if not novig_edges.empty:
                         novig_taker = novig_edges[novig_edges["edge"] > 0].copy()
                         if not novig_taker.empty:
