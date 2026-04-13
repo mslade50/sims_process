@@ -57,14 +57,11 @@ def load_predictions(tourney_name):
     Input cols:  player_name, r1_ott_mean, r1_app_mean, ..., r4_total_mean
     Output cols: player_name, round (1-4), category, predicted_sg
     """
-    base_dir = os.path.dirname(__file__)
-    path = os.path.join(base_dir, f"avg_expected_cat_sg_{tourney_name}.csv")
+    path = os.path.join(
+        os.path.dirname(__file__), f"avg_expected_cat_sg_{tourney_name}.csv"
+    )
     if not os.path.exists(path):
-        # Fallback to permanent_data/ (survives weekly cleanup)
-        path = os.path.join(base_dir, "permanent_data", f"avg_expected_cat_sg_{tourney_name}.csv")
-    if not os.path.exists(path):
-        print(f"  Prediction file not found: avg_expected_cat_sg_{tourney_name}.csv")
-        print(f"  (checked repo root and permanent_data/)")
+        print(f"  Prediction file not found: {path}")
         return pd.DataFrame()
 
     df = pd.read_csv(path)
@@ -1381,11 +1378,6 @@ def main():
         action="store_true",
         help="Re-run archetype classification on all stored diagnostic data",
     )
-    parser.add_argument(
-        "--archetypes-only",
-        action="store_true",
-        help="Classify archetypes for an event field without requiring prediction CSVs",
-    )
     args = parser.parse_args()
 
     # --- Reclassify mode: update archetypes in existing parquet ---
@@ -1452,61 +1444,6 @@ def main():
                 print(f"    {arch}: {cnt}")
         else:
             print("  No archetypes computed.")
-        return
-
-    # --- Archetypes-only mode: classify field without predictions ---
-    if args.archetypes_only:
-        eid = args.event_id or str(event_ids[0])
-        year = args.year or datetime.now().year
-        event_name = tourney
-
-        print("\n  Archetypes-Only Mode")
-        print("  " + "=" * 40)
-        print(f"  Event: {event_name} (ID: {eid}, Year: {year})")
-
-        # Get player list from actuals API
-        print("\n  Fetching field from API...")
-        actuals, _ = fetch_actuals(eid, year=year)
-        if actuals.empty:
-            print("  ERROR: Could not fetch field. Exiting.")
-            return
-
-        field_players = actuals["player_name"].dropna().unique().tolist()
-        print(f"  Field: {len(field_players)} players")
-
-        # Compute archetypes
-        print("\n  Computing archetypes...")
-        archetypes = compute_rolling_archetypes(eid, field_players, actuals_df=actuals, year=year)
-
-        if archetypes.empty:
-            print("  No archetypes computed. Exiting.")
-            return
-
-        # Build minimal records — one row per player with archetype + rolling stats
-        arch_cols = [
-            "player_name", "archetype",
-            "sg_ott_rolling", "sg_app_rolling", "sg_arg_rolling",
-            "sg_putt_rolling", "sg_total_rolling",
-            "driving_dist_rolling", "driving_acc_rolling",
-        ]
-        available = [c for c in arch_cols if c in archetypes.columns]
-        records = archetypes[available].copy()
-        records["event_name"] = event_name
-        records["year"] = year
-        records["event_id"] = str(eid)
-        records["run_timestamp"] = datetime.now().isoformat()
-        records["round"] = "0"
-        records["category"] = "archetype_only"
-        records["predicted_sg"] = np.nan
-        records["actual_sg"] = np.nan
-        records["miss"] = np.nan
-
-        append_to_diagnostic(records)
-
-        counts = archetypes["archetype"].value_counts()
-        print(f"\n  Archetypes written for {len(records)} players:")
-        for arch, cnt in counts.items():
-            print(f"    {arch}: {cnt}")
         return
 
     # --- Report mode: cross-event analysis ---

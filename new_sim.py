@@ -34,6 +34,9 @@ COURSE_CAT_SKEW  = _cfg["course_cat_skew"]
 TOP_K            = 20  # hardcode — never changes
 _event_id        = _cfg["event_id"]
 # Player adjustments from Sheet (survives sim_inputs overwrites)
+_sheet_manual_boosts = _cfg.get("manual_boosts", {})
+_sheet_archetype_boosts = _cfg.get("archetype_boosts", {})
+dg_override_players  = _cfg.get("dg_override_players", [])
 
 # --- Stable model params from sim_inputs ---
 from sim_inputs import (
@@ -282,16 +285,84 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
-# --- DG overrides + manual boosts are now applied upstream in pre_sim_skill.py ---
-# pre_course_fit_{tourney}.csv arrives with overrides already baked in.
-# On second pass, final_predictions has regression on top — no overrides needed.
+# --- DG override + init_sim_skill save (first pass only) ---
+# On second pass, final_predictions already has DG-overridden values with regression
+# applied on top from mkt_regress — re-applying here would undo the regression.
 if PRED_PATH != _final_pred_path:
-    print(f"[info] Using predictions from: {PRED_PATH} (overrides applied by pre_sim_skill.py)")
-else:
-    print(f"[info] Using regressed predictions from: {PRED_PATH}")
+    dg_decomp = fetch_player_decompositions(API_KEY)
+    if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
+        model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
+        manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
+        threshold_mask = model_preds['my_pred'] < 0.5
+        mask = (threshold_mask | manual_mask) & model_preds['dg_final_pred'].notna()
+        n_replaced = mask.sum()
+        if n_replaced > 0:
+            print(f"[DG override] Replacing {n_replaced} predictions (pred < 0 or manual list):")
+            for _, r in model_preds.loc[mask].iterrows():
+                print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
+            model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
+        else:
+            print("[DG override] No predictions needed replacement")
+        model_preds = model_preds.drop(columns=['dg_final_pred'])
 
-# --- Archetype map (for email/diagnostics, not for boosting) ---
-_precomputed_arch_map = None
+    # Save init_sim_skill for mkt_regress: DG-overridden pred + c_adj + sample from pre_sim_summary
+    _pss_path = f"pre_sim_summary_{tourney}.csv"
+    if os.path.exists(_pss_path):
+        _pss_df = pd.read_csv(_pss_path)
+        _pss_df['player_name'] = _pss_df['player_name'].str.lower().str.strip().replace(name_replacements)
+        _init_skill = model_preds[['player_name', 'my_pred']].rename(columns={'my_pred': 'pred'})
+        _init_skill = _init_skill.merge(_pss_df[['player_name', 'c_adj', 'sample']], on='player_name', how='left')
+        _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
+        print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players)")
+    else:
+        print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
+else:
+    print("[DG override] Second pass — skipping (DG-overridden + regressed predictions already in final_predictions)")
+
+# --- Archetype boosts from Google Sheet (first pass only) ---
+if _sheet_archetype_boosts and PRED_PATH != _final_pred_path:
+    try:
+        from sg_diagnostic import compute_rolling_archetypes
+        field_players = model_preds['player_name'].tolist()
+        _arch_boost_df = compute_rolling_archetypes(_event_id, field_players)
+        _arch_boost_map = dict(zip(_arch_boost_df['player_name'], _arch_boost_df['archetype']))
+        _arch_boost_applied = 0
+        for idx, row in model_preds.iterrows():
+            arch = _arch_boost_map.get(row['player_name'], "")
+            if arch in _sheet_archetype_boosts:
+                boost = _sheet_archetype_boosts[arch]
+                old_val = row['my_pred']
+                model_preds.at[idx, 'my_pred'] = old_val + boost
+                _arch_boost_applied += 1
+        if _arch_boost_applied:
+            print(f"[archetype boost] Applied to {_arch_boost_applied} players: " +
+                  ", ".join(f"{k}: {v:+.2f}" for k, v in _sheet_archetype_boosts.items()))
+        # Cache archetype map so we don't recompute later
+        _precomputed_arch_map = _arch_boost_map
+    except Exception as e:
+        print(f"[archetype boost] Skipped: {e}")
+        _precomputed_arch_map = None
+elif _sheet_archetype_boosts:
+    print("[archetype boost] Second pass - skipping (already baked into final_predictions)")
+    _precomputed_arch_map = None
+else:
+    _precomputed_arch_map = None
+
+# --- Manual boosts from Google Sheet (first pass only) ---
+if _sheet_manual_boosts and PRED_PATH != _final_pred_path:
+    _boost_applied = 0
+    for name, boost in _sheet_manual_boosts.items():
+        mask = model_preds['player_name'] == name
+        if mask.any():
+            old_val = model_preds.loc[mask, 'my_pred'].iloc[0]
+            model_preds.loc[mask, 'my_pred'] += boost
+            print(f"[boost] {name}: {old_val:.3f} -> {old_val + boost:.3f} ({boost:+.3f})")
+            _boost_applied += 1
+        else:
+            print(f"[boost] Warning: {name} not found in field")
+    print(f"[boost] Applied {_boost_applied} manual boosts from Sheet")
+elif _sheet_manual_boosts:
+    print("[boost] Second pass - skipping manual boosts (already baked into final_predictions)")
 
 # Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
@@ -785,28 +856,6 @@ r3_r4[~made_cut_mask] = 200
 final_scores = r1_r2_scores + r3_r4
 np.save(f"final_scores_{tourney}.npy", final_scores)
 
-# ── Precompute H2H matchup matrix for dashboard ──────────────────────
-_h2h_rows = []
-_n_players = len(player_names)
-for i in range(_n_players):
-    for j in range(i + 1, _n_players):
-        s_i = final_scores[i]
-        s_j = final_scores[j]
-        wins_i = int(np.sum(s_i < s_j))
-        wins_j = int(np.sum(s_i > s_j))
-        denom = wins_i + wins_j
-        if denom == 0:
-            continue
-        prob_i = wins_i / denom
-        _h2h_rows.append({
-            "player_a": player_names[i],
-            "player_b": player_names[j],
-            "prob_a": round(prob_i, 6),
-        })
-_h2h_df = pd.DataFrame(_h2h_rows)
-_h2h_df.to_parquet(f"h2h_matrix_{tourney}.parquet", index=False)
-print(f"[ok] wrote h2h_matrix_{tourney}.parquet ({len(_h2h_rows)} pairs)")
-
 
 # ======================
 # Validation checks
@@ -827,130 +876,14 @@ for k, cat in enumerate(["OTT", "APP", "ARG", "PUTT"]):
     expected_avg = np.mean([p[1][k] for p in player_params_v2])
     print(f"    {cat}: realized={realized:.3f}, expected_avg={expected_avg:.3f}, ratio={realized/expected_avg:.3f}")
 
-# 3. Win prob sanity (with skill-weighted playoff)
-from sim_inputs import playoff_format, playoff_holes, aggregate_holes
-
-# Load hole distributions for playoff holes
-_hole_dist_path = os.path.join(
-    os.path.expanduser("~"), "OneDrive",
-    f"adj_hole_dist_{tourney}_{_event_id}.csv"
-)
-_playoff_hole_dists = {}  # hole_num -> (scores_array, probs_array)
-if os.path.exists(_hole_dist_path):
-    _hd = pd.read_csv(_hole_dist_path)
-    _hd_r4 = _hd[_hd["Round"] == 4]
-    for hole_num in set(playoff_holes):
-        row = _hd_r4[_hd_r4["Hole"] == hole_num]
-        if not row.empty:
-            r = row.iloc[0]
-            scores = np.array([r[str(i)] for i in range(1, 11)])
-            total = scores.sum()
-            if total > 0:
-                _playoff_hole_dists[hole_num] = (np.arange(1, 11), scores / total)
-    print(f"[playoff] Loaded hole distributions for holes {list(_playoff_hole_dists.keys())} from {_hole_dist_path}")
-else:
-    print(f"[playoff] Hole dist file not found: {_hole_dist_path} — using random tiebreak")
-
-
-def _playoff_draw(player_idxs, hole_num, preds):
-    """Draw one hole score for each player, skill-adjusted.
-    Shifts the hole distribution mean by player_pred / 18 (negative = better).
-    """
-    if hole_num not in _playoff_hole_dists:
-        return RNG.standard_normal(len(player_idxs))  # fallback
-
-    scores, base_probs = _playoff_hole_dists[hole_num]
-    base_mean = (scores * base_probs).sum()
-    results = np.empty(len(player_idxs))
-
-    for i, pidx in enumerate(player_idxs):
-        # Skill shift: positive pred = better player = lower score
-        shift = -preds[pidx] / 18.0
-        shifted_mean = base_mean + shift
-        # Scale probabilities to shift mean while keeping shape
-        # Use exponential tilting: multiply by exp(-lambda * score), solve for lambda
-        # Simpler: just shift and redraw from continuous normal with hole std
-        hole_std = np.sqrt(((scores - base_mean) ** 2 * base_probs).sum())
-        results[i] = RNG.normal(shifted_mean, hole_std)
-
-    return results
-
-
-def _run_playoff(tied_idxs, preds):
-    """Run a playoff between tied player indices. Returns winner index."""
-    if len(tied_idxs) == 1:
-        return tied_idxs[0]
-
-    remaining = list(tied_idxs)
-
-    if playoff_format == "aggregate" and aggregate_holes > 0:
-        # Aggregate phase: sum scores over N holes
-        totals = np.zeros(len(remaining))
-        hole_seq = playoff_holes if playoff_holes else [18]
-        for h_idx in range(aggregate_holes):
-            hole_num = hole_seq[h_idx % len(hole_seq)]
-            scores = _playoff_draw(remaining, hole_num, preds)
-            totals += scores
-        min_total = totals.min()
-        survivors = [remaining[i] for i in range(len(remaining)) if totals[i] == min_total]
-        if len(survivors) == 1:
-            return survivors[0]
-        remaining = survivors
-
-    # Sudden death phase
-    hole_seq = playoff_holes if playoff_holes else [18]
-    for attempt in range(20):  # cap at 20 holes to avoid infinite loop
-        hole_num = hole_seq[attempt % len(hole_seq)]
-        scores = _playoff_draw(remaining, hole_num, preds)
-        min_score = scores.min()
-        winners = [remaining[i] for i in range(len(remaining)) if scores[i] == min_score]
-        if len(winners) == 1:
-            return winners[0]
-        remaining = winners
-
-    # Fallback: random if still tied after 20 holes
-    return RNG.choice(remaining)
-
-
+# 3. Win prob sanity
 simulated_winners_v2 = []
-_playoff_count = 0
-_playoff_appearances = {}  # player_idx -> count of playoffs entered
-_playoff_wins = {}         # player_idx -> count of playoffs won
 for j in range(SIMULATIONS):
     sc = final_scores[:, j]
     min_score = sc.min()
     tied = np.where(sc == min_score)[0]
-    if len(tied) == 1:
-        winner_idx = tied[0]
-    else:
-        for pidx in tied:
-            _playoff_appearances[pidx] = _playoff_appearances.get(pidx, 0) + 1
-        winner_idx = _run_playoff(tied, my_pred_base)
-        _playoff_wins[winner_idx] = _playoff_wins.get(winner_idx, 0) + 1
-        _playoff_count += 1
+    winner_idx = RNG.choice(tied)
     simulated_winners_v2.append(player_names[winner_idx])
-
-print(f"[playoff] {_playoff_count}/{SIMULATIONS} sims needed playoff ({_playoff_count/SIMULATIONS*100:.1f}%)")
-
-# Playoff summary: players with most appearances
-if _playoff_appearances:
-    _po_rows = []
-    for pidx in sorted(_playoff_appearances, key=lambda x: _playoff_appearances[x], reverse=True):
-        apps = _playoff_appearances[pidx]
-        wins = _playoff_wins.get(pidx, 0)
-        _po_rows.append({
-            "player": player_names[pidx],
-            "pred": f"{my_pred_base[pidx]:+.2f}",
-            "playoffs": apps,
-            "wins": wins,
-            "win_pct": f"{wins/apps*100:.1f}%",
-        })
-    _po_df = pd.DataFrame(_po_rows)
-    print(f"\n  PLAYOFF SUMMARY (top 15):")
-    print(f"  {'Player':>25s}  {'Pred':>6s}  {'In':>5s}  {'Won':>5s}  {'Win%':>6s}")
-    print(f"  {'-'*25}  {'-'*6}  {'-'*5}  {'-'*5}  {'-'*6}")
-    for _, r in _po_df.head(15).iterrows():
-        print(f"  {r['player']:>25s}  {r['pred']:>6s}  {r['playoffs']:>5d}  {r['wins']:>5d}  {r['win_pct']:>6s}")
 
 win_counts = pd.Series(simulated_winners_v2).value_counts(normalize=True)
 print(f"\n  Win prob sum: {win_counts.sum():.4f} (should be 1.0)")
@@ -1566,16 +1499,8 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
             tourn_counts[t] += 1
     if tourn_counts:
         current_tourney = tourn_counts.most_common(1)[0][0]
-        # Include markets whose detected tournament name overlaps with the
-        # most-common name (e.g. "The Masters" and "Masters Tournament" are
-        # the same event).  Overlap = any word longer than 3 chars in common.
-        _ct_words = {w.lower() for w in current_tourney.split() if len(w) > 3}
-        def _same_event(detected):
-            if not detected:
-                return True
-            return bool({w.lower() for w in detected.split() if len(w) > 3} & _ct_words)
         all_markets = [m for m in all_markets
-                       if _same_event(_detect_tourney(m.get("title", "")))]
+                       if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
         print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
 
     # ── Extract player name from title ────────────────────────────────
@@ -1623,25 +1548,55 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 x = f"{parts[1]}, {parts[0]}"
         return name_replacements.get(x, x)
 
-    # ── Flat-size orderbook walk ─────────────────────────────────────
-    FLAT_CONTRACTS = 1000
+    # ── Kelly-sized orderbook walk ──────────────────────────────────
+    KALSHI_BANKROLL = 30_000.0
+    KALSHI_KELLY = 0.60
+    MIN_DEPTH = 400
+    MIN_OI = 5000
 
-    def _walk_book(ob_levels, sim_prob):
-        """Walk orderbook for a flat 1000-contract fill.
+    def _walk_book(ob_levels, sim_prob, bankroll, kelly_frac):
+        """Walk orderbook to compute effective fill for a Kelly-sized order.
 
-        Returns dict with effective_price, filled, or None if empty book
-        or no edge at the fill price.
-        ob_levels: list of (price_dollars, qty) from the OPPOSITE side.
+        Args:
+            ob_levels: raw levels from the OPPOSITE side of the book.
+                       For buying YES: pass NO levels (no_price, qty).
+                       For buying NO:  pass YES levels (yes_price, qty).
+            sim_prob:  our probability for the side we're betting.
+            bankroll:  total bankroll in dollars.
+            kelly_frac: Kelly fraction (e.g. 0.60).
+
+        Returns dict with effective_price, target, filled, vwap, avg_fee,
+        or None if no edge at best price.
         """
-        fill_levels = sorted([(1.0 - p, qty) for p, qty in ob_levels])
+        # Convert to (cost_cents, qty) sorted cheapest-first
+        fill_levels = sorted(
+            [(100 - p, qty) for p, qty in ob_levels],
+        )
         if not fill_levels:
             return None
 
-        target = FLAT_CONTRACTS
+        # Kelly at best available price (includes taker fee)
+        best_cents = fill_levels[0][0]
+        best = best_cents / 100.0
+        fee_at_best = _kalshi_taker_fee(best)
+        eff_best = best + fee_at_best
+        if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
+            return None  # no edge
+
+        b = (1.0 / eff_best) - 1.0
+        if b <= 0:
+            return None
+        f_star = max((b * sim_prob - (1 - sim_prob)) / b, 0) * kelly_frac
+        target = int(bankroll * f_star / eff_best)
+        if target <= 0:
+            return None
+
+        # Walk the book
         filled = 0
-        cost_sum = 0.0
-        fee_sum = 0.0
-        for price, qty in fill_levels:
+        cost_sum = 0.0   # dollars
+        fee_sum = 0.0     # dollars
+        for price_cents, qty in fill_levels:
+            price = price_cents / 100.0
             fee = _kalshi_taker_fee(price)
             take = min(qty, target - filled)
             filled += take
@@ -1654,16 +1609,15 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
             return None
 
         vwap = cost_sum / filled
-        eff_price = vwap + fee_sum / filled
-
-        # Only return if there's edge at the fill price
-        if eff_price >= sim_prob:
-            return None
+        avg_fee = fee_sum / filled
+        eff_price = vwap + avg_fee
 
         return {
             "effective_price": eff_price,
             "target": target,
             "filled": filled,
+            "vwap": vwap,
+            "avg_fee": avg_fee,
         }
 
     # ── Stage 1: Pre-filter (no orderbook calls) ─────────────────────
@@ -1754,9 +1708,11 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         no_levels = ob.get("no", [])    # NO bids
 
         # Buy YES: walk NO levels (sellers of YES)
-        row["yes_fill"] = _walk_book(no_levels, row["sim_yes"])
+        row["yes_fill"] = _walk_book(no_levels, row["sim_yes"],
+                                     KALSHI_BANKROLL, KALSHI_KELLY)
         # Buy NO: walk YES levels (sellers of NO)
-        row["no_fill"] = _walk_book(yes_levels, row["sim_no"])
+        row["no_fill"] = _walk_book(yes_levels, row["sim_no"],
+                                    KALSHI_BANKROLL, KALSHI_KELLY)
 
     print(f"  Stage 2 orderbook: fetched {len(stage1_rows)} orderbooks")
 
@@ -1778,6 +1734,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if yf is not None:
             eff = yf["effective_price"]
             edge = (row["sim_yes"] - eff) * 100
+            passes_liq = (yf["filled"] >= MIN_DEPTH) or (oi >= MIN_OI)
             rows.append({
                 **base_row,
                 "side": "yes",
@@ -1788,6 +1745,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 "my_fair": prob_to_american(row["sim_yes"]),
                 "target": yf["target"],
                 "filled": yf["filled"],
+                "passes_liq": passes_liq,
             })
 
         # --- NO side ---
@@ -1795,6 +1753,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if nf is not None:
             eff = nf["effective_price"]
             edge = (row["sim_no"] - eff) * 100
+            passes_liq = (nf["filled"] >= MIN_DEPTH) or (oi >= MIN_OI)
             rows.append({
                 **base_row,
                 "side": "no",
@@ -1805,14 +1764,17 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 "my_fair": prob_to_american(row["sim_no"]),
                 "target": nf["target"],
                 "filled": nf["filled"],
+                "passes_liq": passes_liq,
             })
 
     df = pd.DataFrame(rows)
     if not df.empty:
+        pre_filter = len(df)
+        df = df[df["passes_liq"]].drop(columns=["passes_liq"])
         df = df.sort_values("edge", ascending=False)
         yes_pos = ((df["side"] == "yes") & (df["edge"] > 0)).sum()
         no_pos = ((df["side"] == "no") & (df["edge"] > 0)).sum()
-        print(f"  Kalshi outrights: {len(df)} lines ({FLAT_CONTRACTS}-contract fill), "
+        print(f"  Kalshi outrights: {len(df)} lines pass liquidity (dropped {pre_filter - len(df)}), "
               f"{yes_pos} YES +edge, {no_pos} NO +edge")
     return df
 
@@ -2178,7 +2140,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
 
             no_levels = ob.get("no", [])
             # Buy YES: walk NO levels (sellers of YES)
-            fill_levels = sorted([(1.0 - p, qty) for p, qty in no_levels])
+            fill_levels = sorted([(100 - p, qty) for p, qty in no_levels])
             if not fill_levels:
                 continue
 
@@ -2186,7 +2148,8 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             filled = 0
             cost_sum = 0.0
             fee_sum = 0.0
-            for price, qty in fill_levels:
+            for price_cents, qty in fill_levels:
+                price = price_cents / 100.0
                 fee = _kalshi_taker_fee(price)
                 take = min(qty, FLAT_STAKE - filled)
                 filled += take
@@ -2567,7 +2530,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 {rows_html}
             </table>"""
         else:
-            mu_html = "<p>No matchup edges above threshold in this run.</p>"
+            mu_html = "<p>No tournament matchups passed filters.</p>"
     else:
         mu_html = "<p>No tournament matchup data available.</p>"
 
@@ -2802,7 +2765,7 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
 
-        msg.attach(MIMEText(html, "html", "utf-8"))
+        msg.attach(MIMEText(html, "html"))
 
         if attachment_paths:
             for fpath in attachment_paths:
@@ -2997,7 +2960,7 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         msg["Subject"] = f"Exchange Opportunities -- {tourney.replace('_', ' ').title()}"
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
-        msg.attach(MIMEText(body, "html", "utf-8"))
+        msg.attach(MIMEText(body, "html"))
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, EMAIL_PASSWORD)
@@ -3069,8 +3032,8 @@ if not df_match.empty:
     prob_p1 = np.where(use_tl, df_match['my_odds_p1_ties_loss'], df_match['my_odds_p1'])
     prob_p2 = np.where(use_tl, df_match['my_odds_p2_ties_loss'], df_match['my_odds_p2'])
 
-    df_match['edge_p1'] = (prob_p1 - 1.0 / df_match['p1_dec']) * 100
-    df_match['edge_p2'] = (prob_p2 - 1.0 / df_match['p2_dec']) * 100
+    df_match['edge_p1'] = (prob_p1 * (df_match['p1_dec'] - 1) - (1 - prob_p1)) * 100
+    df_match['edge_p2'] = (prob_p2 * (df_match['p2_dec'] - 1) - (1 - prob_p2)) * 100
 
     df_match['Fair_p1'] = df_match['my_odds_p1'].apply(
         lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
@@ -3099,13 +3062,13 @@ if not df_match.empty:
         dfb['p2_decimal_odds'] = np.where(dfb['P2 Odds'] > 0, dfb['P2 Odds'] / 100 + 1, 100 / dfb['P2 Odds'].abs() + 1)
         dfb['edge_p1'] = np.where(
             dfb['use_ties_loss'],
-            (dfb['my_odds_p1_ties_loss'] - 1.0 / dfb['p1_decimal_odds']) * 100,
-            (dfb['my_odds_p1'] - 1.0 / dfb['p1_decimal_odds']) * 100
+            ((dfb['my_odds_p1_ties_loss'] * (dfb['p1_decimal_odds'] - 1)) - (1 - dfb['my_odds_p1_ties_loss'])) * 100,
+            ((dfb['my_odds_p1'] * (dfb['p1_decimal_odds'] - 1)) - (1 - dfb['my_odds_p1'])) * 100
         )
         dfb['edge_p2'] = np.where(
             dfb['use_ties_loss'],
-            (dfb['my_odds_p2_ties_loss'] - 1.0 / dfb['p2_decimal_odds']) * 100,
-            (dfb['my_odds_p2'] - 1.0 / dfb['p2_decimal_odds']) * 100
+            ((dfb['my_odds_p2_ties_loss'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2_ties_loss'])) * 100,
+            ((dfb['my_odds_p2'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2'])) * 100
         )
         dfb['Fair_p1'] = dfb['my_odds_p1'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
         dfb['Fair_p2'] = dfb['my_odds_p2'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
@@ -3246,13 +3209,8 @@ if not df_match.empty:
         except Exception as _ke:
             print(f"  [warn] NoVig matchup pricing failed: {_ke}")
 
-        _skip = bool(os.getenv("SKIP_STORAGE"))
-        if _skip:
-            print("\n[skip] SKIP_STORAGE set — skipping emails and storage")
-
         # Email 1: bettable edges (sportsbooks + best exchange rows)
-        if not _skip:
-            send_tournament_email(
+        send_tournament_email(
             sharp_mu_df=sharp_df,
             finish_df=_finish_for_email,
             sample_lookup=sample_lookup,
@@ -3414,14 +3372,14 @@ if not df_match.empty:
                 print_correlated_kelly_report(_ck_result)
 
                 # Email 3: correlated Kelly staking
-                if _ck_result.get('bets') and EMAIL_PASSWORD and EMAIL_FROM and EMAIL_TO and EMAIL_TO != [''] and not _skip:
+                if _ck_result.get('bets') and EMAIL_PASSWORD and EMAIL_FROM and EMAIL_TO and EMAIL_TO != ['']:
                     try:
                         _ck_html = build_correlated_kelly_email_html(_ck_result, tourney=tourney)
                         _ck_msg = MIMEMultipart("mixed")
                         _ck_msg["Subject"] = f"Correlated Kelly -- {tourney.replace('_', ' ').title()}"
                         _ck_msg["From"] = EMAIL_FROM
                         _ck_msg["To"] = ", ".join(EMAIL_TO)
-                        _ck_msg.attach(MIMEText(_ck_html, "html", "utf-8"))
+                        _ck_msg.attach(MIMEText(_ck_html, "html"))
                         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as _ck_srv:
                             _ck_srv.login(EMAIL_FROM, EMAIL_PASSWORD)
                             _ck_srv.sendmail(EMAIL_FROM, EMAIL_TO, _ck_msg.as_string())
@@ -3434,13 +3392,12 @@ if not df_match.empty:
             print(f"[correlated-kelly] Error: {_ck_err}")
 
         # Email 2: exchange-only opportunities
-        if not _skip:
-            send_exchange_email(
-                kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
-                novig_df=_novig_df if not _novig_df.empty else None,
-                kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
-                novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
-            )
+        send_exchange_email(
+            kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+            novig_df=_novig_df if not _novig_df.empty else None,
+            kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
+            novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
+        )
 
     else:
         print("[note] no bookmaker CSVs found to combine.")
