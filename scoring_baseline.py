@@ -1571,7 +1571,12 @@ def _write_details_tab(spreadsheet, table_rows, regression, sg_result,
         return
 
     try:
-        ws = _get_or_create_tab(spreadsheet, TAB_DETAILS, DETAILS_HEADERS)
+        # Details tab uses freeform sections with varying column widths,
+        # so skip header validation (we clear + rewrite each time anyway)
+        try:
+            ws = spreadsheet.worksheet(TAB_DETAILS)
+        except Exception:
+            ws = spreadsheet.add_worksheet(title=TAB_DETAILS, rows=1000, cols=15)
         ws.clear()
 
         rows = []
