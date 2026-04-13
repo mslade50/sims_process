@@ -1174,6 +1174,218 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     return df
 
 
+def price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=None):
+    """Price NoVig outright markets using live GraphQL API (no auth needed).
+
+    Uses the `available` field (best offer / ask price) on each outcome.
+    Probabilities are no-dead-heat (NoVig pays on exact finish, not DH-adjusted).
+
+    Returns DataFrame with same schema as Kalshi pricing for easy merging.
+    """
+    import httpx as _httpx
+
+    GRAPHQL_URL = "https://api.novig.us/v1/graphql"
+    GQL_HEADERS = {
+        "Content-Type": "application/json",
+        "Origin": "https://novig.com",
+        "Referer": "https://novig.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+
+    NOVIG_TYPE_MAP = {
+        "TOP_FIVE_FINISH": "top_5",
+        "TOP_TEN_FINISH": "top_10",
+        "TOP_TWENTY_FINISH": "top_20",
+        "WINNER": "winner",
+    }
+
+    type_to_col = {
+        "top_5": "top_5_nodh",
+        "top_10": "top_10_nodh",
+        "top_20": "top_20_nodh",
+        "winner": "simulated_win_prob",
+    }
+    for mtype, col in list(type_to_col.items()):
+        if col not in finish_probs.columns:
+            fallback = {"top_5_nodh": "top_5", "top_10_nodh": "top_10",
+                        "top_20_nodh": "top_20"}
+            type_to_col[mtype] = fallback.get(col, col)
+
+    try:
+        from sim_inputs import name_replacements as _nr
+    except ImportError:
+        _nr = {}
+
+    def norm(s):
+        x = s.strip().lower()
+        if "," not in x:
+            parts = x.rsplit(" ", 1)
+            if len(parts) == 2:
+                x = f"{parts[1]}, {parts[0]}"
+        return _nr.get(x, x)
+
+    # ── Find current PGA tournament on NoVig ──────────────────────────
+    try:
+        client = _httpx.Client(timeout=15.0)
+
+        def gql(query, variables=None):
+            payload = {"query": query}
+            if variables:
+                payload["variables"] = variables
+            resp = client.post(GRAPHQL_URL, headers=GQL_HEADERS, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+
+        data = gql("""query {
+  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}
+        order_by: {scheduled_start: asc}) {
+    id description
+    child_events_aggregate: events_aggregate(where: {status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}) {
+      aggregate { count }
+    }
+  }
+}""")
+        events = data.get("data", {}).get("event", [])
+        if not events:
+            print("  No open PGA tournament on NoVig")
+            return pd.DataFrame()
+
+        # Fuzzy-match to tourney name from sim_inputs if provided
+        best = None
+        if tourney_name:
+            from difflib import SequenceMatcher
+            scored = [(e, SequenceMatcher(None, tourney_name.lower(),
+                       e.get("description", "").lower()).ratio() * 100) for e in events]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            if scored[0][1] >= 50:
+                best = scored[0][0]
+                print(f"  NoVig tournament: {best['description']} (fuzzy={scored[0][1]:.0f})")
+        if best is None:
+            best = max(events, key=lambda e: e.get("child_events_aggregate", {})
+                       .get("aggregate", {}).get("count", 0))
+            print(f"  NoVig tournament: {best['description']}")
+
+        tourn_id = best["id"]
+    except Exception as e:
+        print(f"  [warn] NoVig tournament lookup failed: {e}")
+        return pd.DataFrame()
+
+    # ── Fetch outright markets ────────────────────────────────────────
+    rows = []
+    for novig_type, our_type in NOVIG_TYPE_MAP.items():
+        try:
+            data = gql("""query($tournId: uuid!, $mtype: String!) {
+  event(where: {parent_event: {id: {_eq: $tournId}}, type: {_eq: "Future"},
+                status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]},
+                markets: {type: {_eq: $mtype}, status: {_eq: "OPEN"}}}) {
+    id description
+    markets(where: {type: {_eq: $mtype}, status: {_eq: "OPEN"}}) {
+      id type volume description
+      outcomes { id index description available }
+    }
+  }
+}""", {"tournId": tourn_id, "mtype": novig_type})
+            events = data.get("data", {}).get("event", [])
+            # Pick the right event (skip "With Ties" and "End Of Round")
+            target = None
+            for e in events:
+                desc = e.get("description", "")
+                if "With Ties" in desc or "End Of Round" in desc:
+                    continue
+                if e.get("markets"):
+                    target = e
+                    break
+            if not target:
+                continue
+
+            for m in target.get("markets", []):
+                outcomes = m.get("outcomes", [])
+                yes_price = None
+                no_price = None
+                for o in outcomes:
+                    if o["index"] == 0:
+                        yes_price = o.get("available")
+                    elif o["index"] == 1:
+                        no_price = o.get("available")
+                if not yes_price or yes_price <= 0:
+                    continue
+
+                # Extract player name
+                desc = m.get("description", "")
+                player_raw = desc.replace(f" {novig_type}", "").strip()
+                if not player_raw:
+                    continue
+                player = norm(player_raw)
+
+                prob_col = type_to_col.get(our_type)
+                if not prob_col or prob_col not in finish_probs.columns:
+                    continue
+                match = finish_probs[finish_probs["player_name"] == player]
+                if match.empty:
+                    continue
+                sim_prob = float(match.iloc[0][prob_col])
+                if sim_prob <= 0:
+                    continue
+
+                volume = float(m.get("volume", 0) or 0)
+
+                # YES side
+                yes_edge = (sim_prob - yes_price) * 100
+                yes_american = implied_to_american(yes_price)
+                if yes_american is not None:
+                    base_row = {
+                        "player_name": player,
+                        "market_type": our_type,
+                        "bookmaker": "novig",
+                        "my_pred": pred_lookup.get(player),
+                        "sample": sample_lookup.get(player),
+                        "side": "yes",
+                        "pricing": "taker",
+                        "american_odds": yes_american,
+                        "sim_prob": sim_prob,
+                        "implied_prob": yes_price,
+                        "edge": round(yes_edge, 1),
+                        "my_fair": implied_to_american(min(max(sim_prob, 1e-4), 1 - 1e-4)),
+                        "volume": volume,
+                    }
+                    rows.append(base_row)
+
+                # NO side
+                if no_price and no_price > 0:
+                    sim_no = 1.0 - sim_prob
+                    no_edge = (sim_no - no_price) * 100
+                    no_american = implied_to_american(no_price)
+                    if no_american is not None:
+                        rows.append({
+                            "player_name": player,
+                            "market_type": our_type,
+                            "bookmaker": "novig",
+                            "my_pred": pred_lookup.get(player),
+                            "sample": sample_lookup.get(player),
+                            "side": "no",
+                            "pricing": "taker",
+                            "american_odds": no_american,
+                            "sim_prob": sim_no,
+                            "implied_prob": no_price,
+                            "edge": round(no_edge, 1),
+                            "my_fair": implied_to_american(min(max(sim_no, 1e-4), 1 - 1e-4)),
+                            "volume": volume,
+                        })
+
+        except Exception as e:
+            print(f"  [warn] NoVig {novig_type} failed: {e}")
+
+    client.close()
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("edge", ascending=False)
+        yes_pos = ((df["side"] == "yes") & (df["edge"] > 0)).sum()
+        no_pos = ((df["side"] == "no") & (df["edge"] > 0)).sum()
+        print(f"  NoVig outrights: {len(df)} lines, {yes_pos} YES +edge, {no_pos} NO +edge")
+    return df
+
+
 def build_finish_outputs(priced_markets, pred_lookup, sample_lookup):
     """
     Build combined and sharp outputs for finish positions.
@@ -2994,6 +3206,7 @@ def main():
     outrights_sharp = pd.DataFrame()
     kalshi_mids = pd.DataFrame()
     kalshi_edges = pd.DataFrame()
+    novig_edges = pd.DataFrame()
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
     finish_equity_csv_path = None
@@ -3098,6 +3311,21 @@ def main():
                         if not kalshi_sharp.empty:
                             outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
                             outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+
+                # Price NoVig outrights (no dead-heat)
+                print(f"\n    Pricing NoVig outrights (no dead-heat)...")
+                try:
+                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=tourney)
+                    if not novig_edges.empty:
+                        novig_taker = novig_edges[novig_edges["edge"] > 0].copy()
+                        if not novig_taker.empty:
+                            outrights_combined = pd.concat([outrights_combined, novig_taker], ignore_index=True)
+                            novig_sharp = novig_taker[novig_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
+                            if not novig_sharp.empty:
+                                outrights_sharp = pd.concat([outrights_sharp, novig_sharp], ignore_index=True)
+                                outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+                except Exception as e:
+                    print(f"    Warning: NoVig pricing failed: {e}")
 
                 # --- Win market edge CSVs ---
                 print(f"\n    Building outright win edge CSVs...")

@@ -1854,10 +1854,10 @@ def price_novig_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
 
         # Get tournaments, pick one with most child events
         data = gql("""query {
-  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_eq: "OPEN_PREGAME"}}
+  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}
         order_by: {scheduled_start: asc}) {
     id description
-    child_events_aggregate: events_aggregate(where: {status: {_eq: "OPEN_PREGAME"}}) {
+    child_events_aggregate: events_aggregate(where: {status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}) {
       aggregate { count }
     }
   }
@@ -1881,7 +1881,7 @@ def price_novig_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         try:
             data = gql("""query($tournId: uuid!, $mtype: String!) {
   event(where: {parent_event: {id: {_eq: $tournId}}, type: {_eq: "Future"},
-                status: {_eq: "OPEN_PREGAME"},
+                status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]},
                 markets: {type: {_eq: $mtype}, status: {_eq: "OPEN"}}}) {
     id description
     markets(where: {type: {_eq: $mtype}, status: {_eq: "OPEN"}}) {
@@ -2259,10 +2259,10 @@ def price_novig_matchups_tourney(model_preds_df, final_scores_arr=None, player_n
 
         # Find tournament
         data = gql("""query {
-  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_eq: "OPEN_PREGAME"}}
+  event(where: {league: {_eq: "PGA"}, type: {_eq: "Tournament"}, status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}
         order_by: {scheduled_start: asc}) {
     id description
-    child_events_aggregate: events_aggregate(where: {status: {_eq: "OPEN_PREGAME"}}) {
+    child_events_aggregate: events_aggregate(where: {status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}) {
       aggregate { count }
     }
   }
@@ -2278,7 +2278,7 @@ def price_novig_matchups_tourney(model_preds_df, final_scores_arr=None, player_n
         # Fetch H2H matchups (tournament MONEY only — round matchups use different sim)
         data = gql("""query($tournId: uuid!) {
   event(where: {parent_event: {id: {_eq: $tournId}}, type: {_eq: "Game"},
-                status: {_eq: "OPEN_PREGAME"}}) {
+                status: {_in: ["OPEN_PREGAME", "OPEN_INGAME"]}}) {
     id description
     game {
       homeTeam { name }
