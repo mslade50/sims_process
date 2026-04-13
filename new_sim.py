@@ -36,7 +36,6 @@ _event_id        = _cfg["event_id"]
 # Player adjustments from Sheet (survives sim_inputs overwrites)
 _sheet_manual_boosts = _cfg.get("manual_boosts", {})
 _sheet_archetype_boosts = _cfg.get("archetype_boosts", {})
-dg_override_players  = _cfg.get("dg_override_players", [])
 
 # --- Stable model params from sim_inputs ---
 from sim_inputs import (
@@ -69,7 +68,7 @@ print("=" * 60)
 from api_utils import (
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
-    fetch_player_decompositions, fetch_field_updates,
+    fetch_field_updates,
 )
 try:
     import pandas as _pd_coords
@@ -285,27 +284,9 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
-# --- DG override + init_sim_skill save (first pass only) ---
-# On second pass, final_predictions already has DG-overridden values with regression
-# applied on top from mkt_regress — re-applying here would undo the regression.
+# --- Save init_sim_skill for mkt_regress (first pass only) ---
+# DG blending is handled upstream by pre_sim_skill.py — no override here.
 if PRED_PATH != _final_pred_path:
-    dg_decomp = fetch_player_decompositions(API_KEY)
-    if not dg_decomp.empty and 'dg_final_pred' in dg_decomp.columns:
-        model_preds = model_preds.merge(dg_decomp[['player_name', 'dg_final_pred']], on='player_name', how='left')
-        manual_mask = model_preds['player_name'].isin([n.lower().strip() for n in dg_override_players])
-        threshold_mask = model_preds['my_pred'] < 0.5
-        mask = (threshold_mask | manual_mask) & model_preds['dg_final_pred'].notna()
-        n_replaced = mask.sum()
-        if n_replaced > 0:
-            print(f"[DG override] Replacing {n_replaced} predictions (pred < 0 or manual list):")
-            for _, r in model_preds.loc[mask].iterrows():
-                print(f"  {r['player_name']}: {r['my_pred']:.3f} -> {r['dg_final_pred']:.3f}")
-            model_preds.loc[mask, 'my_pred'] = model_preds.loc[mask, 'dg_final_pred']
-        else:
-            print("[DG override] No predictions needed replacement")
-        model_preds = model_preds.drop(columns=['dg_final_pred'])
-
-    # Save init_sim_skill for mkt_regress: DG-overridden pred + c_adj + sample from pre_sim_summary
     _pss_path = f"pre_sim_summary_{tourney}.csv"
     if os.path.exists(_pss_path):
         _pss_df = pd.read_csv(_pss_path)
@@ -317,7 +298,7 @@ if PRED_PATH != _final_pred_path:
     else:
         print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
 else:
-    print("[DG override] Second pass — skipping (DG-overridden + regressed predictions already in final_predictions)")
+    print("[init_sim_skill] Second pass — skipping (regressed predictions already in final_predictions)")
 
 # --- Archetype boosts from Google Sheet (first pass only) ---
 if _sheet_archetype_boosts and PRED_PATH != _final_pred_path:
