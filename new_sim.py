@@ -2467,6 +2467,17 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 )
                 arch_against = arch_map.get(_opp_name, "") if arch_map else ""
 
+                # Raw probability edge (sim_prob - book_implied)
+                sim_prob_on = row.get('my_odds_p1') if bet_on_lower == str(row['Player 1']).lower() else row.get('my_odds_p2')
+                if pd.notna(book_odds) and book_odds != 0 and sim_prob_on and sim_prob_on > 0:
+                    if book_odds < 0:
+                        book_implied = abs(book_odds) / (abs(book_odds) + 100)
+                    else:
+                        book_implied = 100 / (book_odds + 100)
+                    edge_pct = (sim_prob_on - book_implied) * 100
+                else:
+                    edge_pct = 0
+
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
@@ -2478,12 +2489,12 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; font-weight:600;">{bet_player}</td>
                     <td style="padding:6px 10px; color:#666;">vs {opponent}</td>
                     <td style="padding:6px 10px; text-align:center; {book_color}">{book}</td>
-                    <td style="padding:6px 10px; text-align:center;">{ties}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{arch_against}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; color:#555;">{edge_pct:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px;">{wx_sg:+.2f}</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
@@ -2498,12 +2509,12 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:left;">Bet On</th>
                     <th style="padding:6px 10px; text-align:left;">Opponent</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
-                    <th style="padding:6px 10px; text-align:center;">Ties</th>
                     <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Vs Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge %</th>
                     <th style="padding:6px 10px; text-align:center;">Wx</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
