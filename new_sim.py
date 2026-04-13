@@ -2468,15 +2468,18 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 arch_against = arch_map.get(_opp_name, "") if arch_map else ""
 
                 # Raw probability edge (sim_prob - book_implied)
-                sim_prob_on = row.get('my_odds_p1') if bet_on_lower == str(row['Player 1']).lower() else row.get('my_odds_p2')
-                if pd.notna(book_odds) and book_odds != 0 and sim_prob_on and sim_prob_on > 0:
+                # Derive sim_prob from fair_odds (American) since my_odds_p1/p2 may not be in filtered df
+                edge_pct = 0
+                if pd.notna(book_odds) and book_odds != 0 and pd.notna(fair_odds) and fair_odds != 0:
                     if book_odds < 0:
                         book_implied = abs(book_odds) / (abs(book_odds) + 100)
                     else:
                         book_implied = 100 / (book_odds + 100)
-                    edge_pct = (sim_prob_on - book_implied) * 100
-                else:
-                    edge_pct = 0
+                    if fair_odds < 0:
+                        sim_implied = abs(fair_odds) / (abs(fair_odds) + 100)
+                    else:
+                        sim_implied = 100 / (fair_odds + 100)
+                    edge_pct = (sim_implied - book_implied) * 100
 
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
