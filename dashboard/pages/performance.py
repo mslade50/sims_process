@@ -373,12 +373,27 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     df = _convert_to_units(df)
 
     # Join archetype from sg_diagnostic.parquet (bet_on + opponent)
+    # Primary: exact (event_id, player) match. Fallback: most recent archetype
+    # from any event (handles WDs and name variants across events).
     arch_lookup = get_archetype_lookup()
     if not arch_lookup.empty and "event_id" in df.columns:
         df = df.merge(arch_lookup, left_on=["event_id", "bet_on"],
                       right_on=["event_id", "player_name"],
                       how="left", suffixes=("", "_arch"))
         df.drop(columns=["player_name_arch"], errors="ignore", inplace=True)
+
+        # Fallback: for unmatched rows, use most recent archetype from any event
+        missing = df["archetype"].isna()
+        if missing.any():
+            latest = arch_lookup.sort_values("event_id").drop_duplicates(
+                subset=["player_name"], keep="last"
+            )[["player_name", "archetype"]].rename(columns={"archetype": "_arch_fallback"})
+            df = df.merge(latest, left_on="bet_on", right_on="player_name",
+                          how="left", suffixes=("", "_fb"))
+            df.drop(columns=["player_name_fb"], errors="ignore", inplace=True)
+            df["archetype"] = df["archetype"].fillna(df.get("_arch_fallback"))
+            df.drop(columns=["_arch_fallback"], errors="ignore", inplace=True)
+
         df["archetype"] = df["archetype"].fillna("Unknown")
 
         # Join opponent archetype for matchup bets
@@ -387,6 +402,19 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
                       right_on=["event_id", "opp_name"],
                       how="left", suffixes=("", "_opp"))
         df.drop(columns=["opp_name"], errors="ignore", inplace=True)
+
+        # Fallback for opponent archetype too
+        missing_opp = df["archetype_against"].isna()
+        if missing_opp.any():
+            latest_opp = arch_lookup.sort_values("event_id").drop_duplicates(
+                subset=["player_name"], keep="last"
+            )[["player_name", "archetype"]].rename(columns={"player_name": "opp_name2", "archetype": "_opp_fb"})
+            df = df.merge(latest_opp, left_on="opponent", right_on="opp_name2",
+                          how="left", suffixes=("", "_ofb"))
+            df.drop(columns=["opp_name2"], errors="ignore", inplace=True)
+            df["archetype_against"] = df["archetype_against"].fillna(df.get("_opp_fb"))
+            df.drop(columns=["_opp_fb"], errors="ignore", inplace=True)
+
         df["archetype_against"] = df["archetype_against"].fillna("")
     else:
         df["archetype"] = "Unknown"
