@@ -5,7 +5,7 @@ import numpy as np
 SIMULATIONS   = 100000
 STD_DEV       = 2.75
 PAR           = 72
-CUT_LINE      = 65
+CUT_LINE      = 50
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.15  # must match your main script
 TOP_K = 20 
@@ -22,11 +22,11 @@ dewpoint_wave = -0.035
 dew_calculation = .6*baseline_dew + .4*dewpoint_wave
 wind_speed_base=12.2
 
-start_yr=2019 #first year of data you want to consider in your course baslines
+start_yr=2020 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [475]
-course_id = 665
-tourney = 'valspar'
+event_ids = [12]
+course_id = 12
+tourney = 'rbc'
 course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
@@ -35,7 +35,7 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=11
+course_id_1=12
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -83,34 +83,28 @@ player_var= 2
 tee_time_start="8:30" 
 tee_time_end="1:00"
 
-# Players to force-override with DG predictions (empty = auto only)
-dg_override_players = []
-
 #any names that cause trouble, want to ensure consistency
 name_replacements = {
     'echavarria, nico': 'echavarria, nicolas',
     'norgaard, niklas': 'norgaard moller, niklas',
     'moller, niklas norgaard': 'norgaard moller, niklas',
     'stevens, sam': 'stevens, samuel',
-    'stevens, sam': 'stevens, samuel',
     'davis, cam': 'davis, cameron',
     'lee, k.h.': 'lee, kyounghoon',
     'ventura, kris': 'ventura, kristoffer',
     'schmid, matti': 'schmid, matthias',
     'dumont de chassart, adrien': 'dumont de chassart, adrien',
-    'nesmith, matthew' : 'nesmith, matt',
+    'nesmith, matthew': 'nesmith, matt',
     'ayora, angel': 'ayora fanegas, angel',
-    'capan, frankie' : 'capan iii, frankie',
-    'stallings, stephen jr' : 'stallings jr., stephen',
-    'bauchou, zachary' : 'bauchou, zach',
+    'capan, frankie': 'capan iii, frankie',
+    'stallings, stephen jr': 'stallings jr., stephen',
+    'bauchou, zachary': 'bauchou, zach',
+    'kim, seonghyeon': 'kim, s.h.',
     'chassart, adrien dumont de': 'dumont de chassart, adrien',
     'keefer, john': 'keefer, johnny',
-    'kim, seonghyeon': 'kim, s.h.',
-    'mccarty, matthew': 'mccarty, matt',
-    'petersen, rasmus neergaard': 'neergaard-petersen, rasmus',
+    'kim, sh': 'kim, s.h.',
     'rooyen, erik van': 'van rooyen, erik',
-    'smith, jordan l.': 'smith, jordan',
-    'brown, daniel': 'brown, dan',
+    'spaun, jj': 'spaun, j.j.'
 }
 
 #regression informed coefficients for base model
@@ -255,7 +249,6 @@ coefficients_r3 = {
     'sg_putt_avg': -0.14,
     'sg_app_avg': -0.02,
     'sg_arg_avg': -0.3,
-    'avg_great_shots': 0.106,
 }
 
 coefficients_r3_mid = {
@@ -263,7 +256,6 @@ coefficients_r3_mid = {
     'sg_putt_avg': -0.02,
     'sg_app_avg': -0.07,
     'sg_arg_avg': -0.13,
-    'avg_great_shots': -0.013,
 }
 
 coefficients_r3_high = {
@@ -271,7 +263,6 @@ coefficients_r3_high = {
     'sg_putt_avg': -0.00,
     'sg_app_avg': 0.05,
     'sg_arg_avg': -0.01,
-    'avg_great_shots': 0.020,
 }
 
 pressure_curves_r3 = {
