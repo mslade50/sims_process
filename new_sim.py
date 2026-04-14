@@ -1585,16 +1585,17 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         Returns dict with effective_price, target, filled, vwap, avg_fee,
         or None if no edge at best price.
         """
-        # Convert to (cost_cents, qty) sorted cheapest-first
+        # Convert to (cost_dollars, qty) sorted cheapest-first
+        # ob_levels are from the OPPOSITE side in dollar format (0.0-1.0)
+        # Cost to buy our side = 1.0 - opposite_price
         fill_levels = sorted(
-            [(100 - p, qty) for p, qty in ob_levels],
+            [(1.0 - p, qty) for p, qty in ob_levels],
         )
         if not fill_levels:
             return None
 
         # Kelly at best available price (includes taker fee)
-        best_cents = fill_levels[0][0]
-        best = best_cents / 100.0
+        best = fill_levels[0][0]
         fee_at_best = _kalshi_taker_fee(best)
         eff_best = best + fee_at_best
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
@@ -1612,8 +1613,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         filled = 0
         cost_sum = 0.0   # dollars
         fee_sum = 0.0     # dollars
-        for price_cents, qty in fill_levels:
-            price = price_cents / 100.0
+        for price, qty in fill_levels:
             fee = _kalshi_taker_fee(price)
             take = min(qty, target - filled)
             filled += take
