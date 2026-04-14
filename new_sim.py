@@ -2173,7 +2173,8 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
 
             no_levels = ob.get("no", [])
             # Buy YES: walk NO levels (sellers of YES)
-            fill_levels = sorted([(100 - p, qty) for p, qty in no_levels])
+            # Prices are in dollar format (0.0-1.0); cost = 1.0 - opposite_price
+            fill_levels = sorted([(1.0 - p, qty) for p, qty in no_levels])
             if not fill_levels:
                 continue
 
@@ -2181,8 +2182,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             filled = 0
             cost_sum = 0.0
             fee_sum = 0.0
-            for price_cents, qty in fill_levels:
-                price = price_cents / 100.0
+            for price, qty in fill_levels:
                 fee = _kalshi_taker_fee(price)
                 take = min(qty, FLAT_STAKE - filled)
                 filled += take
