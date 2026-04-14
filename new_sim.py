@@ -1569,7 +1569,6 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     KALSHI_BANKROLL = 30_000.0
     KALSHI_KELLY = 0.60
     MIN_DEPTH = 400
-    MIN_OI = 5000
 
     def _walk_book(ob_levels, sim_prob, bankroll, kelly_frac):
         """Walk orderbook to compute effective fill for a Kelly-sized order.
@@ -1751,7 +1750,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if yf is not None:
             eff = yf["effective_price"]
             edge = (row["sim_yes"] - eff) * 100
-            passes_liq = (yf["filled"] >= MIN_DEPTH) or (oi >= MIN_OI)
+            passes_liq = yf["filled"] >= MIN_DEPTH
             rows.append({
                 **base_row,
                 "side": "yes",
@@ -1770,7 +1769,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if nf is not None:
             eff = nf["effective_price"]
             edge = (row["sim_no"] - eff) * 100
-            passes_liq = (nf["filled"] >= MIN_DEPTH) or (oi >= MIN_OI)
+            passes_liq = nf["filled"] >= MIN_DEPTH
             rows.append({
                 **base_row,
                 "side": "no",
