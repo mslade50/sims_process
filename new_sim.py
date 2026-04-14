@@ -1433,13 +1433,49 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     import time as _time
     from collections import Counter
 
-    # ── Kalshi client + market fetch ──────────────────────────────────
-    try:
-        from kalshi_client import KalshiClient
-        client = KalshiClient()
-    except Exception as e:
-        print(f"  [warn] KalshiClient init failed: {e} — skipping Kalshi pricing")
-        return pd.DataFrame()
+    # ── Kalshi public API (no auth needed for market data) ──────────
+    import httpx as _kalshi_httpx
+    import time as _time
+    _KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+    _KALSHI_HEADERS = {"Accept": "application/json"}
+    _kalshi_client = _kalshi_httpx.Client(timeout=15.0, headers=_KALSHI_HEADERS)
+
+    def _kalshi_get_markets(series_ticker):
+        """Fetch all open markets for a series, handling pagination."""
+        all_mkts = []
+        cursor = None
+        while True:
+            params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
+            if cursor:
+                params["cursor"] = cursor
+            resp = _kalshi_client.get(f"{_KALSHI_API}/markets", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            mkts = data.get("markets", [])
+            all_mkts.extend(mkts)
+            cursor = data.get("cursor")
+            if not cursor or len(mkts) < 200:
+                break
+        return all_mkts
+
+    def _kalshi_get_orderbook(ticker):
+        """Fetch orderbook for a market (public, no auth)."""
+        resp = _kalshi_client.get(f"{_KALSHI_API}/markets/{ticker}/orderbook")
+        resp.raise_for_status()
+        data = resp.json()
+        ob = data.get("orderbook", data.get("orderbook_fp", data))
+        def parse_levels(raw):
+            levels = []
+            for item in (raw or []):
+                if isinstance(item, list) and len(item) == 2:
+                    price = float(item[0])
+                    qty = int(float(item[1]))
+                    levels.append((price, qty))
+            return levels
+        return {
+            "yes": parse_levels(ob.get("yes_dollars") or ob.get("yes", [])),
+            "no": parse_levels(ob.get("no_dollars") or ob.get("no", [])),
+        }
 
     OUTRIGHT_SERIES = {
         "KXPGATOP5": "top_5",
@@ -1451,7 +1487,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     all_markets = []
     for series_ticker, mtype in OUTRIGHT_SERIES.items():
         try:
-            mkts = client.get_markets(series_ticker)
+            mkts = _kalshi_get_markets(series_ticker)
             for m in mkts:
                 m["_market_type"] = mtype
             all_markets.append(mkts)
@@ -1678,7 +1714,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     # ── Stage 2: Orderbook walk with Kelly sizing ────────────────────
     for row in stage1_rows:
         try:
-            ob = client.get_orderbook(row["ticker"])
+            ob = _kalshi_get_orderbook(row["ticker"])
             _time.sleep(0.05)  # 50ms rate limit
         except Exception:
             row["yes_fill"] = None
@@ -1986,12 +2022,26 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
     import time as _time
     from collections import Counter
 
-    try:
-        from kalshi_client import KalshiClient
-        client = KalshiClient()
-    except Exception as e:
-        print(f"  [warn] KalshiClient init failed: {e} — skipping Kalshi matchups")
-        return pd.DataFrame()
+    import httpx as _kalshi_httpx_mu
+    _KALSHI_API_MU = "https://api.elections.kalshi.com/trade-api/v2"
+    _KALSHI_HEADERS_MU = {"Accept": "application/json"}
+    _kalshi_mu_client = _kalshi_httpx_mu.Client(timeout=15.0, headers=_KALSHI_HEADERS_MU)
+
+    def _kalshi_mu_get_orderbook(ticker):
+        resp = _kalshi_mu_client.get(f"{_KALSHI_API_MU}/markets/{ticker}/orderbook")
+        resp.raise_for_status()
+        data = resp.json()
+        ob = data.get("orderbook", data.get("orderbook_fp", data))
+        def parse_levels(raw):
+            levels = []
+            for item in (raw or []):
+                if isinstance(item, list) and len(item) == 2:
+                    levels.append((float(item[0]), int(float(item[1]))))
+            return levels
+        return {
+            "yes": parse_levels(ob.get("yes_dollars") or ob.get("yes", [])),
+            "no": parse_levels(ob.get("no_dollars") or ob.get("no", [])),
+        }
 
     FLAT_STAKE = 1000  # contracts
 
@@ -2002,7 +2052,9 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             params = {"limit": 200, "status": "open", "series_ticker": "KXPGAH2H"}
             if cursor:
                 params["cursor"] = cursor
-            data = client._get("/markets", params=params)
+            resp = _kalshi_mu_client.get(f"{_KALSHI_API_MU}/markets", params=params)
+            resp.raise_for_status()
+            data = resp.json()
             mkts = data.get("markets", [])
             all_mkts.extend(mkts)
             cursor = data.get("cursor")
@@ -2113,7 +2165,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             if player not in pred_lookup:
                 continue
             try:
-                ob = client.get_orderbook(side_info["ticker"])
+                ob = _kalshi_mu_get_orderbook(side_info["ticker"])
                 _time.sleep(0.05)
                 ob_count += 1
             except Exception:
@@ -2173,7 +2225,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
                 "filled": filled,
             })
 
-    client._client.close()
+    _kalshi_mu_client.close()
     print(f"  Kalshi matchups: {len(rows)} sides priced ({ob_count} orderbooks fetched)")
 
     df = pd.DataFrame(rows)
