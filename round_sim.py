@@ -1000,53 +1000,117 @@ def _kalshi_taker_fee(price):
 
 
 def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
+    """Price Kalshi outright markets using live API with orderbook-aware liquidity filtering.
+
+    Two-stage approach (matches new_sim.py):
+      Stage 1: Pre-filter on bid/ask presence, spread ≤ 10c, mid edge > 0.5%
+      Stage 2: Fetch orderbook, Kelly-walk for effective fill, gate taker rows on MIN_DEPTH
+
+    Taker rows are the walked VWAP (incl. fee) — only emitted when fillable depth ≥ MIN_DEPTH.
+    Mid rows are the bid/ask midpoint (maker, no fee) — emitted for any stage-1 survivor.
+    Downstream splits on `pricing` (taker → outrights pipeline; mid → maker-opportunity email).
     """
-    Price Kalshi outright markets using NO dead-heat probabilities.
+    import re as _re
+    import time as _time
+    from collections import Counter
+    import httpx as _httpx
 
-    Kalshi top-N markets pay out if the player finishes inside the threshold
-    regardless of ties (dead-heat-free). So we use top_N_nodh columns.
+    try:
+        from sim_inputs import name_replacements
+    except ImportError:
+        name_replacements = {}
 
-    Computes 4 price points per line:
-      - Yes taker: buy Yes at ask + fee (existing)
-      - Yes mid: post Yes limit at mid (no fees)
-      - No taker (fade): buy No at 1-bid + fee
-      - No mid (fade): post No limit at 1-mid (no fees)
+    _KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+    _client = _httpx.Client(timeout=15.0, headers={"Accept": "application/json"})
 
-    Returns DataFrame with 'side' ("yes"/"no") and 'pricing' ("taker"/"mid") columns.
-    """
-    import json
-    from pathlib import Path
+    def _get_markets(series_ticker):
+        all_mkts, cursor = [], None
+        while True:
+            params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
+            if cursor:
+                params["cursor"] = cursor
+            resp = _client.get(f"{_KALSHI_API}/markets", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            mkts = data.get("markets", [])
+            all_mkts.extend(mkts)
+            cursor = data.get("cursor")
+            if not cursor or len(mkts) < 200:
+                break
+        return all_mkts
 
-    # Load Kalshi outright lines from scraped data
-    search_paths = [
-        Path.home() / "Documents" / "golf_scraping" / "data",
-        Path(__file__).parent / "permanent_data" / "scraped_odds",
-    ]
+    def _get_orderbook(ticker):
+        resp = _client.get(f"{_KALSHI_API}/markets/{ticker}/orderbook")
+        resp.raise_for_status()
+        data = resp.json()
+        ob = data.get("orderbook", data.get("orderbook_fp", data))
+        def parse_levels(raw):
+            out = []
+            for item in (raw or []):
+                if isinstance(item, list) and len(item) == 2:
+                    out.append((float(item[0]), int(float(item[1]))))
+            return out
+        return {
+            "yes": parse_levels(ob.get("yes_dollars") or ob.get("yes", [])),
+            "no": parse_levels(ob.get("no_dollars") or ob.get("no", [])),
+        }
 
-    kalshi_lines = None
-    for base in search_paths:
-        path = base / "kalshi_outrights_latest.json"
-        if path.exists():
-            with open(path) as f:
-                kalshi_lines = json.load(f)
-            print(f"  Loaded Kalshi outrights from {path.name}")
-            break
+    OUTRIGHT_SERIES = {
+        "KXPGATOP5": "top_5",
+        "KXPGATOP10": "top_10",
+        "KXPGATOP20": "top_20",
+        "KXPGATOUR": "winner",
+    }
 
-    if not kalshi_lines:
+    all_markets = []
+    for series_ticker, mtype in OUTRIGHT_SERIES.items():
+        try:
+            mkts = _get_markets(series_ticker)
+            for m in mkts:
+                m["_market_type"] = mtype
+            all_markets.extend(mkts)
+        except Exception as e:
+            print(f"  [warn] Failed to fetch {series_ticker}: {e}")
+    print(f"  Fetched {len(all_markets)} Kalshi markets from live API")
+
+    if not all_markets:
         return pd.DataFrame()
 
-    # Map Kalshi market types to nodh probability columns
+    def _detect_tourney(title):
+        m = _re.search(r"(?:at|in|win) the (.+?)\?", title)
+        if m:
+            return m.group(1).strip()
+        m = _re.match(r"(.+?):\s*Will", title)
+        if m:
+            return m.group(1).strip()
+        return ""
+
+    tourn_counts = Counter()
+    for m in all_markets:
+        t = _detect_tourney(m.get("title", ""))
+        if t:
+            tourn_counts[t] += 1
+    if tourn_counts:
+        current_tourney = tourn_counts.most_common(1)[0][0]
+        all_markets = [m for m in all_markets
+                       if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
+        print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
+
+    def _extract_player(title):
+        m = _re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
+        if m:
+            return m.group(1).strip()
+        m = _re.match(r"Will (.+?) win the ", title)
+        if m:
+            return m.group(1).strip()
+        return ""
+
     type_to_col = {
         "top_5": "top_5_nodh",
         "top_10": "top_10_nodh",
         "top_20": "top_20_nodh",
         "winner": "simulated_win_prob",
     }
-
-    try:
-        from sim_inputs import name_replacements
-    except ImportError:
-        name_replacements = {}
 
     def norm(s):
         x = s.strip().lower()
@@ -1056,18 +1120,68 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
                 x = f"{parts[1]}, {parts[0]}"
         return name_replacements.get(x, x)
 
-    lines = kalshi_lines.get("lines", [])
-    rows = []
+    KALSHI_BANKROLL = 30_000.0
+    KALSHI_KELLY = 0.60
+    MIN_DEPTH = 400
+    MIN_EDGE_STAGE1 = 0.5  # pct points on mid — loose gate
+
+    def _walk_book(ob_levels, sim_prob, bankroll, kelly_frac):
+        """Walk opposite-side levels to compute Kelly-sized VWAP fill."""
+        fill_levels = sorted([(1.0 - p, qty) for p, qty in ob_levels])
+        if not fill_levels:
+            return None
+        best = fill_levels[0][0]
+        eff_best = best + _kalshi_taker_fee(best)
+        if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
+            return None
+        b = (1.0 / eff_best) - 1.0
+        if b <= 0:
+            return None
+        f_star = max((b * sim_prob - (1 - sim_prob)) / b, 0) * kelly_frac
+        target = int(bankroll * f_star / eff_best)
+        if target <= 0:
+            return None
+        filled, cost_sum, fee_sum = 0, 0.0, 0.0
+        for price, qty in fill_levels:
+            fee = _kalshi_taker_fee(price)
+            take = min(qty, target - filled)
+            filled += take
+            cost_sum += take * price
+            fee_sum += take * fee
+            if filled >= target:
+                break
+        if filled == 0:
+            return None
+        vwap = cost_sum / filled
+        avg_fee = fee_sum / filled
+        return {"effective_price": vwap + avg_fee, "target": target, "filled": filled}
+
+    # ── Stage 1: pre-filter on bid/ask + mid edge ────────────────────
+    stage1 = []
     kalshi_mismatches = set()
-    for line in lines:
-        mtype = line.get("market_type", "")
+    for mkt in all_markets:
+        ticker = mkt.get("ticker", "")
+        title = mkt.get("title", "")
+        mtype = mkt.get("_market_type", "")
+
+        bid = float(mkt.get("yes_bid_dollars") or 0)
+        ask = float(mkt.get("yes_ask_dollars") or 0)
+        if bid == 0 and ask == 0:
+            bid = float(mkt.get("yes_bid", 0) or 0) / 100.0
+            ask = float(mkt.get("yes_ask", 0) or 0) / 100.0
+        if bid <= 0 or ask <= 0:
+            continue
+        if (ask - bid) > 0.10:
+            continue
+
+        player_raw = _extract_player(title)
+        if not player_raw:
+            continue
+        player = norm(player_raw)
+
         prob_col = type_to_col.get(mtype)
         if not prob_col or prob_col not in finish_probs.columns:
             continue
-
-        player = norm(line["player"])
-
-        # Look up sim probability
         match = finish_probs[finish_probs["player_name"] == player]
         if match.empty:
             kalshi_mismatches.add(player)
@@ -1077,95 +1191,103 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         if sim_yes <= 0:
             continue
         sim_no = 1.0 - sim_yes
+        mid = (bid + ask) / 2.0
+        yes_mid_edge = (sim_yes - mid) * 100
+        no_mid_edge = (sim_no - (1 - mid)) * 100
+        if max(yes_mid_edge, no_mid_edge) < MIN_EDGE_STAGE1:
+            continue
+
+        stage1.append({
+            "ticker": ticker, "player": player, "mtype": mtype,
+            "bid": bid, "ask": ask, "mid": mid,
+            "sim_yes": sim_yes, "sim_no": sim_no,
+            "yes_mid_edge": yes_mid_edge, "no_mid_edge": no_mid_edge,
+        })
+
+    print(f"  Stage 1 pre-filter: {len(stage1)} markets pass (edge > {MIN_EDGE_STAGE1}%)")
+    if not stage1:
+        df = pd.DataFrame()
+        if kalshi_mismatches:
+            df.attrs["name_mismatches"] = kalshi_mismatches
+        return df
+
+    # ── Stage 2: orderbook walk with Kelly sizing ────────────────────
+    rows = []
+    ob_fail = 0
+    for s in stage1:
+        try:
+            ob = _get_orderbook(s["ticker"])
+            _time.sleep(0.05)
+        except Exception:
+            ob_fail += 1
+            ob = {"yes": [], "no": []}
 
         base_row = {
-            "player_name": player,
-            "market_type": mtype,
+            "player_name": s["player"],
+            "market_type": s["mtype"],
             "bookmaker": "kalshi",
-            "my_pred": pred_lookup.get(player),
-            "sample": sample_lookup.get(player),
+            "my_pred": pred_lookup.get(s["player"]),
+            "sample": sample_lookup.get(s["player"]),
         }
 
-        bid = line.get("bid", 0)
-        ask = line.get("ask", 0)
-        market_odds = line["odds"]  # taker (ask + fee) in american
-
-        # --- Yes taker (existing) ---
-        yes_taker_implied = american_to_implied(market_odds)
-        if yes_taker_implied:
-            yes_taker_edge = (sim_yes - yes_taker_implied) * 100
+        # YES taker: walk NO levels (sellers of YES)
+        yf = _walk_book(ob.get("no", []), s["sim_yes"], KALSHI_BANKROLL, KALSHI_KELLY)
+        if yf and yf["filled"] >= MIN_DEPTH:
+            eff = yf["effective_price"]
             rows.append({
-                **base_row,
-                "side": "yes",
-                "pricing": "taker",
-                "american_odds": market_odds,
-                "sim_prob": sim_yes,
-                "implied_prob": yes_taker_implied,
-                "edge": round(yes_taker_edge, 1),
-                "my_fair": implied_to_american(min(max(sim_yes, 1e-4), 1 - 1e-4)),
+                **base_row, "side": "yes", "pricing": "taker",
+                "american_odds": implied_to_american(min(max(eff, 1e-4), 1 - 1e-4)),
+                "sim_prob": s["sim_yes"], "implied_prob": eff,
+                "edge": round((s["sim_yes"] - eff) * 100, 1),
+                "my_fair": implied_to_american(min(max(s["sim_yes"], 1e-4), 1 - 1e-4)),
+                "target": yf["target"], "filled": yf["filled"],
             })
 
-        # --- Yes mid (maker, no fees) ---
-        odds_mid = line.get("odds_mid")
-        if odds_mid and odds_mid != 0:
-            yes_mid_implied = american_to_implied(odds_mid)
-            if yes_mid_implied:
-                yes_mid_edge = (sim_yes - yes_mid_implied) * 100
-                rows.append({
-                    **base_row,
-                    "side": "yes",
-                    "pricing": "mid",
-                    "american_odds": odds_mid,
-                    "sim_prob": sim_yes,
-                    "implied_prob": yes_mid_implied,
-                    "edge": round(yes_mid_edge, 1),
-                    "my_fair": implied_to_american(min(max(sim_yes, 1e-4), 1 - 1e-4)),
-                })
+        # NO taker: walk YES levels (sellers of NO)
+        nf = _walk_book(ob.get("yes", []), s["sim_no"], KALSHI_BANKROLL, KALSHI_KELLY)
+        if nf and nf["filled"] >= MIN_DEPTH:
+            eff = nf["effective_price"]
+            rows.append({
+                **base_row, "side": "no", "pricing": "taker",
+                "american_odds": implied_to_american(min(max(eff, 1e-4), 1 - 1e-4)),
+                "sim_prob": s["sim_no"], "implied_prob": eff,
+                "edge": round((s["sim_no"] - eff) * 100, 1),
+                "my_fair": implied_to_american(min(max(s["sim_no"], 1e-4), 1 - 1e-4)),
+                "target": nf["target"], "filled": nf["filled"],
+            })
 
-        # Fade (No) pricing requires bid > 0
-        if bid > 0:
-            # --- No taker (fade): buy No at 1 - bid + fee ---
-            no_taker_price = 1 - bid
-            no_taker_fee = _kalshi_taker_fee(no_taker_price)
-            no_taker_eff = min(no_taker_price + no_taker_fee, 0.99)
-            no_taker_american = implied_to_american(min(max(no_taker_eff, 1e-4), 1 - 1e-4))
-            if no_taker_american is not None:
-                no_taker_edge = (sim_no - no_taker_eff) * 100
-                rows.append({
-                    **base_row,
-                    "side": "no",
-                    "pricing": "taker",
-                    "american_odds": no_taker_american,
-                    "sim_prob": sim_no,
-                    "implied_prob": no_taker_eff,
-                    "edge": round(no_taker_edge, 1),
-                    "my_fair": implied_to_american(min(max(sim_no, 1e-4), 1 - 1e-4)),
-                })
+        # YES mid (maker, no fees)
+        yes_mid_am = implied_to_american(min(max(s["mid"], 1e-4), 1 - 1e-4))
+        if yes_mid_am is not None:
+            rows.append({
+                **base_row, "side": "yes", "pricing": "mid",
+                "american_odds": yes_mid_am,
+                "sim_prob": s["sim_yes"], "implied_prob": s["mid"],
+                "edge": round(s["yes_mid_edge"], 1),
+                "my_fair": implied_to_american(min(max(s["sim_yes"], 1e-4), 1 - 1e-4)),
+            })
 
-            # --- No mid (fade maker): buy No at 1 - yes_mid, no fees ---
-            if ask > 0:
-                yes_mid_price = (bid + ask) / 2
-                no_mid_price = 1 - yes_mid_price
-                no_mid_american = implied_to_american(min(max(no_mid_price, 1e-4), 1 - 1e-4))
-                if no_mid_american is not None:
-                    no_mid_edge = (sim_no - no_mid_price) * 100
-                    rows.append({
-                        **base_row,
-                        "side": "no",
-                        "pricing": "mid",
-                        "american_odds": no_mid_american,
-                        "sim_prob": sim_no,
-                        "implied_prob": no_mid_price,
-                        "edge": round(no_mid_edge, 1),
-                        "my_fair": implied_to_american(min(max(sim_no, 1e-4), 1 - 1e-4)),
-                    })
+        # NO mid (maker, no fees)
+        no_mid_price = 1 - s["mid"]
+        no_mid_am = implied_to_american(min(max(no_mid_price, 1e-4), 1 - 1e-4))
+        if no_mid_am is not None:
+            rows.append({
+                **base_row, "side": "no", "pricing": "mid",
+                "american_odds": no_mid_am,
+                "sim_prob": s["sim_no"], "implied_prob": no_mid_price,
+                "edge": round(s["no_mid_edge"], 1),
+                "my_fair": implied_to_american(min(max(s["sim_no"], 1e-4), 1 - 1e-4)),
+            })
+
+    print(f"  Stage 2 orderbook: fetched {len(stage1) - ob_fail}/{len(stage1)} orderbooks")
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("edge", ascending=False)
         taker_pos = ((df["pricing"] == "taker") & (df["edge"] > 0)).sum()
         mid_pos = ((df["pricing"] == "mid") & (df["edge"] > 0)).sum()
-        print(f"  Kalshi outrights: {len(df)} lines priced, {taker_pos} taker edge, {mid_pos} maker edge")
+        print(f"  Kalshi outrights: {len(df)} lines priced, "
+              f"{taker_pos} taker edge (walked >= {MIN_DEPTH}), {mid_pos} maker edge")
 
     if kalshi_mismatches:
         print(f"  Warning: {len(kalshi_mismatches)} Kalshi outright players not found in sim")
@@ -2194,24 +2316,74 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_score_lines():
-    """Load scraped round score O/U lines (FanDuel etc.) via odds_loader paths."""
+    """Load scraped round score O/U lines (FanDuel etc.).
+
+    Follows the same GitHub-first pattern as odds_loader._fetch_scraped_json():
+    1. Try GitHub API (mslade50/golf_scraping) for fresh data
+    2. Fall back to local paths
+
+    Staleness rule: data must be from today (UTC). Old tournament lines
+    should never be priced against the current field.
+    """
     import json
+    import os
+    from datetime import datetime, timezone
     from pathlib import Path
 
+    import requests
+
+    filename = "round_scores_latest.json"
+    today_utc = datetime.now(timezone.utc).date()
+
+    # 1. Try GitHub API first
+    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    api_url = f"https://api.github.com/repos/mslade50/golf_scraping/contents/data/{filename}?ref=master"
+    try:
+        headers = {"Accept": "application/vnd.github.raw+json"}
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        last_updated = data.get("last_updated", "")
+        if last_updated:
+            try:
+                ts = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+                if ts.date() < today_utc:
+                    print(f"  GitHub score lines from {ts.date()} (not today), skipping")
+                else:
+                    lines = data.get("lines", [])
+                    if lines:
+                        print(f"  Loaded {len(lines)} score lines from GitHub (updated {last_updated})")
+                        return lines
+            except ValueError:
+                pass  # can't verify date, skip
+        else:
+            pass  # no timestamp, can't verify, skip
+    except Exception as e:
+        print(f"  GitHub fetch failed for {filename}: {e}")
+
+    # 2. Fall back to local paths
     search_paths = [
-        Path.home() / "Documents" / "golf_scraping" / "data",
         Path(__file__).parent / "permanent_data" / "scraped_odds",
+        Path.home() / "Documents" / "golf_scraping" / "data",
     ]
 
     for base in search_paths:
-        path = base / "round_scores_latest.json"
+        path = base / filename
         if path.exists():
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            if mtime.date() < today_utc:
+                print(f"  Local score lines from {mtime.date()} (not today): {path}")
+                continue
             with open(path) as f:
                 data = json.load(f)
             lines = data.get("lines", [])
             if lines:
                 print(f"  Loaded {len(lines)} score lines from {path.name}")
                 return lines
+
+    print("  No score lines from today found (GitHub + local)")
     return []
 
 
@@ -2652,6 +2824,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
                 stake_str = f"${stake:.0f}" if pd.notna(stake) and stake > 0 else ""
 
+                # Cent pricing for exchange rows (Kalshi): effective fill price incl. fee
+                is_exchange = str(book).lower() in ("kalshi", "novig")
+                imp_prob = row.get("implied_prob")
+                sim_prob_row = row.get("sim_prob")
+                line_c_str = f"{imp_prob * 100:.1f}&cent;" if is_exchange and pd.notna(imp_prob) else ""
+                fair_c_str = f"{sim_prob_row * 100:.1f}&cent;" if is_exchange and pd.notna(sim_prob_row) else ""
+
                 rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
@@ -2661,6 +2840,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; color:#2c5282;">{line_c_str}</td>
+                    <td style="padding:6px 10px; text-align:center; color:#2c5282; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{stake_str}</td>
@@ -2680,6 +2861,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Line&cent;</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair&cent;</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Stake</th>
@@ -2862,6 +3045,12 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
                 wx_str = f"{_mk_wx_sg:+.2f}" if _mk_wx_sg != 0 else "0.00"
 
+                # Cent pricing (Kalshi maker = mid price, no fees)
+                imp_prob = row.get("implied_prob")
+                sim_prob_row = row.get("sim_prob")
+                line_c_str = f"{imp_prob * 100:.1f}&cent;" if pd.notna(imp_prob) else ""
+                fair_c_str = f"{sim_prob_row * 100:.1f}&cent;" if pd.notna(sim_prob_row) else ""
+
                 rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
@@ -2869,6 +3058,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side.upper()}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; color:#2c5282;">{line_c_str}</td>
+                    <td style="padding:6px 10px; text-align:center; color:#2c5282; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{wx_str}</td>
@@ -2885,6 +3076,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Side</th>
                     <th style="padding:6px 10px; text-align:center;">Mid Line</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Mid&cent;</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair&cent;</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
