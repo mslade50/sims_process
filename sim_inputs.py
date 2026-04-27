@@ -3,9 +3,9 @@ import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
-STD_DEV       = 2.75
+STD_DEV       = 3.0
 PAR           = 72
-CUT_LINE      = 50
+CUT_LINE      = 100
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.15  # must match your main script
 TOP_K = 20 
@@ -22,20 +22,32 @@ dewpoint_wave = -0.035
 dew_calculation = .6*baseline_dew + .4*dewpoint_wave
 wind_speed_base=12.2
 
-start_yr=2020 #first year of data you want to consider in your course baslines
+start_yr=2024 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [12]
-course_id = 12
-tourney = 'rbc'
-course_par = 71
+event_ids = [556]
+course_id = 556
+tourney = 'cadillac'
+course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
+
+# One-off LIV-history overrides (Cadillac Championship 2026 at Trump National Doral).
+# This is a PGA event at a course with no PGA history — historical SG variance
+# multipliers + per-category skew are pulled from the LIV Miami events at Doral
+# (event_ids 22 [2023], 28 [2024], 43 [2025] under tour='liv'). Player distributions
+# and current-week API calls stay on PGA. Reset to None / 'pga' / [] for any normal
+# week. See sim_inputs.lat_override partner-event pattern.
+tour_override = 'liv'
+historical_event_ids = [22, 28, 43]
+lat_override = 25.8131
+lon_override = -80.3382
+baseline_score_adj = 0.0
 
 major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=12
+course_id_1=556
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -89,6 +101,13 @@ name_replacements = {
     'norgaard, niklas': 'norgaard moller, niklas',
     'moller, niklas norgaard': 'norgaard moller, niklas',
     'stevens, sam': 'stevens, samuel',
+    # DK salary CSV -> our canonical (Zurich 2026)
+    'brown, daniel': 'brown, dan',
+    'l. smith, jordan': 'smith, jordan',
+    'smith, jordan l.': 'smith, jordan',
+    'li, hao-tong': 'li, haotong',
+    'mccarty, matthew': 'mccarty, matt',
+    'skov olesen, jacob': 'olesen, jacob skov',
     'davis, cam': 'davis, cameron',
     'lee, k.h.': 'lee, kyounghoon',
     'ventura, kris': 'ventura, kristoffer',
