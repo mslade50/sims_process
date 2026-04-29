@@ -22,32 +22,20 @@ dewpoint_wave = -0.035
 dew_calculation = .6*baseline_dew + .4*dewpoint_wave
 wind_speed_base=12.2
 
-start_yr=2024 #first year of data you want to consider in your course baslines
+start_yr=2020 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [556]
-course_id = 556
+event_ids = [565]
+course_id = 729
 tourney = 'cadillac'
 course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
-# One-off LIV-history overrides (Cadillac Championship 2026 at Trump National Doral).
-# This is a PGA event at a course with no PGA history — historical SG variance
-# multipliers + per-category skew are pulled from the LIV Miami events at Doral
-# (event_ids 22 [2023], 28 [2024], 43 [2025] under tour='liv'). Player distributions
-# and current-week API calls stay on PGA. Reset to None / 'pga' / [] for any normal
-# week. See sim_inputs.lat_override partner-event pattern.
-tour_override = 'liv'
-historical_event_ids = [22, 28, 43]
-lat_override = 25.8131
-lon_override = -80.3382
-baseline_score_adj = 0.0
-
 major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=556
+course_id_1=565
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -187,6 +175,14 @@ overrides_sd = {
 manual_boosts={
 }
 # manual_boosts = { }
+
+# Field replacements: WD'd player -> replacement (used by skill_imports.py
+# when DataGolf hasn't updated the field yet). Both names lowercase
+# "lastname, firstname". Replacement just needs to exist in DG
+# decompositions or player_rounds; remaining fields fall through fallbacks.
+field_replacements = {
+    # 'cantlay, patrick': 'thorbjornsen, michael',
+}
 
 
 #for etr export to sheet
