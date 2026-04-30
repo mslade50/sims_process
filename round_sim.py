@@ -1085,16 +1085,40 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
             return m.group(1).strip()
         return ""
 
+    # Match Kalshi tournament names against the configured `tourney` so
+    # simultaneously-open events don't get confused (e.g. PGA Championship
+    # markets bleeding into a Cadillac sim). If all configured words are
+    # generic (e.g. tourney='pga_championship'), require ALL words to match.
+    _GENERIC_RT = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
+                   "open", "classic", "invitational", "cup", "pga", "tour"}
+    _all_target_words_rt = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
+    _distinct_target_words_rt = _all_target_words_rt - _GENERIC_RT
+
+    def _matches_target_rt(detected_title):
+        t = detected_title.lower()
+        if _distinct_target_words_rt:
+            return any(w in t for w in _distinct_target_words_rt)
+        return all(w in t for w in _all_target_words_rt)
+
     tourn_counts = Counter()
     for m in all_markets:
         t = _detect_tourney(m.get("title", ""))
         if t:
             tourn_counts[t] += 1
     if tourn_counts:
-        current_tourney = tourn_counts.most_common(1)[0][0]
-        all_markets = [m for m in all_markets
-                       if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
-        print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
+        matched = [t for t in tourn_counts.keys() if _matches_target_rt(t)]
+        if matched:
+            matched_lower = {t.lower() for t in matched}
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")).lower() in matched_lower
+                           or _detect_tourney(m.get("title", "")) == ""]
+            print(f"  Tournament: {', '.join(matched)} ({len(all_markets)} markets, matched on tourney='{tourney}')")
+        else:
+            current_tourney = tourn_counts.most_common(1)[0][0]
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
+            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; falling back to most-common: {current_tourney}")
+            print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
 
     def _extract_player(title):
         m = _re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
@@ -1773,7 +1797,7 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
         sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12, int(round(player_avg)) + 12)
 
     print(f"  Simulated {len(sim_dict)} players × {num_sims:,} iterations")
-    return sim_dict
+    return sim_dict, {}
 
 
 def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
@@ -1801,6 +1825,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     has_course_adj = "course_score_adj" in model_preds.columns
 
     sim_dict = {}
+    cat_mu_lookup = {}
     for idx, (_, row) in enumerate(model_preds.iterrows()):
         player = row["player_name"]
         scores_rn = row[scores_col]
@@ -1822,6 +1847,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         # Re-center + weather split (inline, not via _catfirst_draw)
         shift = (skill - mu.sum()) / 4.0
         cat_mu = mu + shift + wx_delta * WEATHER_CAT_SPLIT
+        cat_mu_lookup[player] = cat_mu.copy()
 
         # Draw: correlated standard normals → skew → scale → clip → sum
         Z = RNG_CF.standard_normal(size=(num_sims, 4))
@@ -1839,7 +1865,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     print(f"  [catfirst] Simulated {len(sim_dict)} players × {num_sims:,} iterations")
     print(f"  [catfirst] Course mults: OTT={_course_mults_cf[0]:.3f}, APP={_course_mults_cf[1]:.3f}, "
           f"ARG={_course_mults_cf[2]:.3f}, PUTT={_course_mults_cf[3]:.3f}")
-    return sim_dict
+    return sim_dict, cat_mu_lookup
 
 
 def print_catfirst_comparison(sim_old, sim_cf, model_preds, pred_col, expected_avg):
@@ -2309,6 +2335,57 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
     card = card.sort_values("Pred", ascending=False)
     print(f"  Score card: {len(card)} players × {len(lines)} lines ({lines[0]}–{lines[-1]})")
     return card
+
+
+def build_round_score_probs(sim_dict, expected_avg_lookup, cat_mu_lookup=None):
+    """
+    Aggregate sim_dict into per-score probabilities for the dashboard.
+
+    Parameters
+    ----------
+    sim_dict : {player_name: np.ndarray of int scores}
+    expected_avg_lookup : {player_name: float} per-player expected score (course-adjusted)
+                         OR a single float applied to all players.
+    cat_mu_lookup : {player_name: np.ndarray([ott, app, arg, putt])} or None
+
+    Returns
+    -------
+    DataFrame with columns: player_name, score, prob, sg_ott, sg_app, sg_arg,
+    sg_putt, expected_avg. Rows are one-per-(player, score).
+    """
+    cat_mu_lookup = cat_mu_lookup or {}
+    rows = []
+    for player, scores in sim_dict.items():
+        if scores is None or len(scores) == 0:
+            continue
+        total = len(scores)
+        vals, counts = np.unique(scores, return_counts=True)
+        probs = counts / total
+
+        if isinstance(expected_avg_lookup, dict):
+            p_exp = expected_avg_lookup.get(player)
+        else:
+            p_exp = expected_avg_lookup
+
+        cat = cat_mu_lookup.get(player)
+        sg_ott = float(cat[0]) if cat is not None else np.nan
+        sg_app = float(cat[1]) if cat is not None else np.nan
+        sg_arg = float(cat[2]) if cat is not None else np.nan
+        sg_putt = float(cat[3]) if cat is not None else np.nan
+
+        for s, p in zip(vals, probs):
+            rows.append({
+                "player_name": player,
+                "score": int(s),
+                "prob": float(p),
+                "sg_ott": sg_ott,
+                "sg_app": sg_app,
+                "sg_arg": sg_arg,
+                "sg_putt": sg_putt,
+                "expected_avg": float(p_exp) if p_exp is not None else np.nan,
+            })
+
+    return pd.DataFrame(rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3326,12 +3403,12 @@ def main():
     print(f"\n  Simulating R{sim_round} scores...")
 
     # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
-    sim_dict_cf = simulate_round_scores_catfirst(
+    sim_dict_cf, cat_mu_lookup = simulate_round_scores_catfirst(
         model_preds, sim_round, expected_avg, _wx_lookup
     )
 
     if args.legacy:
-        sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
+        sim_dict_legacy, _ = simulate_round_scores(model_preds, sim_round, expected_avg)
         print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
         print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
         sim_dict = sim_dict_legacy
@@ -3384,6 +3461,27 @@ def main():
     else:
         print(f"\n  Building fair score card (expected avg = {expected_avg})...")
         score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
+
+    # ── Step 3a: Pre-aggregated score distributions for dashboard ────────
+    try:
+        # Per-player expected avg (course-adjusted when multi-course), else scalar
+        if "course_score_adj" in model_preds.columns:
+            exp_lookup = dict(zip(
+                model_preds["player_name"],
+                model_preds["course_score_adj"].fillna(expected_avg),
+            ))
+        else:
+            exp_lookup = expected_avg
+
+        score_probs = build_round_score_probs(sim_dict, exp_lookup, cat_mu_lookup)
+        if not score_probs.empty:
+            out_dir_probs = f"./{tourney}"
+            os.makedirs(out_dir_probs, exist_ok=True)
+            probs_path = os.path.join(out_dir_probs, f"round_score_probs_r{sim_round}.parquet")
+            score_probs.to_parquet(probs_path, index=False)
+            print(f"  Saved {probs_path} ({len(score_probs)} rows, {score_probs['player_name'].nunique()} players)")
+    except Exception as e:
+        print(f"  Warning: round_score_probs write failed: {e}")
 
     # ── Step 3b: Price score lines vs market ─────────────────────────────
     score_edges = pd.DataFrame()
