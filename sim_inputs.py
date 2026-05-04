@@ -22,11 +22,11 @@ dewpoint_wave = -0.035
 dew_calculation = .6*baseline_dew + .4*dewpoint_wave
 wind_speed_base=12.2
 
-start_yr=2020 #first year of data you want to consider in your course baslines
+start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [565]
-course_id = 729
-tourney = 'cadillac'
+event_ids = [480]
+course_id = 872
+tourney = 'truist'
 course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
@@ -35,7 +35,7 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=565
+course_id_1=872
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
