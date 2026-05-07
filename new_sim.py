@@ -2356,7 +2356,7 @@ def price_novig_matchups_tourney(model_preds_df, final_scores_arr=None, player_n
       awayTeam { name }
     }
     markets(where: {status: {_eq: "OPEN"}, type: {_eq: "MONEY"}}) {
-      id type
+      id type volume
       outcomes {
         index available
         competitor { name }
@@ -2393,6 +2393,7 @@ def price_novig_matchups_tourney(model_preds_df, final_scores_arr=None, player_n
 
                 home_price = prices.get(home, 0)
                 away_price = prices.get(away, 0)
+                volume = float(m.get("volume", 0) or 0)
 
                 mtype = "tournament_matchup"
 
@@ -2421,6 +2422,7 @@ def price_novig_matchups_tourney(model_preds_df, final_scores_arr=None, player_n
                         "edge": round(edge_val, 1) if edge_val is not None else None,
                         "my_pred": pred_lookup.get(player_norm, 0),
                         "opp_pred": pred_lookup.get(opp_norm, 0),
+                        "volume": volume,
                         "target": 0,
                         "filled": 0,
                     })
@@ -2772,6 +2774,11 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             sb_line_str = f"{sb_line:+d}" if sb_line is not None else "—"
 
             book_color_hex = "#dd6b20" if book == "kalshi" else "#6b46c1" if book == "novig" else "#000000"
+            if book == "kalshi":
+                _filled = int(row.get('filled', 0) or 0)
+                fill_str = f"{_filled:,}c" if _filled else "—"
+            else:
+                fill_str = "—"  # NoVig: depth not exposed publicly
             exch_rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
@@ -2783,6 +2790,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_prob:.1%}</td>
+                    <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
                 </tr>"""
 
         exchange_inject_html = f"""
@@ -2800,6 +2808,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Prob</th>
+                    <th style="padding:6px 10px; text-align:center;">Fill</th>
                 </tr>
                 {exch_rows_html}
             </table>"""
@@ -2913,6 +2922,14 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
 
+    def _fill_str(row):
+        book = str(row.get('bookmaker', ''))
+        if book == 'kalshi':
+            filled = int(row.get('filled', 0) or 0)
+            return f"{filled:,}c" if filled else "—"
+        # NoVig doesn't publish depth without auth; cumulative volume is not fillable size
+        return "—"
+
     def _exch_row(row, book):
         player = str(row.get('player_name', '')).title()
         market = str(row.get('market_type', ''))
@@ -2921,9 +2938,7 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         edge = row.get('edge', 0)
         american = f"{int(row['american_odds']):+d}" if pd.notna(row.get('american_odds')) else ""
         fair = f"{int(row['my_fair']):+d}" if pd.notna(row.get('my_fair')) else ""
-        target = int(row.get('target', 0) or 0)
-        filled = int(row.get('filled', 0) or 0)
-        fill_str = f"{filled:,}/{target:,}" if target else "—"
+        fill_str = _fill_str(row)
         edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
         return f"""<tr>
             <td style="padding:5px 8px; font-weight:600;">{player}</td>
@@ -2946,9 +2961,7 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         edge = row.get('edge', 0) or 0
         edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
         mtype = str(row.get('market_type', ''))
-        target = int(row.get('target', 0) or 0)
-        filled = int(row.get('filled', 0) or 0)
-        fill_str = f"{filled:,}/{target:,}" if target else "—"
+        fill_str = _fill_str(row)
         return f"""<tr>
             <td style="padding:5px 8px; font-weight:600;">{player}</td>
             <td style="padding:5px 8px;">{opp}</td>
