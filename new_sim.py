@@ -645,15 +645,18 @@ r1_r2_scores = strokes_r1 + strokes_r2
 # CUT LOGIC after 36 (Top-N and ties)
 # ======================
 made_cut_mask = np.ones_like(r1_r2_scores, dtype=bool)
-for j in range(SIMULATIONS):
-    sc = r1_r2_scores[:, j]
-    cut_score = np.sort(sc)[CUT_LINE - 1]
-    top_cut = sc <= cut_score
-    if USE_10_SHOT_RULE:
-        within_10 = sc <= (sc.min() + 10)
-        made_cut_mask[:, j] = top_cut | within_10
-    else:
-        made_cut_mask[:, j] = top_cut
+if CUT_LINE >= n_players:
+    print(f"[cut] CUT_LINE={CUT_LINE} >= field size ({n_players}); treating as no-cut event")
+else:
+    for j in range(SIMULATIONS):
+        sc = r1_r2_scores[:, j]
+        cut_score = np.sort(sc)[CUT_LINE - 1]
+        top_cut = sc <= cut_score
+        if USE_10_SHOT_RULE:
+            within_10 = sc <= (sc.min() + 10)
+            made_cut_mask[:, j] = top_cut | within_10
+        else:
+            made_cut_mask[:, j] = top_cut
 
 
 # ======================
@@ -1509,16 +1512,41 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
             return m.group(1).strip()
         return ""
 
+    # Match Kalshi tournament names against the configured `tourney` from sim_inputs.
+    # Generic stopwords removed so "cadillac" doesn't match "PGA Championship" via
+    # the shared "championship" token. If every word is generic (e.g. tourney=
+    # "pga_championship"), require ALL words to appear in the title.
+    _GENERIC = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
+                "open", "classic", "invitational", "cup", "pga", "tour"}
+    _all_target_words = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
+    _distinct_target_words = _all_target_words - _GENERIC
+
+    def _matches_target(detected_title):
+        t = detected_title.lower()
+        if _distinct_target_words:
+            return any(w in t for w in _distinct_target_words)
+        return all(w in t for w in _all_target_words)
+
     tourn_counts = Counter()
     for m in all_markets:
         t = _detect_tourney(m.get("title", ""))
         if t:
             tourn_counts[t] += 1
     if tourn_counts:
-        current_tourney = tourn_counts.most_common(1)[0][0]
-        all_markets = [m for m in all_markets
-                       if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
-        print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
+        matched = [t for t in tourn_counts.keys() if _matches_target(t)]
+        if matched:
+            matched_lower = {t.lower() for t in matched}
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")).lower() in matched_lower
+                           or _detect_tourney(m.get("title", "")) == ""]
+            label = ", ".join(matched)
+            print(f"  Tournament: {label} ({len(all_markets)} markets, matched on tourney='{tourney}')")
+        else:
+            current_tourney = tourn_counts.most_common(1)[0][0]
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
+            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; falling back to most-common: {current_tourney}")
+            print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
 
     # ── Extract player name from title ────────────────────────────────
     def _extract_player(title):
@@ -1565,24 +1593,23 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 x = f"{parts[1]}, {parts[0]}"
         return name_replacements.get(x, x)
 
-    # ── Kelly-sized orderbook walk ──────────────────────────────────
-    KALSHI_BANKROLL = 30_000.0
-    KALSHI_KELLY = 0.60
-    MIN_DEPTH = 400
+    # ── Flat 1000-contract orderbook walk (matches matchup pricer) ──
+    FLAT_STAKE = 1000
+    MIN_DEPTH = 100  # require at least 100 contracts of fill to call the VWAP "real"
 
-    def _walk_book(ob_levels, sim_prob, bankroll, kelly_frac):
-        """Walk orderbook to compute effective fill for a Kelly-sized order.
+    def _walk_book(ob_levels, sim_prob, target=FLAT_STAKE):
+        """Walk orderbook to compute effective fill for a flat target-contract order.
 
         Args:
             ob_levels: raw levels from the OPPOSITE side of the book.
                        For buying YES: pass NO levels (no_price, qty).
                        For buying NO:  pass YES levels (yes_price, qty).
-            sim_prob:  our probability for the side we're betting.
-            bankroll:  total bankroll in dollars.
-            kelly_frac: Kelly fraction (e.g. 0.60).
+            sim_prob:  our probability for the side we're betting (used only for
+                       the no-edge short-circuit at best price).
+            target:    contracts to fill (default FLAT_STAKE=1000).
 
         Returns dict with effective_price, target, filled, vwap, avg_fee,
-        or None if no edge at best price.
+        or None if no edge at best price or empty book.
         """
         # Convert to (cost_dollars, qty) sorted cheapest-first
         # ob_levels are from the OPPOSITE side in dollar format (0.0-1.0)
@@ -1593,22 +1620,14 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if not fill_levels:
             return None
 
-        # Kelly at best available price (includes taker fee)
+        # No-edge short-circuit at best price (post-fee)
         best = fill_levels[0][0]
         fee_at_best = _kalshi_taker_fee(best)
         eff_best = best + fee_at_best
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
-            return None  # no edge
-
-        b = (1.0 / eff_best) - 1.0
-        if b <= 0:
-            return None
-        f_star = max((b * sim_prob - (1 - sim_prob)) / b, 0) * kelly_frac
-        target = int(bankroll * f_star / eff_best)
-        if target <= 0:
             return None
 
-        # Walk the book
+        # Walk the book for `target` contracts
         filled = 0
         cost_sum = 0.0   # dollars
         fee_sum = 0.0     # dollars
@@ -1724,11 +1743,9 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         no_levels = ob.get("no", [])    # NO bids
 
         # Buy YES: walk NO levels (sellers of YES)
-        row["yes_fill"] = _walk_book(no_levels, row["sim_yes"],
-                                     KALSHI_BANKROLL, KALSHI_KELLY)
+        row["yes_fill"] = _walk_book(no_levels, row["sim_yes"])
         # Buy NO: walk YES levels (sellers of NO)
-        row["no_fill"] = _walk_book(yes_levels, row["sim_no"],
-                                    KALSHI_BANKROLL, KALSHI_KELLY)
+        row["no_fill"] = _walk_book(yes_levels, row["sim_no"])
 
     print(f"  Stage 2 orderbook: fetched {len(stage1_rows)} orderbooks")
 
@@ -2077,14 +2094,36 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             return m.group(1).strip()
         return ""
 
+    # Match against the configured `tourney` so simultaneously-open events
+    # (e.g. PGA Championship + Cadillac) don't get confused.
+    _GENERIC_MU = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
+                   "open", "classic", "invitational", "cup", "pga", "tour"}
+    _all_target_words_mu = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
+    _distinct_target_words_mu = _all_target_words_mu - _GENERIC_MU
+
+    def _matches_target_mu(detected_title):
+        t = detected_title.lower()
+        if _distinct_target_words_mu:
+            return any(w in t for w in _distinct_target_words_mu)
+        return all(w in t for w in _all_target_words_mu)
+
     tourn_counts = Counter()
     for m in all_mkts:
         t = _detect(m.get("title", ""))
         if t:
             tourn_counts[t] += 1
     if tourn_counts:
-        current_tourney = tourn_counts.most_common(1)[0][0]
-        all_mkts = [m for m in all_mkts if _detect(m.get("title", "")) in (current_tourney, "")]
+        matched = [t for t in tourn_counts.keys() if _matches_target_mu(t)]
+        if matched:
+            matched_lower = {t.lower() for t in matched}
+            all_mkts = [m for m in all_mkts
+                        if _detect(m.get("title", "")).lower() in matched_lower
+                        or _detect(m.get("title", "")) == ""]
+            print(f"  Kalshi H2H: matched on tourney='{tourney}' -> {', '.join(matched)} ({len(all_mkts)} markets)")
+        else:
+            current_tourney = tourn_counts.most_common(1)[0][0]
+            all_mkts = [m for m in all_mkts if _detect(m.get("title", "")) in (current_tourney, "")]
+            print(f"  Kalshi H2H: WARNING no match for tourney='{tourney}', falling back to most-common: {current_tourney}")
 
     # Group by event_ticker to pair the two sides of each H2H
     by_event = {}
@@ -2536,7 +2575,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
                 fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
-                book_color = "color:#6b46c1; font-weight:500;" if book in ("kalshi", "novig") else ""
+                book_color = "color:#dd6b20; font-weight:500;" if book == "kalshi" else "color:#6b46c1; font-weight:500;" if book == "novig" else ""
 
                 rows_html += f"""
                 <tr>
@@ -2732,11 +2771,12 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             sb_line = _sb_best_line.get(key)
             sb_line_str = f"{sb_line:+d}" if sb_line is not None else "—"
 
+            book_color_hex = "#dd6b20" if book == "kalshi" else "#6b46c1" if book == "novig" else "#000000"
             exch_rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
-                    <td style="padding:6px 10px; text-align:center; font-weight:500; color:#6b46c1;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500; color:{book_color_hex};">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{eff * 100:.1f}¢</td>
                     <td style="padding:6px 10px; text-align:center;">{eff_american}</td>
                     <td style="padding:6px 10px; text-align:center; color:#888;">{sb_line_str}</td>
