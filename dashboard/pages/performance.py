@@ -310,6 +310,11 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
 
     df = get_bet_ledger(**filters)
 
+    # Hide Kalshi/NoVig results until scraped prices are validated.
+    # Rows stay in the ledger; we just don't render them on this page.
+    if "bookmaker" in df.columns:
+        df = df[~df["bookmaker"].astype(str).str.lower().str.contains("kalshi|novig", na=False)]
+
     # Apply round filter
     if round_filter and "round" in df.columns:
         round_strs = [str(r) for r in round_filter] if isinstance(round_filter, list) else [str(round_filter)]
