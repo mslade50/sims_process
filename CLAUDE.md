@@ -118,6 +118,10 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - **ID prefixes**: Outrights pre `outpre-`, outrights live `outlive-`, fragility `frag-`.
 - **All pages must handle empty data gracefully** (show alerts, not crash).
 
+## Local Setup Quirks
+
+- **OneDrive truncates source files.** The repo lives under OneDrive and OneDrive has emptied tracked `.py` files (notably `new_sim.py`) more than once — the file stays in place but contents go to 0 bytes. The pre-commit hook at `.githooks/pre-commit` refuses to commit a guarded file (`.py`, `.md`, `.yml`, `.yaml`, `.json`, `.toml`, `.sh`, `.sql`) that was non-empty at HEAD and is now 0 bytes. New clones must run once: `git config core.hooksPath .githooks`. Recovery for a wiped file: `git checkout HEAD -- <file>`.
+
 ## Environment
 
 - `.env`: `DATAGOLF_API_KEY`, `EMAIL_USER`, `EMAIL_PASSWORD`, `GMAIL_APP_PASSWORD`
