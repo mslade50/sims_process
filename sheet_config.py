@@ -454,9 +454,16 @@ def reset_for_new_week():
     """
     Reset round_config tab for a new tournament week.
 
-    Reads tourney, event_ids, course_id from sim_inputs.py and writes them
-    to the Sheet along with round=0. Call this at the start of each week
-    before running humidity.py / scoring_baseline.py / etc.
+    Reads per-week config from sim_inputs.py and writes it to the Sheet:
+      round       -> 0
+      tourney     -> sim_inputs.tourney
+      event_id    -> sim_inputs.event_ids[0]
+      course_id   -> sim_inputs.course_id
+      cut_line    -> sim_inputs.CUT_LINE  (if defined)
+      course_pars -> sim_inputs.course_par (if defined; comma-joined when list)
+
+    Call this at the start of each week before running humidity.py /
+    scoring_baseline.py / etc.
     """
     from sim_inputs import tourney, event_ids, course_id
 
@@ -475,6 +482,22 @@ def reset_for_new_week():
         "course_id": str(course_id),
     }
 
+    # Optional: push cut_line and course_pars when present in sim_inputs so
+    # they don't carry over from the prior week.
+    try:
+        from sim_inputs import CUT_LINE
+        updates["cut_line"] = str(int(CUT_LINE))
+    except ImportError:
+        pass
+    try:
+        from sim_inputs import course_par
+        if isinstance(course_par, (list, tuple)):
+            updates["course_pars"] = ",".join(str(int(p)) for p in course_par)
+        else:
+            updates["course_pars"] = str(int(course_par))
+    except ImportError:
+        pass
+
     cells_updated = []
     for param, value in updates.items():
         row_idx = param_rows.get(param)
@@ -489,7 +512,13 @@ def reset_for_new_week():
             cells_updated.append(param)
 
     print(f"  [reset] Sheet updated for new week: {', '.join(cells_updated)}")
-    print(f"  [reset] tourney={tourney}, event_id={event_ids[0]}, course_id={course_id}, round=0")
+    summary_extra = []
+    if "cut_line" in updates:
+        summary_extra.append(f"cut_line={updates['cut_line']}")
+    if "course_pars" in updates:
+        summary_extra.append(f"course_pars={updates['course_pars']}")
+    extra_str = (", " + ", ".join(summary_extra)) if summary_extra else ""
+    print(f"  [reset] tourney={tourney}, event_id={event_ids[0]}, course_id={course_id}, round=0{extra_str}")
 
 
 def write_sim_config(cat_mults=None, cat_skew=None):
