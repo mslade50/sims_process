@@ -59,7 +59,7 @@ layout = dbc.Container([
         edge_slider("perf", default=0),
     ], className="mb-2"),
 
-    # Filters — Row 2: Round, Sample & Pred ranges
+    # Filters — Row 2: Round, Day of Bet, Sample & Pred ranges
     dbc.Row([
         dbc.Col([
             html.Label("Round", className="form-label small text-muted"),
@@ -73,6 +73,24 @@ layout = dbc.Container([
                 ],
                 multi=True,
                 placeholder="All rounds",
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
+        dbc.Col([
+            html.Label("Day of Bet", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-dow-filter",
+                options=[
+                    {"label": "Mon", "value": "Monday"},
+                    {"label": "Tue", "value": "Tuesday"},
+                    {"label": "Wed", "value": "Wednesday"},
+                    {"label": "Thu", "value": "Thursday"},
+                    {"label": "Fri", "value": "Friday"},
+                    {"label": "Sat", "value": "Saturday"},
+                    {"label": "Sun", "value": "Sunday"},
+                ],
+                multi=True,
+                placeholder="All days",
                 className="dash-dropdown-dark",
             ),
         ], md=2),
@@ -276,6 +294,7 @@ def _convert_to_units(df):
     Input("perf-book-filter", "value"),
     Input("perf-edge-slider", "value"),
     Input("perf-round-filter", "value"),
+    Input("perf-dow-filter", "value"),
     Input("perf-sample-min", "value"),
     Input("perf-sample-max", "value"),
     Input("perf-pred-min", "value"),
@@ -289,7 +308,7 @@ def _convert_to_units(df):
     Input("perf-archetype-against-filter", "value"),
     Input("perf-player-filter", "value"),
 )
-def update_performance(event, bet_type, books, min_edge, round_filter,
+def update_performance(event, bet_type, books, min_edge, round_filter, dow_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
@@ -319,6 +338,12 @@ def update_performance(event, bet_type, books, min_edge, round_filter,
     if round_filter and "round" in df.columns:
         round_strs = [str(r) for r in round_filter] if isinstance(round_filter, list) else [str(round_filter)]
         df = df[df["round"].astype(str).str.strip().isin(round_strs)]
+
+    # Apply day-of-bet filter (UTC day-of-week from run_timestamp)
+    if dow_filter and "run_timestamp" in df.columns:
+        dow_list = dow_filter if isinstance(dow_filter, list) else [dow_filter]
+        dow_series = pd.to_datetime(df["run_timestamp"], errors="coerce").dt.day_name()
+        df = df[dow_series.isin(dow_list)]
 
     # Apply analysis mode: sharp filtering + best-price dedup
     if analysis_mode in ("sharp_only", "sharp_best") and "bookmaker" in df.columns:
