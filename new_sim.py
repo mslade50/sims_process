@@ -3153,19 +3153,19 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             rows_html = "".join(_exch_row(r, "novig") for _, r in no.head(20).iterrows())
             sections.append(f'<h3 style="color:#9b2c2c;">NoVig NO (Fade) — edge &gt; 0.5%</h3>{_hdr}{rows_html}</table>')
 
-    # Kalshi matchups (edge > 5%)
+    # Kalshi matchups (edge > 0.5% on the fillable price)
     if kalshi_mu_df is not None and not kalshi_mu_df.empty:
-        _kmu = kalshi_mu_df[kalshi_mu_df['edge'].notna() & (kalshi_mu_df['edge'] > 5)].sort_values('edge', ascending=False)
+        _kmu = kalshi_mu_df[kalshi_mu_df['edge'].notna() & (kalshi_mu_df['edge'] > 0.5)].sort_values('edge', ascending=False)
         if not _kmu.empty:
             rows_html = "".join(_mu_row(r) for _, r in _kmu.iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">Kalshi Matchups — edge &gt; 5%</h3>{_mu_hdr}{rows_html}</table>')
+            sections.append(f'<h3 style="color:#2c5282;">Kalshi Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
 
-    # NoVig matchups (edge > 5%)
+    # NoVig matchups (edge > 0.5%)
     if novig_mu_df is not None and not novig_mu_df.empty:
-        _nmu = novig_mu_df[novig_mu_df['edge'].notna() & (novig_mu_df['edge'] > 5)].sort_values('edge', ascending=False)
+        _nmu = novig_mu_df[novig_mu_df['edge'].notna() & (novig_mu_df['edge'] > 0.5)].sort_values('edge', ascending=False)
         if not _nmu.empty:
             rows_html = "".join(_mu_row(r) for _, r in _nmu.iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">NoVig Matchups — edge &gt; 5%</h3>{_mu_hdr}{rows_html}</table>')
+            sections.append(f'<h3 style="color:#2c5282;">NoVig Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
 
     if not sections:
         print("  [exchange email] No exchange data — skipping")
