@@ -1595,7 +1595,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
 
     # ── Flat 1000-contract orderbook walk (matches matchup pricer) ──
     FLAT_STAKE = 1000
-    MIN_DEPTH = 100  # require at least 100 contracts of fill to call the VWAP "real"
+    MIN_DEPTH = 300  # require at least 300 contracts of fill to call the VWAP "real"
 
     def _walk_book(ob_levels, sim_prob, target=FLAT_STAKE):
         """Walk orderbook to compute effective fill for a flat target-contract order.
@@ -1627,6 +1627,11 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
             return None
 
+        # Depth available at the headline (best) price — i.e. how many contracts
+        # we could take without paying up to the next level. Kalshi consolidates
+        # same-price quantity into one level but sum just in case.
+        depth_at_best = sum(qty for price, qty in fill_levels if price == best)
+
         # Walk the book for `target` contracts
         filled = 0
         cost_sum = 0.0   # dollars
@@ -1651,6 +1656,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
             "effective_price": eff_price,
             "target": target,
             "filled": filled,
+            "depth_at_best": int(depth_at_best),
             "vwap": vwap,
             "avg_fee": avg_fee,
         }
@@ -1778,6 +1784,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 "my_fair": prob_to_american(row["sim_yes"]),
                 "target": yf["target"],
                 "filled": yf["filled"],
+                "depth_at_best": yf.get("depth_at_best", 0),
                 "passes_liq": passes_liq,
             })
 
@@ -1797,6 +1804,7 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
                 "my_fair": prob_to_american(row["sim_no"]),
                 "target": nf["target"],
                 "filled": nf["filled"],
+                "depth_at_best": nf.get("depth_at_best", 0),
                 "passes_liq": passes_liq,
             })
 
@@ -2216,6 +2224,10 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             if not fill_levels:
                 continue
 
+            # Depth at the headline (best) price — max take with no slippage
+            best_price_mu = fill_levels[0][0]
+            depth_at_best_mu = sum(q for p, q in fill_levels if p == best_price_mu)
+
             # Walk book for FLAT_STAKE contracts
             filled = 0
             cost_sum = 0.0
@@ -2261,6 +2273,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
                 "opp_pred": pred_lookup.get(side_info["opponent"], 0),
                 "target": FLAT_STAKE,
                 "filled": filled,
+                "depth_at_best": int(depth_at_best_mu),
             })
 
     _kalshi_mu_client.close()
@@ -2783,8 +2796,20 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             if book == "kalshi":
                 _filled = int(row.get('filled', 0) or 0)
                 fill_str = f"{_filled:,}c" if _filled else "—"
+                _depth_best = int(row.get('depth_at_best', 0) or 0)
+                top_str = f"{_depth_best:,}c" if _depth_best else "—"
             else:
                 fill_str = "—"  # NoVig: depth not exposed publicly
+                top_str = "—"
+
+            # Kelly stake (same formula as Sheet storage above) → units (1u = $200)
+            _dec = round(1.0 / eff, 4) if eff > 0 else None
+            _b = (_dec - 1.0) if _dec and _dec > 1 else 0
+            _q = 1.0 - sim_prob
+            _f = max((_b * sim_prob - _q) / _b, 0) if _b > 0 else 0
+            _stake_dollars = round(BANKROLL * KELLY_FRACTION * _f, 2)
+            units_str = f"{_stake_dollars / 200.0:.1f}u" if _stake_dollars > 0 else "—"
+
             exch_rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
@@ -2797,6 +2822,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_prob:.1%}</td>
                     <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{top_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{units_str}</td>
                 </tr>"""
 
         exchange_inject_html = f"""
@@ -2815,6 +2842,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Prob</th>
                     <th style="padding:6px 10px; text-align:center;">Fill</th>
+                    <th style="padding:6px 10px; text-align:center;">Top</th>
+                    <th style="padding:6px 10px; text-align:center;">Units</th>
                 </tr>
                 {exch_rows_html}
             </table>"""
@@ -2936,6 +2965,26 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         # NoVig doesn't publish depth without auth; cumulative volume is not fillable size
         return "—"
 
+    def _top_str(row):
+        book = str(row.get('bookmaker', ''))
+        if book == 'kalshi':
+            depth = int(row.get('depth_at_best', 0) or 0)
+            return f"{depth:,}c" if depth else "—"
+        return "—"
+
+    def _units_str(row):
+        eff = row.get('eff_price', 0) or 0
+        sim_p = row.get('sim_prob', 0) or 0
+        if eff <= 0 or eff >= 1 or sim_p <= 0:
+            return "—"
+        dec = 1.0 / eff
+        b = dec - 1.0
+        if b <= 0:
+            return "—"
+        f_star = max((b * sim_p - (1 - sim_p)) / b, 0)
+        stake = BANKROLL * KELLY_FRACTION * f_star
+        return f"{stake / 200.0:.1f}u" if stake > 0 else "—"
+
     def _exch_row(row, book):
         player = str(row.get('player_name', '')).title()
         market = str(row.get('market_type', ''))
@@ -2945,6 +2994,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         american = f"{int(row['american_odds']):+d}" if pd.notna(row.get('american_odds')) else ""
         fair = f"{int(row['my_fair']):+d}" if pd.notna(row.get('my_fair')) else ""
         fill_str = _fill_str(row)
+        top_str = _top_str(row)
+        units_str = _units_str(row)
         edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
         return f"""<tr>
             <td style="padding:5px 8px; font-weight:600;">{player}</td>
@@ -2955,6 +3006,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             <td style="padding:5px 8px; text-align:center;">{fair}</td>
             <td style="padding:5px 8px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
             <td style="padding:5px 8px; text-align:center;">{fill_str}</td>
+            <td style="padding:5px 8px; text-align:center;">{top_str}</td>
+            <td style="padding:5px 8px; text-align:center; font-weight:500;">{units_str}</td>
         </tr>"""
 
     def _mu_row(row):
@@ -2968,6 +3021,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
         mtype = str(row.get('market_type', ''))
         fill_str = _fill_str(row)
+        top_str = _top_str(row)
+        units_str = _units_str(row)
         return f"""<tr>
             <td style="padding:5px 8px; font-weight:600;">{player}</td>
             <td style="padding:5px 8px;">{opp}</td>
@@ -2977,6 +3032,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             <td style="padding:5px 8px; text-align:center;">{fair_str}</td>
             <td style="padding:5px 8px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
             <td style="padding:5px 8px; text-align:center;">{fill_str}</td>
+            <td style="padding:5px 8px; text-align:center;">{top_str}</td>
+            <td style="padding:5px 8px; text-align:center; font-weight:500;">{units_str}</td>
         </tr>"""
 
     _hdr = """<table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:12px; width:100%;">
@@ -2989,6 +3046,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             <th style="padding:5px 8px; text-align:center;">Fair</th>
             <th style="padding:5px 8px; text-align:center;">Edge</th>
             <th style="padding:5px 8px; text-align:center;">Fill</th>
+            <th style="padding:5px 8px; text-align:center;">Top</th>
+            <th style="padding:5px 8px; text-align:center;">Units</th>
         </tr>"""
 
     _mu_hdr = """<table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:12px; width:100%;">
@@ -3001,6 +3060,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             <th style="padding:5px 8px; text-align:center;">Fair</th>
             <th style="padding:5px 8px; text-align:center;">Edge</th>
             <th style="padding:5px 8px; text-align:center;">Fill</th>
+            <th style="padding:5px 8px; text-align:center;">Top</th>
+            <th style="padding:5px 8px; text-align:center;">Units</th>
         </tr>"""
 
     sections = []

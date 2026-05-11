@@ -1146,11 +1146,15 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         return name_replacements.get(x, x)
 
     FLAT_STAKE = 1000
-    MIN_DEPTH = 100
+    MIN_DEPTH = 300
     MIN_EDGE_STAGE1 = 0.5  # pct points on mid — loose gate
 
     def _walk_book(ob_levels, sim_prob, target=FLAT_STAKE):
-        """Walk opposite-side levels to compute VWAP fill for a flat target order."""
+        """Walk opposite-side levels to compute VWAP fill for a flat target order.
+
+        Returns dict with effective_price, target, filled, depth_at_best (qty
+        available at the headline price — i.e. the max take without slippage).
+        """
         fill_levels = sorted([(1.0 - p, qty) for p, qty in ob_levels])
         if not fill_levels:
             return None
@@ -1158,6 +1162,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         eff_best = best + _kalshi_taker_fee(best)
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
             return None
+        depth_at_best = sum(qty for price, qty in fill_levels if price == best)
         filled, cost_sum, fee_sum = 0, 0.0, 0.0
         for price, qty in fill_levels:
             fee = _kalshi_taker_fee(price)
@@ -1171,7 +1176,12 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
             return None
         vwap = cost_sum / filled
         avg_fee = fee_sum / filled
-        return {"effective_price": vwap + avg_fee, "target": target, "filled": filled}
+        return {
+            "effective_price": vwap + avg_fee,
+            "target": target,
+            "filled": filled,
+            "depth_at_best": int(depth_at_best),
+        }
 
     # ── Stage 1: pre-filter on bid/ask + mid edge ────────────────────
     stage1 = []
@@ -1258,6 +1268,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
                 "edge": round((s["sim_yes"] - eff) * 100, 1),
                 "my_fair": implied_to_american(min(max(s["sim_yes"], 1e-4), 1 - 1e-4)),
                 "target": yf["target"], "filled": yf["filled"],
+                "depth_at_best": yf.get("depth_at_best", 0),
             })
 
         # NO taker: walk YES levels (sellers of NO)
@@ -1271,6 +1282,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
                 "edge": round((s["sim_no"] - eff) * 100, 1),
                 "my_fair": implied_to_american(min(max(s["sim_no"], 1e-4), 1 - 1e-4)),
                 "target": nf["target"], "filled": nf["filled"],
+                "depth_at_best": nf.get("depth_at_best", 0),
             })
 
         # YES mid (maker, no fees)
@@ -2969,8 +2981,21 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 if book == "kalshi":
                     _filled = int(row.get('filled', 0) or 0)
                     fill_str = f"{_filled:,}c" if _filled else "—"
+                    _depth_best = int(row.get('depth_at_best', 0) or 0)
+                    top_str = f"{_depth_best:,}c" if _depth_best else "—"
                 else:
                     fill_str = "—"
+                    top_str = "—"
+
+                # Units = kelly stake / $200 (matches Sheet's units_wagered convention)
+                if is_exchange and pd.notna(imp_prob) and pd.notna(sim_prob_row) and imp_prob > 0 and imp_prob < 1:
+                    _dec = 1.0 / imp_prob
+                    _b = _dec - 1.0
+                    _f = max((_b * sim_prob_row - (1 - sim_prob_row)) / _b, 0) if _b > 0 else 0
+                    _stake_dollars = BANKROLL * KELLY_FRACTION * _f
+                else:
+                    _stake_dollars = float(stake) if pd.notna(stake) else 0.0
+                units_str = f"{_stake_dollars / 200.0:.1f}u" if _stake_dollars > 0 else "—"
 
                 rows_html += f"""
                 <tr>
@@ -2987,6 +3012,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{stake_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{top_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{units_str}</td>
                     <td style="padding:6px 10px; text-align:center; background:{_fp_wx_color};">{_fp_wx_str}</td>
                 </tr>"""
 
@@ -3009,6 +3036,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Stake</th>
                     <th style="padding:6px 10px; text-align:center;">Fill</th>
+                    <th style="padding:6px 10px; text-align:center;">Top</th>
+                    <th style="padding:6px 10px; text-align:center;">Units</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
                 {rows_html}
@@ -3033,13 +3062,17 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             if book == "kalshi":
                 _filled = int(row.get('filled', 0) or 0)
                 fill_str = f"{_filled:,}c" if _filled else "—"
+                _depth_best = int(row.get('depth_at_best', 0) or 0)
+                top_str = f"{_depth_best:,}c" if _depth_best else "—"
             else:
                 fill_str = "—"
+                top_str = "—"
 
             odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
             sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
             kelly_str = f"${kelly:.0f}" if pd.notna(kelly) and kelly > 0 else "$0"
+            units_str = f"{float(kelly) / 200.0:.1f}u" if pd.notna(kelly) and kelly > 0 else "—"
 
             rows_html += f"""
                 <tr>
@@ -3051,6 +3084,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{kelly_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{top_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{units_str}</td>
                 </tr>"""
 
         win_pos_html = f"""
@@ -3067,6 +3102,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Kelly</th>
                     <th style="padding:6px 10px; text-align:center;">Fill</th>
+                    <th style="padding:6px 10px; text-align:center;">Top</th>
+                    <th style="padding:6px 10px; text-align:center;">Units</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -3090,8 +3127,11 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             if book == "kalshi":
                 _filled = int(row.get('filled', 0) or 0)
                 fill_str = f"{_filled:,}c" if _filled else "—"
+                _depth_best = int(row.get('depth_at_best', 0) or 0)
+                top_str = f"{_depth_best:,}c" if _depth_best else "—"
             else:
                 fill_str = "—"
+                top_str = "—"
 
             odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
@@ -3108,6 +3148,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{impl_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{top_str}</td>
                 </tr>"""
 
         win_neg_html = f"""
@@ -3124,6 +3165,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Mkt Implied%</th>
                     <th style="padding:6px 10px; text-align:center;">Fill</th>
+                    <th style="padding:6px 10px; text-align:center;">Top</th>
                 </tr>
                 {rows_html}
             </table>"""
