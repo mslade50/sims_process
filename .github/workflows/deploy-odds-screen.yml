@@ -1,0 +1,48 @@
+name: Deploy Odds Screen
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'odds_screen/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Upload index.html to R2
+      env:
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      run: |
+        pip install boto3
+        python << 'PYEOF'
+        import boto3, os
+        client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{os.environ['CF_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+            region_name="auto",
+        )
+        with open("odds_screen/index.html", "rb") as f:
+            client.put_object(
+                Bucket="golf-odds-data",
+                Key="odds_data/index.html",
+                Body=f.read(),
+                ContentType="text/html; charset=utf-8",
+            )
+        print("Uploaded index.html to R2")
+        PYEOF
+
+    - name: Deploy Worker
+      uses: cloudflare/wrangler-action@v3
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        workingDirectory: odds_screen
