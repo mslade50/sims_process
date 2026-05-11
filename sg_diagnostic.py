@@ -694,16 +694,38 @@ def _classify_archetypes(df, tour_population=None):
             return "Unknown"
 
         # First match wins
-        # Stud: all categories > 70th pct AND recent total SG (50-SMA) > 70th pct
-        if all(v > 70 for v in [ott, app, arg, putt]) and (not pd.isna(sg_total) and sg_total > 70):
+        # Stud: all categories > 75th pct AND recent total SG (50-SMA) > 75th pct
+        if all(v > 75 for v in [ott, app, arg, putt]) and (not pd.isna(sg_total) and sg_total > 75):
             return "Stud"
+        # Balanced specialists: elite (>90th) in 1 or 2 of OTT/APP/ARG/PUTT.
+        # Checked before driving archetypes so elite SG signals take priority.
+        # - 2 elite: "X_Y" (canonical order: OTT, APP, ARG, PUTT) —
+        #   no others-avg check, the dual elite is the signal.
+        # - 1 elite + avg of other three > 60: "Balanced X".
+        # - 3+ elite or no match: fall through to old classifications.
+        cat_pcts = [("OTT", ott), ("APP", app), ("ARG", arg), ("PUTT", putt)]
+        if all(not pd.isna(p) for _, p in cat_pcts):
+            elite_cats = [n for n, p in cat_pcts if p > 90]
+            single_label = {
+                "OTT": "Balanced OTT", "APP": "Balanced APP",
+                "ARG": "Balanced ARG", "PUTT": "Balanced Putter",
+            }
+            if len(elite_cats) == 2:
+                return f"{elite_cats[0]}_{elite_cats[1]}"
+            if len(elite_cats) == 1:
+                name = elite_cats[0]
+                others_avg = np.mean([p for n, p in cat_pcts if n != name])
+                if others_avg > 60:
+                    return single_label[name]
         if dd >= 80 and da < 40:
             return "Long Wild"
         if dd >= 80 and da >= 40:
             return "Long Accurate"
         if dd < 35 and da >= 70:
             return "Short Accurate"
-        if bs >= 70:
+        # Ball Striker requires weak short game — otherwise too many well-rounded
+        # players land here on the back of decent OTT+APP alone.
+        if bs >= 70 and putt < 60 and arg < 60:
             return "Ball Striker"
         if sg >= 70 and bs < 50:
             return "Short Game Specialist"
