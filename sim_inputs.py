@@ -3,11 +3,11 @@ import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
-STD_DEV       = 3.0
-PAR           = 72
-CUT_LINE      = 100
+STD_DEV       = 2.8
+PAR           = 70
+CUT_LINE      = 65
 USE_10_SHOT_RULE = False
-WIND_FACTOR_SIM  = 0.15  # must match your main script
+WIND_FACTOR_SIM  = 0.12  # must match your main script
 TOP_K = 20 
 
 #number of simulations you want to run. Applied to rd lvl and hole lvl scripts
@@ -24,10 +24,10 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [480]
-course_id = 872
-tourney = 'truist'
-course_par = 72
+event_ids = [33]
+course_id = 773
+tourney = 'pga_c'
+course_par = 70
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
@@ -35,7 +35,7 @@ major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) 
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=872
+course_id_1=73
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
