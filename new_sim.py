@@ -2657,6 +2657,10 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
                 edge_color = "#d4edda" if edge > 8 else "#fff3cd" if edge > 5 else "#ffffff"
 
+                # 1 unit = $200 (matches dashboard/performance convention)
+                stake_dollars = float(row.get('stake', 0) or 0)
+                units_str = f"{stake_dollars / 200.0:.1f}u" if stake_dollars > 0 else "—"
+
                 fp_rows += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
@@ -2669,6 +2673,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center;">{pred:.2f}</td>
                     <td style="padding:6px 10px; text-align:center;">{sample}</td>
                     <td style="padding:6px 10px; text-align:center; background:{_fp_wx_color};">{_fp_wx_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{units_str}</td>
                 </tr>"""
 
             fp_html = f"""
@@ -2687,6 +2692,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Sample</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
+                    <th style="padding:6px 10px; text-align:center;">Units</th>
                 </tr>
                 {fp_rows}
             </table>"""

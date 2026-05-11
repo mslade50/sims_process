@@ -1004,9 +1004,10 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
 
     Two-stage approach (matches new_sim.py):
       Stage 1: Pre-filter on bid/ask presence, spread ≤ 10c, mid edge > 0.5%
-      Stage 2: Fetch orderbook, Kelly-walk for effective fill, gate taker rows on MIN_DEPTH
+      Stage 2: Fetch orderbook, walk for flat 1000-contract VWAP, gate taker rows on MIN_DEPTH=100
 
-    Taker rows are the walked VWAP (incl. fee) — only emitted when fillable depth ≥ MIN_DEPTH.
+    Taker rows are the walked VWAP (incl. fee) for a flat 1000-contract order — only emitted
+    when fillable depth ≥ MIN_DEPTH.
     Mid rows are the bid/ask midpoint (maker, no fee) — emitted for any stage-1 survivor.
     Downstream splits on `pricing` (taker → outrights pipeline; mid → maker-opportunity email).
     """
@@ -1085,16 +1086,40 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
             return m.group(1).strip()
         return ""
 
+    # Match Kalshi tournament names against the configured `tourney` so
+    # simultaneously-open events don't get confused (e.g. PGA Championship
+    # markets bleeding into a Cadillac sim). If all configured words are
+    # generic (e.g. tourney='pga_championship'), require ALL words to match.
+    _GENERIC_RT = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
+                   "open", "classic", "invitational", "cup", "pga", "tour"}
+    _all_target_words_rt = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
+    _distinct_target_words_rt = _all_target_words_rt - _GENERIC_RT
+
+    def _matches_target_rt(detected_title):
+        t = detected_title.lower()
+        if _distinct_target_words_rt:
+            return any(w in t for w in _distinct_target_words_rt)
+        return all(w in t for w in _all_target_words_rt)
+
     tourn_counts = Counter()
     for m in all_markets:
         t = _detect_tourney(m.get("title", ""))
         if t:
             tourn_counts[t] += 1
     if tourn_counts:
-        current_tourney = tourn_counts.most_common(1)[0][0]
-        all_markets = [m for m in all_markets
-                       if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
-        print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
+        matched = [t for t in tourn_counts.keys() if _matches_target_rt(t)]
+        if matched:
+            matched_lower = {t.lower() for t in matched}
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")).lower() in matched_lower
+                           or _detect_tourney(m.get("title", "")) == ""]
+            print(f"  Tournament: {', '.join(matched)} ({len(all_markets)} markets, matched on tourney='{tourney}')")
+        else:
+            current_tourney = tourn_counts.most_common(1)[0][0]
+            all_markets = [m for m in all_markets
+                           if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
+            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; falling back to most-common: {current_tourney}")
+            print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
 
     def _extract_player(title):
         m = _re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
@@ -1120,26 +1145,18 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
                 x = f"{parts[1]}, {parts[0]}"
         return name_replacements.get(x, x)
 
-    KALSHI_BANKROLL = 30_000.0
-    KALSHI_KELLY = 0.60
-    MIN_DEPTH = 400
+    FLAT_STAKE = 1000
+    MIN_DEPTH = 100
     MIN_EDGE_STAGE1 = 0.5  # pct points on mid — loose gate
 
-    def _walk_book(ob_levels, sim_prob, bankroll, kelly_frac):
-        """Walk opposite-side levels to compute Kelly-sized VWAP fill."""
+    def _walk_book(ob_levels, sim_prob, target=FLAT_STAKE):
+        """Walk opposite-side levels to compute VWAP fill for a flat target order."""
         fill_levels = sorted([(1.0 - p, qty) for p, qty in ob_levels])
         if not fill_levels:
             return None
         best = fill_levels[0][0]
         eff_best = best + _kalshi_taker_fee(best)
         if eff_best <= 0 or eff_best >= 1 or eff_best >= sim_prob:
-            return None
-        b = (1.0 / eff_best) - 1.0
-        if b <= 0:
-            return None
-        f_star = max((b * sim_prob - (1 - sim_prob)) / b, 0) * kelly_frac
-        target = int(bankroll * f_star / eff_best)
-        if target <= 0:
             return None
         filled, cost_sum, fee_sum = 0, 0.0, 0.0
         for price, qty in fill_levels:
@@ -1231,7 +1248,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         }
 
         # YES taker: walk NO levels (sellers of YES)
-        yf = _walk_book(ob.get("no", []), s["sim_yes"], KALSHI_BANKROLL, KALSHI_KELLY)
+        yf = _walk_book(ob.get("no", []), s["sim_yes"])
         if yf and yf["filled"] >= MIN_DEPTH:
             eff = yf["effective_price"]
             rows.append({
@@ -1244,7 +1261,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
             })
 
         # NO taker: walk YES levels (sellers of NO)
-        nf = _walk_book(ob.get("yes", []), s["sim_no"], KALSHI_BANKROLL, KALSHI_KELLY)
+        nf = _walk_book(ob.get("yes", []), s["sim_no"])
         if nf and nf["filled"] >= MIN_DEPTH:
             eff = nf["effective_price"]
             rows.append({
@@ -1773,7 +1790,7 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
         sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12, int(round(player_avg)) + 12)
 
     print(f"  Simulated {len(sim_dict)} players × {num_sims:,} iterations")
-    return sim_dict
+    return sim_dict, {}
 
 
 def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
@@ -1801,6 +1818,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     has_course_adj = "course_score_adj" in model_preds.columns
 
     sim_dict = {}
+    cat_mu_lookup = {}
     for idx, (_, row) in enumerate(model_preds.iterrows()):
         player = row["player_name"]
         scores_rn = row[scores_col]
@@ -1822,6 +1840,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         # Re-center + weather split (inline, not via _catfirst_draw)
         shift = (skill - mu.sum()) / 4.0
         cat_mu = mu + shift + wx_delta * WEATHER_CAT_SPLIT
+        cat_mu_lookup[player] = cat_mu.copy()
 
         # Draw: correlated standard normals → skew → scale → clip → sum
         Z = RNG_CF.standard_normal(size=(num_sims, 4))
@@ -1839,7 +1858,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     print(f"  [catfirst] Simulated {len(sim_dict)} players × {num_sims:,} iterations")
     print(f"  [catfirst] Course mults: OTT={_course_mults_cf[0]:.3f}, APP={_course_mults_cf[1]:.3f}, "
           f"ARG={_course_mults_cf[2]:.3f}, PUTT={_course_mults_cf[3]:.3f}")
-    return sim_dict
+    return sim_dict, cat_mu_lookup
 
 
 def print_catfirst_comparison(sim_old, sim_cf, model_preds, pred_col, expected_avg):
@@ -2309,6 +2328,57 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
     card = card.sort_values("Pred", ascending=False)
     print(f"  Score card: {len(card)} players × {len(lines)} lines ({lines[0]}–{lines[-1]})")
     return card
+
+
+def build_round_score_probs(sim_dict, expected_avg_lookup, cat_mu_lookup=None):
+    """
+    Aggregate sim_dict into per-score probabilities for the dashboard.
+
+    Parameters
+    ----------
+    sim_dict : {player_name: np.ndarray of int scores}
+    expected_avg_lookup : {player_name: float} per-player expected score (course-adjusted)
+                         OR a single float applied to all players.
+    cat_mu_lookup : {player_name: np.ndarray([ott, app, arg, putt])} or None
+
+    Returns
+    -------
+    DataFrame with columns: player_name, score, prob, sg_ott, sg_app, sg_arg,
+    sg_putt, expected_avg. Rows are one-per-(player, score).
+    """
+    cat_mu_lookup = cat_mu_lookup or {}
+    rows = []
+    for player, scores in sim_dict.items():
+        if scores is None or len(scores) == 0:
+            continue
+        total = len(scores)
+        vals, counts = np.unique(scores, return_counts=True)
+        probs = counts / total
+
+        if isinstance(expected_avg_lookup, dict):
+            p_exp = expected_avg_lookup.get(player)
+        else:
+            p_exp = expected_avg_lookup
+
+        cat = cat_mu_lookup.get(player)
+        sg_ott = float(cat[0]) if cat is not None else np.nan
+        sg_app = float(cat[1]) if cat is not None else np.nan
+        sg_arg = float(cat[2]) if cat is not None else np.nan
+        sg_putt = float(cat[3]) if cat is not None else np.nan
+
+        for s, p in zip(vals, probs):
+            rows.append({
+                "player_name": player,
+                "score": int(s),
+                "prob": float(p),
+                "sg_ott": sg_ott,
+                "sg_app": sg_app,
+                "sg_arg": sg_arg,
+                "sg_putt": sg_putt,
+                "expected_avg": float(p_exp) if p_exp is not None else np.nan,
+            })
+
+    return pd.DataFrame(rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2798,7 +2868,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             for _, row in filtered_out.iterrows():
                 player = row['player_name'].title()
                 market = row['market_type'].replace('_', ' ').title()
-                book = row.get('bookmaker', '')
+                book = str(row.get('bookmaker', '') or '')
                 side = row.get('side', '')
                 odds = row.get('american_odds', '')
                 fair = row.get('my_fair', '')
@@ -2818,6 +2888,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred_color = "#d4edda" if pred and pred > 1.5 else "#ffffff"
                 side_str = str(side).upper() if side and pd.notna(side) else ""
                 side_color = "#e8f4fd" if side == "yes" else "#fde8e8" if side == "no" else "#ffffff"
+                book_color = "#dd6b20" if book == "kalshi" else "#6b46c1" if book == "novig" else "#000000"
 
                 odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
                 fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
@@ -2825,17 +2896,23 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 stake_str = f"${stake:.0f}" if pd.notna(stake) and stake > 0 else ""
 
                 # Cent pricing for exchange rows (Kalshi): effective fill price incl. fee
-                is_exchange = str(book).lower() in ("kalshi", "novig")
+                is_exchange = book.lower() in ("kalshi", "novig")
                 imp_prob = row.get("implied_prob")
                 sim_prob_row = row.get("sim_prob")
                 line_c_str = f"{imp_prob * 100:.1f}&cent;" if is_exchange and pd.notna(imp_prob) else ""
                 fair_c_str = f"{sim_prob_row * 100:.1f}&cent;" if is_exchange and pd.notna(sim_prob_row) else ""
 
+                if book == "kalshi":
+                    _filled = int(row.get('filled', 0) or 0)
+                    fill_str = f"{_filled:,}c" if _filled else "—"
+                else:
+                    fill_str = "—"
+
                 rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
                     <td style="padding:6px 10px; text-align:center;">{market}</td>
-                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; color:{book_color}; font-weight:500;">{book}</td>
                     <td style="padding:6px 10px; text-align:center; background:{side_color}; font-weight:600;">{side_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
@@ -2845,6 +2922,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{stake_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
                     <td style="padding:6px 10px; text-align:center; background:{_fp_wx_color};">{_fp_wx_str}</td>
                 </tr>"""
 
@@ -2866,6 +2944,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Stake</th>
+                    <th style="padding:6px 10px; text-align:center;">Fill</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
                 {rows_html}
@@ -2877,7 +2956,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         rows_html = ""
         for _, row in win_positive_top10.iterrows():
             player = row['player_name'].title()
-            book = row.get('bookmaker', '')
+            book = str(row.get('bookmaker', '') or '')
             odds = row.get('american_odds', '')
             fair = row.get('my_fair', '')
             edge = row.get('edge', 0)
@@ -2885,6 +2964,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             kelly = row.get('kelly', 0)
 
             edge_color = "#d4edda" if edge > 10 else "#fff3cd" if edge > 5 else "#ffffff"
+            book_color = "#dd6b20" if book == "kalshi" else "#6b46c1" if book == "novig" else "#000000"
+
+            if book == "kalshi":
+                _filled = int(row.get('filled', 0) or 0)
+                fill_str = f"{_filled:,}c" if _filled else "—"
+            else:
+                fill_str = "—"
 
             odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
@@ -2894,12 +2980,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
-                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; color:{book_color}; font-weight:500;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{kelly_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
                 </tr>"""
 
         win_pos_html = f"""
@@ -2915,6 +3002,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Kelly</th>
+                    <th style="padding:6px 10px; text-align:center;">Fill</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -2925,7 +3013,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         rows_html = ""
         for _, row in win_negative_top10.iterrows():
             player = row['player_name'].title()
-            book = row.get('bookmaker', '')
+            book = str(row.get('bookmaker', '') or '')
             odds = row.get('american_odds', '')
             fair = row.get('my_fair', '')
             edge = row.get('edge', 0)
@@ -2933,6 +3021,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             implied = row.get('implied_prob', 0)
 
             edge_color = "#f8d7da" if edge < -10 else "#fff3cd" if edge < -5 else "#ffffff"
+            book_color = "#dd6b20" if book == "kalshi" else "#6b46c1" if book == "novig" else "#000000"
+
+            if book == "kalshi":
+                _filled = int(row.get('filled', 0) or 0)
+                fill_str = f"{_filled:,}c" if _filled else "—"
+            else:
+                fill_str = "—"
 
             odds_str = f"{int(odds):+d}" if pd.notna(odds) else ""
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
@@ -2942,12 +3037,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             rows_html += f"""
                 <tr>
                     <td style="padding:6px 10px; font-weight:600;">{player}</td>
-                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center; color:{book_color}; font-weight:500;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{odds_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
                     <td style="padding:6px 10px; text-align:center;">{sim_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{impl_str}</td>
+                    <td style="padding:6px 10px; text-align:center;">{fill_str}</td>
                 </tr>"""
 
         win_neg_html = f"""
@@ -2963,6 +3059,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Sim Win%</th>
                     <th style="padding:6px 10px; text-align:center;">Mkt Implied%</th>
+                    <th style="padding:6px 10px; text-align:center;">Fill</th>
                 </tr>
                 {rows_html}
             </table>"""
@@ -3326,12 +3423,12 @@ def main():
     print(f"\n  Simulating R{sim_round} scores...")
 
     # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
-    sim_dict_cf = simulate_round_scores_catfirst(
+    sim_dict_cf, cat_mu_lookup = simulate_round_scores_catfirst(
         model_preds, sim_round, expected_avg, _wx_lookup
     )
 
     if args.legacy:
-        sim_dict_legacy = simulate_round_scores(model_preds, sim_round, expected_avg)
+        sim_dict_legacy, _ = simulate_round_scores(model_preds, sim_round, expected_avg)
         print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
         print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
         sim_dict = sim_dict_legacy
@@ -3384,6 +3481,27 @@ def main():
     else:
         print(f"\n  Building fair score card (expected avg = {expected_avg})...")
         score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
+
+    # ── Step 3a: Pre-aggregated score distributions for dashboard ────────
+    try:
+        # Per-player expected avg (course-adjusted when multi-course), else scalar
+        if "course_score_adj" in model_preds.columns:
+            exp_lookup = dict(zip(
+                model_preds["player_name"],
+                model_preds["course_score_adj"].fillna(expected_avg),
+            ))
+        else:
+            exp_lookup = expected_avg
+
+        score_probs = build_round_score_probs(sim_dict, exp_lookup, cat_mu_lookup)
+        if not score_probs.empty:
+            out_dir_probs = f"./{tourney}"
+            os.makedirs(out_dir_probs, exist_ok=True)
+            probs_path = os.path.join(out_dir_probs, f"round_score_probs_r{sim_round}.parquet")
+            score_probs.to_parquet(probs_path, index=False)
+            print(f"  Saved {probs_path} ({len(score_probs)} rows, {score_probs['player_name'].nunique()} players)")
+    except Exception as e:
+        print(f"  Warning: round_score_probs write failed: {e}")
 
     # ── Step 3b: Price score lines vs market ─────────────────────────────
     score_edges = pd.DataFrame()
@@ -3527,13 +3645,43 @@ def main():
                 _, win_edges_csv_path, win_all_edges = build_win_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
                 build_betonline_negative_edges_csv(finish_probs, pred_lookup, sample_lookup, out_dir)
 
-                # Build top-10 positive and negative win edge tables for email
-                if not win_all_edges.empty:
-                    pos = win_all_edges[win_all_edges['edge'] > 0].copy()
+                # Build top-10 positive and negative win edge tables for email.
+                # Merge Kalshi + NoVig winner taker edges (YES side) into the DG-based
+                # win edges so exchange winner prices show up in the dedicated table.
+                win_combined = win_all_edges.copy() if not win_all_edges.empty else pd.DataFrame()
+
+                def _attach_exchange_winner(src_df):
+                    if src_df is None or src_df.empty:
+                        return pd.DataFrame()
+                    w = src_df[
+                        (src_df.get("market_type") == "winner")
+                        & (src_df.get("pricing", "taker") == "taker")
+                        & (src_df.get("side") == "yes")
+                    ].copy()
+                    if w.empty:
+                        return w
+                    w["simulated_win_prob"] = w["sim_prob"].astype(float)
+                    w["decimal_odds"] = 1.0 / w["implied_prob"].clip(lower=1e-6)
+                    p = w["simulated_win_prob"]
+                    b = w["decimal_odds"] - 1.0
+                    q = 1.0 - p
+                    f_star = ((b * p - q) / b.clip(lower=1e-6)).clip(lower=0)
+                    w["kelly"] = (BANKROLL * KELLY_FRACTION * f_star).astype(float)
+                    return w
+
+                k_win = _attach_exchange_winner(kalshi_edges)
+                n_win = _attach_exchange_winner(novig_edges)
+                if not k_win.empty:
+                    win_combined = pd.concat([win_combined, k_win], ignore_index=True)
+                if not n_win.empty:
+                    win_combined = pd.concat([win_combined, n_win], ignore_index=True)
+
+                if not win_combined.empty:
+                    pos = win_combined[win_combined['edge'] > 0].copy()
                     pos = pos.sort_values('kelly', ascending=False).drop_duplicates('player_name', keep='first').head(10)
                     win_positive_top10 = pos
 
-                    neg = win_all_edges[(win_all_edges['edge'] < 0) & (win_all_edges['decimal_odds'] < 31.0)].copy()
+                    neg = win_combined[(win_combined['edge'] < 0) & (win_combined['decimal_odds'] < 31.0)].copy()
                     neg = neg.sort_values('edge', ascending=True).drop_duplicates('player_name', keep='first').head(10)
                     win_negative_top10 = neg
 
