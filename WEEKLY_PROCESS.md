@@ -74,6 +74,37 @@ python bet_query.py --graded --export
 ## Phase 1: Monday/Tuesday Prep
 
 ### 1.1 Update `sim_inputs.py`
+
+> **⚠️ FIRST — check one-off overrides from last week.** If any of the following are
+> non-None / non-zero / non-default in `sim_inputs.py`, reset them:
+> ```python
+> lat_override = None
+> lon_override = None
+> baseline_score_adj = 0.0
+> tour_override = 'pga'          # only set to 'liv' (etc.) for one-off events
+> historical_event_ids = []      # only populated when LIV/non-PGA history is being used
+> ```
+> **Two override modes:**
+>
+> 1. **Partner / no-data course** (e.g. Zurich 2026 at TPC Louisiana reusing
+>    course_id=11 for variance): set `lat_override`, `lon_override`, optional
+>    `baseline_score_adj`. Bypasses `course_coordinates.csv` lookup in `humidity.py`
+>    + `scoring_baseline.py` and adds a flat strokes adjustment to expected scores.
+>
+> 2. **LIV-history course** (e.g. Cadillac 2026 at Trump National Doral — PGA event
+>    at a course with only LIV history): set `lat_override` + `lon_override` (no
+>    PGA `course_coordinates.csv` entry), AND `tour_override = 'liv'`,
+>    `historical_event_ids = [LIV event_ids at that course]`. The `tour_override`
+>    flows into all the historical SQL queries in `scoring_baseline.py` (incl. the
+>    SG variance + skew computation that becomes `cat_mult_*` / `cat_skew_*` in the
+>    Sheet); `historical_event_ids` lets the script pull from a different set of
+>    events than the current-week `event_ids` (which still reflects this week's
+>    PGA event for live API calls). LIV is 54 holes — there will be no R4 baseline,
+>    set `expected_score_r4` manually in the Sheet.
+>
+> Leaving any of these on for a normal week will pull weather from the wrong
+> location, query the wrong tour's history, or shift expected scores.
+
 Open `sim_inputs.py` and update for the new tournament:
 
 **Core identifiers (always update):**

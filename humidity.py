@@ -6,6 +6,11 @@ import gspread
 from dotenv import load_dotenv
 
 from sim_inputs import dewpoint_wave, baseline_dew, tourney, course_id
+try:
+    from sim_inputs import lat_override, lon_override
+except ImportError:
+    lat_override = None
+    lon_override = None
 from sheets_storage import get_spreadsheet
 from api_utils import fetch_historical_hourly_wind
 
@@ -83,14 +88,19 @@ def get_tournament_info():
 # Resolve coordinates and dates
 # ══════════════════════════════════════════════════════════════════════════════
 
-lat, lon = get_course_coordinates(course_id)
-if lat is None:
-    print("FATAL: Could not resolve course coordinates. Exiting.")
-    raise SystemExit(1)
-
-LATITUDE = lat
-LONGITUDE = lon
-print(f"Course {course_id} ({tourney}): lat={LATITUDE}, lon={LONGITUDE}")
+if lat_override is not None and lon_override is not None:
+    LATITUDE = float(lat_override)
+    LONGITUDE = float(lon_override)
+    print(f"Course {course_id} ({tourney}): lat/lon OVERRIDE from sim_inputs "
+          f"-> lat={LATITUDE}, lon={LONGITUDE}")
+else:
+    lat, lon = get_course_coordinates(course_id)
+    if lat is None:
+        print("FATAL: Could not resolve course coordinates. Exiting.")
+        raise SystemExit(1)
+    LATITUDE = lat
+    LONGITUDE = lon
+    print(f"Course {course_id} ({tourney}): lat={LATITUDE}, lon={LONGITUDE}")
 
 tournament_dates, course_codes = get_tournament_info()
 if tournament_dates is None:

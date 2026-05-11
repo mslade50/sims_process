@@ -43,6 +43,25 @@ from sim_inputs import (
     CUT_LINE,
     STD_DEV,
 )
+try:
+    from sim_inputs import lat_override, lon_override
+except ImportError:
+    lat_override = None
+    lon_override = None
+try:
+    from sim_inputs import baseline_score_adj
+except ImportError:
+    baseline_score_adj = 0.0
+try:
+    from sim_inputs import tour_override
+except ImportError:
+    tour_override = 'pga'
+try:
+    from sim_inputs import historical_event_ids
+    if not historical_event_ids:
+        historical_event_ids = event_ids
+except ImportError:
+    historical_event_ids = event_ids
 
 # Paths
 DG_HISTORICAL_DB = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
@@ -62,7 +81,16 @@ DEW_DISCOUNT = 0.40
 # ===========================================================================
 
 def get_course_coordinates(cid):
-    """Look up lat/lon for a course_id from course_coordinates.csv."""
+    """Look up lat/lon for a course_id from course_coordinates.csv.
+
+    If sim_inputs.lat_override/lon_override are set, they take precedence —
+    used for partner events at courses we have no historical data for but
+    are reusing another course_id for variance profiles.
+    """
+    if lat_override is not None and lon_override is not None:
+        print(f"  Using lat/lon OVERRIDE from sim_inputs: {lat_override}, {lon_override}")
+        return float(lat_override), float(lon_override)
+
     if not os.path.exists(COURSE_COORDS_CSV):
         print(f"  WARNING: {COURSE_COORDS_CSV} not found")
         return None, None
@@ -96,11 +124,11 @@ def get_tournament_dates(event_id_list, min_year):
         FROM player_rounds
         WHERE event_id IN ({placeholders})
           AND year >= ?
-          AND tour = 'pga'
+          AND tour = ?
         GROUP BY year, round_num
         ORDER BY year, round_num
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
 
@@ -381,10 +409,10 @@ def _get_tee_times(event_id_list, min_year):
     query = f"""
         SELECT year, round_num, teetime
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = 'pga'
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
               AND teetime IS NOT NULL AND teetime != ''
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
@@ -411,7 +439,7 @@ def load_weather_averages(event_tag, tournament_dates_df):
     weather_df["date"] = pd.to_datetime(weather_df["date"])
 
     # Load player tee times from dg_historical.db
-    tee_df = _get_tee_times(event_ids, start_yr)
+    tee_df = _get_tee_times(historical_event_ids, start_yr)
     tee_counts = tee_df.groupby(["year", "round_num"]).size()
 
     results = []
@@ -517,10 +545,10 @@ def get_field_strength(event_id_list, min_year):
     query = f"""
         SELECT DISTINCT year, event_name
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = 'pga'
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
         ORDER BY year
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     event_names_df = pd.read_sql_query(query, hist_conn, params=params)
     hist_conn.close()
 
@@ -598,11 +626,11 @@ def get_scoring_averages(event_id_list, min_year):
                SUM(score) AS sum_score,
                COUNT(score) AS n_players
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = 'pga'
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
         GROUP BY year, round_num
         ORDER BY year, round_num
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
 
@@ -1128,13 +1156,13 @@ def compute_sg_variance_analysis(event_id_list, min_year):
     player_year_query = f"""
         SELECT DISTINCT player_name, year, MIN(round_date) AS event_start
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
         GROUP BY player_name, year
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     player_years = pd.read_sql_query(player_year_query, conn, params=params)
     player_years["event_start"] = pd.to_datetime(player_years["event_start"])
-    print(f"  [sg_var] Found {len(player_years)} player-year combos at this course")
+    print(f"  [sg_var] Found {len(player_years)} player-year combos at this course (tour='{tour_override}')")
 
     if player_years.empty:
         conn.close()
@@ -1165,10 +1193,10 @@ def compute_sg_variance_analysis(event_id_list, min_year):
     event_sg_query = f"""
         SELECT player_name, year, sg_total_adj
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
           AND sg_total_adj IS NOT NULL
     """
-    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year])
+    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year, tour_override])
     conn.close()
 
     # Step 4: Compute trailing 50-round std dev per player-year
@@ -1333,12 +1361,13 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
     player_year_query = f"""
         SELECT DISTINCT player_name, year, MIN(round_date) AS event_start
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
         GROUP BY player_name, year
     """
-    params = list(event_id_list) + [min_year]
+    params = list(event_id_list) + [min_year, tour_override]
     player_years = pd.read_sql_query(player_year_query, conn, params=params)
     player_years["event_start"] = pd.to_datetime(player_years["event_start"])
+    print(f"  [sg_cat_var] Found {len(player_years)} player-year combos at this course (tour='{tour_override}')")
 
     if player_years.empty:
         conn.close()
@@ -1368,10 +1397,10 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
     event_sg_query = f"""
         SELECT player_name, year, {cat_cols_str}
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
           AND sg_total_adj IS NOT NULL
     """
-    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year])
+    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year, tour_override])
     conn.close()
 
     # Step 5: Trailing 50-round std per category per player-year
@@ -1781,8 +1810,8 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
     if detail_df is not None:
         hist_avgs = compute_historical_round_averages(detail_df)
         regression = compute_wind_variance_regression(detail_df)
-        sg_result = compute_sg_variance_analysis(event_ids, min_year=start_yr)
-        sg_cat_result = compute_sg_category_variance_analysis(event_ids, min_year=start_yr)
+        sg_result = compute_sg_variance_analysis(historical_event_ids, min_year=start_yr)
+        sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr)
 
     # --- Cut adjustment for R3/R4 ---
     cut_adj = 0.25 if CUT_LINE < 120 else 0.0
@@ -1797,7 +1826,7 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
         base = final_estimates[rnd]
         avg_wind = round_wind_avgs.get(rnd, 0.0)
         wind_effect = avg_wind * wind_factor
-        expected = base - field_strength + wind_effect
+        expected = base - field_strength + wind_effect + baseline_score_adj
         adjusted[rnd] = round(expected, 1)
 
         # This-week field adjustment (negative = stronger field)
@@ -2071,7 +2100,7 @@ def main():
 
     # Step 3: Get tournament dates
     print("\n[2/8] Looking up tournament dates...")
-    dates_df = get_tournament_dates(event_ids, start_yr)
+    dates_df = get_tournament_dates(historical_event_ids, start_yr)
     years = sorted(dates_df["year"].unique())
     print(f"  Found data for {len(years)} years: {years}")
 
@@ -2098,14 +2127,14 @@ def main():
 
     # Step 6: Field strength
     print("\n[6/8] Matching field strength data...")
-    mean_skills = get_field_strength(event_ids, start_yr)
+    mean_skills = get_field_strength(historical_event_ids, start_yr)
     for yr in sorted(mean_skills.keys()):
         print(f"  {yr}: Mean Skill = {mean_skills[yr]:+.3f}")
 
     # Step 7: Compute baselines
     print("\n[7/8] Computing scoring baselines...")
-    scoring_df = get_scoring_averages(event_ids, start_yr)
-    cuts = detect_cuts(event_ids, start_yr)
+    scoring_df = get_scoring_averages(historical_event_ids, start_yr)
+    cuts = detect_cuts(historical_event_ids, start_yr)
     detail_df, dew_norm = compute_baselines(scoring_df, weather_df, mean_skills, cuts, wind_factor)
 
     # Step 8: Recency-weighted average
