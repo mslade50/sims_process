@@ -1745,6 +1745,70 @@ def _send_telegram(text):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Sim cache (for --sim-only / --price-only / --reprice)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=None):
+    """Persist sim_dict to parquet + JSON sidecar so --price-only / --reprice
+    can skip re-running the simulation.
+
+    Writes:
+      {tourney}/sim_cache_r{N}.parquet  — players × num_sims integer scores
+      {tourney}/sim_cache_r{N}_meta.json — round, expected_avg, pred_lookup, wx_lookup
+    """
+    import json as _json
+    out_dir = f"./{tourney}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    players = sorted(sim_dict.keys())
+    data = np.column_stack([sim_dict[p] for p in players])  # (num_sims, n_players)
+    df = pd.DataFrame(data.T, index=players)  # (n_players, num_sims)
+    df.index.name = "player_name"
+
+    parquet_path = os.path.join(out_dir, f"sim_cache_r{sim_round}.parquet")
+    df.to_parquet(parquet_path)
+
+    meta = {
+        "sim_round": sim_round,
+        "expected_avg": expected_avg,
+        "num_sims": len(next(iter(sim_dict.values()))),
+        "num_players": len(players),
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "pred_lookup": {k: round(float(v), 4) for k, v in pred_lookup.items()},
+        "wx_lookup": {k: round(float(v), 6) for k, v in (wx_lookup or {}).items()},
+    }
+    meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
+    with open(meta_path, "w") as f:
+        _json.dump(meta, f, indent=2)
+
+    print(f"  Saved sim cache: {parquet_path} ({len(players)} players × {meta['num_sims']:,} sims)")
+    return parquet_path
+
+
+def load_sim_cache(sim_round):
+    """Load a previously cached sim. Returns (sim_dict, meta). Raises FileNotFoundError if absent."""
+    import json as _json
+    out_dir = f"./{tourney}"
+    parquet_path = os.path.join(out_dir, f"sim_cache_r{sim_round}.parquet")
+    meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
+
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(f"No sim cache found at {parquet_path}. Run --sim-only first.")
+
+    df = pd.read_parquet(parquet_path)
+    sim_dict = {player: df.loc[player].values for player in df.index}
+
+    meta = {}
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = _json.load(f)
+
+    print(f"  Loaded sim cache: {parquet_path} ({len(sim_dict)} players × {len(next(iter(sim_dict.values()))):,} sims)")
+    print(f"  Cache saved at: {meta.get('saved_at', 'unknown')}")
+    return sim_dict, meta
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Step 1: Score Simulation (shared by matchups + score card)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3316,6 +3380,187 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Reprice: dedup + store + alert helpers (for --reprice mode)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
+    """Return rows from `combined` that aren't already in the Round Matchups sheet.
+
+    Dedup key: (player_1, player_2, bookmaker, p1_odds, p2_odds) for this event+round.
+    """
+    if combined is None or combined.empty:
+        return combined
+
+    from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
+    existing = ws.get_all_records()
+
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
+            key = (
+                str(row.get("player_1", "")).lower().strip(),
+                str(row.get("player_2", "")).lower().strip(),
+                str(row.get("bookmaker", "")).lower().strip(),
+                str(row.get("p1_odds", "")),
+                str(row.get("p2_odds", "")),
+            )
+            existing_keys.add(key)
+
+    if not existing_keys:
+        return combined
+
+    mask = []
+    for _, r in combined.iterrows():
+        key = (
+            str(r.get("Player 1", "")).lower().strip(),
+            str(r.get("Player 2", "")).lower().strip(),
+            str(r.get("Bookmaker", "")).lower().strip(),
+            str(r.get("P1 Odds", "")),
+            str(r.get("P2 Odds", "")),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = combined[mask].copy()
+    print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new (deduped {len(combined) - len(new_rows)})")
+    return new_rows
+
+
+def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
+    """Return rows from `score_edges` that aren't already in the Score Edges sheet."""
+    if score_edges is None or score_edges.empty:
+        return score_edges
+
+    from sheets_storage import TAB_SCORE_EDGES, SCORE_EDGES_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
+    existing = ws.get_all_records()
+
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
+            key = (
+                str(row.get("player", "")).lower().strip(),
+                str(row.get("line", "")),
+                str(row.get("book", "")).lower().strip(),
+            )
+            existing_keys.add(key)
+
+    if not existing_keys:
+        return score_edges
+
+    mask = []
+    for _, r in score_edges.iterrows():
+        key = (
+            str(r.get("Player", "")).lower().strip(),
+            str(r.get("Line", "")),
+            str(r.get("Book", "")).lower().strip(),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = score_edges[mask].copy()
+    print(f"  [reprice] Score edges: {len(score_edges)} total, {len(new_rows)} new (deduped {len(score_edges) - len(new_rows)})")
+    return new_rows
+
+
+def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
+    """Format and send Telegram alert for newly-priced (since last reprice) bets."""
+    lines = []
+    lines.append(f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>")
+    lines.append("")
+
+    def _fmt_odds(v):
+        if isinstance(v, (int, float)) and not pd.isna(v):
+            return f"+{int(v)}" if v > 0 else str(int(v))
+        return str(v)
+
+    if new_mu is not None and not new_mu.empty:
+        lines.append(f"<b>New Matchups ({len(new_mu)}):</b>")
+        for _, r in new_mu.iterrows():
+            bet = r.get("bet_on", "?")
+            edge = r.get("edge_on", "?")
+            book = r.get("Bookmaker", "?")
+            is_p1 = str(r.get("bet_on", "")).lower() == str(r.get("Player 1", "")).lower()
+            opp = r.get("Player 2", "") if is_p1 else r.get("Player 1", "")
+            mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
+            fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
+            lines.append(f"  {bet} vs {opp}")
+            lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
+        lines.append("")
+
+    if new_se is not None and not new_se.empty:
+        lines.append(f"<b>New Score Edges ({len(new_se)}):</b>")
+        for _, r in new_se.iterrows():
+            player = r.get("Player", "?")
+            line_val = r.get("Line", "?")
+            side = r.get("Best_Side", "?")
+            edge = r.get("Best_Edge", "?")
+            book = r.get("Book", "?")
+            if side == "Under":
+                mkt_odds = r.get("Mkt_Under", "?")
+                fair_odds = r.get("Fair_Under", "?")
+            else:
+                mkt_odds = r.get("Mkt_Over", "?")
+                fair_odds = r.get("Fair_Over", "?")
+            lines.append(f"  {player} {side} {line_val}")
+            lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
+        lines.append("")
+
+    if (new_mu is None or new_mu.empty) and (new_se is None or new_se.empty):
+        lines.append("No new or moved bets found.")
+
+    _send_telegram("\n".join(lines))
+
+
+def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, event_id):
+    """Dedup against Sheets, store only new rows, send Telegram alert."""
+    from sheets_storage import (
+        get_spreadsheet,
+        store_round_matchups,
+        store_score_edges,
+        load_dg_id_lookup,
+    )
+
+    spreadsheet = get_spreadsheet()
+
+    new_mu = _dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
+    new_se = _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round)
+
+    try:
+        dg_id_lookup = load_dg_id_lookup(tourney_name, name_replacements)
+    except Exception:
+        dg_id_lookup = {}
+
+    if new_mu is not None and not new_mu.empty:
+        store_round_matchups(
+            new_mu, sim_round, tourney_name, event_id,
+            dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
+        )
+    else:
+        print("  [reprice] No new matchup rows to store.")
+
+    if new_se is not None and not new_se.empty:
+        store_score_edges(
+            new_se, sim_round, tourney_name, event_id,
+            spreadsheet=spreadsheet,
+        )
+    else:
+        print("  [reprice] No new score edge rows to store.")
+
+    # Telegram filter: only sharp books in matchup alerts
+    TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
+    _tg_mu = None
+    if new_mu is not None and not new_mu.empty:
+        _tg_mu = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
+        if _tg_mu.empty:
+            _tg_mu = None
+    _send_reprice_alert(_tg_mu, new_se, sim_round, tourney_name)
+
+    n_mu = len(new_mu) if new_mu is not None and not new_mu.empty else 0
+    n_se = len(new_se) if new_se is not None and not new_se.empty else 0
+    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges. Telegram sent.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3342,7 +3587,19 @@ def main():
                         help="Skip email sending and bet storage")
     parser.add_argument("--legacy", action="store_true",
                         help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
+    parser.add_argument("--sim-only", action="store_true",
+                        help="Run round score sim, save sim_cache parquet, then exit (no pricing/email)")
+    parser.add_argument("--price-only", action="store_true",
+                        help="Load cached sim arrays, skip simulation, run pricing + email")
+    parser.add_argument("--reprice", action="store_true",
+                        help="Like --price-only but dedup against Sheets and Telegram-alert only new bets (no email)")
     args = parser.parse_args()
+
+    # --reprice implies --price-only
+    if args.reprice:
+        args.price_only = True
+    if args.sim_only and args.price_only:
+        parser.error("Cannot use --sim-only and --price-only together")
 
     # ── Config ───────────────────────────────────────────────────────────
     sheet_config = None
@@ -3375,31 +3632,54 @@ def main():
         expected_avg = args.expected_avg or PAR
         round_num = sim_round - 1
 
-    # ── Load predictions ─────────────────────────────────────────────────
+    # ── Load sim cache early if --price-only / --reprice ─────────────────
+    cached_sim_dict = None
+    cached_meta = None
+    if args.price_only:
+        try:
+            cached_sim_dict, cached_meta = load_sim_cache(sim_round)
+        except FileNotFoundError as e:
+            if args.reprice:
+                print(f"  [reprice] {e}")
+                print(f"  [reprice] Nothing to reprice without a cache. Exiting cleanly.")
+                return
+            raise
+
+    # ── Load predictions (optional in --price-only if cache has them) ─────
     pred_file = f"model_predictions_r{sim_round}.csv"
-    if not os.path.exists(pred_file):
+    pred_file_path = None
+    if os.path.exists(pred_file):
+        pred_file_path = pred_file
+    else:
         alt = os.path.join("dashboard_data", pred_file)
         if os.path.exists(alt):
             print(f"  [resolve] {pred_file} not in root, using {alt}")
-            pred_file = alt
-        else:
-            raise FileNotFoundError(
-                f"{pred_file} not found. Run live_stats_engine.py first."
-            )
+            pred_file_path = alt
 
-    model_preds = pd.read_csv(pred_file)
-    model_preds["player_name"] = (
-        model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
-    )
+    if pred_file_path:
+        model_preds = pd.read_csv(pred_file_path)
+        model_preds["player_name"] = (
+            model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
+        )
+        pred_col = find_pred_col(model_preds, sim_round)
+        pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
+    elif args.price_only and cached_meta and cached_meta.get("pred_lookup"):
+        print(f"  [price-only] {pred_file} not found — using pred_lookup from cache meta")
+        model_preds = pd.DataFrame(columns=["player_name"])
+        pred_col = None
+        pred_lookup = {k: float(v) for k, v in cached_meta["pred_lookup"].items()}
+    else:
+        raise FileNotFoundError(
+            f"{pred_file} not found. Run live_stats_engine.py first."
+        )
 
-    pred_col = find_pred_col(model_preds, sim_round)
-    pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
     sample_lookup = load_sample_data()
 
+    _mode = "PRICE-ONLY" if args.price_only else ("SIM-ONLY" if args.sim_only else "FULL")
     print(f"\n{'='*60}")
-    print(f"  ROUND {sim_round} SIMULATION - {tourney}")
+    print(f"  ROUND {sim_round} {'RE-PRICING' if args.price_only else 'SIMULATION'} - {tourney} [{_mode}]")
     print(f"{'='*60}")
-    print(f"  Predictions:  {pred_file} ({len(model_preds)} players)")
+    print(f"  Predictions:  {pred_file_path or '(from cache)'} ({len(model_preds)} players)")
     print(f"  Expected avg: {expected_avg}")
     print(f"  Draw mode:    {'legacy (STD_DEV=' + str(STD_DEV) + ')' if args.legacy else 'category-first'}")
     print(f"  Simulations:  {NUM_SIMULATIONS:,}")
@@ -3409,31 +3689,48 @@ def main():
     _wind_col = f"wind_adj{sim_round}"
     _dew_col = f"dew_adj{sim_round}"
     _wx_lookup = {}
-    if _wind_col in model_preds.columns and _dew_col in model_preds.columns:
+    if (not model_preds.empty
+            and _wind_col in model_preds.columns
+            and _dew_col in model_preds.columns):
         _avg_wind = model_preds[_wind_col].mean()
         _wx_lookup = dict(zip(
             model_preds["player_name"],
             _avg_wind - model_preds[_wind_col] + model_preds[_dew_col],
         ))
         print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
+    elif args.price_only and cached_meta and cached_meta.get("wx_lookup"):
+        _wx_lookup = {k: float(v) for k, v in cached_meta["wx_lookup"].items()}
+        print(f"  Weather lookup: {len(_wx_lookup)} players (from cache meta)")
     else:
         print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
 
-    # ── Step 1: Simulate scores ──────────────────────────────────────────
-    print(f"\n  Simulating R{sim_round} scores...")
-
-    # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
-    sim_dict_cf, cat_mu_lookup = simulate_round_scores_catfirst(
-        model_preds, sim_round, expected_avg, _wx_lookup
-    )
-
-    if args.legacy:
-        sim_dict_legacy, _ = simulate_round_scores(model_preds, sim_round, expected_avg)
-        print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
-        print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
-        sim_dict = sim_dict_legacy
+    # ── Step 1: Simulate scores (or load from cache) ─────────────────────
+    if args.price_only:
+        sim_dict = cached_sim_dict
+        cat_mu_lookup = {}
+        print(f"\n  [price-only] Skipped sim — using {len(sim_dict)} cached player arrays")
     else:
-        sim_dict = sim_dict_cf
+        print(f"\n  Simulating R{sim_round} scores...")
+        # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
+        sim_dict_cf, cat_mu_lookup = simulate_round_scores_catfirst(
+            model_preds, sim_round, expected_avg, _wx_lookup
+        )
+
+        if args.legacy:
+            sim_dict_legacy, _ = simulate_round_scores(model_preds, sim_round, expected_avg)
+            print_catfirst_comparison(sim_dict_legacy, sim_dict_cf, model_preds, pred_col, expected_avg)
+            print("  [legacy] Using standard N(mu, STD_DEV) draws for matchup pricing")
+            sim_dict = sim_dict_legacy
+        else:
+            sim_dict = sim_dict_cf
+
+        # Persist sim_dict so future --price-only / --reprice runs can skip the sim
+        save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)
+
+        if args.sim_only:
+            print(f"\n  Sim complete (--sim-only). Cache saved for --price-only / --reprice.")
+            print(f"{'='*60}\n")
+            return
 
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
@@ -3464,7 +3761,8 @@ def main():
     # ── Step 3: Score card ───────────────────────────────────────────────
     # Multi-course: build separate score cards per course
     score_cards_by_course = {}
-    if ("course_score_adj" in model_preds.columns
+    if (not model_preds.empty
+            and "course_score_adj" in model_preds.columns
             and model_preds["course_score_adj"].nunique() > 1):
         for course_adj in sorted(model_preds["course_score_adj"].unique()):
             mask = model_preds["course_score_adj"] == course_adj
@@ -3483,7 +3781,11 @@ def main():
         score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
 
     # ── Step 3a: Pre-aggregated score distributions for dashboard ────────
+    # Skip in --price-only: cat_mu_lookup is unavailable and the parquet was
+    # already written by the prior --sim-only run.
     try:
+        if args.price_only:
+            raise RuntimeError("skip in --price-only")
         # Per-player expected avg (course-adjusted when multi-course), else scalar
         if "course_score_adj" in model_preds.columns:
             exp_lookup = dict(zip(
@@ -3524,7 +3826,7 @@ def main():
     win_positive_top10 = pd.DataFrame()
     win_negative_top10 = pd.DataFrame()
 
-    if not args.skip_tournament_sim and round_num >= 1:
+    if not args.skip_tournament_sim and not args.price_only and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
         try:
             # Load tournament config from sheet
@@ -3764,6 +4066,17 @@ def main():
         score_cards_by_course=score_cards_by_course if score_cards_by_course else None,
         score_edges=score_edges,
     )
+
+    # ── Step 6a: --reprice exits here (dedup + store + Telegram, no email) ──
+    if args.reprice:
+        print(f"\n  [reprice] Dedup + store + alert...")
+        try:
+            _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id)
+        except Exception as e:
+            print(f"  [reprice] Warning: {e}")
+            import traceback; traceback.print_exc()
+        print(f"\n{'='*60}\n  Done (--reprice).\n{'='*60}")
+        return
 
     # ── Step 6: Email ────────────────────────────────────────────────────
     if not args.dry_run:
