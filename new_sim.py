@@ -2132,6 +2132,14 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             current_tourney = tourn_counts.most_common(1)[0][0]
             all_mkts = [m for m in all_mkts if _detect(m.get("title", "")) in (current_tourney, "")]
             print(f"  Kalshi H2H: WARNING no match for tourney='{tourney}', falling back to most-common: {current_tourney}")
+            print(f"  Kalshi H2H: detected tournaments in raw feed: {dict(tourn_counts)}")
+    else:
+        print(f"  Kalshi H2H: WARNING no titles parsed for tournament name. Sample titles: "
+              f"{[m.get('title', '')[:80] for m in all_mkts[:3]]}")
+
+    if not all_mkts:
+        print(f"  Kalshi H2H: 0 markets after tournament filter — nothing to price")
+        return pd.DataFrame()
 
     # Group by event_ticker to pair the two sides of each H2H
     by_event = {}
@@ -2174,21 +2182,43 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
         denom = wins + losses
         return wins / denom if denom > 0 else None
 
+    # Diagnostic drop counters — printed in summary at the end so it's easy
+    # to see exactly where markets fall out of the pipeline.
+    diag = {
+        "events_total": len(by_event),
+        "events_single_market": 0,        # event had < 2 markets in group
+        "sides_total": 0,                  # markets considered across all events
+        "sides_title_unparsed": 0,         # _extract_player returned ""
+        "sides_no_quote": 0,               # bid<=0 or ask<=0
+        "events_fewer_than_2_sides": 0,    # after parsing, < 2 valid sides
+        "sides_player_not_in_preds": 0,
+        "sides_orderbook_fail": 0,
+        "sides_empty_book": 0,             # no fill_levels on the buy side
+        "sides_zero_filled": 0,            # walk produced 0 contracts
+        "sides_american_none": 0,
+        "sides_sim_prob_none": 0,
+        "name_mismatches": set(),          # players in Kalshi that weren't in pred_lookup
+    }
+
     rows = []
     ob_count = 0
     for event_ticker, mkts in by_event.items():
         if len(mkts) < 2:
+            diag["events_single_market"] += 1
             continue
 
         # Parse both sides
         sides = []
         for m in mkts:
+            diag["sides_total"] += 1
             player_raw, opponent_raw = _extract_player(m.get("title", ""))
             if not player_raw:
+                diag["sides_title_unparsed"] += 1
                 continue
             bid = float(m.get("yes_bid_dollars") or 0)
             ask = float(m.get("yes_ask_dollars") or 0)
             if bid <= 0 or ask <= 0:
+                diag["sides_no_quote"] += 1
                 continue
             sides.append({
                 "ticker": m.get("ticker", ""),
@@ -2201,6 +2231,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             })
 
         if len(sides) < 2:
+            diag["events_fewer_than_2_sides"] += 1
             continue
 
         a, b = sides[0], sides[1]
@@ -2209,12 +2240,15 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
         for side_info in [a, b]:
             player = side_info["player"]
             if player not in pred_lookup:
+                diag["sides_player_not_in_preds"] += 1
+                diag["name_mismatches"].add(player)
                 continue
             try:
                 ob = _kalshi_mu_get_orderbook(side_info["ticker"])
                 _time.sleep(0.05)
                 ob_count += 1
             except Exception:
+                diag["sides_orderbook_fail"] += 1
                 continue
 
             no_levels = ob.get("no", [])
@@ -2222,6 +2256,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             # Prices are in dollar format (0.0-1.0); cost = 1.0 - opposite_price
             fill_levels = sorted([(1.0 - p, qty) for p, qty in no_levels])
             if not fill_levels:
+                diag["sides_empty_book"] += 1
                 continue
 
             # Depth at the headline (best) price — max take with no slippage
@@ -2242,6 +2277,7 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
                     break
 
             if filled == 0:
+                diag["sides_zero_filled"] += 1
                 continue
 
             vwap = cost_sum / filled
@@ -2253,9 +2289,12 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
             mid = (side_info["bid"] + side_info["ask"]) / 2.0
             american = implied_prob_to_american_odds(eff_price)
             if american is None:
+                diag["sides_american_none"] += 1
                 continue
 
             sim_p = _sim_win_prob(player, side_info["opponent"])
+            if sim_p is None:
+                diag["sides_sim_prob_none"] += 1
             edge_val = (sim_p - eff_price) * 100 if sim_p is not None else None
 
             rows.append({
@@ -2279,7 +2318,28 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
     _kalshi_mu_client.close()
     print(f"  Kalshi matchups: {len(rows)} sides priced ({ob_count} orderbooks fetched)")
 
+    # Diagnostic drop-reason summary — surfaces exactly where markets fall out
+    # of the pipeline so we don't have to guess on "missing markets" reports.
+    print(f"  [kalshi-mu diag] events={diag['events_total']} "
+          f"(single_market_drop={diag['events_single_market']}, "
+          f"under_2_sides_drop={diag['events_fewer_than_2_sides']})")
+    print(f"  [kalshi-mu diag] sides_seen={diag['sides_total']} "
+          f"(title_unparsed={diag['sides_title_unparsed']}, "
+          f"no_quote={diag['sides_no_quote']}, "
+          f"player_not_in_preds={diag['sides_player_not_in_preds']}, "
+          f"orderbook_fail={diag['sides_orderbook_fail']}, "
+          f"empty_book={diag['sides_empty_book']}, "
+          f"zero_filled={diag['sides_zero_filled']}, "
+          f"sim_prob_none={diag['sides_sim_prob_none']})")
+    if diag["name_mismatches"]:
+        _shown = sorted(diag["name_mismatches"])[:10]
+        more = "" if len(diag["name_mismatches"]) <= 10 else f" (+{len(diag['name_mismatches']) - 10} more)"
+        print(f"  [kalshi-mu diag] name mismatches (Kalshi normalized -> not in pred_lookup): "
+              f"{', '.join(_shown)}{more}")
+
     df = pd.DataFrame(rows)
+    if not df.empty and diag["name_mismatches"]:
+        df.attrs["name_mismatches"] = diag["name_mismatches"]
     return df
 
 
