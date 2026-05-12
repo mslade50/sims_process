@@ -3102,14 +3102,25 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         return
 
     # Sharp-book filter — only consider edges at pinnacle / betonline / betcris.
-    # Retail rows are noisy and not actionable for capital deployment.
-    _sharp_filter = combined_finish_df['bookmaker'].astype(str).str.lower().isin(SHARP_BOOKS)
-    sharp_df = combined_finish_df[_sharp_filter]
+    # Note: combined_finish_df's `bookmaker` field is post-groupby comma-joined
+    # when multiple books share the same decimal_odds (e.g. "betcris, betonline").
+    # A naive isin() check drops every concat row, which silently buries
+    # tied-best lines (often where Betcris is among the books). Filter on
+    # whether ANY token in the concat is sharp.
+    def _sharp_books_in(bm_str: str) -> list[str]:
+        tokens = [t.strip().lower() for t in str(bm_str or '').split(',')]
+        return [t for t in tokens if t in SHARP_BOOKS]
+
+    sharp_df = combined_finish_df[
+        combined_finish_df['bookmaker'].apply(lambda v: bool(_sharp_books_in(v)))
+    ]
     if sharp_df.empty:
         print("  [sb-priority] no sharp-book outright rows — skipping email")
         return
 
     # ── Build SB-best per (player, market_type) ────────────────────────────
+    # When the row is a concat ("betcris, betonline"), display only the sharp
+    # tokens — retail-book co-occurrences can leak into the concat too.
     sb_best = {}
     for _, r in sharp_df.iterrows():
         try:
@@ -3123,8 +3134,9 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         if not key[0] or not key[1]:
             continue
         if key not in sb_best or edge > sb_best[key]['edge']:
+            sharp_tokens = _sharp_books_in(r.get('bookmaker', ''))
             sb_best[key] = {
-                'book': str(r.get('bookmaker', '') or ''),
+                'book': ', '.join(sharp_tokens),
                 'edge': edge,
                 'american_odds': r.get('american_odds'),
                 'my_pred': r.get('my_pred'),
