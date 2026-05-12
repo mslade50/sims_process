@@ -109,6 +109,64 @@ def _fetch_scraped_json(market: str) -> dict | None:
     return None
 
 
+def load_betcris_outrights() -> pd.DataFrame:
+    """Load scraped Betcris outright odds (winner / top_5 / top_10 / top_20).
+
+    Source: betcris_outrights_latest.json published by sentinel.py in the
+    golf_scraping repo. Falls back to local permanent_data/scraped_odds/.
+
+    Returns DataFrame with columns:
+        player_name (lower-case "first last")
+        market_type (winner / top_5 / top_10 / top_20)
+        american_odds (int)
+        decimal_odds (float)
+
+    Returns an empty DataFrame if the file is unavailable or empty. The
+    caller is responsible for `if df.empty: skip-fallback`.
+    """
+    data = _fetch_scraped_json("betcris_outrights")
+    if not data:
+        return pd.DataFrame()
+
+    rows = []
+    for line in data.get("lines", []):
+        # JSON stores names as "Last, First". new_sim's player_name pipeline
+        # uses lowercase "first last" — convert here so the merge keys align.
+        raw = str(line.get("player", "")).strip()
+        if "," in raw:
+            last, first = [p.strip() for p in raw.split(",", 1)]
+            player = f"{first} {last}".lower()
+        else:
+            player = raw.lower()
+        if not player:
+            continue
+
+        try:
+            am = int(line["odds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # American -> decimal
+        if am > 0:
+            dec = am / 100.0 + 1.0
+        elif am < 0:
+            dec = 100.0 / abs(am) + 1.0
+        else:
+            continue
+
+        rows.append({
+            "player_name": player,
+            "market_type": str(line.get("market_type", "")),
+            "bookmaker": "betcris",
+            "american_odds": am,
+            "decimal_odds": dec,
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["player_name", "market_type"], keep="first")
+    return df
+
+
 def _parse_datagolf_json(data: dict) -> pd.DataFrame:
     """Parse DataGolf-schema JSON into the standard matchup DataFrame.
 

@@ -1139,6 +1139,67 @@ def extract_market_rows(json_obj, odds_key='odds'):
                 rows.append({'player_name': player, 'bookmaker': book, 'decimal_odds': float(odds)})
     return pd.DataFrame(rows)
 
+
+# Fetch scraped Betcris outrights once. Used as a fallback when DataGolf
+# returns no betcris row for a (player, market_type) — DG drops books that
+# don't post a price; we backfill from our own scrape so betcris-only lines
+# are still priced.
+try:
+    from odds_loader import load_betcris_outrights as _load_betcris_outrights
+    _BETCRIS_FALLBACK_OUTRIGHTS = _load_betcris_outrights()
+    if not _BETCRIS_FALLBACK_OUTRIGHTS.empty:
+        # Match the new_sim convention: lowercase + name_replacements
+        _BETCRIS_FALLBACK_OUTRIGHTS["player_name"] = (
+            _BETCRIS_FALLBACK_OUTRIGHTS["player_name"]
+            .str.lower().str.strip()
+            .replace(name_replacements)
+        )
+        _by_mkt = _BETCRIS_FALLBACK_OUTRIGHTS.groupby("market_type").size()
+        print(f"[betcris-fallback] Loaded scraped outright odds: "
+              f"{', '.join(f'{k}={v}' for k, v in _by_mkt.items())}")
+    else:
+        print("[betcris-fallback] No scraped Betcris outright odds available")
+except Exception as _e:
+    print(f"[betcris-fallback] Loader failed: {_e}")
+    _BETCRIS_FALLBACK_OUTRIGHTS = pd.DataFrame()
+
+
+def _apply_betcris_fallback(dg_df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """Append scraped Betcris rows for any (player) where DG has no betcris row.
+
+    Only operates on the given market (`win` / `top_5` / `top_10` / `top_20`).
+    DG sometimes returns betcris odds, sometimes doesn't — when it doesn't,
+    fall back to our scrape so betcris pricing still flows downstream.
+    """
+    if _BETCRIS_FALLBACK_OUTRIGHTS.empty:
+        return dg_df
+
+    # Map DG's "win" market to our scrape's "winner" market_type
+    scraped_mt = "winner" if market == "win" else market
+    scrape = _BETCRIS_FALLBACK_OUTRIGHTS[
+        _BETCRIS_FALLBACK_OUTRIGHTS["market_type"] == scraped_mt
+    ]
+    if scrape.empty:
+        return dg_df
+
+    # Players that already have a betcris row from DG for this market
+    if not dg_df.empty:
+        dg_betcris_players = set(
+            dg_df.loc[dg_df["bookmaker"].astype(str).str.lower() == "betcris", "player_name"]
+        )
+    else:
+        dg_betcris_players = set()
+
+    backfill = scrape[~scrape["player_name"].isin(dg_betcris_players)][
+        ["player_name", "bookmaker", "decimal_odds"]
+    ].copy()
+    if backfill.empty:
+        return dg_df
+
+    print(f"[betcris-fallback] {market.upper()}: DG had betcris for {len(dg_betcris_players)} players, "
+          f"backfilled {len(backfill)} more from scrape")
+    return pd.concat([dg_df, backfill], ignore_index=True) if not dg_df.empty else backfill
+
 model_preds['player_name'] = model_preds['player_name'].str.lower().str.strip()
 
 sample_df = model_preds[['player_name','sample']].copy() if 'sample' in model_preds.columns else \
@@ -1151,6 +1212,7 @@ if pred_join['my_pred'].isna().all() and 'my_pred' in model_preds.columns:
 # --- WIN market ---
 data_win = fetch_market_data('win')
 win_df = extract_market_rows(data_win)
+win_df = _apply_betcris_fallback(win_df, 'win')
 if not win_df.empty:
     win_merged = pd.merge(win_df, sim_win_probs, on='player_name', how='inner')
     win_merged['implied_prob'] = 1.0 / win_merged['decimal_odds']
@@ -1180,6 +1242,7 @@ def process_topn_market(market, prob_col):
         print(f"[finish-pos] {market.upper()}: no market data returned from API")
         return pd.DataFrame()
     df = extract_market_rows(data, odds_key='odds')
+    df = _apply_betcris_fallback(df, market)
     if df.empty:
         print(f"[finish-pos] {market.upper()}: API returned data but no parseable odds rows")
         return pd.DataFrame()
