@@ -277,6 +277,14 @@ def implied_prob_to_american_odds(prob):
     else:
         return int(np.floor(100 * (1 - prob) / prob))
 
+def format_units(stake_dollars):
+    """Format a $ stake as units (1u = $200). Returns '—' for non-positive.
+    Sub-0.3u stakes show 2 decimals so 0.05u doesn't render as '0.1u'."""
+    if not stake_dollars or stake_dollars <= 0:
+        return "—"
+    u = stake_dollars / 200.0
+    return f"{u:.2f}u" if u < 0.3 else f"{u:.1f}u"
+
 def load_corr_matrix(cat_order):
     for fn in CORR_PREFS:
         if os.path.exists(fn):
@@ -2898,7 +2906,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 
                 # 1 unit = $200 (matches dashboard/performance convention)
                 stake_dollars = float(row.get('stake', 0) or 0)
-                units_str = f"{stake_dollars / 200.0:.1f}u" if stake_dollars > 0 else "—"
+                units_str = format_units(stake_dollars)
 
                 fp_rows += f"""
                 <tr>
@@ -3034,7 +3042,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
             _q = 1.0 - sim_prob
             _f = max((_b * sim_prob - _q) / _b, 0) if _b > 0 else 0
             _stake_dollars = round(BANKROLL * KELLY_FRACTION * _f, 2)
-            units_str = f"{_stake_dollars / 200.0:.1f}u" if _stake_dollars > 0 else "—"
+            units_str = format_units(_stake_dollars)
 
             exch_rows_html += f"""
                 <tr>
@@ -3187,7 +3195,7 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
     edge at all). Goal: tell us where to prioritise sportsbook deployment.
 
     Inclusion rule:
-        sb_best_edge > 0 AND
+        sb_best_edge >= 0.5 AND
         (exch_best_edge is None OR sb_best_edge - exch_best_edge > 0.5)
     """
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
@@ -3268,6 +3276,8 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
     # ── Filter + sort ──────────────────────────────────────────────────────
     rows = []
     for key, sb in sb_best.items():
+        if sb['edge'] < 0.5:
+            continue
         ex = exch_best.get(key)
         ex_edge = ex['edge'] if ex else None
         delta = sb['edge'] - (ex_edge if ex_edge is not None else 0.0)
@@ -3305,7 +3315,7 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         sb_odds_str = f"{int(r['sb_odds']):+d}" if pd.notna(r.get('sb_odds')) else ""
         sb_edge = r['sb_edge']
         sb_stake = r['sb_stake'] or 0
-        units_str = f"{sb_stake / 200.0:.1f}u" if sb_stake > 0 else "—"
+        units_str = format_units(sb_stake)
 
         if r['exch_edge'] is None:
             exch_book_str = "—"
@@ -3354,7 +3364,7 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
     <body style="font-family:Arial,sans-serif; max-width:1200px; margin:0 auto; padding:20px;">
         <h2 style="margin-bottom:4px;">Sportsbook Priority &mdash; {tourney.replace('_', ' ').title()}</h2>
         <p style="color:#666; margin-top:0;">
-            Players where sportsbook edge beats exchange edge by &gt;0.5pp, or where no exchange edge exists.
+            Players with sportsbook edge &ge; 0.5pp where SB edge beats exchange edge by &gt;0.5pp, or where no exchange edge exists.
             Amber rows = SB-only (no exchange offer). Sorted by SB edge desc.
         </p>
         <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
@@ -3428,7 +3438,7 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
             return "—"
         f_star = max((b * sim_p - (1 - sim_p)) / b, 0)
         stake = BANKROLL * KELLY_FRACTION * f_star
-        return f"{stake / 200.0:.1f}u" if stake > 0 else "—"
+        return format_units(stake)
 
     def _exch_row(row, book):
         player = str(row.get('player_name', '')).title()

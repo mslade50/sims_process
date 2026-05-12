@@ -316,13 +316,12 @@ def update_chart(player, compare_players, mode):
                     prob_2 = 1.0 - prob_1
                     rec = {
                         "Matchup": f"{p1.title()} vs {p2.title()}",
-                        f"{p1.title()} %": f"{prob_1 * 100:.1f}%",
-                        f"{p1.title()}": _prob_to_american(prob_1),
-                        f"{p2.title()} %": f"{prob_2 * 100:.1f}%",
-                        f"{p2.title()}": _prob_to_american(prob_2),
+                        "P1 Odds": _prob_to_american(prob_1),
+                        "P2 Odds": _prob_to_american(prob_2),
+                        "P1 %": f"{prob_1 * 100:.1f}%",
+                        "P2 %": f"{prob_2 * 100:.1f}%",
+                        "Tie %": f"{float(row['tie_pct']) * 100:.1f}%" if has_tie else "—",
                     }
-                    if has_tie:
-                        rec["Tie %"] = f"{float(row['tie_pct']) * 100:.1f}%"
                     h2h_rows.append(rec)
 
             h2h_children = []

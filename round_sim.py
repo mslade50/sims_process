@@ -866,6 +866,15 @@ def decimal_to_american(decimal_odds):
         return int(round(-100 / (decimal_odds - 1)))
 
 
+def format_units(stake_dollars):
+    """Format a $ stake as units (1u = $200). Returns '—' for non-positive.
+    Sub-0.3u stakes show 2 decimals so 0.05u doesn't render as '0.1u'."""
+    if pd.isna(stake_dollars) or not stake_dollars or stake_dollars <= 0:
+        return "—"
+    u = float(stake_dollars) / 200.0
+    return f"{u:.2f}u" if u < 0.3 else f"{u:.1f}u"
+
+
 def fetch_outright_odds(market_name):
     """Fetch outright odds from DataGolf API."""
     params = {
@@ -2995,7 +3004,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     _stake_dollars = BANKROLL * KELLY_FRACTION * _f
                 else:
                     _stake_dollars = float(stake) if pd.notna(stake) else 0.0
-                units_str = f"{_stake_dollars / 200.0:.1f}u" if _stake_dollars > 0 else "—"
+                units_str = format_units(_stake_dollars)
 
                 rows_html += f"""
                 <tr>
@@ -3072,7 +3081,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             fair_str = f"{int(fair):+d}" if pd.notna(fair) else ""
             sim_str = f"{sim_prob*100:.2f}%" if pd.notna(sim_prob) else ""
             kelly_str = f"${kelly:.0f}" if pd.notna(kelly) and kelly > 0 else "$0"
-            units_str = f"{float(kelly) / 200.0:.1f}u" if pd.notna(kelly) and kelly > 0 else "—"
+            units_str = format_units(kelly)
 
             rows_html += f"""
                 <tr>
