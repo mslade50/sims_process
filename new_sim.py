@@ -1930,9 +1930,13 @@ def price_novig_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         ).reset_index()
         finish_probs = finish_probs.merge(_nodh, on="player_name", how="left")
 
+    # Winner uses dead-heat-resolved sim prob (one actual tournament winner
+    # via uniform random tie-break in the sim, equivalent to DH 1/N split for
+    # tied-at-top sims). Top-5/10/20 stay nodh because exchanges pay full on
+    # any rank-in-region (no fractional DH payout).
     type_to_col = {
         "top_5": "top_5_nodh", "top_10": "top_10_nodh",
-        "top_20": "top_20_nodh", "winner": "win_nodh",
+        "top_20": "top_20_nodh", "winner": "simulated_win_prob",
     }
     for mtype, col in list(type_to_col.items()):
         if col not in finish_probs.columns:
@@ -3079,6 +3083,205 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
             print(f"  [warn] Exchange Sheets storage failed: {_se}")
 
 
+def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=None,
+                                    arch_map=None, wx_lookup=None):
+    """Email: capital-deployment guide.
+
+    For each (player, market_type), surface rows where sportsbook edge is
+    materially better than the best exchange edge (or where exchange has no
+    edge at all). Goal: tell us where to prioritise sportsbook deployment.
+
+    Inclusion rule:
+        sb_best_edge > 0 AND
+        (exch_best_edge is None OR sb_best_edge - exch_best_edge > 0.5)
+    """
+    if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
+        return
+    if combined_finish_df is None or combined_finish_df.empty:
+        print("  [sb-priority] no sportsbook outright rows — skipping email")
+        return
+
+    # ── Build SB-best per (player, market_type) ────────────────────────────
+    sb_best = {}
+    for _, r in combined_finish_df.iterrows():
+        try:
+            edge = float(r.get('edge', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if edge <= 0:
+            continue
+        key = (str(r.get('player_name', '')).lower().strip(),
+               str(r.get('market_type', '')))
+        if not key[0] or not key[1]:
+            continue
+        if key not in sb_best or edge > sb_best[key]['edge']:
+            sb_best[key] = {
+                'book': str(r.get('bookmaker', '') or ''),
+                'edge': edge,
+                'american_odds': r.get('american_odds'),
+                'my_pred': r.get('my_pred'),
+                'stake': r.get('stake'),
+                'sample': r.get('sample'),
+            }
+
+    # ── Build exchange-best per (player, market_type) ──────────────────────
+    exch_best = {}
+    for exch_df, exch_name in [(kalshi_df, 'kalshi'), (novig_df, 'novig')]:
+        if exch_df is None or exch_df.empty:
+            continue
+        sub = exch_df
+        if 'side' in sub.columns:
+            sub = sub[sub['side'] == 'yes']
+        if 'pricing' in sub.columns:
+            sub = sub[sub['pricing'] != 'mid']  # taker only — actual fills
+        for _, r in sub.iterrows():
+            try:
+                edge = float(r.get('edge', 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            key = (str(r.get('player_name', '')).lower().strip(),
+                   str(r.get('market_type', '')))
+            if not key[0] or not key[1]:
+                continue
+            if key not in exch_best or edge > exch_best[key]['edge']:
+                exch_best[key] = {
+                    'book': exch_name,
+                    'edge': edge,
+                    'american_odds': r.get('american_odds'),
+                }
+
+    # ── Filter + sort ──────────────────────────────────────────────────────
+    rows = []
+    for key, sb in sb_best.items():
+        ex = exch_best.get(key)
+        ex_edge = ex['edge'] if ex else None
+        delta = sb['edge'] - (ex_edge if ex_edge is not None else 0.0)
+        if ex_edge is None or delta > 0.5:
+            rows.append({
+                'player': key[0],
+                'market': key[1],
+                'sb_book': sb['book'],
+                'sb_edge': sb['edge'],
+                'sb_odds': sb['american_odds'],
+                'sb_stake': sb.get('stake') or 0,
+                'sb_pred': sb.get('my_pred'),
+                'sb_sample': sb.get('sample'),
+                'exch_book': ex['book'] if ex else None,
+                'exch_edge': ex_edge,
+                'exch_odds': ex['american_odds'] if ex else None,
+                'delta': delta,
+            })
+
+    if not rows:
+        print("  [sb-priority] no edges where sportsbook beats exchange by >0.5pp")
+        return
+
+    rows.sort(key=lambda x: x['sb_edge'], reverse=True)
+    print(f"  [sb-priority] {len(rows)} priority rows "
+          f"({sum(1 for r in rows if r['exch_edge'] is None)} sb-only, "
+          f"{sum(1 for r in rows if r['exch_edge'] is not None)} both-but-sb-bigger)")
+
+    # ── HTML ───────────────────────────────────────────────────────────────
+    rows_html = ""
+    for r in rows:
+        player = r['player'].title()
+        market = r['market']
+        sb_book = r['sb_book']
+        sb_odds_str = f"{int(r['sb_odds']):+d}" if pd.notna(r.get('sb_odds')) else ""
+        sb_edge = r['sb_edge']
+        sb_stake = r['sb_stake'] or 0
+        units_str = f"{sb_stake / 200.0:.1f}u" if sb_stake > 0 else "—"
+
+        if r['exch_edge'] is None:
+            exch_book_str = "—"
+            exch_odds_str = "—"
+            exch_edge_str = "—"
+            delta_str = "SB only"
+            row_bg = "#fff8e1"  # light amber for SB-only — biggest priority
+        else:
+            exch_book_str = r['exch_book']
+            exch_odds_str = f"{int(r['exch_odds']):+d}" if pd.notna(r.get('exch_odds')) else "—"
+            exch_edge_str = f"{r['exch_edge']:.1f}%"
+            delta_str = f"+{r['delta']:.1f}pp"
+            row_bg = "#f0f4f8" if r['delta'] > 2 else "#ffffff"
+
+        sb_edge_color = "#d4edda" if sb_edge > 5 else "#fff3cd" if sb_edge > 2 else "#ffffff"
+
+        archetype = arch_map.get(r['player'], "") if arch_map else ""
+        wx_sg = (wx_lookup or {}).get(r['player'], 0) if wx_lookup else 0
+        wx_str = f"{wx_sg:+.2f}" if wx_sg else ""
+
+        pred = r.get('sb_pred')
+        pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
+        sample = r.get('sb_sample')
+        sample_str = f"{int(sample)}" if pd.notna(sample) else ""
+
+        rows_html += f"""
+            <tr style="background:{row_bg};">
+                <td style="padding:6px 10px; font-weight:600;">{player}</td>
+                <td style="padding:6px 10px; text-align:center;">{market}</td>
+                <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
+                <td style="padding:6px 10px; text-align:center; font-weight:500;">{sb_book}</td>
+                <td style="padding:6px 10px; text-align:center;">{sb_odds_str}</td>
+                <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{sb_edge_color};">{sb_edge:.1f}%</td>
+                <td style="padding:6px 10px; text-align:center; font-weight:500;">{units_str}</td>
+                <td style="padding:6px 10px; text-align:center; color:#666;">{exch_book_str}</td>
+                <td style="padding:6px 10px; text-align:center; color:#666;">{exch_odds_str}</td>
+                <td style="padding:6px 10px; text-align:center; color:#666;">{exch_edge_str}</td>
+                <td style="padding:6px 10px; text-align:center; font-weight:600; color:#2c5282;">{delta_str}</td>
+                <td style="padding:6px 10px; text-align:center;">{pred_str}</td>
+                <td style="padding:6px 10px; text-align:center;">{sample_str}</td>
+                <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{wx_str}</td>
+            </tr>"""
+
+    body = f"""
+    <html>
+    <body style="font-family:Arial,sans-serif; max-width:1200px; margin:0 auto; padding:20px;">
+        <h2 style="margin-bottom:4px;">Sportsbook Priority &mdash; {tourney.replace('_', ' ').title()}</h2>
+        <p style="color:#666; margin-top:0;">
+            Players where sportsbook edge beats exchange edge by &gt;0.5pp, or where no exchange edge exists.
+            Amber rows = SB-only (no exchange offer). Sorted by SB edge desc.
+        </p>
+        <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+            <tr style="background:#343a40; color:white;">
+                <th style="padding:6px 10px; text-align:left;">Player</th>
+                <th style="padding:6px 10px; text-align:center;">Market</th>
+                <th style="padding:6px 10px; text-align:center;">Type</th>
+                <th style="padding:6px 10px; text-align:center;">SB Book</th>
+                <th style="padding:6px 10px; text-align:center;">SB Line</th>
+                <th style="padding:6px 10px; text-align:center;">SB Edge</th>
+                <th style="padding:6px 10px; text-align:center;">Units</th>
+                <th style="padding:6px 10px; text-align:center;">Exch Book</th>
+                <th style="padding:6px 10px; text-align:center;">Exch Line</th>
+                <th style="padding:6px 10px; text-align:center;">Exch Edge</th>
+                <th style="padding:6px 10px; text-align:center;">Delta</th>
+                <th style="padding:6px 10px; text-align:center;">Pred</th>
+                <th style="padding:6px 10px; text-align:center;">Sample</th>
+                <th style="padding:6px 10px; text-align:center;">Wx</th>
+            </tr>
+            {rows_html}
+        </table>
+        <p style="color:#999; font-size:11px; margin-top:20px;">
+            Edge = (sim_prob - implied_prob) * 100. SB edge is the best edge across all sportsbook books for this
+            (player, market). Exchange edge uses YES-side taker (walked-fillable) rows only. Units = SB kelly stake / $200.
+        </p>
+    </body>
+    </html>"""
+
+    try:
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = f"Sportsbook Priority -- {tourney.replace('_', ' ').title()}"
+        msg["From"] = EMAIL_FROM
+        msg["To"] = ", ".join(EMAIL_TO)
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_FROM, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+        print(f"  [ok] Sportsbook priority email sent ({len(rows)} rows)")
+    except Exception as e:
+        print(f"  [warn] Sportsbook priority email failed: {e}")
+
+
 def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_mu_df=None):
     """Email 2: Exchange-only opportunities (Kalshi + NoVig, independent tables + fades)."""
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
@@ -3691,6 +3894,18 @@ if not df_match.empty:
             kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
             novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
         )
+
+        # Email 3: sportsbook priority (capital-deployment guide)
+        try:
+            send_sportsbook_priority_email(
+                combined_finish_df=combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
+                kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+                novig_df=_novig_df if not _novig_df.empty else None,
+                arch_map=_arch_map,
+                wx_lookup=_wx_fp_lookup,
+            )
+        except Exception as _spe:
+            print(f"  [warn] Sportsbook priority email failed: {_spe}")
 
     else:
         print("[note] no bookmaker CSVs found to combine.")
