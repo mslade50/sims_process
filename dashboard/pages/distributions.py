@@ -7,7 +7,11 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
-from dashboard.data_layer import get_rank_probs_pre, get_rank_probs_live, get_h2h_matrix
+from dashboard.data_layer import (
+    get_rank_probs_pre,
+    get_rank_probs_live,
+    get_h2h_matrix,
+)
 
 dash.register_page(__name__, path="/distributions", title="Distributions", order=5)
 
@@ -288,45 +292,69 @@ def update_chart(player, compare_players, mode):
         ]),
     ]
 
-    # H2H matchup table when 2+ players selected
+    # H2H matchup table when 2+ players selected. Reads the precomputed
+    # h2h_matrix_{tourney}.parquet written by new_sim.py (ties pushed — same
+    # convention as the Kalshi/NoVig matchup pricers). The matrix is small
+    # enough to ship to Render via push_dashboard_data.py.
     if len(players) >= 2:
         h2h_df = get_h2h_matrix()
         if not h2h_df.empty:
+            has_tie = "tie_pct" in h2h_df.columns
             h2h_rows = []
+            missing = []
             for i, p1 in enumerate(players):
                 for p2 in players[i + 1:]:
-                    # Look up in both directions
                     match = h2h_df[
                         ((h2h_df["player_a"] == p1) & (h2h_df["player_b"] == p2))
                         | ((h2h_df["player_a"] == p2) & (h2h_df["player_b"] == p1))
                     ]
                     if match.empty:
+                        missing.append((p1, p2))
                         continue
                     row = match.iloc[0]
-                    if row["player_a"] == p1:
-                        prob_1 = row["prob_a"]
-                    else:
-                        prob_1 = 1.0 - row["prob_a"]
+                    prob_1 = row["prob_a"] if row["player_a"] == p1 else 1.0 - row["prob_a"]
                     prob_2 = 1.0 - prob_1
-                    h2h_rows.append({
+                    rec = {
                         "Matchup": f"{p1.title()} vs {p2.title()}",
                         f"{p1.title()} %": f"{prob_1 * 100:.1f}%",
                         f"{p1.title()}": _prob_to_american(prob_1),
                         f"{p2.title()} %": f"{prob_2 * 100:.1f}%",
                         f"{p2.title()}": _prob_to_american(prob_2),
-                    })
+                    }
+                    if has_tie:
+                        rec["Tie %"] = f"{float(row['tie_pct']) * 100:.1f}%"
+                    h2h_rows.append(rec)
+
+            h2h_children = []
             if h2h_rows:
                 h2h_table = dbc.Table.from_dataframe(
                     pd.DataFrame(h2h_rows), striped=True, bordered=True,
                     hover=True, color="dark", size="sm",
                 )
-                tables_children.append(
-                    html.Div([
-                        html.H6("Head-to-Head (ties pushed)", className="mt-3 mb-1",
-                                 style={"color": "#1f77b4"}),
-                        h2h_table,
-                    ])
+                h2h_children.extend([
+                    html.H6("Head-to-Head (ties pushed)", className="mt-3 mb-1",
+                             style={"color": "#1f77b4"}),
+                    h2h_table,
+                ])
+            if missing:
+                miss_str = ", ".join(f"{a.title()} / {b.title()}" for a, b in missing)
+                h2h_children.append(
+                    dbc.Alert(
+                        f"Pairs not in matrix: {miss_str}",
+                        color="warning", className="py-1 mt-2 small",
+                    )
                 )
+            if h2h_children:
+                tables_children.append(html.Div(h2h_children))
+        else:
+            tables_children.append(
+                dbc.Alert(
+                    "Matchup pricing unavailable — h2h_matrix not found. "
+                    "Run new_sim.py to generate it, then push_dashboard_data.py "
+                    "to ship it to Render.",
+                    color="secondary", className="py-1 mt-3 small",
+                )
+            )
 
     return fig, html.Div(tables_children)
 

@@ -43,7 +43,7 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 
 ## Key Files Not Obvious From Code
 
-- **`sim_inputs.py`**: Local-only (gitignored). ALL tournament config: `tourney`, `course_id`, `course_par`, `event_ids`, weather arrays (`wind_1`-`wind_4`, `dewpoint_1`-`dewpoint_4`), coefficients per round/bucket, `score_adj_r{N}`, `name_replacements`. Read this first when debugging anything.
+- **`sim_inputs.py`**: Tracked in git (despite the name suggesting local-only). ALL tournament config: `tourney`, `course_id`, `course_par`, `event_ids`, weather arrays (`wind_1`-`wind_4`, `dewpoint_1`-`dewpoint_4`), coefficients per round/bucket, `score_adj_r{N}`, `name_replacements`. Read this first when debugging anything.
 - **`sheet_config.py`**: Reads round number + weather from Google Sheet (`golf_sims` → `round_config` tab) so config can be updated from phone.
 - **`api_utils.py`**: All DataGolf API calls live here. New API calls must go through this file.
 - **`sheets_storage.py`**: Single auth source. `get_spreadsheet()` caches at module level. All `store_*` functions accept `spreadsheet=None`. Never duplicate auth code elsewhere.

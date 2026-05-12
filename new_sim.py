@@ -1139,6 +1139,36 @@ else:
     print(f"[sim-cache] Loaded cached sim outputs ({len(player_names)} players, "
           f"{final_scores.shape[1]:,} sims)")
 
+# Precomputed pairwise H2H matrix for the dashboard. Ships to Render via
+# push_dashboard_data.py; the raw final_scores.npy is too big to deploy.
+# Ties pushed — same convention as the Kalshi/NoVig matchup pricers below.
+import time as _h2h_time
+_h2h_t0 = _h2h_time.time()
+_n_players_h2h = len(player_names)
+_h2h_records = []
+for _i in range(_n_players_h2h):
+    _s_i = final_scores[_i]
+    for _j in range(_i + 1, _n_players_h2h):
+        _s_j = final_scores[_j]
+        _wins = int(np.sum(_s_i < _s_j))
+        _losses = int(np.sum(_s_i > _s_j))
+        _ties = int(np.sum(_s_i == _s_j))
+        _denom = _wins + _losses
+        if _denom == 0:
+            continue
+        _total = _wins + _losses + _ties
+        _h2h_records.append((
+            player_names[_i],
+            player_names[_j],
+            _wins / _denom,
+            _ties / _total if _total else 0.0,
+        ))
+_h2h_df = pd.DataFrame(_h2h_records, columns=["player_a", "player_b", "prob_a", "tie_pct"])
+_h2h_path = f"h2h_matrix_{tourney}.parquet"
+_h2h_df.to_parquet(_h2h_path, index=False)
+print(f"[h2h-matrix] Wrote {len(_h2h_df):,} pairs to {_h2h_path} "
+      f"({_h2h_time.time() - _h2h_t0:.1f}s)")
+
 if args.sim_only:
     print("\n[sim-only] Cache populated, skipping pricing/email/storage. Done.")
     sys.exit(0)
@@ -3805,172 +3835,6 @@ if not df_match.empty:
             arch_map=_arch_map,
             sb_lines_lookup=_all_sb_lines_lookup,
         )
-
-        # --- Correlated Kelly staking (console diagnostic only) ---
-        try:
-            from correlated_kelly import optimize_correlated_kelly, print_correlated_kelly_report, build_correlated_kelly_email_html
-
-            # Re-filter finish bets (same criteria as email builder)
-            _ck_finish = []
-            if _finish_for_email is not None and not _finish_for_email.empty:
-                _ck_fp = _finish_for_email[
-                    _finish_for_email['bookmaker'].str.lower().isin({"pinnacle", "betonline", "betcris"})
-                ].copy()
-                if not _ck_fp.empty:
-                    _ck_fp = _ck_fp.sort_values('edge', ascending=False)
-                    _ck_fp = _ck_fp.drop_duplicates(subset=['player_name', 'market_type'], keep='first')
-                    _ck_fp = _ck_fp[_ck_fp['edge'] >= 0.4]
-                    _fp_prob_col = {'win': 'simulated_win_prob', 'top_5': 'top_5',
-                                    'top_10': 'top_10', 'top_20': 'top_20'}
-                    for _, _r in _ck_fp.iterrows():
-                        _mt = str(_r['market_type'])
-                        _pcol = _fp_prob_col.get(_mt, _mt)
-                        _sp = float(_r[_pcol]) if _pcol in _r.index and pd.notna(_r[_pcol]) else 0.0
-                        _ck_finish.append({
-                            'player_name': str(_r['player_name']).lower().strip(),
-                            'market_type': _mt,
-                            'decimal_odds': float(_r['decimal_odds']),
-                            'sim_prob': _sp,
-                            'bookmaker': str(_r.get('bookmaker', '')),
-                            'american_odds': _r.get('american_odds', ''),
-                        })
-
-            # Add exchange finish bets (beat sportsbook edge, edge > 0.5%)
-            _ck_exch_fp = getattr(build_tournament_email_html, '_exchange_bets', [])
-            for _eb in _ck_exch_fp:
-                _pn = str(_eb.get('player_name', '')).lower().strip()
-                _mt = str(_eb.get('market_type', ''))
-                _sp = float(_eb.get('sim_prob', 0))
-                _dec = float(_eb.get('decimal_odds', 0))
-                if _sp > 0 and _dec > 1:
-                    _ck_finish.append({
-                        'player_name': _pn,
-                        'market_type': _mt,
-                        'decimal_odds': _dec,
-                        'sim_prob': _sp,
-                        'bookmaker': str(_eb.get('bookmaker', '')),
-                        'american_odds': _eb.get('american_odds', ''),
-                    })
-
-            # Re-filter matchup bets (same criteria as email builder)
-            _ck_matchups = []
-            if not sharp_df.empty:
-                _ck_mu = sharp_df.copy()
-                if 'sample_on' not in _ck_mu.columns:
-                    _ck_mu['sample_on'] = _ck_mu['bet_on'].str.lower().map(sample_lookup).fillna(0)
-                if 'pred_on' not in _ck_mu.columns:
-                    _ck_mu['pred_on'] = _ck_mu['bet_on'].str.lower().map(my_pred_lookup).fillna(0)
-                _ck_mu['dist_rounds_on'] = _ck_mu['bet_on'].str.lower().map(dist_rounds_lookup).fillna(0)
-                _ck_mu = _ck_mu[
-                    (_ck_mu['pred_on'] > EMAIL_MU_MIN_PRED) &
-                    (_ck_mu['sample_on'] >= EMAIL_MU_MIN_SAMPLE) &
-                    (_ck_mu['dist_rounds_on'] >= MIN_DIST_ROUNDS)
-                ]
-                for _, _r in _ck_mu.iterrows():
-                    _bet_on = str(_r['bet_on']).lower().strip()
-                    _bet_against = str(_r.get('bet_against', '')).lower().strip()
-                    if not _bet_against:
-                        _bet_against = (str(_r['Player 2']).lower().strip()
-                                        if _bet_on == str(_r['Player 1']).lower().strip()
-                                        else str(_r['Player 1']).lower().strip())
-                    # Decimal odds and sim probability for the bet_on side
-                    def _fair_to_prob(fair_am):
-                        """Convert Fair american odds to implied probability."""
-                        if pd.isna(fair_am) or fair_am == 0:
-                            return 0.0
-                        fair_am = float(fair_am)
-                        if fair_am < 0:
-                            return abs(fair_am) / (abs(fair_am) + 100)
-                        return 100 / (fair_am + 100)
-
-                    if _bet_on == str(_r['Player 1']).lower().strip():
-                        _p1_odds = float(_r['P1 Odds'])
-                        _dec = (_p1_odds / 100 + 1) if _p1_odds > 0 else (100 / abs(_p1_odds) + 1)
-                        _sim_p = _fair_to_prob(_r.get('Fair_p1'))
-                        _am = _r['P1 Odds']
-                    else:
-                        _p2_odds = float(_r['P2 Odds'])
-                        _dec = (_p2_odds / 100 + 1) if _p2_odds > 0 else (100 / abs(_p2_odds) + 1)
-                        _sim_p = _fair_to_prob(_r.get('Fair_p2'))
-                        _am = _r['P2 Odds']
-                    _ck_matchups.append({
-                        'bet_on': _bet_on,
-                        'opponent': _bet_against,
-                        'decimal_odds': _dec,
-                        'sim_win_prob': _sim_p,
-                        'bookmaker': str(_r.get('Bookmaker', '')),
-                        'american_odds': _am,
-                    })
-
-            # Add exchange-replaced matchups (better exchange price, sized alongside sportsbook)
-            _ck_exch_mu = getattr(build_tournament_email_html, '_exchange_mu_replacements', [])
-            for _em in _ck_exch_mu:
-                _bet_on = str(_em.get('bet_on', '')).lower().strip()
-                if not _bet_on:
-                    _bet_on = (str(_em['Player 1']).lower().strip()
-                               if _em.get('edge_p1', 0) > _em.get('edge_p2', 0)
-                               else str(_em['Player 2']).lower().strip())
-                _opp = (str(_em['Player 2']).lower().strip()
-                        if _bet_on == str(_em['Player 1']).lower().strip()
-                        else str(_em['Player 1']).lower().strip())
-                if _bet_on == str(_em['Player 1']).lower().strip():
-                    _am = _em.get('P1 Odds', 0)
-                    _sim_p = float(_em.get('my_odds_p1', 0) or 0)
-                else:
-                    _am = _em.get('P2 Odds', 0)
-                    _sim_p = float(_em.get('my_odds_p2', 0) or 0)
-                _am_f = float(_am) if pd.notna(_am) else 0
-                _dec = (_am_f / 100 + 1) if _am_f > 0 else (100 / abs(_am_f) + 1) if _am_f < 0 else 0
-                if _sim_p > 0 and _dec > 1:
-                    _ck_matchups.append({
-                        'bet_on': _bet_on,
-                        'opponent': _opp,
-                        'decimal_odds': _dec,
-                        'sim_win_prob': _sim_p,
-                        'bookmaker': str(_em.get('Bookmaker', '')),
-                        'american_odds': _am,
-                    })
-
-            if _ck_finish or _ck_matchups:
-                # Build finish prob lookup from sim's authoritative calculations
-                _ck_fprobs = {}
-                if 'finish_equity_df' in dir() and not finish_equity_df.empty:
-                    for _, _frow in finish_equity_df.iterrows():
-                        _ck_fprobs[str(_frow['player_name']).lower().strip()] = {
-                            'win': float(_frow.get('simulated_win_prob', 0)),
-                            'top_5': float(_frow.get('top_5', 0)),
-                            'top_10': float(_frow.get('top_10', 0)),
-                            'top_20': float(_frow.get('top_20', 0)),
-                        }
-                _ck_result = optimize_correlated_kelly(
-                    _ck_finish, _ck_matchups,
-                    final_scores, player_names,
-                    finish_probs=_ck_fprobs,
-                    bankroll=30_000.0,
-                    kelly_fraction=0.60,
-                    book_caps={'pinnacle': 500},
-                )
-                print_correlated_kelly_report(_ck_result)
-
-                # Email 3: correlated Kelly staking
-                if _ck_result.get('bets') and EMAIL_PASSWORD and EMAIL_FROM and EMAIL_TO and EMAIL_TO != ['']:
-                    try:
-                        _ck_html = build_correlated_kelly_email_html(_ck_result, tourney=tourney)
-                        _ck_msg = MIMEMultipart("mixed")
-                        _ck_msg["Subject"] = f"Correlated Kelly -- {tourney.replace('_', ' ').title()}"
-                        _ck_msg["From"] = EMAIL_FROM
-                        _ck_msg["To"] = ", ".join(EMAIL_TO)
-                        _ck_msg.attach(MIMEText(_ck_html, "html"))
-                        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as _ck_srv:
-                            _ck_srv.login(EMAIL_FROM, EMAIL_PASSWORD)
-                            _ck_srv.sendmail(EMAIL_FROM, EMAIL_TO, _ck_msg.as_string())
-                        print("  [ok] Correlated Kelly email sent")
-                    except Exception as _ck_email_err:
-                        print(f"  [warn] Correlated Kelly email failed: {_ck_email_err}")
-            else:
-                print("[correlated-kelly] No qualifying bets for correlated sizing.")
-        except Exception as _ck_err:
-            print(f"[correlated-kelly] Error: {_ck_err}")
 
         # Email 2: exchange-only opportunities
         send_exchange_email(
