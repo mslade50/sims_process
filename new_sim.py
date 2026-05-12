@@ -3101,9 +3101,17 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         print("  [sb-priority] no sportsbook outright rows — skipping email")
         return
 
+    # Sharp-book filter — only consider edges at pinnacle / betonline / betcris.
+    # Retail rows are noisy and not actionable for capital deployment.
+    _sharp_filter = combined_finish_df['bookmaker'].astype(str).str.lower().isin(SHARP_BOOKS)
+    sharp_df = combined_finish_df[_sharp_filter]
+    if sharp_df.empty:
+        print("  [sb-priority] no sharp-book outright rows — skipping email")
+        return
+
     # ── Build SB-best per (player, market_type) ────────────────────────────
     sb_best = {}
-    for _, r in combined_finish_df.iterrows():
+    for _, r in sharp_df.iterrows():
         try:
             edge = float(r.get('edge', 0) or 0)
         except (TypeError, ValueError):
