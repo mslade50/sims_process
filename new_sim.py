@@ -1573,11 +1573,15 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         finish_probs = finish_probs.merge(_nodh, on="player_name", how="left")
         print(f"  Built nodh probs from {_rp_path} ({len(_nodh)} players)")
 
+    # Winner uses dead-heat-resolved sim prob (one actual tournament winner
+    # via uniform random tie-break in the sim, equivalent to DH 1/N split for
+    # tied-at-top sims). Top-5/10/20 stay nodh because exchanges pay full on
+    # any rank-in-region (no fractional DH payout).
     type_to_col = {
         "top_5": "top_5_nodh",
         "top_10": "top_10_nodh",
         "top_20": "top_20_nodh",
-        "winner": "win_nodh",
+        "winner": "simulated_win_prob",
     }
     for mtype, col in list(type_to_col.items()):
         if col not in finish_probs.columns:
