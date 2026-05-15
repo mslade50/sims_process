@@ -3644,7 +3644,13 @@ def main():
                         help="Load cached sim arrays, skip simulation, run pricing + email")
     parser.add_argument("--reprice", action="store_true",
                         help="Like --price-only but dedup against Sheets and Telegram-alert only new bets (no email)")
+    parser.add_argument("--score-est", type=float, default=None,
+                        help="Override expected score estimate (only valid with --price-only/--reprice). "
+                             "Shifts every cached score by (new - cached_expected_avg) and re-prices.")
     args = parser.parse_args()
+
+    if args.score_est is not None and not args.price_only and not args.reprice:
+        parser.error("--score-est requires --price-only or --reprice")
 
     # --reprice implies --price-only
     if args.reprice:
@@ -3686,6 +3692,7 @@ def main():
     # ── Load sim cache early if --price-only / --reprice ─────────────────
     cached_sim_dict = None
     cached_meta = None
+    score_shift_delta = 0.0
     if args.price_only:
         try:
             cached_sim_dict, cached_meta = load_sim_cache(sim_round)
@@ -3695,6 +3702,13 @@ def main():
                 print(f"  [reprice] Nothing to reprice without a cache. Exiting cleanly.")
                 return
             raise
+
+        if args.score_est is not None:
+            cached_avg = float(cached_meta.get("expected_avg", expected_avg))
+            score_shift_delta = float(args.score_est) - cached_avg
+            print(f"  [score-est] Overriding expected_avg: {cached_avg} -> {args.score_est} "
+                  f"(delta = {score_shift_delta:+.3f}); cached scores will be shifted")
+            expected_avg = float(args.score_est)
 
     # ── Load predictions (optional in --price-only if cache has them) ─────
     pred_file = f"model_predictions_r{sim_round}.csv"
@@ -3760,6 +3774,12 @@ def main():
         sim_dict = cached_sim_dict
         cat_mu_lookup = {}
         print(f"\n  [price-only] Skipped sim — using {len(sim_dict)} cached player arrays")
+        if score_shift_delta != 0.0:
+            sim_dict = {
+                p: scores.astype(np.float64) + score_shift_delta
+                for p, scores in sim_dict.items()
+            }
+            print(f"  [score-est] Shifted {len(sim_dict)} cached arrays by {score_shift_delta:+.3f} strokes")
     else:
         print(f"\n  Simulating R{sim_round} scores...")
         # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
@@ -3942,6 +3962,14 @@ def main():
                 rank_probs.to_parquet(f"rank_probs_live_{tourney}.parquet", index=False)
                 print(f"    Saved rank_probs_live_{tourney}.parquet")
 
+                # Persist final_scores so the Kalshi maker can price H2H matchups
+                # against post-round joint outcomes (P(p1 beats p2)). Without this,
+                # the maker has to either skip matchups mid-event or use the stale
+                # pre-tournament final_scores from new_sim.py.
+                np.save(f"final_scores_live_{tourney}.npy", final_scores)
+                print(f"    Saved final_scores_live_{tourney}.npy "
+                      f"({final_scores.shape[0]} players x {final_scores.shape[1]:,} sims)")
+
                 # Price outrights against market
                 print(f"    Fetching outright odds and calculating edges...")
                 priced_markets = price_outrights(finish_probs, pred_lookup, sample_lookup)
@@ -4118,7 +4146,7 @@ def main():
         score_edges=score_edges,
     )
 
-    # ── Step 6a: --reprice exits here (dedup + store + Telegram, no email) ──
+    # ── Step 6a: --reprice exits here (dedup + store + Telegram + email) ──
     if args.reprice:
         print(f"\n  [reprice] Dedup + store + alert...")
         try:
@@ -4126,6 +4154,27 @@ def main():
         except Exception as e:
             print(f"  [reprice] Warning: {e}")
             import traceback; traceback.print_exc()
+
+        if not args.dry_run:
+            print(f"\n  [reprice] Sending email...")
+            send_round_sim_email(
+                sharp_df=sharp,
+                sim_round=sim_round,
+                sample_lookup=sample_lookup,
+                excel_path=excel_path,
+                card_csv_path=card_csv,
+                outrights_sharp=outrights_sharp,
+                win_edges_csv_path=win_edges_csv_path,
+                bol_matchups_csv_path=bol_matchups_csv,
+                all_books_csv_path=all_books_csv,
+                finish_equity_csv_path=finish_equity_csv_path,
+                win_positive_top10=win_positive_top10,
+                win_negative_top10=win_negative_top10,
+                wx_lookup=_wx_lookup,
+                score_edges=score_edges,
+                kalshi_mids=kalshi_mids,
+            )
+
         print(f"\n{'='*60}\n  Done (--reprice).\n{'='*60}")
         return
 
