@@ -271,6 +271,18 @@
         </div>
       </div>
       <div class="chip">
+        <div class="label">invested ($ paid)</div>
+        <div class="value">
+          $<span x-text="pnlTotal('invested').toLocaleString(undefined, {maximumFractionDigits:0})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">ROI (net / invested)</div>
+        <div class="value" :style="{color: pnlROI() >= 0 ? '#4caf50' : '#e74c3c'}">
+          <span x-text="pnlROI().toFixed(2)"></span>%
+        </div>
+      </div>
+      <div class="chip">
         <div class="label">positions</div>
         <div class="value">
           <span x-text="pnlOpenCount()"></span> open / <span x-text="pnlSettledCount()"></span> settled

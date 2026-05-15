@@ -566,65 +566,96 @@ def pnl():
                      else {r["ticker"]: r.get("title", "")
                            for r in history.to_dict(orient="records")})
 
-    # ── 5. Walk fills → per-ticker cashflow + fees + side activity. ─────
-    # cashflow = sum over fills of (+price * count for sells, -price * count
-    # for buys). NEGATIVE when net long-bought, POSITIVE when net sold.
-    # For YES/NO inference: when no live position remains, infer side from
-    # which side had more activity. (Doesn't affect math, only display.)
-    by_t = _dd(lambda: {"cashflow": 0.0, "fees": 0.0,
-                        "yes_buys": 0, "yes_sells": 0,
-                        "no_buys": 0, "no_sells": 0,
-                        "first_ts": None, "last_ts": None})
+    # ── 5. Walk fills chronologically per ticker. ──────────────────────
+    # Kalshi cashflow model: every fill (buy OR sell) adds inventory to
+    # `fill.side` at the side-specific price and DEBITS the cash cost.
+    # "Sell yes" is functionally "buy no" — the matching engine has us
+    # acquire NO inventory at no_price as our share of a newly created
+    # YES+NO pair. Kalshi reports it as action=sell on fill.side=no.
+    # When YES and NO inventories coexist, Kalshi auto-converts pairs to
+    # $1 cash apiece. `invested` is the gross $ paid across all fills
+    # (the denominator for ROI).
+    fills_by_ticker = _dd(list)
     for f in all_fills:
-        ticker = f.get("ticker") or f.get("market_ticker") or ""
-        if not ticker:
-            continue
-        side = f.get("side", "")
-        action = f.get("action", "")
-        try:
-            count = int(round(float(f.get("count_fp") or 0)))
-        except (TypeError, ValueError):
-            count = 0
-        if count <= 0:
-            continue
-        try:
-            raw_price = (f.get("yes_price_dollars") if side == "yes"
-                         else f.get("no_price_dollars"))
-            price = float(raw_price or 0)
-        except (TypeError, ValueError):
-            price = 0.0
-        try:
-            fee = float(f.get("fee_cost") or 0)
-        except (TypeError, ValueError):
-            fee = 0.0
+        tk = f.get("ticker") or f.get("market_ticker") or ""
+        if tk:
+            fills_by_ticker[tk].append(f)
+    for tk in fills_by_ticker:
+        fills_by_ticker[tk].sort(key=lambda f: f.get("ts") or 0)
 
-        b = by_t[ticker]
-        if action == "buy":
-            b["cashflow"] -= price * count
-            if side == "yes":
-                b["yes_buys"] += count
-            else:
-                b["no_buys"] += count
-        elif action == "sell":
-            b["cashflow"] += price * count
-            if side == "yes":
-                b["yes_sells"] += count
-            else:
-                b["no_sells"] += count
-        b["fees"] += fee
+    def _empty_bucket():
+        return {"cashflow": 0.0, "fees": 0.0, "invested": 0.0,
+                "yes_long": 0.0, "no_long": 0.0,
+                "yes_buys": 0, "yes_sells": 0,
+                "no_buys": 0, "no_sells": 0,
+                "auto_converted": 0.0,
+                "first_ts": None, "last_ts": None}
 
-        ts = f.get("created_time") or f.get("ts") or ""
-        if ts:
-            if b["first_ts"] is None or ts < b["first_ts"]:
-                b["first_ts"] = ts
-            if b["last_ts"] is None or ts > b["last_ts"]:
-                b["last_ts"] = ts
+    by_t = {}
+    for ticker, fs in fills_by_ticker.items():
+        b = _empty_bucket()
+        for f in fs:
+            side = f.get("side", "")
+            action = f.get("action", "")
+            try:
+                count = float(f.get("count_fp") or 0)
+            except (TypeError, ValueError):
+                count = 0.0
+            if count <= 0:
+                continue
+            try:
+                yes_p = float(f.get("yes_price_dollars") or 0)
+                no_p = float(f.get("no_price_dollars") or 0)
+            except (TypeError, ValueError):
+                yes_p = no_p = 0.0
+            price = yes_p if side == "yes" else no_p
+            try:
+                fee = float(f.get("fee_cost") or 0)
+            except (TypeError, ValueError):
+                fee = 0.0
+
+            cnt_int = int(round(count))
+            if side == "yes":
+                b["yes_long"] += count
+                if action == "buy":
+                    b["yes_buys"] += cnt_int
+                else:
+                    b["yes_sells"] += cnt_int
+            else:
+                b["no_long"] += count
+                if action == "buy":
+                    b["no_buys"] += cnt_int
+                else:
+                    b["no_sells"] += cnt_int
+            cost = price * count
+            b["cashflow"] -= cost
+            b["invested"] += cost
+            b["fees"] += fee
+
+            # Auto-conversion: any time both inventories are > 0, Kalshi
+            # nets pairs into $1 cash each. Do it inline so subsequent
+            # fills see the post-conv inventory (matters for /positions
+            # cross-check on still-open tickers).
+            if b["yes_long"] > 0 and b["no_long"] > 0:
+                pairs = min(b["yes_long"], b["no_long"])
+                b["yes_long"] -= pairs
+                b["no_long"] -= pairs
+                b["cashflow"] += pairs
+                b["auto_converted"] += pairs
+
+            ts = f.get("created_time") or f.get("ts") or ""
+            if ts:
+                if b["first_ts"] is None or str(ts) < str(b["first_ts"]):
+                    b["first_ts"] = ts
+                if b["last_ts"] is None or str(ts) > str(b["last_ts"]):
+                    b["last_ts"] = ts
+        by_t[ticker] = b
 
     # Settled-but-no-fills (super rare, e.g. legacy data) — still surface
     # the row with whatever the settlement record alone implies.
     for tk in settlements_by_ticker:
         if tk not in by_t:
-            by_t[tk]  # creates default zeros
+            by_t[tk] = _empty_bucket()
 
     # ── 6. Batched /markets — title + bid/ask. ──────────────────────────
     all_tickers = list(by_t.keys())
@@ -665,7 +696,9 @@ def pnl():
         sm = summaries.get(ticker) or {}
         title = sm.get("title") or cached_titles.get(ticker, "")
 
-        # MTM for open positions
+        # MTM for open positions. Use post-auto-conv yes_long/no_long so
+        # we value each leg at its own mid (matters for tickers where the
+        # raw fills span both sides before netting).
         mark = None
         unreal = 0.0
         if is_open:
@@ -673,12 +706,10 @@ def pnl():
             yes_ask = sm.get("yes_ask", 0.0)
             if yes_bid > 0 and yes_ask > 0 and yes_ask >= yes_bid:
                 yes_mid = (yes_bid + yes_ask) / 2.0
-                mark = yes_mid if side == "yes" else (1.0 - yes_mid)
-                unreal = mark * contracts
+                unreal = b["yes_long"] * yes_mid + b["no_long"] * (1.0 - yes_mid)
+                mark = (unreal / contracts) if contracts else 0.0
             else:
-                # Thin/empty book — assume mark = avg cost (no MTM PnL).
-                # avg cost here = absolute cost basis of open position;
-                # without FIFO we approximate as |cashflow| / contracts.
+                # Thin/empty book — fall back to avg cost (no MTM PnL).
                 mark = (abs(cashflow) / contracts) if contracts else 0.0
                 unreal = mark * contracts
 
@@ -687,7 +718,10 @@ def pnl():
         # avg_cost is conceptually -cashflow / contracts when net long. We
         # only display this for open positions; for settled it's misleading.
         avg_cost = (-cashflow / contracts) if (is_open and contracts > 0) else 0.0
+        # cost_basis = absolute net cash deployed (after auto-conv).
+        # invested = gross dollars paid into the ticker (denominator for ROI).
         cost_basis = abs(cashflow)
+        invested = b["invested"]
 
         rows.append({
             "ticker": ticker,
@@ -705,6 +739,8 @@ def pnl():
             "no_sells": b["no_sells"],
             "avg_cost_dollars": avg_cost,
             "exposure_dollars": cost_basis,
+            "invested_dollars": invested,
+            "auto_converted_pairs": b["auto_converted"],
             "cashflow_dollars": cashflow,
             "settlement_revenue_dollars": settlement_rev,
             "realized_pnl_dollars": realized,
@@ -743,6 +779,7 @@ def pnl():
         "unrealized": sum(r.get("unrealized_pnl_dollars", 0.0) for r in rows),
         "fees": sum(r["fees_paid_dollars"] for r in rows),
         "net": sum(r["net_pnl_dollars"] for r in rows),
+        "invested": sum(r.get("invested_dollars", 0.0) for r in rows),
         "open_count": sum(1 for r in rows if r["is_open"]),
         "settled_count": sum(1 for r in rows if not r["is_open"]),
     }

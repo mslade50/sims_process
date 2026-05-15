@@ -52,6 +52,9 @@ function makerDashboard() {
       groupBy: "none",
       golfOnly: true,
       statusFilter: "all",  // 'all' | 'open' | 'settled'
+      // Bumped on every grid filter/sort change so chip totals recompute
+      // off the post-filter row set. Alpine tracks this reactively.
+      filterTick: 0,
     },
 
     async initAll() {
@@ -437,6 +440,7 @@ function makerDashboard() {
             fees_paid_dollars: 0,
             net_pnl_dollars: 0,
             exposure_dollars: 0,
+            invested_dollars: 0,
             n_open: 0,
             n_settled: 0,
           });
@@ -449,25 +453,53 @@ function makerDashboard() {
         b.fees_paid_dollars += Number(r.fees_paid_dollars || 0);
         b.net_pnl_dollars += Number(r.net_pnl_dollars || 0);
         b.exposure_dollars += Number(r.exposure_dollars || 0);
+        b.invested_dollars += Number(r.invested_dollars || 0);
         if (r.is_open) b.n_open += 1; else b.n_settled += 1;
       }
       return Array.from(buckets.values())
         .sort((a, b) => b.net_pnl_dollars - a.net_pnl_dollars);
     },
 
-    // Totals are derived from the currently-visible row set so filters
-    // (golf-only, status) actually change the summary chips — much more
-    // useful than always showing the server-side global totals.
+    // Post-grid-filter row set. When ag-grid has applied column filters,
+    // walk the displayed nodes; otherwise fall back to the pre-grid
+    // (golf/status) filter result. Reading filterTick makes Alpine
+    // re-evaluate whenever the grid signals a filter/sort change.
+    pnlGridRows() {
+      void this.pnl.filterTick;
+      const g = grids.pnl;
+      if (g && typeof g.forEachNodeAfterFilter === "function") {
+        const out = [];
+        g.forEachNodeAfterFilter(n => { if (n.data) out.push(n.data); });
+        return out;
+      }
+      return this.pnlGroupedRows();
+    },
+
+    // Totals are derived from the currently-visible (post-grid-filter)
+    // row set so column filters AND golf/status filters change the chips.
     pnlTotal(field) {
       const map = { net: "net_pnl_dollars",
                     realized: "realized_pnl_dollars",
                     unrealized: "unrealized_pnl_dollars",
-                    fees: "fees_paid_dollars" };
+                    fees: "fees_paid_dollars",
+                    invested: "invested_dollars" };
       const col = map[field] || field;
-      return this.visiblePnL().reduce((s, r) => s + Number(r[col] || 0), 0);
+      return this.pnlGridRows().reduce((s, r) => s + Number(r[col] || 0), 0);
     },
-    pnlOpenCount()    { return this.visiblePnL().filter(r => r.is_open).length; },
-    pnlSettledCount() { return this.visiblePnL().filter(r => !r.is_open).length; },
+    pnlROI() {
+      const inv = this.pnlTotal("invested");
+      return inv > 0 ? (this.pnlTotal("net") / inv) * 100 : 0;
+    },
+    // Position counts on grouped rows aggregate n_open/n_settled fields
+    // (per-bucket); on flat rows fall back to scanning is_open.
+    pnlOpenCount() {
+      return this.pnlGridRows().reduce(
+        (s, r) => s + (r.n_open != null ? Number(r.n_open) : (r.is_open ? 1 : 0)), 0);
+    },
+    pnlSettledCount() {
+      return this.pnlGridRows().reduce(
+        (s, r) => s + (r.n_settled != null ? Number(r.n_settled) : (r.is_open ? 0 : 1)), 0);
+    },
 
     renderPnLGrid() {
       const groupBy = this.pnl.groupBy;
@@ -554,6 +586,18 @@ function makerDashboard() {
         ];
       }
       this.bindGrid("pnl", "#grid-pnl", colDefs, this.pnlGroupedRows(), null);
+      // Bump filterTick on any row-set change so the chip totals recompute
+      // off the post-filter visible rows. We listen on multiple events
+      // because column filters fire filterChanged, but quick-filter / sort
+      // / data-change all surface through modelUpdated.
+      if (grids.pnl && typeof grids.pnl.addEventListener === "function") {
+        const evts = ["filterChanged", "modelUpdated"];
+        if (this._pnlListener) {
+          for (const e of evts) grids.pnl.removeEventListener(e, this._pnlListener);
+        }
+        this._pnlListener = () => { this.pnl.filterTick++; };
+        for (const e of evts) grids.pnl.addEventListener(e, this._pnlListener);
+      }
     },
 
     // ── Grid binding helper ──────────────────────────────────────
