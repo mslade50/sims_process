@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kalshi Maker — Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.4/styles/ag-grid.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.4/styles/ag-theme-quartz-dark.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.0/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.4/dist/ag-grid-community.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body x-data="makerDashboard()" x-init="initAll()">
+  <header>
+    <h1>Kalshi Maker</h1>
+    <nav class="tabs">
+      <button :class="{active: tab === 'proposals'}"  @click="switchTab('proposals')">Proposals</button>
+      <button :class="{active: tab === 'open'}"       @click="switchTab('open')">Open Orders</button>
+      <button :class="{active: tab === 'exposures'}"  @click="switchTab('exposures')">Exposures</button>
+      <button :class="{active: tab === 'fills'}"      @click="switchTab('fills')">Fills</button>
+      <button :class="{active: tab === 'pnl'}"        @click="switchTab('pnl')">PnL</button>
+    </nav>
+  </header>
+
+  <!-- ── Proposals tab ───────────────────────────────────────────── -->
+  <section x-show="tab === 'proposals'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="proposals.scanTs">scan: <code x-text="proposals.scanTs"></code></span>
+        <span x-show="proposals.staleMinutes !== null"
+              :class="proposals.staleMinutes > 5 ? 'stale' : 'fresh'">
+          <span x-text="proposals.staleMinutes"></span> min ago
+        </span>
+      </div>
+    </div>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">approved orders</div>
+        <div class="value"><span x-text="approvedCount()"></span> / <span x-text="proposals.rows.length"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">proposed $ stake</div>
+        <div class="value">$<span x-text="approvedDollars().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">total contracts</div>
+        <div class="value"><span x-text="approvedContracts().toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">biggest player</div>
+        <div class="value" x-text="biggestPlayer()"></div>
+      </div>
+    </section>
+
+    <section class="actions-top">
+      <button class="btn btn-secondary" @click="loadProposals()">Reload proposals from disk</button>
+      <button class="btn btn-secondary" @click="resetAllSizes()">Reset all sizes to default</button>
+      <button class="btn btn-secondary" @click="setAllInclude(true)">Select all</button>
+      <button class="btn btn-secondary" @click="setAllInclude(false)">Clear all</button>
+      <label class="expiry-control">
+        <span>Expiry (local):</span>
+        <input type="datetime-local" x-model="expiry" class="expiry-input" />
+        <button type="button" class="btn btn-secondary btn-tiny" @click="expiry = ''" title="Clear → true GTC">GTC</button>
+        <span class="muted" x-show="expirySeconds()">
+          unix=<code x-text="expirySeconds()"></code>
+        </span>
+        <span class="muted" x-show="!expirySeconds()">no expiry (GTC)</span>
+      </label>
+    </section>
+
+    <div id="grid-proposals" class="ag-theme-quartz-dark" style="height: 560px; width: 100%;"></div>
+
+    <section class="actions-bottom">
+      <button class="btn btn-primary"
+              @click="confirmSend = true"
+              :disabled="approvedCount() === 0 || (proposals.staleMinutes ?? 0) > 30">
+        Send <span x-text="approvedCount()"></span> Approved Orders
+        ($<span x-text="approvedDollars().toLocaleString(undefined, {maximumFractionDigits:0})"></span>)
+      </button>
+      <span x-show="(proposals.staleMinutes ?? 0) > 30" class="warning">
+        Scan is over 30 minutes old — re-run <code>python kalshi_maker.py --preview</code> before sending.
+      </span>
+    </section>
+  </section>
+
+  <!-- ── Open Orders tab ─────────────────────────────────────────── -->
+  <section x-show="tab === 'open'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="openOrders.fetchedTs">fetched: <code x-text="openOrders.fetchedTs"></code></span>
+      </div>
+      <div>
+        <label class="checkbox-label">
+          <input type="checkbox" x-model="openOrders.golfOnly" @change="renderOpenGrid()" />
+          Golf only
+        </label>
+        <button class="btn btn-secondary" @click="loadOpenOrders()">Refresh</button>
+      </div>
+    </div>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">visible orders</div>
+        <div class="value"><span x-text="visibleOpenOrders().length.toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">total contracts</div>
+        <div class="value"><span x-text="openTotalContracts().toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">total $ reserved</div>
+        <div class="value">$<span x-text="openTotalDollars().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">script / manual</div>
+        <div class="value">
+          <span x-text="openScriptCount()"></span> / <span x-text="openManualCount()"></span>
+        </div>
+      </div>
+    </section>
+
+    <div id="grid-open" class="ag-theme-quartz-dark" style="height: 600px; width: 100%;"></div>
+  </section>
+
+  <!-- ── Exposures tab ───────────────────────────────────────────── -->
+  <section x-show="tab === 'exposures'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="exposures.fetchedTs">fetched: <code x-text="exposures.fetchedTs"></code></span>
+      </div>
+      <div>
+        <label class="checkbox-label">
+          <input type="checkbox" x-model="exposures.golfOnly" @change="renderExposuresGrid()" />
+          Golf only
+        </label>
+        <button class="btn btn-secondary" @click="loadExposures()">Refresh</button>
+      </div>
+    </div>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">positions</div>
+        <div class="value"><span x-text="visibleExposures().length.toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">$ at risk</div>
+        <div class="value">$<span x-text="exposuresAtRisk().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">$ max gain if all win</div>
+        <div class="value">$<span x-text="exposuresMaxGain().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">realized P&L</div>
+        <div class="value" :style="{color: exposuresNetPnl() >= 0 ? '#4caf50' : '#e74c3c'}">
+          $<span x-text="exposuresNetPnl().toLocaleString(undefined, {maximumFractionDigits:2})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">total contracts</div>
+        <div class="value"><span x-text="exposuresTotalContracts().toLocaleString()"></span></div>
+      </div>
+    </section>
+
+    <div id="grid-exposures" class="ag-theme-quartz-dark" style="height: 600px; width: 100%;"></div>
+  </section>
+
+  <!-- ── Fills tab ───────────────────────────────────────────────── -->
+  <section x-show="tab === 'fills'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="fills.fetchedTs">fetched: <code x-text="fills.fetchedTs"></code></span>
+        <span x-show="fills.rows.length">
+          showing <span x-text="fills.rows.length"></span> most recent fills
+        </span>
+      </div>
+      <div>
+        <label class="checkbox-label">
+          <input type="checkbox" x-model="fills.golfOnly" @change="renderFillsGrid()" />
+          Golf only
+        </label>
+        <button class="btn btn-secondary" @click="loadFills()">Refresh</button>
+      </div>
+    </div>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">visible fills</div>
+        <div class="value"><span x-text="visibleFills().length.toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">total contracts filled</div>
+        <div class="value"><span x-text="fillsTotalContracts().toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">$ paid (cost basis)</div>
+        <div class="value">$<span x-text="fillsTotalDollars().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">maker / taker</div>
+        <div class="value">
+          <span x-text="fillsMakerCount()"></span> / <span x-text="fillsTakerCount()"></span>
+        </div>
+      </div>
+    </section>
+
+    <div id="grid-fills" class="ag-theme-quartz-dark" style="height: 600px; width: 100%;"></div>
+
+  </section>
+
+  <!-- ── PnL tab ─────────────────────────────────────────────────── -->
+  <section x-show="tab === 'pnl'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="pnl.fetchedTs">fetched: <code x-text="pnl.fetchedTs"></code></span>
+        <span x-show="pnl.fromCache" class="muted">(cached)</span>
+        <span x-show="pnl.newSettledCount > 0" class="fresh">
+          +<span x-text="pnl.newSettledCount"></span> new settled
+        </span>
+      </div>
+      <div class="pnl-controls">
+        <label class="select-label">
+          Group by:
+          <select x-model="pnl.groupBy" @change="renderPnLGrid()">
+            <option value="none">None</option>
+            <option value="player_code">Golfer</option>
+            <option value="market_type">Market type</option>
+            <option value="side">Side</option>
+            <option value="is_open">Status (open/settled)</option>
+            <option value="event_code">Tournament</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" x-model="pnl.golfOnly" @change="renderPnLGrid()" />
+          Golf only
+        </label>
+        <label class="checkbox-label">
+          <select x-model="pnl.statusFilter" @change="renderPnLGrid()">
+            <option value="all">All positions</option>
+            <option value="open">Open only</option>
+            <option value="settled">Settled only</option>
+          </select>
+        </label>
+        <button class="btn btn-secondary" @click="loadPnL(true)">Refresh</button>
+      </div>
+    </div>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">net PnL</div>
+        <div class="value" :style="{color: pnlTotal('net') >= 0 ? '#4caf50' : '#e74c3c'}">
+          $<span x-text="pnlTotal('net').toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">realized</div>
+        <div class="value" :style="{color: pnlTotal('realized') >= 0 ? '#4caf50' : '#e74c3c'}">
+          $<span x-text="pnlTotal('realized').toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">unrealized (MTM mid)</div>
+        <div class="value" :style="{color: pnlTotal('unrealized') >= 0 ? '#4caf50' : '#e74c3c'}">
+          $<span x-text="pnlTotal('unrealized').toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">fees paid</div>
+        <div class="value" style="color: #888">
+          $<span x-text="pnlTotal('fees').toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">positions</div>
+        <div class="value">
+          <span x-text="pnlOpenCount()"></span> open / <span x-text="pnlSettledCount()"></span> settled
+        </div>
+      </div>
+    </section>
+
+    <div id="grid-pnl" class="ag-theme-quartz-dark" style="height: 600px; width: 100%;"></div>
+  </section>
+
+  <!-- Fill detail modal (top-level so it floats over any tab) -->
+  <div class="modal" x-show="fillDetail" @click.self="fillDetail = null">
+    <div class="modal-box">
+      <h2>Fill detail</h2>
+      <table class="detail-table" x-show="fillDetail">
+        <template x-for="[k, v] in Object.entries(fillDetail ?? {})" :key="k">
+          <tr>
+            <th x-text="k"></th>
+            <td><code x-text="JSON.stringify(v)"></code></td>
+          </tr>
+        </template>
+      </table>
+      <div class="modal-actions">
+        <button class="btn btn-primary" @click="fillDetail = null">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Send confirmation modal (proposals tab) ─────────────────── -->
+  <div class="modal" x-show="confirmSend" @click.self="confirmSend = false">
+    <div class="modal-box">
+      <h2>Confirm send</h2>
+      <p>
+        About to POST <strong x-text="approvedCount()"></strong> limit orders to Kalshi
+        totaling <strong>$<span x-text="approvedDollars().toLocaleString(undefined, {maximumFractionDigits:0})"></span></strong>.
+      </p>
+      <p>
+        Expiry:
+        <strong x-show="expirySeconds()">
+          <span x-text="expiry.replace('T', ' ')"></span> local
+          (unix=<code x-text="expirySeconds()"></code>)
+        </strong>
+        <strong x-show="!expirySeconds()">none — true GTC</strong>
+      </p>
+      <p>
+        Each order will re-validate against the live orderbook at send time — any order
+        that would now cross the spread will be skipped, not posted.
+      </p>
+      <p>Type <code>SEND</code> to confirm:</p>
+      <input type="text" x-model="confirmToken" class="confirm-input" placeholder="SEND" />
+      <div class="modal-actions">
+        <button class="btn btn-secondary" @click="confirmSend = false; confirmToken = ''">Cancel</button>
+        <button class="btn btn-primary"
+                :disabled="confirmToken !== 'SEND' || sending"
+                @click="sendOrders()">
+          <span x-show="!sending">Confirm and Send</span>
+          <span x-show="sending">Sending…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Send results modal -->
+  <div class="modal" x-show="sendResult" @click.self="sendResult = null">
+    <div class="modal-box">
+      <h2>Send result</h2>
+      <p>
+        <strong x-text="sendResult?.posted ?? 0"></strong> posted,
+        <strong x-text="sendResult?.failed ?? 0"></strong> failed,
+        <strong x-text="sendResult?.skipped ?? 0"></strong> skipped.
+      </p>
+      <div class="result-list" x-show="sendResult?.details?.length">
+        <template x-for="d in (sendResult?.details ?? [])" :key="d.row_id">
+          <div class="result-row" :class="d.status">
+            <code x-text="d.ticker"></code>
+            <span x-text="d.side.toUpperCase()"></span>
+            @<span x-text="(d.post_price * 100).toFixed(1)"></span>c
+            ×<span x-text="d.contracts"></span>
+            → <strong x-text="d.status"></strong>
+            <span x-show="d.message" x-text="' (' + d.message + ')'" class="muted"></span>
+          </div>
+        </template>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" @click="sendResult = null; loadProposals(); loadOpenOrders()">Close & Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
