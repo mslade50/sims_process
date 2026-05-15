@@ -3186,6 +3186,74 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
             print(f"  [warn] Exchange Sheets storage failed: {_se}")
 
 
+def _compute_sb_priority_keys(combined_finish_df, kalshi_df=None, novig_df=None):
+    """Return the set of (player_lower, market_type) pairs that would appear in the
+    sportsbook-priority email — i.e. where the best sharp-book edge is >=0.5pp AND
+    either no YES-side exchange edge exists OR SB beats Exch by >0.5pp.
+
+    Used by send_exchange_email to suppress players whose YES bet is "better"
+    at sportsbooks.
+    """
+    keys = set()
+    if combined_finish_df is None or combined_finish_df.empty:
+        return keys
+
+    def _sharp_books_in(bm_str):
+        tokens = [t.strip().lower() for t in str(bm_str or '').split(',')]
+        return [t for t in tokens if t in SHARP_BOOKS]
+
+    sharp_df = combined_finish_df[
+        combined_finish_df['bookmaker'].apply(lambda v: bool(_sharp_books_in(v)))
+    ]
+    if sharp_df.empty:
+        return keys
+
+    sb_best = {}
+    for _, r in sharp_df.iterrows():
+        try:
+            edge = float(r.get('edge', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if edge <= 0:
+            continue
+        key = (str(r.get('player_name', '')).lower().strip(),
+               str(r.get('market_type', '')))
+        if not key[0] or not key[1]:
+            continue
+        if key not in sb_best or edge > sb_best[key]:
+            sb_best[key] = edge
+
+    exch_best = {}
+    for exch_df in [kalshi_df, novig_df]:
+        if exch_df is None or exch_df.empty:
+            continue
+        sub = exch_df
+        if 'side' in sub.columns:
+            sub = sub[sub['side'] == 'yes']
+        if 'pricing' in sub.columns:
+            sub = sub[sub['pricing'] != 'mid']
+        for _, r in sub.iterrows():
+            try:
+                edge = float(r.get('edge', 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            key = (str(r.get('player_name', '')).lower().strip(),
+                   str(r.get('market_type', '')))
+            if not key[0] or not key[1]:
+                continue
+            if key not in exch_best or edge > exch_best[key]:
+                exch_best[key] = edge
+
+    for key, sb_edge in sb_best.items():
+        if sb_edge < 0.5:
+            continue
+        ex_edge = exch_best.get(key)
+        delta = sb_edge - (ex_edge if ex_edge is not None else 0.0)
+        if ex_edge is None or delta > 0.5:
+            keys.add(key)
+    return keys
+
+
 def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=None,
                                     arch_map=None, wx_lookup=None):
     """Email: capital-deployment guide.
@@ -3407,10 +3475,20 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         print(f"  [warn] Sportsbook priority email failed: {e}")
 
 
-def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_mu_df=None):
-    """Email 2: Exchange-only opportunities (Kalshi + NoVig, independent tables + fades)."""
+def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_mu_df=None,
+                        sb_priority_keys=None):
+    """Email 2: Exchange-only opportunities (Kalshi + NoVig, independent tables + fades).
+
+    Per-player dedup: each player appears at most once across the entire email, on
+    their single highest-edge bet (compared across Kalshi/NoVig YES/NO outrights and
+    matchups). If that bet (player, market_type) is also flagged in the sportsbook
+    priority email (SB beats Exch by >0.5pp on the same YES bet, or SB-only),
+    the player is dropped entirely — surface SB bets in the SB priority email instead.
+    Matchup edges are NOT filtered by sb_priority_keys (no SB matchup comparison).
+    """
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
+    sb_priority_keys = sb_priority_keys or set()
 
     def _fill_str(row):
         book = str(row.get('bookmaker', ''))
@@ -3522,45 +3600,92 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
     sections = []
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
-    # Kalshi YES outrights
-    if kalshi_df is not None and not kalshi_df.empty:
-        yes = kalshi_df[(kalshi_df['side'] == 'yes') & (kalshi_df['edge'] > 0)].sort_values('edge', ascending=False)
-        if not yes.empty:
-            rows_html = "".join(_exch_row(r, "kalshi") for _, r in yes.head(20).iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">Kalshi YES — Top 20</h3>{_hdr}{rows_html}</table>')
+    # ── Build unified pool: every candidate row across all six display buckets,
+    # already past its per-section threshold. Then keep only each player's single
+    # biggest-edge row, dropping YES outrights whose (player, market_type) is in
+    # sb_priority_keys (= the SB bet is materially better than the exchange offer).
+    pool = []  # list of dicts: {player, edge, bucket, row}
 
-        # Kalshi fades
-        no = kalshi_df[(kalshi_df['side'] == 'no') & (kalshi_df['edge'] > 0.5)].sort_values('edge', ascending=False)
-        if not no.empty:
-            rows_html = "".join(_exch_row(r, "kalshi") for _, r in no.head(20).iterrows())
-            sections.append(f'<h3 style="color:#9b2c2c;">Kalshi NO (Fade) — edge &gt; 0.5%</h3>{_hdr}{rows_html}</table>')
+    def _push(df, bucket, kind, side=None):
+        if df is None or df.empty:
+            return
+        sub = df
+        if side is not None and 'side' in sub.columns:
+            sub = sub[sub['side'] == side]
+        for _, r in sub.iterrows():
+            e = r.get('edge')
+            try:
+                e = float(e) if e is not None else None
+            except (TypeError, ValueError):
+                e = None
+            if e is None:
+                continue
+            # Per-bucket threshold (mirrors the original section filters)
+            if kind == 'yes' and e <= 0:
+                continue
+            if kind == 'no' and e <= 0.5:
+                continue
+            if kind == 'mu' and e <= 0.5:
+                continue
+            player = str(r.get('player_name', '')).lower().strip()
+            if not player:
+                continue
+            market = str(r.get('market_type', ''))
+            # Skip YES outrights covered better by sportsbooks
+            if kind == 'yes' and (player, market) in sb_priority_keys:
+                continue
+            pool.append({'player': player, 'edge': e, 'bucket': bucket, 'row': r})
 
-    # NoVig YES outrights
-    if novig_df is not None and not novig_df.empty:
-        yes = novig_df[(novig_df['side'] == 'yes') & (novig_df['edge'] > 0)].sort_values('edge', ascending=False)
-        if not yes.empty:
-            rows_html = "".join(_exch_row(r, "novig") for _, r in yes.head(20).iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">NoVig YES — Top 20</h3>{_hdr}{rows_html}</table>')
+    _push(kalshi_df, 'kalshi_yes', 'yes', side='yes')
+    _push(kalshi_df, 'kalshi_no', 'no', side='no')
+    _push(novig_df, 'novig_yes', 'yes', side='yes')
+    _push(novig_df, 'novig_no', 'no', side='no')
+    _push(kalshi_mu_df, 'kalshi_mu', 'mu')
+    _push(novig_mu_df, 'novig_mu', 'mu')
 
-        # NoVig fades
-        no = novig_df[(novig_df['side'] == 'no') & (novig_df['edge'] > 0.5)].sort_values('edge', ascending=False)
-        if not no.empty:
-            rows_html = "".join(_exch_row(r, "novig") for _, r in no.head(20).iterrows())
-            sections.append(f'<h3 style="color:#9b2c2c;">NoVig NO (Fade) — edge &gt; 0.5%</h3>{_hdr}{rows_html}</table>')
+    # Keep only each player's biggest-edge row
+    best = {}
+    for item in pool:
+        cur = best.get(item['player'])
+        if cur is None or item['edge'] > cur['edge']:
+            best[item['player']] = item
 
-    # Kalshi matchups (edge > 0.5% on the fillable price)
-    if kalshi_mu_df is not None and not kalshi_mu_df.empty:
-        _kmu = kalshi_mu_df[kalshi_mu_df['edge'].notna() & (kalshi_mu_df['edge'] > 0.5)].sort_values('edge', ascending=False)
-        if not _kmu.empty:
-            rows_html = "".join(_mu_row(r) for _, r in _kmu.iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">Kalshi Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
+    by_bucket = {b: [] for b in
+                 ('kalshi_yes', 'kalshi_no', 'novig_yes', 'novig_no', 'kalshi_mu', 'novig_mu')}
+    for item in best.values():
+        by_bucket[item['bucket']].append(item['row'])
 
-    # NoVig matchups (edge > 0.5%)
-    if novig_mu_df is not None and not novig_mu_df.empty:
-        _nmu = novig_mu_df[novig_mu_df['edge'].notna() & (novig_mu_df['edge'] > 0.5)].sort_values('edge', ascending=False)
-        if not _nmu.empty:
-            rows_html = "".join(_mu_row(r) for _, r in _nmu.iterrows())
-            sections.append(f'<h3 style="color:#2c5282;">NoVig Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
+    def _bucket_df(bucket):
+        rows = by_bucket.get(bucket, [])
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).sort_values('edge', ascending=False)
+
+    _ky = _bucket_df('kalshi_yes')
+    _kn = _bucket_df('kalshi_no')
+    _ny = _bucket_df('novig_yes')
+    _nn = _bucket_df('novig_no')
+    _km = _bucket_df('kalshi_mu')
+    _nm = _bucket_df('novig_mu')
+
+    if not _ky.empty:
+        rows_html = "".join(_exch_row(r, "kalshi") for _, r in _ky.head(20).iterrows())
+        sections.append(f'<h3 style="color:#2c5282;">Kalshi YES — Top 20</h3>{_hdr}{rows_html}</table>')
+    if not _kn.empty:
+        rows_html = "".join(_exch_row(r, "kalshi") for _, r in _kn.head(20).iterrows())
+        sections.append(f'<h3 style="color:#9b2c2c;">Kalshi NO (Fade) — edge &gt; 0.5%</h3>{_hdr}{rows_html}</table>')
+    if not _ny.empty:
+        rows_html = "".join(_exch_row(r, "novig") for _, r in _ny.head(20).iterrows())
+        sections.append(f'<h3 style="color:#2c5282;">NoVig YES — Top 20</h3>{_hdr}{rows_html}</table>')
+    if not _nn.empty:
+        rows_html = "".join(_exch_row(r, "novig") for _, r in _nn.head(20).iterrows())
+        sections.append(f'<h3 style="color:#9b2c2c;">NoVig NO (Fade) — edge &gt; 0.5%</h3>{_hdr}{rows_html}</table>')
+    if not _km.empty:
+        rows_html = "".join(_mu_row(r) for _, r in _km.iterrows())
+        sections.append(f'<h3 style="color:#2c5282;">Kalshi Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
+    if not _nm.empty:
+        rows_html = "".join(_mu_row(r) for _, r in _nm.iterrows())
+        sections.append(f'<h3 style="color:#2c5282;">NoVig Matchups — edge &gt; 0.5%</h3>{_mu_hdr}{rows_html}</table>')
 
     if not sections:
         print("  [exchange email] No exchange data — skipping")
@@ -3846,12 +3971,25 @@ if not df_match.empty:
             sb_lines_lookup=_all_sb_lines_lookup,
         )
 
-        # Email 2: exchange-only opportunities
+        # Email 2: exchange-only opportunities — pre-compute the sportsbook
+        # priority key set so we can suppress players whose YES bet is "better"
+        # at sportsbooks (= already covered by Email 3).
+        try:
+            _sb_priority_keys = _compute_sb_priority_keys(
+                combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
+                _kalshi_df if not _kalshi_df.empty else None,
+                _novig_df if not _novig_df.empty else None,
+            )
+        except Exception as _ke:
+            print(f"  [warn] sb_priority_keys compute failed: {_ke}")
+            _sb_priority_keys = set()
+
         send_exchange_email(
             kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
             novig_df=_novig_df if not _novig_df.empty else None,
             kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
             novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
+            sb_priority_keys=_sb_priority_keys,
         )
 
         # Email 3: sportsbook priority (capital-deployment guide)

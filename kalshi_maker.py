@@ -1,0 +1,1051 @@
+"""Kalshi maker — phase 2.
+
+Reads the most recent sim's persisted probability outputs, re-fetches Kalshi
+live, and either dry-runs (default) or posts resting limit orders.
+
+Inclusion gate (per side, per market):
+    raw_edge_at_post >= MIN_RAW_EDGE_PP (default 0.5 pp)
+    kelly_fraction_at_post >= MIN_KELLY_F   (default 0.08, i.e. full-Kelly 8%)
+
+Modes:
+    (default)        scan + print intents only
+    --live           reconcile + auto-cancel stale + POST new intents
+    --cancel-all     cancel every resting order owned by our key, then exit
+
+Safety invariants (enforced in code, not just convention):
+    1. post_price is clamped to be STRICTLY below the opposite best ask, in
+       1¢ ticks (no maker → taker math bug).
+    2. Before each POST, the orderbook is re-fetched and the assert is run
+       AGAIN against the live ask, so a tick between scan and post can't
+       turn an order into a cross.
+    3. client_order_id is a deterministic hash of (ticker, side, price), so
+       Kalshi rejects duplicates if our reconciliation misses one.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import math
+import os
+import re
+import sys
+import time
+from collections import Counter
+from dotenv import load_dotenv
+
+import httpx
+import numpy as np
+import pandas as pd
+
+from sim_inputs import tourney, name_replacements
+
+load_dotenv()
+
+# ── Gates ──────────────────────────────────────────────────────────────
+MIN_RAW_EDGE_PP = 0.5      # percentage points
+MIN_KELLY_F = 0.08         # full-Kelly fraction
+
+# Per-level allocation (3 levels per market+side: near_ask, mid, bid).
+# Outrights stay flat-33 until the portfolio-Kelly solver (kelly_solver.py)
+# is wired in. Matchups stay flat-500 regardless — they're out of scope
+# for the Kelly solver per design discussion.
+LEVEL_CONTRACTS = 33               # outright: top_5/top_10/top_20/winner
+MATCHUP_LEVEL_CONTRACTS = 500      # H2H matchups
+MATCHUP_MIN_EDGE_PP = 5.0          # matchup-specific raw-edge gate (no Kelly gate)
+MATCHUP_SERIES = "KXPGAH2H"
+
+# Pre-tournament fallback for matchup final_scores. Off by default — mid-event
+# we want to refuse stale pre-tournament probs rather than silently mispricing.
+# Set True via --allow-pre-matchup when running the maker before R1 begins.
+_allow_pre_matchup_fallback = False
+
+# Tick handling: Kalshi markets carry a `price_ranges` field with per-price
+# tick sizes (e.g. winner markets use 0.1¢ ticks above 90¢ and below 10¢, but
+# 1¢ ticks in the middle). All tick math is per-market — never a global
+# default — so we don't lose precision near the bounds.
+DEFAULT_TICK = 0.01        # fallback only if a market doesn't report ranges
+
+# ── Kalshi public API (no auth) ────────────────────────────────────────
+KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+OUTRIGHT_SERIES = {
+    "KXPGATOP5": "top_5",
+    "KXPGATOP10": "top_10",
+    "KXPGATOP20": "top_20",
+    "KXPGATOUR": "winner",
+}
+
+# ── Golf scope guard ──────────────────────────────────────────────────
+# Hard invariant: this script must NEVER touch a Kalshi order outside golf.
+# Every code path that lists, cancels, or posts orders runs each ticker
+# through _is_golf_ticker() and skips non-matches. Update this prefix tuple
+# if Kalshi ever adds a new PGA series ticker (e.g. KXPGAMU for matchups).
+GOLF_TICKER_PREFIXES = ("KXPGA",)
+
+
+def _is_golf_ticker(ticker):
+    return isinstance(ticker, str) and ticker.startswith(GOLF_TICKER_PREFIXES)
+
+_client = httpx.Client(timeout=15.0, headers={"Accept": "application/json"})
+
+# Throttle between authenticated calls (kalshi allows ~10/sec sustained)
+_AUTH_SLEEP = 0.12
+
+
+def _authed_request(method, path, json_body=None):
+    """Sign + execute an authenticated request. Path includes query string."""
+    from kalshi_auth import sign_headers
+    headers = dict(_client.headers)
+    headers.update(sign_headers(method, path))
+    if json_body is not None:
+        headers["Content-Type"] = "application/json"
+    url = f"https://api.elections.kalshi.com{path}"
+    r = _client.request(method, url, headers=headers, json=json_body)
+    time.sleep(_AUTH_SLEEP)
+    return r
+
+
+def _get_markets(series_ticker):
+    out, cursor = [], None
+    while True:
+        params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
+        if cursor:
+            params["cursor"] = cursor
+        r = _client.get(f"{KALSHI_API}/markets", params=params)
+        r.raise_for_status()
+        data = r.json()
+        mkts = data.get("markets", [])
+        out.extend(mkts)
+        cursor = data.get("cursor")
+        if not cursor or len(mkts) < 200:
+            break
+    return out
+
+
+# ── Tournament filter (mirrors new_sim.py logic) ───────────────────────
+_GENERIC = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
+            "open", "classic", "invitational", "cup", "pga", "tour"}
+
+
+def _detect_tourney(title):
+    m = re.search(r"(?:at|in|win) the (.+?)\?", title)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"(.+?):\s*Will", title)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def _build_target_matcher():
+    all_words = {w for w in re.split(r"[\s_]+", tourney.lower()) if w}
+    distinct = all_words - _GENERIC
+
+    def matches(t):
+        tl = t.lower()
+        if distinct:
+            return any(w in tl for w in distinct)
+        return all(w in tl for w in all_words)
+
+    return matches
+
+
+def _extract_player(title):
+    m = re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"Will (.+?) win the ", title)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def _extract_matchup(title):
+    """Parse 'Will <player> beat <opponent> in the <event>?' titles.
+    Returns (player_raw, opponent_raw) or ("", "")."""
+    m = re.match(r"Will (.+?) beat (.+?) in the", title)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", ""
+
+
+def _norm(s):
+    x = s.strip().lower()
+    if "," not in x:
+        parts = x.rsplit(" ", 1)
+        if len(parts) == 2:
+            x = f"{parts[1]}, {parts[0]}"
+    return name_replacements.get(x, x)
+
+
+# ── Sim probability load ───────────────────────────────────────────────
+def load_sim_probs():
+    # Prefer the live (post-round) rank probs from round_sim.py when present.
+    # Fall back to the full-tournament sim from new_sim.py.
+    live_path = f"rank_probs_live_{tourney}.parquet"
+    pre_path = f"rank_probs_updated_{tourney}.parquet"
+    if os.path.exists(live_path):
+        rp_path = live_path
+        source = "live"
+    elif os.path.exists(pre_path):
+        rp_path = pre_path
+        source = "pre"
+    else:
+        raise FileNotFoundError(
+            f"Missing both {live_path} and {pre_path}. "
+            "Run round_sim.py (mid-event) or new_sim.py (pre-event) first."
+        )
+    print(f"  [probs] loading outright probs from {rp_path} (source={source})")
+    rp = pd.read_parquet(rp_path)
+    # Column-name reconciliation between the two writers:
+    #   new_sim.py        writes BOTH `prob_u` (dead-heat) and `prob_ndh` (no-dead-heat).
+    #   round_sim.py      writes only `prob_u`, but its `prob_u` is actually
+    #                     computed with rank(method='min') — i.e. ties share the
+    #                     min rank, no fractional credit. Semantically that's
+    #                     the no-dead-heat number that Kalshi top-N markets
+    #                     settle on (ties all count as inside). So when only
+    #                     `prob_u` is present we use it in place of `prob_ndh`.
+    if "prob_ndh" in rp.columns:
+        prob_col = "prob_ndh"
+    elif "prob_u" in rp.columns:
+        prob_col = "prob_u"
+        print(f"  [probs] note: {rp_path} has no prob_ndh column — using prob_u "
+              f"(round_sim.py's prob_u is computed with rank='min', semantically "
+              f"the no-dead-heat number Kalshi resolves on).")
+    else:
+        raise KeyError(f"{rp_path} has neither prob_ndh nor prob_u: cols={list(rp.columns)}")
+    probs = rp.groupby("player_name").apply(
+        lambda g: pd.Series({
+            "top_5": g.loc[g["rank"] <= 5, prob_col].sum(),
+            "top_10": g.loc[g["rank"] <= 10, prob_col].sum(),
+            "top_20": g.loc[g["rank"] <= 20, prob_col].sum(),
+            "winner": g.loc[g["rank"] == 1, prob_col].sum(),
+        }),
+        include_groups=False,
+    ).reset_index()
+    # winner: new_sim/round_sim use simulated_win_prob (DH-resolved) — load if present.
+    # Prefer live finish_equity when we loaded live rank probs.
+    fe_path = (f"finish_equity_live_{tourney}.csv" if source == "live"
+               else f"finish_equity_{tourney}.csv")
+    if not os.path.exists(fe_path):
+        fe_path = f"finish_equity_{tourney}.csv"
+    if os.path.exists(fe_path):
+        fe = pd.read_csv(fe_path)
+        if "simulated_win_prob" in fe.columns:
+            probs = probs.merge(
+                fe[["player_name", "simulated_win_prob"]], on="player_name", how="left"
+            )
+            probs["winner"] = probs["simulated_win_prob"].fillna(probs["winner"])
+            probs = probs.drop(columns=["simulated_win_prob"])
+    return probs
+
+
+def load_matchup_sim_data(allow_pre_fallback=False):
+    """Load final_scores + player_names so we can compute P(p1 beats p2) on
+    demand for any H2H matchup.
+
+    Prefers the live post-round final_scores written by round_sim.py
+    (`final_scores_live_{tourney}.npy`). If absent, returns (None, None) so
+    matchups get skipped — falling back to the pre-tournament
+    `pga_c/final_scores.npy` mid-event would produce stale prices, which is
+    worse than no proposal. Pass allow_pre_fallback=True to override (e.g.
+    when running the maker pre-tournament before any round has finished).
+    """
+    import json as _json
+    live_fs = f"final_scores_live_{tourney}.npy"
+    pre_fs = os.path.join(".", tourney, "final_scores.npy")
+    pn_path = os.path.join(".", tourney, "player_names.json")
+
+    if os.path.exists(live_fs) and os.path.exists(pn_path):
+        print(f"    [matchups] using live final_scores: {live_fs}")
+        final_scores = np.load(live_fs)
+        with open(pn_path) as f:
+            player_names = _json.load(f)
+        return final_scores, player_names
+
+    if allow_pre_fallback and os.path.exists(pre_fs) and os.path.exists(pn_path):
+        print(f"    [matchups] using PRE-TOURNAMENT final_scores: {pre_fs} "
+              f"(allow_pre_fallback=True)")
+        final_scores = np.load(pre_fs)
+        with open(pn_path) as f:
+            player_names = _json.load(f)
+        return final_scores, player_names
+
+    return None, None
+
+
+def matchup_sim_prob(p1, p2, final_scores, name_to_idx):
+    """P(p1 beats p2) from final_scores, ties pushed (matches new_sim.py)."""
+    i1 = name_to_idx.get(p1)
+    i2 = name_to_idx.get(p2)
+    if i1 is None or i2 is None:
+        return None
+    s1 = final_scores[i1]
+    s2 = final_scores[i2]
+    wins = int(np.sum(s1 < s2))   # lower score wins in golf
+    losses = int(np.sum(s1 > s2))
+    denom = wins + losses
+    return wins / denom if denom > 0 else None
+
+
+# ── Post-price + Kelly math ────────────────────────────────────────────
+def _parse_price_ranges(market):
+    """Return a list of (start, end, step) floats, sorted by start. Falls
+    back to a single 0¢→100¢ range with DEFAULT_TICK if the market lacks
+    price_ranges (shouldn't happen on golf markets, but defensive)."""
+    raw = market.get("price_ranges") or []
+    out = []
+    for r in raw:
+        try:
+            out.append((float(r["start"]), float(r["end"]), float(r["step"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not out:
+        return [(0.0, 1.0, DEFAULT_TICK)]
+    return sorted(out, key=lambda x: x[0])
+
+
+def _tick_at(price_ranges, price):
+    """Tick size at this price level, using the market's price_ranges."""
+    for start, end, step in price_ranges:
+        # Use a tiny tolerance on the upper bound — ranges are usually
+        # exclusive on `end`, so 0.0999 falls in [0,0.1) and 0.1 in [0.1,0.9)
+        if start <= price < end + 1e-9:
+            return step
+    return price_ranges[-1][2] if price_ranges else DEFAULT_TICK
+
+
+def _floor_to_tick(price, tick):
+    """Floor a price down to the nearest valid tick. The +1e-9 absorbs
+    binary-float drift so 0.99 doesn't accidentally floor to 0.98 when
+    tick=0.01."""
+    return math.floor(price / tick + 1e-9) * tick
+
+
+def _round_to_tick(price, tick):
+    """Round to nearest valid tick (used for canonicalizing prices in
+    client_order_id and the resting-order dedup key)."""
+    return round(round(price / tick) * tick, 6)
+
+
+def _maker_intent(yes_bid, yes_ask, sim_yes, price_ranges):
+    """Return a list of intent dicts, one per (side, post_type) that passes
+    the no-cross safety check.
+
+    Three post_type levels per side, in order of decreasing aggressiveness:
+        "near_ask" → 1 tick below best ask. Most likely to fill; thinnest
+                     edge per contract. Front of the new bid queue.
+        "mid"      → floor(midpoint, tick), capped at ask − tick.
+                     Price-improving when the spread is wide enough.
+        "bid"      → join the current best bid queue. Cheapest entry;
+                     fills only if someone hits the bid stack down to us.
+
+    All three are filled at LEVEL_CONTRACTS contracts each, so a wide
+    market with all three passing the gate deploys 3 × LEVEL_CONTRACTS on
+    that side. Tight markets where the levels collapse (e.g. ask = bid + 1
+    tick) dedup down to a single order via first-seen wins.
+
+    Tick size is read per-side from `price_ranges` at the relevant post
+    price level — winner markets use 0.1¢ ticks above 90¢ and below 10¢.
+
+    Posts are always strictly below the opposite ask, so no cross risk.
+    """
+    yes_mid = (yes_bid + yes_ask) / 2.0
+    no_bid = 1.0 - yes_ask
+    no_ask = 1.0 - yes_bid
+    no_mid = (no_bid + no_ask) / 2.0
+
+    out = []
+    for side, p_mid, p_ask, p_bid, sim_p in [
+        ("yes", yes_mid, yes_ask, yes_bid, sim_yes),
+        ("no", no_mid, no_ask, no_bid, 1.0 - sim_yes),
+    ]:
+        # The tick is set by the post side's own price level. Use the mid
+        # as the reference — other posts will usually fall in the same range.
+        tick = _tick_at(price_ranges, p_mid)
+
+        # near_ask: 1 tick below best ask (most aggressive maker, won't cross)
+        near_ask_post = round(p_ask - tick, 6)
+        # mid: floor(midpoint, tick), capped at ask − tick
+        mid_post = _floor_to_tick(p_mid, tick)
+        mid_post = min(mid_post, near_ask_post)
+        # bid: join the current best bid queue
+        bid_post = _round_to_tick(p_bid, tick)
+
+        # Iterate highest price first. On a price collision (tight market),
+        # first-seen wins so the more aggressive level keeps its label.
+        seen = set()
+        for post_type, post in (
+            ("near_ask", near_ask_post),
+            ("mid", mid_post),
+            ("bid", bid_post),
+        ):
+            post_r = round(post, 6)
+            if post_r <= 0 or post_r >= round(p_ask, 6):
+                continue
+            if post_r in seen:
+                continue
+            seen.add(post_r)
+            edge_pp = (sim_p - post_r) * 100
+            kelly_f = (sim_p - post_r) / (1.0 - post_r) if post_r < 1.0 else 0.0
+            out.append({
+                "side": side,
+                "post_type": post_type,
+                "best_bid": p_bid,
+                "best_ask": p_ask,
+                "mid": p_mid,
+                "post_price": post_r,
+                "tick": tick,
+                "sim_prob": sim_p,
+                "edge_pp": edge_pp,
+                "kelly_f": kelly_f,
+                # `contracts` is intentionally not set here — caller (scan
+                # for outrights, scan_matchups for matchups) assigns size
+                # based on its own sizing rule (Kelly vs flat).
+            })
+    return out
+
+
+# ── Authenticated trading helpers ──────────────────────────────────────
+# All client_order_ids placed by this script start with this marker. Used
+# to distinguish our orders from manual hand-clicks (which have an empty
+# client_order_id) — manual orders are NEVER auto-cancelled.
+SCRIPT_ORDER_PREFIX = "smk_"
+
+
+def _client_order_id(ticker, side, post_price_dollars):
+    """Deterministic per-(ticker,side,price), prefixed so we can recognize
+    our own orders when reconciling. Kalshi rejects duplicate
+    client_order_ids, so this gives us idempotency for free even if the
+    reconciliation step misses an in-flight order.
+
+    Uses milli-dollar precision (e.g. 0.995 → 995) so two different
+    sub-cent posts (99.5¢ vs 99.6¢) don't hash to the same id.
+    """
+    milli = int(round(post_price_dollars * 1000))
+    raw = f"sims_maker|{ticker}|{side}|{milli}"
+    h = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    # 4-char prefix + 28-char hex = 32 chars total (within Kalshi's limit)
+    return SCRIPT_ORDER_PREFIX + h[:28]
+
+
+def _is_script_order(o):
+    """True if this resting order was placed by this script."""
+    return str(o.get("client_order_id", "")).startswith(SCRIPT_ORDER_PREFIX)
+
+
+def list_resting_orders(golf_only=True):
+    """Resting orders for our key. Paginates.
+
+    By default returns ONLY golf-series orders (KXPGA-prefixed tickers).
+    Pass golf_only=False for diagnostic dumps that include other markets.
+    """
+    out, cursor = [], None
+    while True:
+        path = "/trade-api/v2/portfolio/orders?status=resting&limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        r = _authed_request("GET", path)
+        r.raise_for_status()
+        data = r.json()
+        out.extend(data.get("orders", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    if golf_only:
+        out = [o for o in out if _is_golf_ticker(o.get("ticker", ""))]
+    return out
+
+
+def _resting_key(o):
+    """(ticker, side, milli_dollars) — the dedup grain for reconciliation.
+
+    Kalshi returns prices as decimal-dollar strings ("0.6700" = 67¢) under
+    `yes_price_dollars` / `no_price_dollars`. We store as integer
+    milli-dollars (0.995 → 995) so sub-cent levels stay distinct.
+    """
+    side = o.get("side", "")
+    if side == "yes":
+        raw = o.get("yes_price_dollars") or o.get("yes_price") or 0
+    else:
+        raw = o.get("no_price_dollars") or o.get("no_price") or 0
+    try:
+        milli = int(round(float(raw) * 1000))
+    except (TypeError, ValueError):
+        milli = 0
+    return (o.get("ticker", ""), side, milli)
+
+
+def _resting_count(o):
+    """Remaining contracts on a resting order."""
+    raw = o.get("remaining_count_fp") or o.get("remaining_count") or 0
+    try:
+        return int(round(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def cancel_order(order_id, ticker, reason=""):
+    """Cancel a single order. ENFORCES golf-scope at the API boundary —
+    raises if the ticker isn't a golf series ticker. Every caller passes
+    the order's ticker so this assertion can't be skipped by accident.
+    """
+    if not _is_golf_ticker(ticker):
+        raise RuntimeError(
+            f"REFUSING to cancel non-golf order: ticker={ticker!r} id={order_id}"
+        )
+    path = f"/trade-api/v2/portfolio/orders/{order_id}"
+    r = _authed_request("DELETE", path)
+    ok = 200 <= r.status_code < 300
+    tag = f" ({reason})" if reason else ""
+    print(f"  [cancel] {order_id} {ticker} status={r.status_code}{tag}")
+    if not ok:
+        print(f"  [cancel] body: {r.text[:200]}")
+    return ok
+
+
+def post_limit(ticker, side, price_dollars, count, expiration_ts=None):
+    """POST a single resting limit order. Re-fetches the orderbook FIRST and
+    re-asserts no-cross against the live ask. Returns (ok, order_id_or_err).
+
+    `price_dollars` is the full-precision post price (e.g. 0.995 for 99.5¢
+    on a deci-cent market). The exact field name Kalshi expects for sub-cent
+    prices is verified before phase-2 goes live — see SUB_CENT_POST_NOTE.
+
+    `expiration_ts` is an optional Unix timestamp in seconds. When provided,
+    Kalshi auto-cancels any unfilled remainder at that wall-clock time. Per
+    Kalshi docs, the field must be paired with time_in_force=good_till_canceled
+    (omitting expiration_ts under GTC = true unlimited GTC, the prior default).
+    """
+    if not _is_golf_ticker(ticker):
+        print(f"  [skip] {ticker} non-golf ticker — refusing")
+        return (False, f"REFUSING to post non-golf ticker: {ticker!r}")
+    # Live re-validate — orderbook may have moved since scan
+    try:
+        ob_path = f"/trade-api/v2/markets/{ticker}/orderbook"
+        r_ob = _client.get(f"https://api.elections.kalshi.com{ob_path}")
+        r_ob.raise_for_status()
+        ob_resp = r_ob.json()
+        # Kalshi wraps levels under `orderbook_fp` (floating-point variant)
+        # in the v2 API; fall back to legacy `orderbook` or flat shapes.
+        ob = ob_resp.get("orderbook_fp") or ob_resp.get("orderbook") or ob_resp
+        yes_levels = ob.get("yes_dollars") or ob.get("yes", [])
+        no_levels = ob.get("no_dollars") or ob.get("no", [])
+        def _best(levels):
+            return max((float(p) for p, _ in levels), default=None) if levels else None
+        best_yes_bid = _best(yes_levels)
+        best_no_bid = _best(no_levels)
+        if best_yes_bid is not None and best_yes_bid > 1:
+            best_yes_bid /= 100.0
+        if best_no_bid is not None and best_no_bid > 1:
+            best_no_bid /= 100.0
+        if side == "yes":
+            live_ask = (1.0 - best_no_bid) if best_no_bid is not None else None
+        else:
+            live_ask = (1.0 - best_yes_bid) if best_yes_bid is not None else None
+        if live_ask is None:
+            print(f"  [skip] {ticker} {side.upper()} — could not derive live ask. "
+                  f"orderbook keys={list(ob.keys())} "
+                  f"yes_levels={yes_levels[:2]} no_levels={no_levels[:2]}")
+            return (False, "no orderbook")
+        if price_dollars >= live_ask - 1e-9:
+            print(f"  [skip] {ticker} {side.upper()} @{price_dollars*100:.1f}c "
+                  f"would cross live_ask={live_ask*100:.1f}c — book moved since scan")
+            return (False, f"would cross: post={price_dollars:.4f} ask={live_ask:.4f}")
+    except Exception as e:
+        print(f"  [skip] {ticker} prevalidate exception: {e}")
+        return (False, f"prevalidate failed: {e}")
+
+    # Always use the `_dollars` decimal-string field. Kalshi accepts it for
+    # both whole-cent and deci-cent markets (the integer `yes_price` /
+    # `no_price` fields only support whole cents 1-99 and would be rejected
+    # on sub-cent markets). Per Kalshi spec, provide exactly one of the
+    # four price fields per order — never mix.
+    # Source: https://docs.kalshi.com/api-reference/orders/create-order
+    body = {
+        "ticker": ticker,
+        "client_order_id": _client_order_id(ticker, side, price_dollars),
+        "type": "limit",
+        "action": "buy",
+        "side": side,
+        "count": int(count),
+        f"{side}_price_dollars": f"{price_dollars:.4f}",
+    }
+    if expiration_ts is not None:
+        body["time_in_force"] = "good_till_canceled"
+        body["expiration_ts"] = int(expiration_ts)
+
+    r = _authed_request("POST", "/trade-api/v2/portfolio/orders", json_body=body)
+    if 200 <= r.status_code < 300:
+        oid = r.json().get("order", {}).get("order_id", "?")
+        exp_tag = f"  expires={int(expiration_ts)}" if expiration_ts is not None else ""
+        print(f"  [post] {ticker} {side.upper()} @{price_dollars*100:.1f}c x {count} "
+              f"-> order_id={oid}  live_ask={live_ask*100:.1f}c{exp_tag}")
+        return (True, oid)
+    print(f"  [post-fail] {ticker} {side.upper()} @{price_dollars*100:.1f}c "
+          f"status={r.status_code} body={r.text[:200]}")
+    return (False, r.text)
+
+
+def reconcile_and_post(candidates):
+    """1. List resting golf orders, split into script-placed vs manual.
+    2. Auto-cancel SCRIPT orders whose (ticker, side, price) is NOT in the
+       fresh candidate set. Manual orders are NEVER auto-cancelled.
+    3. Skip candidates already resting at the exact same price (whether
+       from this script or a manual hand-click — avoids double-posting on
+       the same price level).
+    4. Re-validate + POST the rest.
+    """
+    print("\n[live] reconciling against resting orders…")
+    resting = list_resting_orders(golf_only=True)
+    script_orders = [o for o in resting if _is_script_order(o)]
+    manual_orders = [o for o in resting if not _is_script_order(o)]
+    print(f"  Found {len(resting)} golf resting order(s): "
+          f"{len(script_orders)} script-placed, {len(manual_orders)} manual")
+
+    # Candidate key uses milli-dollar precision to match _resting_key, so
+    # sub-cent levels stay distinct.
+    candidate_keys = {(c["ticker"], c["side"], int(round(c["post_price"] * 1000)))
+                      for c in candidates}
+
+    # ── 1. Auto-cancel stale SCRIPT orders (manual orders are immune) ───
+    stale = [o for o in script_orders if _resting_key(o) not in candidate_keys]
+    if stale:
+        print(f"  Cancelling {len(stale)} stale script order(s)…")
+        for o in stale:
+            cancel_order(o.get("order_id"), o.get("ticker", ""),
+                         reason=f"{o.get('ticker')} {o.get('side')} "
+                                f"@{_resting_key(o)[2]}c")
+    else:
+        print("  No stale script orders to cancel.")
+    if manual_orders:
+        print(f"  (Manual orders left alone: "
+              f"{', '.join(o.get('ticker','?') for o in manual_orders[:5])}"
+              f"{'…' if len(manual_orders) > 5 else ''})")
+
+    # ── 2. Skip candidates already on the book at the same price.
+    # Use ALL resting (script + manual) for the dedup so we never put a
+    # duplicate order on top of one of your hand-clicks. ─────────────────
+    still_resting = [o for o in resting if o not in stale]
+    already = {_resting_key(o) for o in still_resting}
+    to_post = [c for c in candidates
+               if (c["ticker"], c["side"], int(round(c["post_price"] * 1000))) not in already]
+    skipped = len(candidates) - len(to_post)
+    if skipped:
+        print(f"  Skipping {skipped} candidate(s) already resting at target price")
+
+    # ── 3. POST new ones (re-validate happens inside post_limit) ────────
+    print(f"  Posting {len(to_post)} new order(s)…")
+    n_ok = n_fail = 0
+    for c in to_post:
+        ok, _ = post_limit(c["ticker"], c["side"], c["post_price"], c["contracts"])
+        n_ok += int(ok)
+        n_fail += int(not ok)
+    print(f"\n[live] posted={n_ok}  failed={n_fail}  cancelled={len(stale)}")
+
+
+def cancel_all():
+    """--cancel-all entry point: PANIC BUTTON — cancel every golf order,
+    including manual hand-clicks. Non-golf orders never touched.
+    """
+    all_orders = list_resting_orders(golf_only=False)
+    golf = [o for o in all_orders if _is_golf_ticker(o.get("ticker", ""))]
+    non_golf = len(all_orders) - len(golf)
+    script_count = sum(1 for o in golf if _is_script_order(o))
+    manual_count = len(golf) - script_count
+    print(f"[cancel-all] PANIC: cancelling all {len(golf)} golf order(s) "
+          f"({script_count} script, {manual_count} manual). "
+          f"{non_golf} non-golf order(s) untouched.")
+    for o in golf:
+        cancel_order(o.get("order_id"), o.get("ticker", ""),
+                     reason=f"{o.get('ticker')} {o.get('side')} "
+                            f"@{_resting_key(o)[2]}c")
+
+
+def list_orders_smoke():
+    """--list-orders entry point: pure GET, no DELETE. Auth smoke test."""
+    print("[list-orders] GET /portfolio/orders?status=resting (no side effects)")
+    all_orders = list_resting_orders(golf_only=False)
+    golf = [o for o in all_orders if _is_golf_ticker(o.get("ticker", ""))]
+    other = [o for o in all_orders if not _is_golf_ticker(o.get("ticker", ""))]
+    script_golf = [o for o in golf if _is_script_order(o)]
+    manual_golf = [o for o in golf if not _is_script_order(o)]
+    print(f"  Total resting orders on account: {len(all_orders)}")
+    print(f"    golf in scope:    {len(golf)} "
+          f"({len(script_golf)} script-placed, {len(manual_golf)} manual)")
+    print(f"    non-golf (immune): {len(other)}")
+    print(f"  Under --live, auto-cancel would consider only script-placed orders.")
+    if all_orders:
+        print("\n  Sample (up to 10):")
+        for o in all_orders[:10]:
+            if _is_golf_ticker(o.get("ticker", "")):
+                scope = "scr" if _is_script_order(o) else "man"
+            else:
+                scope = "OTH"
+            _, side, milli = _resting_key(o)
+            count = _resting_count(o)
+            print(f"    [{scope:>3}] {o.get('ticker', '?'):<32} "
+                  f"{side:<3} @{milli/10:.1f}c × {count}")
+
+
+# ── H2H matchup scan ──────────────────────────────────────────────────
+def scan_matchups():
+    """Scan KXPGAH2H matchup markets for maker candidates.
+
+    Gates differ from outright scan:
+      - raw edge >= MATCHUP_MIN_EDGE_PP (default 5pp), no Kelly gate
+      - level size = MATCHUP_LEVEL_CONTRACTS (default 500) per intent
+
+    Uses the same 3-level intent structure (near_ask/mid/bid) and the
+    same no-cross safety as outrights.
+    """
+    final_scores, player_names = load_matchup_sim_data(
+        allow_pre_fallback=_allow_pre_matchup_fallback
+    )
+    if final_scores is None:
+        live_fs = f"final_scores_live_{tourney}.npy"
+        print(f"    [matchups] no live final_scores at {live_fs} — skipping. "
+              f"round_sim.py must persist final_scores_live_{{tourney}}.npy "
+              f"to enable mid-event matchup pricing. "
+              f"(Use --allow-pre-matchup pre-tournament only.)")
+        return []
+    name_to_idx = {p: i for i, p in enumerate(player_names)}
+
+    try:
+        all_mkts = _get_markets(MATCHUP_SERIES)
+    except Exception as e:
+        print(f"    [matchups] fetch failed: {e}")
+        return []
+    print(f"    Fetched {len(all_mkts)} H2H markets")
+
+    matches_target = _build_target_matcher()
+    tourn_counts = Counter()
+    for m in all_mkts:
+        t = _detect_tourney(m.get("title", ""))
+        if t:
+            tourn_counts[t] += 1
+    if tourn_counts:
+        matched_titles = {t.lower() for t in tourn_counts if matches_target(t)}
+        if matched_titles:
+            all_mkts = [m for m in all_mkts
+                        if _detect_tourney(m.get("title", "")).lower() in matched_titles
+                        or _detect_tourney(m.get("title", "")) == ""]
+            print(f"    Filtered to tourney={tourney}: {len(all_mkts)} markets")
+
+    candidates = []
+    skipped_name = 0
+    for m in all_mkts:
+        ticker = m.get("ticker", "")
+        title = m.get("title", "")
+        bid = float(m.get("yes_bid_dollars") or 0)
+        ask = float(m.get("yes_ask_dollars") or 0)
+        if bid == 0 and ask == 0:
+            bid = float(m.get("yes_bid", 0) or 0) / 100.0
+            ask = float(m.get("yes_ask", 0) or 0) / 100.0
+        if bid <= 0 or ask <= 0:
+            continue
+
+        player_raw, opp_raw = _extract_matchup(title)
+        if not player_raw or not opp_raw:
+            continue
+        player = _norm(player_raw)
+        opp = _norm(opp_raw)
+        sim_yes = matchup_sim_prob(player, opp, final_scores, name_to_idx)
+        if sim_yes is None or sim_yes <= 0:
+            skipped_name += 1
+            continue
+
+        price_ranges = _parse_price_ranges(m)
+        for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
+            if intent["edge_pp"] < MATCHUP_MIN_EDGE_PP:
+                continue
+            assert intent["post_price"] < intent["best_ask"], (
+                f"SAFETY: post {intent['post_price']} >= ask {intent['best_ask']}"
+            )
+            # Matchups: flat sizing (user spec — leave flat-staked for now).
+            intent["contracts"] = MATCHUP_LEVEL_CONTRACTS
+            # Compact "player v opponent" using last names only; full player
+            # name is preserved in the underlying ticker for reconciliation.
+            display = f"{player.split(',')[0]} v {opp.split(',')[0]}"
+            candidates.append({
+                "ticker": ticker,
+                "title": title,
+                "player": display,
+                "market": "h2h",
+                **intent,
+            })
+
+    if skipped_name:
+        print(f"    [matchups] {skipped_name} sides skipped — player name "
+              f"not in sim's player_names")
+    return candidates
+
+
+# ── Main scan ──────────────────────────────────────────────────────────
+def scan():
+    print(f"[maker] tourney={tourney}  raw_edge>={MIN_RAW_EDGE_PP}pp  "
+          f"kelly_f>={MIN_KELLY_F}  contracts_per_level={LEVEL_CONTRACTS} "
+          f"(near_ask/mid/bid)")
+    probs = load_sim_probs()
+    prob_lookup = probs.set_index("player_name").to_dict("index")
+    print(f"  Loaded sim probs for {len(prob_lookup)} players from "
+          f"rank_probs_updated_{tourney}.parquet")
+
+    all_mkts = []
+    for series, mtype in OUTRIGHT_SERIES.items():
+        try:
+            mkts = _get_markets(series)
+            for m in mkts:
+                m["_market_type"] = mtype
+            all_mkts.extend(mkts)
+        except Exception as e:
+            print(f"  [warn] fetch {series} failed: {e}")
+    print(f"  Fetched {len(all_mkts)} Kalshi markets")
+
+    matches_target = _build_target_matcher()
+    tourn_counts = Counter()
+    for m in all_mkts:
+        t = _detect_tourney(m.get("title", ""))
+        if t:
+            tourn_counts[t] += 1
+    if tourn_counts:
+        matched_titles = {t.lower() for t in tourn_counts if matches_target(t)}
+        if matched_titles:
+            all_mkts = [m for m in all_mkts
+                        if _detect_tourney(m.get("title", "")).lower() in matched_titles
+                        or _detect_tourney(m.get("title", "")) == ""]
+            print(f"  Filtered to tourney={tourney}: {len(all_mkts)} markets")
+        else:
+            print(f"  [warn] no tourney match for '{tourney}'; using all")
+
+    candidates = []
+    for m in all_mkts:
+        ticker = m.get("ticker", "")
+        title = m.get("title", "")
+        mtype = m.get("_market_type", "")
+        bid = float(m.get("yes_bid_dollars") or 0)
+        ask = float(m.get("yes_ask_dollars") or 0)
+        if bid == 0 and ask == 0:
+            bid = float(m.get("yes_bid", 0) or 0) / 100.0
+            ask = float(m.get("yes_ask", 0) or 0) / 100.0
+        if bid <= 0 or ask <= 0:
+            continue
+        player_raw = _extract_player(title)
+        if not player_raw:
+            continue
+        player = _norm(player_raw)
+        rec = prob_lookup.get(player)
+        if rec is None or mtype not in rec:
+            continue
+        sim_yes = float(rec[mtype])
+        if sim_yes <= 0:
+            continue
+        price_ranges = _parse_price_ranges(m)
+
+        for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
+            if intent["edge_pp"] < MIN_RAW_EDGE_PP:
+                continue
+            if intent["kelly_f"] < MIN_KELLY_F:
+                continue
+            # Hard safety check — never enter the candidate set if cross-risk
+            assert intent["post_price"] < intent["best_ask"], (
+                f"SAFETY: post {intent['post_price']} >= ask {intent['best_ask']}"
+            )
+            # Outrights: flat-sized per level until kelly_solver is wired.
+            intent["contracts"] = LEVEL_CONTRACTS
+            candidates.append({
+                "ticker": ticker,
+                "title": title,
+                "player": player,
+                "market": mtype,
+                **intent,
+            })
+
+    # ── Append H2H matchup candidates (different gates + size). ─────────
+    print("\n  [matchups] fetching H2H markets...")
+    matchup_cands = scan_matchups()
+    candidates.extend(matchup_cands)
+    print(f"  [matchups] {len(matchup_cands)} candidate(s) added "
+          f"(edge>={MATCHUP_MIN_EDGE_PP}pp, contracts={MATCHUP_LEVEL_CONTRACTS}/level)")
+
+    candidates.sort(key=lambda r: r["edge_pp"], reverse=True)
+
+    if not candidates:
+        print("  No mid-maker candidates pass the gate.")
+        return candidates, prob_lookup
+
+    print(f"\n  {len(candidates)} candidate(s):")
+    hdr = (f"{'ticker':<28} {'player':<22} {'mkt':<7} {'side':<4} "
+           f"{'type':<8} {'bid':>6} {'ask':>6} {'mid':>6} {'post':>6} "
+           f"{'tick':>5} {'sim':>6} {'edge':>5} {'kelly':>6} {'qty':>4}  vs-ask")
+    print("  " + hdr)
+    print("  " + "-" * len(hdr))
+    for c in candidates:
+        tick_str = f"{c['tick']*100:.1f}c"
+        print(f"  {c['ticker']:<28} {c['player'][:22]:<22} "
+              f"{c['market']:<7} {c['side']:<4} {c['post_type']:<8} "
+              f"{c['best_bid']*100:>5.1f}c {c['best_ask']*100:>5.1f}c "
+              f"{c['mid']*100:>5.2f}c {c['post_price']*100:>5.1f}c "
+              f"{tick_str:>5} "
+              f"{c['sim_prob']*100:>5.1f}c {c['edge_pp']:>4.1f}% "
+              f"{c['kelly_f']*100:>5.1f}% {c['contracts']:>4d}  "
+              f"safe (-{(c['best_ask']-c['post_price'])*100:.1f}c)")
+    return candidates, prob_lookup
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--live", action="store_true",
+                    help="Actually post orders (default is dry-run print only)")
+    ap.add_argument("--cancel-all", action="store_true",
+                    help="Cancel every resting GOLF order owned by our key, then exit. "
+                         "Non-golf orders are NEVER touched.")
+    ap.add_argument("--list-orders", action="store_true",
+                    help="Pure-GET auth smoke test. Lists resting orders with golf vs "
+                         "non-golf breakdown, no DELETE or POST. Then exits.")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="Cap to top N candidates ranked by Kelly fraction desc. "
+                         "Applies to both dry-run print and --live POSTs.")
+    ap.add_argument("--preview", action="store_true",
+                    help="Run scan, write proposals to permanent_data/maker_proposals.parquet, "
+                         "and exit. No POSTs. Used by the maker_dashboard for "
+                         "human review + edit before sending.")
+    ap.add_argument("--allow-pre-matchup", action="store_true",
+                    help="Allow matchup scan to fall back to pre-tournament final_scores.npy "
+                         "when no live final_scores file exists. ONLY safe pre-R1 — using stale "
+                         "pre-tournament matchup probs mid-event will systematically mispice.")
+    args = ap.parse_args()
+    # Note: at module level, __main__ assignments are module-scoped (no function
+    # frame), so this correctly mutates the module global used by scan_matchups.
+    _allow_pre_matchup_fallback = bool(args.allow_pre_matchup)
+
+    t0 = time.time()
+    if args.list_orders:
+        list_orders_smoke()
+        _client.close()
+        sys.exit(0)
+    if args.cancel_all:
+        cancel_all()
+        _client.close()
+        sys.exit(0)
+
+    cands, prob_lookup = scan()
+    if args.limit is not None and cands:
+        before = len(cands)
+        cands = sorted(cands, key=lambda c: c["kelly_f"], reverse=True)[:args.limit]
+        print(f"\n[limit] kept top {len(cands)} of {before} candidates "
+              f"(sorted by Kelly fraction desc):")
+        for c in cands:
+            print(f"  {c['ticker']:<28} {c['player'][:22]:<22} "
+                  f"{c['market']:<7} {c['side']:<4} {c['post_type']:<8} "
+                  f"post={c['post_price']*100:>5.1f}c "
+                  f"(tick={c['tick']*100:.1f}c)  "
+                  f"edge={c['edge_pp']:>4.1f}%  kelly={c['kelly_f']*100:>5.1f}%  "
+                  f"qty={c['contracts']}")
+    if args.preview:
+        import datetime as _dt
+        out_path = os.path.join("permanent_data", "maker_proposals.parquet")
+        os.makedirs("permanent_data", exist_ok=True)
+
+        # ── Kelly portfolio-sizing pass for OUTRIGHTS only ──────────────
+        # Matchups stay at flat MATCHUP_LEVEL_CONTRACTS. Outrights get
+        # resized to per-player joint-Kelly using the live Kalshi balance
+        # minus matchup cash reservation, accounting for existing
+        # exposure (positions + ALL resting golf orders). Solver failure
+        # falls back to flat LEVEL_CONTRACTS sizing for outrights.
+        try:
+            from kelly_solver import compute_optimal_outright_sizing, _cand_key
+            outright_cands = [c for c in cands if c.get("market") != "h2h"]
+            matchup_cands = [c for c in cands if c.get("market") == "h2h"]
+            sizing = compute_optimal_outright_sizing(
+                outright_candidates=outright_cands,
+                matchup_candidates=matchup_cands,
+                prob_lookup=prob_lookup,
+                kelly_fraction=0.5,
+                max_total_fraction_per_player=0.25,
+                verbose=True,
+            )
+            kept = []
+            for c in cands:
+                if c.get("market") == "h2h":
+                    kept.append(c)
+                    continue
+                qty = sizing.get(_cand_key(c), 0)
+                if qty < 1:
+                    continue  # solver allocated nothing → drop from proposals
+                c = dict(c)
+                c["contracts"] = qty
+                kept.append(c)
+            print(f"  [kelly] outright proposals: {len(outright_cands)} candidates "
+                  f"-> {len(kept) - len(matchup_cands)} after Kelly + existing-exposure")
+            cands = kept
+        except Exception as _ke:
+            print(f"  [warn] Kelly sizing failed ({_ke}) — falling back to flat sizing")
+
+        # ── Preview-time dedup for MATCHUPS only ───────────────────────
+        # Matchups bypass Kelly's existing-exposure netting and are
+        # flat-sized at 500. If we already have a same-price matchup
+        # order resting, drop the duplicate proposal so the dashboard
+        # doesn't show stale rows. Outright proposals are kept as-is so
+        # you see the full Kelly slate — same-price collisions will still
+        # be caught at send-time by /api/send's dedup.
+        try:
+            _existing_keys = {_resting_key(o)
+                              for o in list_resting_orders(golf_only=True)}
+            _before = len(cands)
+            cands = [
+                c for c in cands
+                if c.get("market") != "h2h"
+                or (c["ticker"], c["side"],
+                    int(round(c["post_price"] * 1000))) not in _existing_keys
+            ]
+            _dropped = _before - len(cands)
+            if _dropped:
+                print(f"  [dedup] dropped {_dropped} matchup proposal(s) "
+                      f"already resting at the same price")
+        except Exception as _de:
+            print(f"  [warn] matchup dedup failed ({_de}) — proposals may "
+                  f"include same-price duplicates that will skip at send")
+
+        # Serialize candidates to a flat DataFrame. Add a stable per-row id so
+        # the dashboard can track edits, plus the scan timestamp.
+        scan_ts = _dt.datetime.now().isoformat(timespec="seconds")
+        rows = []
+        for c in cands:
+            rows.append({
+                "row_id": f"{c['ticker']}|{c['side']}|"
+                          f"{int(round(c['post_price'] * 1000))}",
+                "scan_ts": scan_ts,
+                "ticker": c["ticker"],
+                "title": c.get("title", ""),
+                "player": c["player"],
+                "market": c["market"],
+                "side": c["side"],
+                "post_type": c["post_type"],
+                "best_bid": float(c["best_bid"]),
+                "best_ask": float(c["best_ask"]),
+                "mid": float(c["mid"]),
+                "post_price": float(c["post_price"]),
+                "tick": float(c["tick"]),
+                "sim_prob": float(c["sim_prob"]),
+                "edge_pp": float(c["edge_pp"]),
+                "kelly_f": float(c["kelly_f"]),
+                "kelly_contracts": int(c["contracts"]),
+                "edit_contracts": int(c["contracts"]),  # default = recommended
+                "include": True,
+            })
+        df = pd.DataFrame(rows)
+        df.to_parquet(out_path, index=False)
+        print(f"\n[preview] wrote {len(df)} proposals to {out_path}")
+        print(f"[preview] Launch dashboard: python -m maker_dashboard.server")
+        _client.close()
+        sys.exit(0)
+    if args.live:
+        if not cands:
+            print("\n[live] no candidates — skipping reconcile/post step.")
+        else:
+            reconcile_and_post(cands)
+        print(f"\n[maker] done in {time.time()-t0:.1f}s")
+    else:
+        print(f"\n[maker] {len(cands)} intents in {time.time()-t0:.1f}s "
+              f"— DRY RUN, nothing sent. Re-run with --live to post.")
+    _client.close()
