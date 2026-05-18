@@ -36,7 +36,7 @@ import os
 import re
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from dotenv import load_dotenv
 
 import httpx
@@ -136,32 +136,10 @@ def _get_markets(series_ticker):
     return out
 
 
-# ── Tournament filter (mirrors new_sim.py logic) ───────────────────────
-_GENERIC = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
-            "open", "classic", "invitational", "cup", "pga", "tour"}
-
-
-def _detect_tourney(title):
-    m = re.search(r"(?:at|in|win) the (.+?)\?", title)
-    if m:
-        return m.group(1).strip()
-    m = re.match(r"(.+?):\s*Will", title)
-    if m:
-        return m.group(1).strip()
-    return ""
-
-
-def _build_target_matcher():
-    all_words = {w for w in re.split(r"[\s_]+", tourney.lower()) if w}
-    distinct = all_words - _GENERIC
-
-    def matches(t):
-        tl = t.lower()
-        if distinct:
-            return any(w in tl for w in distinct)
-        return all(w in tl for w in all_words)
-
-    return matches
+# ── Tournament filter ─────────────────────────────────────────────────
+# Title-based slug matching was replaced by sim-player-overlap detection
+# (_detect_target_event_code below). See _apply_event_filter for the
+# replacement logic.
 
 
 def _extract_player(title):
@@ -190,6 +168,80 @@ def _norm(s):
         if len(parts) == 2:
             x = f"{parts[1]}, {parts[0]}"
     return name_replacements.get(x, x)
+
+
+def _ticker_event_code(ticker):
+    """Pull the event code segment out of a Kalshi golf ticker.
+    e.g. 'KXPGATOUR-THCCBN26-WKIM' -> 'THCCBN26'.
+    Returns '' if the shape doesn't match."""
+    if not isinstance(ticker, str):
+        return ""
+    parts = ticker.split("-", 2)
+    return parts[1] if len(parts) >= 2 else ""
+
+
+def _detect_target_event_code(markets, sim_player_set):
+    """Auto-detect which Kalshi event code we're targeting by counting how
+    many sim-known players appear in each event's markets.
+
+    Replaces title-based slug matching, which is fragile when the Kalshi
+    title doesn't contain the slug as a single word (e.g. slug 'cjcup' vs
+    title 'THE CJ CUP Byron Nelson'). Since the maker only knows what to do
+    with markets whose players are in our sim, the event with the highest
+    sim-player overlap is by definition the one we should be posting on.
+
+    Handles both outright titles ("Will X win the EVENT?") and matchup titles
+    ("Will X beat Y in the EVENT?"). Returns (target_event_code, counts_dict)
+    or (None, {}) if no event has any matching players.
+    """
+    counts = defaultdict(int)
+    for m in markets:
+        event_code = _ticker_event_code(m.get("ticker", ""))
+        if not event_code:
+            continue
+        title = m.get("title", "")
+        # Outright title path.
+        player_raw = _extract_player(title)
+        if player_raw:
+            if _norm(player_raw) in sim_player_set:
+                counts[event_code] += 1
+            continue
+        # Matchup title path.
+        p1_raw, p2_raw = _extract_matchup(title)
+        if p1_raw and p2_raw:
+            if _norm(p1_raw) in sim_player_set or _norm(p2_raw) in sim_player_set:
+                counts[event_code] += 1
+    if not counts:
+        return None, {}
+    target = max(counts, key=counts.get)
+    return target, dict(counts)
+
+
+def _apply_event_filter(markets, sim_player_set, label):
+    """Detect the target Kalshi event from sim-player overlap and filter
+    markets to that event. Prints a one-line summary or warning. Used by
+    both scan() (outrights) and scan_matchups()."""
+    target, counts = _detect_target_event_code(markets, sim_player_set)
+    if target is None:
+        print(f"  [{label}] no sim-player overlap on any event — keeping all "
+              f"{len(markets)} markets")
+        return markets
+    leader = counts[target]
+    runners = sorted(
+        ((ec, c) for ec, c in counts.items() if ec != target),
+        key=lambda x: -x[1],
+    )
+    next_count = runners[0][1] if runners else 0
+    filtered = [m for m in markets if _ticker_event_code(m.get("ticker", "")) == target]
+    msg = (f"  [{label}] target event={target} ({leader} sim-player matches) — "
+           f"filtered {len(markets)} -> {len(filtered)} markets")
+    if next_count and next_count / leader > 0.7:
+        msg += f"  [warn] ambiguous: next event has {next_count} matches"
+    print(msg)
+    if len(counts) > 1:
+        other = ", ".join(f"{ec}={c}" for ec, c in runners[:4])
+        print(f"  [{label}] other event codes seen: {other}")
+    return filtered
 
 
 # ── Sim probability load ───────────────────────────────────────────────
@@ -732,19 +784,7 @@ def scan_matchups():
         return []
     print(f"    Fetched {len(all_mkts)} H2H markets")
 
-    matches_target = _build_target_matcher()
-    tourn_counts = Counter()
-    for m in all_mkts:
-        t = _detect_tourney(m.get("title", ""))
-        if t:
-            tourn_counts[t] += 1
-    if tourn_counts:
-        matched_titles = {t.lower() for t in tourn_counts if matches_target(t)}
-        if matched_titles:
-            all_mkts = [m for m in all_mkts
-                        if _detect_tourney(m.get("title", "")).lower() in matched_titles
-                        or _detect_tourney(m.get("title", "")) == ""]
-            print(f"    Filtered to tourney={tourney}: {len(all_mkts)} markets")
+    all_mkts = _apply_event_filter(all_mkts, set(name_to_idx.keys()), label="matchups")
 
     candidates = []
     skipped_name = 0
@@ -818,21 +858,7 @@ def scan():
             print(f"  [warn] fetch {series} failed: {e}")
     print(f"  Fetched {len(all_mkts)} Kalshi markets")
 
-    matches_target = _build_target_matcher()
-    tourn_counts = Counter()
-    for m in all_mkts:
-        t = _detect_tourney(m.get("title", ""))
-        if t:
-            tourn_counts[t] += 1
-    if tourn_counts:
-        matched_titles = {t.lower() for t in tourn_counts if matches_target(t)}
-        if matched_titles:
-            all_mkts = [m for m in all_mkts
-                        if _detect_tourney(m.get("title", "")).lower() in matched_titles
-                        or _detect_tourney(m.get("title", "")) == ""]
-            print(f"  Filtered to tourney={tourney}: {len(all_mkts)} markets")
-        else:
-            print(f"  [warn] no tourney match for '{tourney}'; using all")
+    all_mkts = _apply_event_filter(all_mkts, set(prob_lookup.keys()), label="outrights")
 
     candidates = []
     for m in all_mkts:
