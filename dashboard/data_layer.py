@@ -177,6 +177,7 @@ def _normalize_tab(tab_df, bet_type):
         n["pred_on"] = ""
         n["sample_on"] = ""
         n["kelly_stake"] = ""
+        n["type_on"] = ""
         n["result"] = tab_df.get("result", "")
         n["units_won"] = tab_df.get("units_won", "")
         return n
@@ -220,6 +221,10 @@ def _normalize_tab(tab_df, bet_type):
     n["pred_on"] = tab_df.get("pred_on", tab_df.get("my_pred", ""))
     n["sample_on"] = tab_df.get("sample_on", tab_df.get("sample", ""))
     n["kelly_stake"] = tab_df.get("kelly_stake", "")
+
+    # Archetype stamped at sim time. Authoritative for the player you bet on,
+    # since sg_diagnostic.parquet excludes LIV-only field members.
+    n["type_on"] = tab_df.get("type_on", "")
 
     # graded fields
     n["result"] = tab_df.get("result", "")
