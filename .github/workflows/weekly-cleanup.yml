@@ -48,7 +48,13 @@ jobs:
         echo ""
         
         echo "📋 Tournament folders to be removed:"
-        find . -maxdepth 1 -type d ! -name "." ! -name ".." ! -name ".git" ! -name ".github" ! -name "permanent_data" ! -name "backups" ! -name ".claude" ! -name "__pycache__" ! -name "dashboard" ! -name "dashboard_data"
+        find . -maxdepth 1 -type d \
+          ! -name "." ! -name ".." \
+          ! -name ".git" ! -name ".github" ! -name ".githooks" ! -name ".claude" \
+          ! -name "__pycache__" \
+          ! -name "permanent_data" ! -name "backups" \
+          ! -name "dashboard" ! -name "dashboard_data" ! -name "maker_dashboard" \
+          ! -name "archive"
         echo ""
         
         # Delete CSV files (except in permanent_data folder)
@@ -74,19 +80,26 @@ jobs:
         # Delete stale artifacts (Windows nul file, etc.)
         rm -f ./nul 2>/dev/null || true
 
-        # Delete tournament folders (but preserve system folders)
+        # Delete tournament folders (but preserve system folders).
+        # IMPORTANT: This is a denylist — anything NOT in the exclude list
+        # gets nuked. New top-level prod directories MUST be added here or
+        # they'll be deleted on the next run. Safety check below catches
+        # accidental deletions before commit.
         echo "🗑️  Deleting tournament folders..."
         find . -maxdepth 1 -type d \
           ! -name "." \
           ! -name ".." \
           ! -name ".git" \
           ! -name ".github" \
-          ! -name "permanent_data" \
-          ! -name "backups" \
+          ! -name ".githooks" \
           ! -name ".claude" \
           ! -name "__pycache__" \
+          ! -name "permanent_data" \
+          ! -name "backups" \
           ! -name "dashboard" \
           ! -name "dashboard_data" \
+          ! -name "maker_dashboard" \
+          ! -name "archive" \
           -exec rm -rf {} + 2>/dev/null || true
 
         # Clear tournament-specific dashboard_data/ files (keep persistent data for Render)
@@ -127,6 +140,38 @@ jobs:
         echo ""
         echo "💡 Tip: Historical data should now be in Google Drive"
         echo "================================================"
+
+    - name: Safety check — abort if critical files missing
+      run: |
+        # If the denylist excludes are wrong, the delete step can wipe prod
+        # code. This guard checks for specific sentinel files BEFORE we
+        # commit. If any are missing, the workflow fails loud rather than
+        # silently pushing the destruction.
+        critical=(
+          "maker_dashboard/server.py"
+          "maker_dashboard/static/app.js"
+          "maker_dashboard/index.html"
+          ".githooks/pre-commit"
+          "dashboard/app.py"
+          "kalshi_maker.py"
+          "new_sim.py"
+          "sim_inputs.py"
+        )
+        missing=()
+        for f in "${critical[@]}"; do
+          if [ ! -f "$f" ]; then
+            missing+=("$f")
+          fi
+        done
+        if [ ${#missing[@]} -ne 0 ]; then
+          echo "❌ Cleanup deleted critical files — refusing to commit:"
+          printf '   - %s\n' "${missing[@]}"
+          echo ""
+          echo "The denylist in the delete step is missing an entry. Fix it"
+          echo "before re-enabling this workflow."
+          exit 1
+        fi
+        echo "✅ All critical files still present after cleanup."
 
     - name: Commit and push cleanup
       run: |
