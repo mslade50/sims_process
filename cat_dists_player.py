@@ -27,7 +27,7 @@ tourney = _cfg["tourney"]
 # --------------------------
 # Config
 # --------------------------
-DB_PATH     = "C:/Users/mckin/OneDrive/dg_historical.db"
+DB_PATH     = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 CATS        = ["sg_ott_adj", "sg_app_adj", "sg_arg_adj", "sg_putt_adj"]
 Q_LIST      = [0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
 HIST_BINS   = np.arange(-10.0, 10.25, 0.25)  # fixed 1/4-stroke bins
