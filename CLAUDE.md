@@ -4,7 +4,7 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Pipeline Execution Order
 
-**Pre-tournament**: `cat_dists_player.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`
+**Pre-tournament**: `init_weekly.py` → `cat_dists_player.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
 **Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
 **Live (R1-R4)**: Update Google Sheet (`round_config` tab) → `live_stats_engine.py` → `round_sim.py` (round matchups + score cards)

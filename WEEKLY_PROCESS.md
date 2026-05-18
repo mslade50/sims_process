@@ -589,6 +589,7 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 
 ```bash
 # Pre-tournament pipeline
+python init_weekly.py                            # Step 0: Push tourney/event_id/course_id/round=0 to Sheet
 python cat_dists_player.py                       # Step 1: SG distributions
 python humidity.py                               # Step 2: Auto-populate weather to Sheet
 python update_sheet_courses.py                   # Step 2: Auto-populate course codes

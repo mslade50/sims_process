@@ -399,23 +399,12 @@ else:
 # --------------------------
 # 6) Filter to this week's field → V2-ready output
 # --------------------------
-IN_FIELD = "field_updates.csv"
+# Field source: pre_course_fit_{tourney}.csv is the authoritative weekly skill
+# model. Using its player list as "the field" keeps cat_dists aligned with
+# new_sim and scoring_baseline (which both read pre_course_fit) and avoids a
+# stale field_updates.csv cache.
+IN_FIELD = f"pre_course_fit_{tourney}.csv"
 OUT_V2 = "this_week_dists_v2.csv"
-
-# Fetch field from API if file doesn't exist
-if not os.path.exists(IN_FIELD):
-    print(f"\n[v2 field] {IN_FIELD} not found — fetching from DataGolf API...")
-    try:
-        from api_utils import fetch_field_updates
-        _api_key = os.getenv('DATAGOLF_API_KEY', 'c05ee5fd8f2f3b14baab409bd83c')
-        _field_df = fetch_field_updates(_api_key)
-        if _field_df is not None and not _field_df.empty:
-            _field_df.to_csv(IN_FIELD, index=False)
-            print(f"[ok] wrote {IN_FIELD} ({len(_field_df)} players)")
-        else:
-            print("[warn] API returned empty field. Cannot build V2 dists.")
-    except Exception as e:
-        print(f"[warn] Failed to fetch field from API: {e}")
 
 if os.path.exists(IN_FIELD):
     field = pd.read_csv(IN_FIELD)

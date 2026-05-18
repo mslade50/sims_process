@@ -154,10 +154,21 @@ MIN_DIST_ROUNDS = 20  # minimum rounds in player distribution (from cat_dists_pl
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 
-# Input predictions
+# Input predictions. Preference order:
+#   1. final_predictions_{tourney}.csv  (post-mkt_regress, second-pass input)
+#   2. pre_sim_summary_{tourney}.csv    (pre_sim_skill output: pred with manual
+#                                         boosts + DG blend + sheet boosts baked in)
+#   3. pre_course_fit_{tourney}.csv     (raw external skill, last-resort fallback
+#                                         if pre_sim_skill hasn't been run)
 _final_pred_path = f"final_predictions_{tourney}.csv"
+_pre_sim_path = f"pre_sim_summary_{tourney}.csv"
 _pre_course_path = f"pre_course_fit_{tourney}.csv"
-PRED_PATH = _final_pred_path if os.path.exists(_final_pred_path) else _pre_course_path
+if os.path.exists(_final_pred_path):
+    PRED_PATH = _final_pred_path
+elif os.path.exists(_pre_sim_path):
+    PRED_PATH = _pre_sim_path
+else:
+    PRED_PATH = _pre_course_path
 print(f"[info] Using predictions from: {PRED_PATH}")
 
 # Per-player category distribution file (course-shaped)
