@@ -3,9 +3,15 @@
 Reads the most recent sim's persisted probability outputs, re-fetches Kalshi
 live, and either dry-runs (default) or posts resting limit orders.
 
-Inclusion gate (per side, per market):
-    raw_edge_at_post >= MIN_RAW_EDGE_PP (default 0.5 pp)
-    kelly_fraction_at_post >= MIN_KELLY_F   (default 0.08, i.e. full-Kelly 8%)
+Inclusion gates (per side, per market). Tiered by post price — at extreme
+favorite prices we accept smaller raw edges because the structural EV/$ is
+capped low; at moderate prices we demand more edge; at long-odd prices we
+add a Kelly-EV (return-per-dollar-staked) floor to filter low-quality
+longshots whose Kelly fraction looks small relative to their leverage:
+    post_price > 0.98:   raw_edge >= MIN_RAW_EDGE_PP_HIGH (1.0 pp)
+    0.60-0.98:           raw_edge >= MIN_RAW_EDGE_PP_DEFAULT (1.5 pp)
+    post_price < 0.60:   raw_edge >= MIN_RAW_EDGE_PP_DEFAULT  AND
+                         kelly_ev_per_dollar >= MIN_KELLY_EV_LOW_PRICE (5%)
 
 Modes:
     (default)        scan + print intents only
@@ -42,8 +48,17 @@ from sim_inputs import tourney, name_replacements
 load_dotenv()
 
 # ── Gates ──────────────────────────────────────────────────────────────
-MIN_RAW_EDGE_PP = 0.5      # percentage points
-MIN_KELLY_F = 0.08         # full-Kelly fraction
+# Tiered raw-edge floor by post price. Short-odds favorites (high price) have
+# a structurally capped EV/$ so demanding 1.5pp there is too restrictive;
+# everything else gets the stricter 1.5pp floor.
+MIN_RAW_EDGE_PP_HIGH_PRICE = 1.0    # post_price > 0.98
+MIN_RAW_EDGE_PP_DEFAULT    = 1.5    # 0 <= post_price <= 0.98
+# Long-odd bets (post_price < 0.60) also need a Kelly-EV gate. EV per $ staked
+# = (sim_prob - post_price)/post_price. Floor filters longshots where the
+# raw edge looks acceptable but the expected return per dollar is thin.
+MIN_KELLY_EV_LOW_PRICE     = 0.05   # 5% EV/$ required when post_price < 0.60
+LOW_PRICE_THRESHOLD        = 0.60
+HIGH_PRICE_THRESHOLD       = 0.98
 
 # Per-level allocation (3 levels per market+side: near_ask, mid, bid).
 # Outrights stay flat-33 until the portfolio-Kelly solver (kelly_solver.py)
@@ -782,9 +797,11 @@ def scan_matchups():
 
 # ── Main scan ──────────────────────────────────────────────────────────
 def scan():
-    print(f"[maker] tourney={tourney}  raw_edge>={MIN_RAW_EDGE_PP}pp  "
-          f"kelly_f>={MIN_KELLY_F}  contracts_per_level={LEVEL_CONTRACTS} "
-          f"(near_ask/mid/bid)")
+    print(f"[maker] tourney={tourney}  "
+          f"raw_edge>={MIN_RAW_EDGE_PP_HIGH_PRICE}pp(price>{HIGH_PRICE_THRESHOLD}) / "
+          f"{MIN_RAW_EDGE_PP_DEFAULT}pp(else)  "
+          f"ev/$>={MIN_KELLY_EV_LOW_PRICE*100:.0f}%(price<{LOW_PRICE_THRESHOLD})  "
+          f"contracts_per_level={LEVEL_CONTRACTS} (near_ask/mid/bid)")
     probs = load_sim_probs()
     prob_lookup = probs.set_index("player_name").to_dict("index")
     print(f"  Loaded sim probs for {len(prob_lookup)} players from "
@@ -842,10 +859,18 @@ def scan():
         price_ranges = _parse_price_ranges(m)
 
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
-            if intent["edge_pp"] < MIN_RAW_EDGE_PP:
+            post_price = intent["post_price"]
+            # Tiered raw-edge floor by post price.
+            raw_floor = (MIN_RAW_EDGE_PP_HIGH_PRICE
+                         if post_price > HIGH_PRICE_THRESHOLD
+                         else MIN_RAW_EDGE_PP_DEFAULT)
+            if intent["edge_pp"] < raw_floor:
                 continue
-            if intent["kelly_f"] < MIN_KELLY_F:
-                continue
+            # Additional Kelly-EV floor for low-price (long-odds) bets only.
+            if post_price < LOW_PRICE_THRESHOLD:
+                ev_per_dollar = (intent["sim_prob"] - post_price) / post_price
+                if ev_per_dollar < MIN_KELLY_EV_LOW_PRICE:
+                    continue
             # Hard safety check — never enter the candidate set if cross-risk
             assert intent["post_price"] < intent["best_ask"], (
                 f"SAFETY: post {intent['post_price']} >= ask {intent['best_ask']}"
@@ -861,11 +886,14 @@ def scan():
             })
 
     # ── Append H2H matchup candidates (different gates + size). ─────────
-    print("\n  [matchups] fetching H2H markets...")
-    matchup_cands = scan_matchups()
-    candidates.extend(matchup_cands)
-    print(f"  [matchups] {len(matchup_cands)} candidate(s) added "
-          f"(edge>={MATCHUP_MIN_EDGE_PP}pp, contracts={MATCHUP_LEVEL_CONTRACTS}/level)")
+    if globals().get("_skip_matchups"):
+        print("\n  [matchups] skipped via --no-matchups")
+    else:
+        print("\n  [matchups] fetching H2H markets...")
+        matchup_cands = scan_matchups()
+        candidates.extend(matchup_cands)
+        print(f"  [matchups] {len(matchup_cands)} candidate(s) added "
+              f"(edge>={MATCHUP_MIN_EDGE_PP}pp, contracts={MATCHUP_LEVEL_CONTRACTS}/level)")
 
     candidates.sort(key=lambda r: r["edge_pp"], reverse=True)
 
@@ -909,6 +937,9 @@ if __name__ == "__main__":
                     help="Run scan, write proposals to permanent_data/maker_proposals.parquet, "
                          "and exit. No POSTs. Used by the maker_dashboard for "
                          "human review + edit before sending.")
+    ap.add_argument("--no-matchups", action="store_true",
+                    help="Skip H2H matchup scan entirely. Matchup cash reservation "
+                         "is $0, so outright Kelly sizing sees full available balance.")
     ap.add_argument("--allow-pre-matchup", action="store_true",
                     help="Allow matchup scan to fall back to pre-tournament final_scores.npy "
                          "when no live final_scores file exists. ONLY safe pre-R1 — using stale "
@@ -917,6 +948,7 @@ if __name__ == "__main__":
     # Note: at module level, __main__ assignments are module-scoped (no function
     # frame), so this correctly mutates the module global used by scan_matchups.
     _allow_pre_matchup_fallback = bool(args.allow_pre_matchup)
+    _skip_matchups = bool(args.no_matchups)
 
     t0 = time.time()
     if args.list_orders:
