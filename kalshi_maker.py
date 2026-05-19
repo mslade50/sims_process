@@ -3,15 +3,18 @@
 Reads the most recent sim's persisted probability outputs, re-fetches Kalshi
 live, and either dry-runs (default) or posts resting limit orders.
 
-Inclusion gates (per side, per market). Tiered by post price — at extreme
-favorite prices we accept smaller raw edges because the structural EV/$ is
-capped low; at moderate prices we demand more edge; at long-odd prices we
-add a Kelly-EV (return-per-dollar-staked) floor to filter low-quality
-longshots whose Kelly fraction looks small relative to their leverage:
-    post_price > 0.98:   raw_edge >= MIN_RAW_EDGE_PP_HIGH (1.0 pp)
-    0.60-0.98:           raw_edge >= MIN_RAW_EDGE_PP_DEFAULT (1.5 pp)
-    post_price < 0.60:   raw_edge >= MIN_RAW_EDGE_PP_DEFAULT  AND
-                         kelly_ev_per_dollar >= MIN_KELLY_EV_LOW_PRICE (5%)
+Inclusion gates (per side, per ladder rung). Raw-edge floor is tiered by
+post price — at extreme favorite prices the structural EV/$ ceiling is
+so low that even 1pp is meaningful, while at long odds we tolerate
+smaller raw edges because the leverage on a fill is large. EV-per-dollar
+gate kicks in below 0.60 to filter rungs whose raw edge looks acceptable
+but whose return per dollar staked is thin.
+    post_price > 0.98:   raw_edge >= 1.0 pp
+    0.45 - 0.98:         raw_edge >= 1.5 pp
+    0.30 - 0.45:         raw_edge >= 1.0 pp
+    0.15 - 0.30:         raw_edge >= 0.5 pp
+    post_price < 0.15:   raw_edge >= 0.15 pp
+    post_price < 0.60 (in addition to above): kelly_ev_per_$ >= 5%
 
 Modes:
     (default)        scan + print intents only
@@ -48,17 +51,31 @@ from sim_inputs import tourney, name_replacements
 load_dotenv()
 
 # ── Gates ──────────────────────────────────────────────────────────────
-# Tiered raw-edge floor by post price. Short-odds favorites (high price) have
-# a structurally capped EV/$ so demanding 1.5pp there is too restrictive;
-# everything else gets the stricter 1.5pp floor.
-MIN_RAW_EDGE_PP_HIGH_PRICE = 1.0    # post_price > 0.98
-MIN_RAW_EDGE_PP_DEFAULT    = 1.5    # 0 <= post_price <= 0.98
-# Long-odd bets (post_price < 0.60) also need a Kelly-EV gate. EV per $ staked
-# = (sim_prob - post_price)/post_price. Floor filters longshots where the
-# raw edge looks acceptable but the expected return per dollar is thin.
-MIN_KELLY_EV_LOW_PRICE     = 0.05   # 5% EV/$ required when post_price < 0.60
-LOW_PRICE_THRESHOLD        = 0.60
-HIGH_PRICE_THRESHOLD       = 0.98
+# Tiered raw-edge floor by post price. See _raw_edge_floor() below for the
+# table. Extreme favorites have a tiny EV/$ ceiling so we accept 1pp; mid-range
+# bets need 1.5pp; long-odd rungs tolerate smaller raw edges because the
+# leverage on a fill is large.
+HIGH_PRICE_THRESHOLD   = 0.98   # post > this  -> 1.0pp raw
+TIER_DEFAULT_LOW       = 0.45   # 0.45 - 0.98  -> 1.5pp raw
+TIER_LOW_PRICE         = 0.30   # 0.30 - 0.45  -> 1.0pp raw
+TIER_LONGSHOT          = 0.15   # 0.15 - 0.30  -> 0.5pp raw
+                                # post < 0.15  -> 0.15pp raw
+# EV gate kicks in below this price (in addition to whatever raw floor applies).
+LOW_PRICE_THRESHOLD    = 0.60
+MIN_KELLY_EV_LOW_PRICE = 0.05   # 5% EV/$ required when post_price < 0.60
+
+
+def _raw_edge_floor(post_price):
+    """Return the minimum raw edge (in pp) required for this post price."""
+    if post_price > HIGH_PRICE_THRESHOLD:
+        return 1.0
+    if post_price >= TIER_DEFAULT_LOW:
+        return 1.5
+    if post_price >= TIER_LOW_PRICE:
+        return 1.0
+    if post_price >= TIER_LONGSHOT:
+        return 0.5
+    return 0.15
 
 # Per-level allocation (3 levels per market+side: near_ask, mid, bid).
 # Outrights stay flat-33 until the portfolio-Kelly solver (kelly_solver.py)
@@ -395,26 +412,22 @@ def _round_to_tick(price, tick):
 
 
 def _maker_intent(yes_bid, yes_ask, sim_yes, price_ranges):
-    """Return a list of intent dicts, one per (side, post_type) that passes
-    the no-cross safety check.
+    """For each of YES and NO sides, generate one intent per valid tick
+    price between best_bid (inclusive) and best_ask − 1 tick (inclusive).
 
-    Three post_type levels per side, in order of decreasing aggressiveness:
-        "near_ask" → 1 tick below best ask. Most likely to fill; thinnest
-                     edge per contract. Front of the new bid queue.
-        "mid"      → floor(midpoint, tick), capped at ask − tick.
-                     Price-improving when the spread is wide enough.
-        "bid"      → join the current best bid queue. Cheapest entry;
-                     fills only if someone hits the bid stack down to us.
+    Each rung is an independent intent — the edge / EV gates filter rungs
+    individually, and kelly_solver groups by (ticker, side) and splits its
+    Kelly-target contracts evenly across whichever rungs survive the gates.
 
-    All three are filled at LEVEL_CONTRACTS contracts each, so a wide
-    market with all three passing the gate deploys 3 × LEVEL_CONTRACTS on
-    that side. Tight markets where the levels collapse (e.g. ask = bid + 1
-    tick) dedup down to a single order via first-seen wins.
-
-    Tick size is read per-side from `price_ranges` at the relevant post
-    price level — winner markets use 0.1¢ ticks above 90¢ and below 10¢.
+    Wide markets produce many rungs (one per tick across the spread). Tight
+    markets (ask = bid + 1 tick) produce a single rung. The market's tick
+    size can change by price region (e.g. 0.1¢ near 0/100 and 1¢ in the
+    middle for winner markets), so we recompute the step at each rung.
 
     Posts are always strictly below the opposite ask, so no cross risk.
+
+    Labels: rungs are tagged sequentially as L01, L02, ... (lowest price
+    first). The label is display-only — no downstream logic depends on it.
     """
     yes_mid = (yes_bid + yes_ask) / 2.0
     no_bid = 1.0 - yes_ask
@@ -426,49 +439,43 @@ def _maker_intent(yes_bid, yes_ask, sim_yes, price_ranges):
         ("yes", yes_mid, yes_ask, yes_bid, sim_yes),
         ("no", no_mid, no_ask, no_bid, 1.0 - sim_yes),
     ]:
-        # The tick is set by the post side's own price level. Use the mid
-        # as the reference — other posts will usually fall in the same range.
-        tick = _tick_at(price_ranges, p_mid)
-
-        # near_ask: 1 tick below best ask (most aggressive maker, won't cross)
-        near_ask_post = round(p_ask - tick, 6)
-        # mid: floor(midpoint, tick), capped at ask − tick
-        mid_post = _floor_to_tick(p_mid, tick)
-        mid_post = min(mid_post, near_ask_post)
-        # bid: join the current best bid queue
-        bid_post = _round_to_tick(p_bid, tick)
-
-        # Iterate highest price first. On a price collision (tight market),
-        # first-seen wins so the more aggressive level keeps its label.
+        # Walk from the bid upward, stepping by the local tick. Stop one
+        # tick below the ask so we can never cross.
+        post = round(p_bid, 6)
+        rung_idx = 0
         seen = set()
-        for post_type, post in (
-            ("near_ask", near_ask_post),
-            ("mid", mid_post),
-            ("bid", bid_post),
-        ):
+        # Safety counter — _tick_at should never return <= 0, but cap to
+        # avoid an infinite loop if a malformed price_ranges row ever sneaks in.
+        max_iters = 10_000
+        for _ in range(max_iters):
             post_r = round(post, 6)
-            if post_r <= 0 or post_r >= round(p_ask, 6):
-                continue
-            if post_r in seen:
-                continue
-            seen.add(post_r)
-            edge_pp = (sim_p - post_r) * 100
-            kelly_f = (sim_p - post_r) / (1.0 - post_r) if post_r < 1.0 else 0.0
-            out.append({
-                "side": side,
-                "post_type": post_type,
-                "best_bid": p_bid,
-                "best_ask": p_ask,
-                "mid": p_mid,
-                "post_price": post_r,
-                "tick": tick,
-                "sim_prob": sim_p,
-                "edge_pp": edge_pp,
-                "kelly_f": kelly_f,
-                # `contracts` is intentionally not set here — caller (scan
-                # for outrights, scan_matchups for matchups) assigns size
-                # based on its own sizing rule (Kelly vs flat).
-            })
+            if post_r >= round(p_ask, 6) - 1e-9:
+                break
+            if post_r > 0 and post_r not in seen:
+                seen.add(post_r)
+                edge_pp = (sim_p - post_r) * 100
+                kelly_f = ((sim_p - post_r) / (1.0 - post_r)
+                           if post_r < 1.0 else 0.0)
+                rung_idx += 1
+                out.append({
+                    "side": side,
+                    "post_type": f"L{rung_idx:02d}",
+                    "best_bid": p_bid,
+                    "best_ask": p_ask,
+                    "mid": p_mid,
+                    "post_price": post_r,
+                    "tick": _tick_at(price_ranges, post_r),
+                    "sim_prob": sim_p,
+                    "edge_pp": edge_pp,
+                    "kelly_f": kelly_f,
+                    # `contracts` is intentionally not set here — caller (scan
+                    # for outrights, scan_matchups for matchups) assigns size
+                    # based on its own sizing rule (Kelly vs flat).
+                })
+            tick = _tick_at(price_ranges, post_r)
+            if tick <= 0:
+                break
+            post = round(post_r + tick, 6)
     return out
 
 
@@ -838,10 +845,11 @@ def scan_matchups():
 # ── Main scan ──────────────────────────────────────────────────────────
 def scan():
     print(f"[maker] tourney={tourney}  "
-          f"raw_edge>={MIN_RAW_EDGE_PP_HIGH_PRICE}pp(price>{HIGH_PRICE_THRESHOLD}) / "
-          f"{MIN_RAW_EDGE_PP_DEFAULT}pp(else)  "
+          f"raw_edge: 1.0pp(>{HIGH_PRICE_THRESHOLD}) / 1.5pp({TIER_DEFAULT_LOW}-{HIGH_PRICE_THRESHOLD}) "
+          f"/ 1.0pp({TIER_LOW_PRICE}-{TIER_DEFAULT_LOW}) "
+          f"/ 0.5pp({TIER_LONGSHOT}-{TIER_LOW_PRICE}) / 0.15pp(<{TIER_LONGSHOT})  "
           f"ev/$>={MIN_KELLY_EV_LOW_PRICE*100:.0f}%(price<{LOW_PRICE_THRESHOLD})  "
-          f"contracts_per_level={LEVEL_CONTRACTS} (near_ask/mid/bid)")
+          f"per-tick laddering")
     probs = load_sim_probs()
     prob_lookup = probs.set_index("player_name").to_dict("index")
     print(f"  Loaded sim probs for {len(prob_lookup)} players from "
@@ -887,10 +895,7 @@ def scan():
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
             post_price = intent["post_price"]
             # Tiered raw-edge floor by post price.
-            raw_floor = (MIN_RAW_EDGE_PP_HIGH_PRICE
-                         if post_price > HIGH_PRICE_THRESHOLD
-                         else MIN_RAW_EDGE_PP_DEFAULT)
-            if intent["edge_pp"] < raw_floor:
+            if intent["edge_pp"] < _raw_edge_floor(post_price):
                 continue
             # Additional Kelly-EV floor for low-price (long-odds) bets only.
             if post_price < LOW_PRICE_THRESHOLD:
