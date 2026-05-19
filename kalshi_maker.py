@@ -940,13 +940,15 @@ def scan():
             fill_pct = _estimate_fill_pct(post_price, intent["best_ask"], volume)
             if fill_pct < MIN_FILL_PCT:
                 continue
-            # Wide-spread tiny-price cull for top_N markets. A 1-2c YES bid
-            # on a 5c+ wide top_5/10/20 market gets crowded out by the rest
-            # of the ladder and rarely fills meaningfully even when fill_pct
-            # passes — cut these to free up budget for fillable rungs.
+            # Wide-spread tiny-price cull for top_N markets. Deep YES bids
+            # on wide top_5/10/20 markets get crowded out and rarely fill
+            # meaningfully even when fill_pct passes. The volume condition
+            # spares well-traded markets where flow eventually walks down
+            # the queue.
             if (mtype in ("top_5", "top_10", "top_20")
-                    and post_price < 0.03
-                    and (intent["best_ask"] - intent["best_bid"]) > 0.05):
+                    and post_price < 0.05
+                    and (intent["best_ask"] - intent["best_bid"]) > 0.05
+                    and volume < 10000):
                 continue
             intent["fill_pct"] = fill_pct
             intent["volume"] = volume
