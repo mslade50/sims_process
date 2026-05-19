@@ -3,6 +3,30 @@
 
 const grids = { proposals: null, open: null, exposures: null, fills: null, pnl: null };
 
+
+// Parse the player's real name out of a Kalshi PGA market title.
+// Handles both shapes:
+//   "Will <player> win the <event>?"
+//   "<event>: Will <player> finish|make|miss|lead..."
+// Returns "" if no match.
+function extractPlayerName(title) {
+  if (!title) return "";
+  let m = title.match(/^Will (.+?) win the /i);
+  if (m) return m[1].trim();
+  m = title.match(/:\s*Will (.+?) (?:finish|make|miss|lead|win)/i);
+  if (m) return m[1].trim();
+  return "";
+}
+
+// Parse the event name out of a Kalshi PGA market title.
+function extractEventName(title) {
+  if (!title) return "";
+  const colon = title.indexOf(":");
+  if (colon > 0) return title.slice(0, colon).trim();
+  const m = title.match(/win the (.+?)\??$/i);
+  return m ? m[1].trim() : "";
+}
+
 // Default expiry = tomorrow 06:00 in the user's local timezone. The
 // <input type="datetime-local"> control reads "YYYY-MM-DDTHH:MM" in local
 // time, and new Date(localString) → unix seconds via getTime()/1000 picks
@@ -459,6 +483,9 @@ function makerDashboard() {
         b.exposure_dollars += Number(r.exposure_dollars || 0);
         b.invested_dollars += Number(r.invested_dollars || 0);
         if (r.is_open) b.n_open += 1; else b.n_settled += 1;
+        // Hold one representative title so the grouped header can resolve
+        // to a friendly name. Prefer non-empty titles when available.
+        if (!b._title && r.title) b._title = r.title;
       }
       return Array.from(buckets.values())
         .sort((a, b) => b.net_pnl_dollars - a.net_pnl_dollars);
@@ -528,8 +555,18 @@ function makerDashboard() {
           is_open: "status",
         })[groupBy] || "group";
         colDefs = [
-          { headerName: groupHeader, field: "_group", width: 200, pinned: "left",
-            cellStyle: { fontWeight: "600" } },
+          { headerName: groupHeader, field: "_group", width: 220, pinned: "left",
+            cellStyle: { fontWeight: "600" },
+            // For player/event groupings, resolve the raw code to a real name
+            // using a representative title from the bucket. Falls back to the
+            // code when no title is available.
+            valueFormatter: p => {
+              const code = p.value;
+              const t = p.data?._title || "";
+              if (groupBy === "player_code") return extractPlayerName(t) || code;
+              if (groupBy === "event_code")  return extractEventName(t)  || code;
+              return code;
+            } },
           { headerName: "# pos", field: "n_positions", width: 75,
             cellStyle: { textAlign: "right", color: "#aaa" } },
           { headerName: "open/settled", field: "open_settled", width: 120,
@@ -556,21 +593,17 @@ function makerDashboard() {
             tooltipField: "ticker",
             valueFormatter: p => p.value || p.data?.ticker,
             cellStyle: p => p.data?.is_golf ? null : { color: "#888" } },
-          { headerName: "golfer", field: "player_code", width: 80 },
+          // Friendly player name parsed from title; falls back to the
+          // ticker player_code (e.g. "HMAT") when the title is unavailable
+          // (legacy/settled tickers Kalshi has purged).
+          { headerName: "golfer", field: "player_code", width: 160,
+            valueGetter: p => extractPlayerName(p.data?.title) || p.data?.player_code || "" },
           { headerName: "market", field: "market_type", width: 80 },
           { headerName: "event", field: "event_code", width: 80 },
-          // Human-readable event name parsed from the title. Two shapes:
-          //   "RBC Heritage: Will Brian Harman finish top 10?"   → "RBC Heritage"
-          //   "Will Robert MacIntyre win the RBC Heritage?"      → "RBC Heritage"
+          // Human-readable event name parsed from the title. Falls back to
+          // event_code when title is missing.
           { headerName: "event name", field: "event_name", width: 180,
-            valueGetter: p => {
-              const t = p.data?.title || "";
-              if (!t) return "";
-              const colon = t.indexOf(":");
-              if (colon > 0) return t.slice(0, colon).trim();
-              const m = t.match(/win the (.+?)\??$/i);
-              return m ? m[1].trim() : "";
-            } },
+            valueGetter: p => extractEventName(p.data?.title) || p.data?.event_code || "" },
           { headerName: "side", field: "side", width: 60,
             cellStyle: p => p.value === "yes"
               ? { color: "#4caf50", fontWeight: "600" }
