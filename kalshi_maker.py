@@ -924,6 +924,12 @@ def scan():
         # falls back to `volume` (centable int) if absent.
         volume = float(m.get("volume_fp", m.get("volume", 0)) or 0)
 
+        # Whole-market skip: a 99c+ YES ask on a wide (>3c) spread with
+        # low volume is too illiquid to ladder meaningfully on either
+        # side. Drop the entire market.
+        if ask >= 0.99 and (ask - bid) > 0.03 and volume < 10000:
+            continue
+
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
             post_price = intent["post_price"]
             # Tiered raw-edge floor by post price.
