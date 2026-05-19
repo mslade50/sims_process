@@ -33,7 +33,7 @@ function makerDashboard() {
     expiry: defaultExpiry(),
 
     // Open Orders state
-    openOrders: { rows: [], fetchedTs: null, golfOnly: false },
+    openOrders: { rows: [], fetchedTs: null, golfOnly: false, playerFilter: "" },
 
     // Exposures state
     exposures: { rows: [], fetchedTs: null, golfOnly: true },
@@ -212,9 +212,11 @@ function makerDashboard() {
     },
 
     visibleOpenOrders() {
-      return this.openOrders.golfOnly
-        ? this.openOrders.rows.filter(r => r.is_golf)
-        : this.openOrders.rows;
+      let rows = this.openOrders.rows;
+      if (this.openOrders.golfOnly) rows = rows.filter(r => r.is_golf);
+      const q = (this.openOrders.playerFilter || "").trim().toLowerCase();
+      if (q) rows = rows.filter(r => (r.player || "").toLowerCase().includes(q));
+      return rows;
     },
     openTotalContracts() {
       return this.visibleOpenOrders().reduce((s, r) => s + Number(r.remaining_contracts || 0), 0);
@@ -232,7 +234,9 @@ function makerDashboard() {
 
     renderOpenGrid() {
       const colDefs = [
-        { headerName: "name", field: "title", width: 380, pinned: "left",
+        { headerName: "player", field: "player", width: 160, pinned: "left",
+          cellStyle: p => p.value ? null : { color: "#888" } },
+        { headerName: "name", field: "title", width: 380,
           tooltipField: "ticker",
           valueFormatter: p => p.value || p.data.ticker,
           cellStyle: p => p.data.is_golf ? null : { color: "#888" } },

@@ -266,7 +266,7 @@ def open_orders():
     sys.path.insert(0, REPO_ROOT)
     from kalshi_maker import (
         list_resting_orders, _is_golf_ticker, _is_script_order,
-        _resting_key, _resting_count,
+        _resting_key, _resting_count, _extract_player, _norm,
     )
     raw = list_resting_orders(golf_only=False)
     titles = _fetch_titles([o.get("ticker", "") for o in raw])
@@ -285,10 +285,14 @@ def open_orders():
             fill = int(round(float(o.get("fill_count_fp") or 0)))
         except (TypeError, ValueError):
             fill = 0
+        title = titles.get(t, "")
+        player_raw = _extract_player(title)
+        player = _norm(player_raw) if player_raw else ""
         rows.append({
             "order_id": o.get("order_id"),
             "ticker": t,
-            "title": titles.get(t, ""),
+            "title": title,
+            "player": player,
             "side": side,
             "price_dollars": price,
             "remaining_contracts": rem,

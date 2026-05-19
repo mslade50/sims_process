@@ -91,6 +91,11 @@
       </div>
       <div>
         <label class="checkbox-label">
+          player:
+          <input type="text" x-model="openOrders.playerFilter" @input="renderOpenGrid()"
+                 placeholder="e.g. scheffler" style="width:160px; margin-left:6px;" />
+        </label>
+        <label class="checkbox-label" style="margin-left:1em;">
           <input type="checkbox" x-model="openOrders.golfOnly" @change="renderOpenGrid()" />
           Golf only
         </label>
