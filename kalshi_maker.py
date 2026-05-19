@@ -16,6 +16,11 @@ but whose return per dollar staked is thin.
     post_price < 0.15:   raw_edge >= 0.15 pp
     post_price < 0.60 (in addition to above): kelly_ev_per_$ >= 5%
 
+Fill-probability filter: rungs are also cut if estimated fill probability
+falls below MIN_FILL_PCT (20%). Estimate drops 5pp per 1c the post is
+below the ask, +/-5pp by market lifetime volume tier (<1k / 1k-10k / >10k).
+Surviving rungs absorb the dropped budget via kelly_solver's even split.
+
 Modes:
     (default)        scan + print intents only
     --live           reconcile + auto-cancel stale + POST new intents
@@ -76,6 +81,29 @@ def _raw_edge_floor(post_price):
     if post_price >= TIER_LONGSHOT:
         return 0.5
     return 0.15
+
+
+# ── Fill-probability filter ────────────────────────────────────────────
+# Posting a tight maker bid 16c below the ask captures big edge per fill
+# but rarely fills. Estimate fill probability based on distance from ask
+# and market lifetime volume; cut rungs below MIN_FILL_PCT. The surviving
+# rungs absorb the cut budget naturally because kelly_solver splits each
+# bet's $ target evenly across (ticker, side) entries — fewer rungs ->
+# bigger contracts per surviving rung.
+MIN_FILL_PCT = 20.0
+
+
+def _estimate_fill_pct(post_price, best_ask, volume):
+    """Heuristic fill probability (0-100). Drops 5pp per 1c the post sits
+    below the ask, then +/-5pp based on lifetime volume tier."""
+    distance_cents = (best_ask - post_price) * 100.0
+    drop = distance_cents * 5.0  # 5pp per 1c below ask
+    base = 100.0
+    if volume < 1000:
+        base -= 5.0
+    elif volume > 10000:
+        base += 5.0
+    return max(0.0, min(100.0, base - drop))
 
 # Per-level allocation (3 levels per market+side: near_ask, mid, bid).
 # Outrights stay flat-33 until the portfolio-Kelly solver (kelly_solver.py)
@@ -849,6 +877,7 @@ def scan():
           f"/ 1.0pp({TIER_LOW_PRICE}-{TIER_DEFAULT_LOW}) "
           f"/ 0.5pp({TIER_LONGSHOT}-{TIER_LOW_PRICE}) / 0.15pp(<{TIER_LONGSHOT})  "
           f"ev/$>={MIN_KELLY_EV_LOW_PRICE*100:.0f}%(price<{LOW_PRICE_THRESHOLD})  "
+          f"fill_pct>={MIN_FILL_PCT:.0f}%  "
           f"per-tick laddering")
     probs = load_sim_probs()
     prob_lookup = probs.set_index("player_name").to_dict("index")
@@ -891,6 +920,9 @@ def scan():
         if sim_yes <= 0:
             continue
         price_ranges = _parse_price_ranges(m)
+        # Kalshi exposes lifetime volume as `volume_fp` (floating-point);
+        # falls back to `volume` (centable int) if absent.
+        volume = float(m.get("volume_fp", m.get("volume", 0)) or 0)
 
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
             post_price = intent["post_price"]
@@ -902,6 +934,14 @@ def scan():
                 ev_per_dollar = (intent["sim_prob"] - post_price) / post_price
                 if ev_per_dollar < MIN_KELLY_EV_LOW_PRICE:
                     continue
+            # Fill-probability filter: cut rungs we'd never realistically
+            # fill at, then let kelly_solver redistribute the budget across
+            # surviving rungs (it splits per-bet target evenly per level).
+            fill_pct = _estimate_fill_pct(post_price, intent["best_ask"], volume)
+            if fill_pct < MIN_FILL_PCT:
+                continue
+            intent["fill_pct"] = fill_pct
+            intent["volume"] = volume
             # Hard safety check — never enter the candidate set if cross-risk
             assert intent["post_price"] < intent["best_ask"], (
                 f"SAFETY: post {intent['post_price']} >= ask {intent['best_ask']}"
@@ -1092,6 +1132,8 @@ if __name__ == "__main__":
                 "sim_prob": float(c["sim_prob"]),
                 "edge_pp": float(c["edge_pp"]),
                 "kelly_f": float(c["kelly_f"]),
+                "fill_pct": float(c.get("fill_pct", 0.0)),
+                "volume": float(c.get("volume", 0.0)),
                 "kelly_contracts": int(c["contracts"]),
                 "edit_contracts": int(c["contracts"]),  # default = recommended
                 "include": True,
