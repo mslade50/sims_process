@@ -924,12 +924,12 @@ def scan():
         # falls back to `volume` (centable int) if absent.
         volume = float(m.get("volume_fp", m.get("volume", 0)) or 0)
 
-        # Whole-market skip: a 99c+ NO ask (i.e. yes_bid <= 1c) on a wide
+        # Whole-market skip: a 95c+ NO ask (i.e. yes_bid <= 5c) on a wide
         # (>3c) spread with low volume is too illiquid to ladder
         # meaningfully on either side. These are deep-longshot markets
-        # where the YES side sits at the floor and the NO side has nowhere
-        # to fill above 99c. Drop the entire market.
-        if (1.0 - bid) >= 0.99 and (ask - bid) > 0.03 and volume < 10000:
+        # where the YES side sits near the floor and the NO side has
+        # little fill room above 95c. Drop the entire market.
+        if (1.0 - bid) >= 0.95 and (ask - bid) > 0.03 and volume < 10000:
             continue
 
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
