@@ -35,6 +35,11 @@ PNL_HISTORY_PATH = os.path.join(REPO_ROOT, "permanent_data", "pnl_history.parque
 _PNL_CACHE = {"data": None, "fetched_at": None}
 _PNL_CACHE_TTL_SEC = 60
 
+# NoVig edges cache. Public GraphQL is fine to hit on demand, but the user
+# can spam-click filters; 60s in-memory is plenty.
+_NOVIG_CACHE = {"data": None, "fetched_at": None, "tournament_name": ""}
+_NOVIG_CACHE_TTL_SEC = 60
+
 # Ticker prefix → market_type. Mirrors OUTRIGHT_SERIES in kalshi_maker plus h2h.
 _MARKET_TYPE_PREFIXES = (
     ("KXPGATOUR", "winner"),
@@ -796,6 +801,57 @@ def pnl():
     }
     _PNL_CACHE["data"] = result
     _PNL_CACHE["fetched_at"] = now
+    return jsonify({**result, "from_cache": False})
+
+
+@app.route("/api/novig")
+def novig_edges():
+    """Live NoVig outright edges (read-only).
+
+    Public GraphQL endpoint, no auth. Tournament is the current `tourney`
+    from sim_inputs; sim probs are loaded from the latest persisted
+    rank_probs + simulated_probs files. 60s cache; ?refresh=1 to force.
+    """
+    if not _enabled():
+        return jsonify({"error": "disabled"}), 403
+
+    force = request.args.get("refresh") == "1"
+    now = dt.datetime.now()
+    if (not force
+            and _NOVIG_CACHE["data"] is not None
+            and _NOVIG_CACHE["fetched_at"]
+            and (now - _NOVIG_CACHE["fetched_at"]).total_seconds() < _NOVIG_CACHE_TTL_SEC):
+        return jsonify({**_NOVIG_CACHE["data"], "from_cache": True})
+
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        from sim_inputs import tourney
+    except Exception as e:
+        return jsonify({"error": f"cannot read sim_inputs.tourney: {e}"}), 500
+
+    try:
+        from novig_pricer import price_novig_outrights
+        df = price_novig_outrights(tourney, project_root=REPO_ROOT)
+    except Exception as e:
+        return jsonify({"error": f"novig_pricer failed: {e}"}), 500
+
+    tournament_name = ""
+    if hasattr(df, "attrs"):
+        tournament_name = df.attrs.get("tournament", "") or ""
+
+    rows = [] if df.empty else df.to_dict(orient="records")
+    positive_edges = int((df["edge"] > 0).sum()) if not df.empty and "edge" in df.columns else 0
+
+    result = {
+        "rows": rows,
+        "tournament_name": tournament_name,
+        "tourney": tourney,
+        "positive_edges": positive_edges,
+        "fetched_ts": now.isoformat(timespec="seconds"),
+    }
+    _NOVIG_CACHE["data"] = result
+    _NOVIG_CACHE["fetched_at"] = now
+    _NOVIG_CACHE["tournament_name"] = tournament_name
     return jsonify({**result, "from_cache": False})
 
 

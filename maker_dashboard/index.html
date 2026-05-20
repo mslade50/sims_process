@@ -18,6 +18,7 @@
       <button :class="{active: tab === 'exposures'}"  @click="switchTab('exposures')">Exposures</button>
       <button :class="{active: tab === 'fills'}"      @click="switchTab('fills')">Fills</button>
       <button :class="{active: tab === 'pnl'}"        @click="switchTab('pnl')">PnL</button>
+      <button :class="{active: tab === 'novig'}"      @click="switchTab('novig')">NoVig</button>
     </nav>
   </header>
 
@@ -296,6 +297,77 @@
     </section>
 
     <div id="grid-pnl" class="ag-theme-quartz-dark" style="height: 600px; width: 100%;"></div>
+  </section>
+
+  <!-- ── NoVig tab ────────────────────────────────────────────────── -->
+  <section x-show="tab === 'novig'">
+    <div class="tab-header">
+      <div class="meta">
+        <span x-show="novig.tournamentName">tournament: <code x-text="novig.tournamentName"></code></span>
+        <span x-show="novig.fetchedTs">fetched: <code x-text="novig.fetchedTs"></code></span>
+        <span x-show="novig.fromCache" class="muted">(cached)</span>
+      </div>
+      <div>
+        <label class="select-label">
+          Market:
+          <select x-model="novig.marketFilter" @change="renderNovigGrid()">
+            <option value="all">All</option>
+            <option value="winner">Winner</option>
+            <option value="top_5">Top 5</option>
+            <option value="top_10">Top 10</option>
+            <option value="top_20">Top 20</option>
+          </select>
+        </label>
+        <label class="select-label">
+          Side:
+          <select x-model="novig.sideFilter" @change="renderNovigGrid()">
+            <option value="both">Both</option>
+            <option value="yes">YES</option>
+            <option value="no">NO</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          min edge (pp):
+          <input type="number" step="0.1" x-model.number="novig.minEdge"
+                 @input="renderNovigGrid()" style="width:70px; margin-left:6px;" />
+        </label>
+        <label class="checkbox-label">
+          min volume:
+          <input type="number" step="1" x-model.number="novig.minVolume"
+                 @input="renderNovigGrid()" style="width:80px; margin-left:6px;" />
+        </label>
+        <button class="btn btn-secondary" @click="loadNovig(true)">Refresh</button>
+      </div>
+    </div>
+
+    <p class="muted" style="margin: 0 0 8px 0;">
+      Read-only — NoVig trading is gated behind a higher account tier. Edges shown for visibility only.
+    </p>
+
+    <section class="summary">
+      <div class="chip">
+        <div class="label">visible lines</div>
+        <div class="value"><span x-text="visibleNovig().length.toLocaleString()"></span></div>
+      </div>
+      <div class="chip">
+        <div class="label">positive edges</div>
+        <div class="value" style="color:#4caf50">
+          <span x-text="novigPositiveCount()"></span>
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">max edge</div>
+        <div class="value" style="color:#4caf50">
+          <span x-text="novigMaxEdge().toFixed(1)"></span> pp
+        </div>
+      </div>
+      <div class="chip">
+        <div class="label">total volume</div>
+        <div class="value">$<span x-text="novigTotalVolume().toLocaleString(undefined, {maximumFractionDigits:0})"></span></div>
+      </div>
+    </section>
+
+    <div id="grid-novig" class="ag-theme-quartz-dark" style="height: 620px; width: 100%;"></div>
   </section>
 
   <!-- Fill detail modal (top-level so it floats over any tab) -->

@@ -1,7 +1,17 @@
 // Alpine.js component for the maker dashboard.
 // Three tabs, each with its own ag-grid instance.
 
-const grids = { proposals: null, open: null, exposures: null, fills: null, pnl: null };
+const grids = { proposals: null, open: null, exposures: null, fills: null, pnl: null, novig: null };
+
+// Stretch the visible grid's columns to fill its container width. Scheduled
+// on the next animation frame so the DOM has its actual width by the time we
+// measure (matters when a tab was just switched in from display:none).
+function fitGrid(api) {
+  if (!api) return;
+  requestAnimationFrame(() => {
+    try { api.sizeColumnsToFit(); } catch (e) { /* grid disposed */ }
+  });
+}
 
 
 // Parse the player's real name out of a Kalshi PGA market title.
@@ -66,6 +76,18 @@ function makerDashboard() {
     fills: { rows: [], fetchedTs: null, golfOnly: false },
     fillDetail: null,
 
+    // NoVig state — read-only edge view
+    novig: {
+      rows: [],
+      tournamentName: "",
+      fetchedTs: null,
+      fromCache: false,
+      marketFilter: "all",
+      sideFilter: "both",
+      minEdge: 0,
+      minVolume: 0,
+    },
+
     // PnL state
     pnl: {
       rows: [],
@@ -88,6 +110,7 @@ function makerDashboard() {
       this.loadExposures();
       this.loadFills();
       this.loadPnL();
+      this.loadNovig();
     },
 
     async switchTab(name) {
@@ -99,6 +122,7 @@ function makerDashboard() {
       if (name === "exposures") this.renderExposuresGrid();
       if (name === "fills")     this.renderFillsGrid();
       if (name === "pnl")       this.renderPnLGrid();
+      if (name === "novig")     this.renderNovigGrid();
     },
 
     // ── Proposals ───────────────────────────────────────────────
@@ -114,40 +138,40 @@ function makerDashboard() {
 
     renderProposalsGrid() {
       const colDefs = [
-        { headerName: "✓", field: "include", width: 60,
+        { headerName: "✓", field: "include", width: 50,
           cellRenderer: "agCheckboxCellRenderer", cellEditor: "agCheckboxCellEditor",
           editable: true, pinned: "left" },
-        { headerName: "name", field: "title", width: 340, pinned: "left",
+        { headerName: "name", field: "title", flex: 3, minWidth: 150, pinned: "left",
           tooltipField: "ticker",
           valueFormatter: p => p.value || p.data.ticker },
-        { headerName: "player", field: "player", width: 160, pinned: "left" },
-        { headerName: "mkt", field: "market", width: 80 },
-        { headerName: "side", field: "side", width: 70,
+        { headerName: "player", field: "player", flex: 2, minWidth: 100 },
+        { headerName: "mkt", field: "market", flex: 1, minWidth: 60 },
+        { headerName: "side", field: "side", flex: 1, minWidth: 55,
           cellStyle: p => ({ color: p.value === "yes" ? "#4caf50" : "#e74c3c" }) },
-        { headerName: "type", field: "post_type", width: 90 },
-        { headerName: "bid", field: "best_bid", width: 80,
+        { headerName: "type", field: "post_type", flex: 1, minWidth: 70 },
+        { headerName: "bid", field: "best_bid", flex: 1, minWidth: 65,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c" },
-        { headerName: "ask", field: "best_ask", width: 80,
+        { headerName: "ask", field: "best_ask", flex: 1, minWidth: 65,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c" },
-        { headerName: "post", field: "post_price", width: 80,
+        { headerName: "post", field: "post_price", flex: 1, minWidth: 65,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c",
           cellStyle: { fontWeight: "600" } },
-        { headerName: "sim", field: "sim_prob", width: 80,
+        { headerName: "sim", field: "sim_prob", flex: 1, minWidth: 60,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c" },
-        { headerName: "edge", field: "edge_pp", width: 80,
+        { headerName: "edge", field: "edge_pp", flex: 1, minWidth: 65,
           valueFormatter: p => p.value.toFixed(1) + "%" },
-        { headerName: "kelly%", field: "kelly_f", width: 80,
+        { headerName: "kelly%", field: "kelly_f", flex: 1, minWidth: 70,
           valueFormatter: p => (p.value * 100).toFixed(1) + "%" },
-        { headerName: "kelly qty", field: "kelly_contracts", width: 100,
+        { headerName: "kelly qty", field: "kelly_contracts", flex: 1, minWidth: 80,
           cellStyle: { color: "#888" } },
-        { headerName: "edit qty", field: "edit_contracts", width: 100,
+        { headerName: "edit qty", field: "edit_contracts", flex: 1, minWidth: 75,
           editable: true,
           cellStyle: { fontWeight: "600", backgroundColor: "#2a2f38" },
           valueParser: p => {
             const n = parseInt(p.newValue, 10);
             return isNaN(n) ? 0 : Math.max(0, n);
           } },
-        { headerName: "$ stake", field: "stake_dollars", width: 100,
+        { headerName: "$ stake", field: "stake_dollars", flex: 1, minWidth: 75,
           valueGetter: p => p.data.edit_contracts * p.data.post_price,
           valueFormatter: p => "$" + p.value.toFixed(2) },
       ];
@@ -258,32 +282,31 @@ function makerDashboard() {
 
     renderOpenGrid() {
       const colDefs = [
-        { headerName: "player", field: "player", width: 160, pinned: "left",
+        { headerName: "player", field: "player", flex: 2, minWidth: 110,
           cellStyle: p => p.value ? null : { color: "#888" } },
-        { headerName: "name", field: "title", width: 380,
-          tooltipField: "ticker",
-          valueFormatter: p => p.value || p.data.ticker,
-          cellStyle: p => p.data.is_golf ? null : { color: "#888" } },
-        { headerName: "side", field: "side", width: 70,
+        { headerName: "event", flex: 2, minWidth: 90,
+          valueGetter: p => extractEventName(p.data.title),
+          cellStyle: { color: "#aaa" } },
+        { headerName: "side", field: "side", flex: 1, minWidth: 55,
           cellStyle: p => ({ color: p.value === "yes" ? "#4caf50" : "#e74c3c" }) },
-        { headerName: "price", field: "price_dollars", width: 90,
+        { headerName: "price", field: "price_dollars", flex: 1, minWidth: 70,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c",
-          cellStyle: { fontWeight: "600" }, sort: null },
-        { headerName: "contracts", field: "remaining_contracts", width: 110,
+          cellStyle: { fontWeight: "600" } },
+        { headerName: "contracts", field: "remaining_contracts", flex: 1, minWidth: 85,
           sort: "desc", sortIndex: 0,
           cellStyle: { fontWeight: "600", textAlign: "right" } },
-        { headerName: "filled / initial", field: "fill_progress", width: 140,
+        { headerName: "filled / initial", flex: 1, minWidth: 95,
           valueGetter: p => `${p.data.fill_count} / ${p.data.initial_count}` },
-        { headerName: "$ value", field: "value_dollars", width: 100,
+        { headerName: "$ value", flex: 1, minWidth: 75,
           valueGetter: p => p.data.remaining_contracts * p.data.price_dollars,
           valueFormatter: p => "$" + p.value.toFixed(2) },
-        { headerName: "placed by", field: "placed_by", width: 100,
+        { headerName: "placed by", field: "placed_by", flex: 1, minWidth: 75,
           cellStyle: p => ({ color: p.value === "script" ? "#4a90e2" : "#f5a623" }) },
-        { headerName: "scope", field: "scope", width: 90,
+        { headerName: "scope", field: "scope", flex: 1, minWidth: 60,
           cellStyle: p => ({ color: p.value === "golf" ? "#4caf50" : "#888" }) },
-        { headerName: "created", field: "created_time", width: 200,
+        { headerName: "created", field: "created_time", flex: 2, minWidth: 125,
           valueFormatter: p => p.value ? p.value.replace("T", " ").substring(0, 19) : "" },
-        { headerName: "order_id", field: "order_id", width: 280,
+        { headerName: "order_id", field: "order_id", flex: 2, minWidth: 140,
           cellStyle: { color: "#888", fontFamily: "monospace", fontSize: "11px" } },
       ];
       this.bindGrid("open", "#grid-open", colDefs, this.visibleOpenOrders(), null);
@@ -323,35 +346,35 @@ function makerDashboard() {
 
     renderExposuresGrid() {
       const colDefs = [
-        { headerName: "name", field: "title", width: 380, pinned: "left",
+        { headerName: "name", field: "title", flex: 3, minWidth: 160, pinned: "left",
           tooltipField: "ticker",
           valueFormatter: p => p.value || p.data.ticker,
           cellStyle: p => p.data.is_golf ? null : { color: "#888" } },
-        { headerName: "side", field: "side", width: 70,
+        { headerName: "side", field: "side", flex: 1, minWidth: 55,
           cellStyle: p => ({ color: p.value === "yes" ? "#4caf50" : "#e74c3c", fontWeight: "600" }) },
-        { headerName: "contracts", field: "contracts", width: 110,
+        { headerName: "contracts", field: "contracts", flex: 1, minWidth: 90,
           cellStyle: { fontWeight: "600", textAlign: "right" } },
-        { headerName: "avg cost", field: "avg_cost_dollars", width: 100,
+        { headerName: "avg cost", field: "avg_cost_dollars", flex: 1, minWidth: 85,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c" },
-        { headerName: "$ at risk", field: "exposure_dollars", width: 110,
+        { headerName: "$ at risk", field: "exposure_dollars", flex: 1, minWidth: 85,
           sort: "desc", sortIndex: 0,
           valueFormatter: p => "$" + Number(p.value).toFixed(2),
           cellStyle: { fontWeight: "600", color: "#f5a623" } },
-        { headerName: "$ max gain", field: "max_gain_dollars", width: 110,
+        { headerName: "$ max gain", field: "max_gain_dollars", flex: 1, minWidth: 85,
           valueFormatter: p => "$" + Number(p.value).toFixed(2),
           cellStyle: { color: "#4caf50" } },
-        { headerName: "realized P&L", field: "net_pnl_dollars", width: 110,
+        { headerName: "realized P&L", field: "net_pnl_dollars", flex: 1, minWidth: 90,
           valueFormatter: p => "$" + Number(p.value).toFixed(2),
           cellStyle: p => ({
             color: p.value > 0 ? "#4caf50" : (p.value < 0 ? "#e74c3c" : "#888"),
             fontWeight: "600"
           }) },
-        { headerName: "fees", field: "fees_paid_dollars", width: 80,
+        { headerName: "fees", field: "fees_paid_dollars", flex: 1, minWidth: 70,
           valueFormatter: p => "$" + Number(p.value).toFixed(2),
           cellStyle: { color: "#888" } },
-        { headerName: "resting", field: "resting_orders_count", width: 90,
+        { headerName: "resting", field: "resting_orders_count", flex: 1, minWidth: 70,
           cellStyle: p => ({ color: p.value > 0 ? "#4a90e2" : "#888" }) },
-        { headerName: "last updated", field: "last_updated_ts", width: 200,
+        { headerName: "last updated", field: "last_updated_ts", flex: 2, minWidth: 130,
           valueFormatter: p => p.value ? p.value.replace("T", " ").substring(0, 19) : "",
           cellStyle: { color: "#888" } },
       ];
@@ -389,27 +412,27 @@ function makerDashboard() {
 
     renderFillsGrid() {
       const colDefs = [
-        { headerName: "time", field: "created_time", width: 200, sort: "desc", sortIndex: 0,
+        { headerName: "time", field: "created_time", flex: 2, minWidth: 130, sort: "desc", sortIndex: 0,
           valueFormatter: p => p.value ? p.value.replace("T", " ").substring(0, 19) : "" },
-        { headerName: "name", field: "title", width: 380,
+        { headerName: "name", field: "title", flex: 3, minWidth: 160,
           tooltipField: "ticker",
           valueFormatter: p => p.value || p.data.ticker,
           cellStyle: p => p.data.is_golf ? null : { color: "#888" } },
-        { headerName: "side", field: "side", width: 70,
+        { headerName: "side", field: "side", flex: 1, minWidth: 55,
           cellStyle: p => ({ color: p.value === "yes" ? "#4caf50" : "#e74c3c" }) },
-        { headerName: "action", field: "action", width: 80 },
-        { headerName: "count", field: "count", width: 90,
+        { headerName: "action", field: "action", flex: 1, minWidth: 65 },
+        { headerName: "count", field: "count", flex: 1, minWidth: 65,
           cellStyle: { fontWeight: "600", textAlign: "right" } },
-        { headerName: "fill price", field: "fill_price_dollars", width: 100,
+        { headerName: "fill price", field: "fill_price_dollars", flex: 1, minWidth: 80,
           valueFormatter: p => (p.value * 100).toFixed(1) + "c",
           cellStyle: { fontWeight: "600" } },
-        { headerName: "$ cost", field: "fill_dollars", width: 100,
+        { headerName: "$ cost", flex: 1, minWidth: 75,
           valueGetter: p => p.data.count * p.data.fill_price_dollars,
           valueFormatter: p => "$" + p.value.toFixed(2) },
-        { headerName: "is_taker", field: "is_taker", width: 90,
+        { headerName: "is_taker", field: "is_taker", flex: 1, minWidth: 75,
           cellStyle: p => ({ color: p.value ? "#e74c3c" : "#4caf50", fontWeight: "600" }),
           valueFormatter: p => p.value ? "TAKER" : "maker" },
-        { headerName: "order_id", field: "order_id", width: 280,
+        { headerName: "order_id", field: "order_id", flex: 2, minWidth: 140,
           cellStyle: { color: "#888", fontFamily: "monospace", fontSize: "11px" } },
       ];
       this.bindGrid("fills", "#grid-fills", colDefs, this.visibleFills(), null);
@@ -555,7 +578,7 @@ function makerDashboard() {
           is_open: "status",
         })[groupBy] || "group";
         colDefs = [
-          { headerName: groupHeader, field: "_group", width: 220, pinned: "left",
+          { headerName: groupHeader, field: "_group", flex: 2, minWidth: 130, pinned: "left",
             cellStyle: { fontWeight: "600" },
             // For player/event groupings, resolve the raw code to a real name
             // using a representative title from the bucket. Falls back to the
@@ -567,71 +590,78 @@ function makerDashboard() {
               if (groupBy === "event_code")  return extractEventName(t)  || code;
               return code;
             } },
-          { headerName: "# pos", field: "n_positions", width: 75,
+          { headerName: "# pos", field: "n_positions", flex: 1, minWidth: 60,
             cellStyle: { textAlign: "right", color: "#aaa" } },
-          { headerName: "open/settled", field: "open_settled", width: 120,
+          { headerName: "open/settled", flex: 1, minWidth: 100,
             valueGetter: p => `${p.data.n_open} / ${p.data.n_settled}` },
-          { headerName: "contracts", field: "contracts", width: 100,
+          { headerName: "contracts", field: "contracts", flex: 1, minWidth: 90,
             cellStyle: { textAlign: "right" } },
-          { headerName: "exposure", field: "exposure_dollars", width: 100,
+          { headerName: "exposure", field: "exposure_dollars", flex: 1, minWidth: 85,
             valueFormatter: dollarFmt, cellStyle: { color: "#f5a623" } },
-          { headerName: "realized", field: "realized_pnl_dollars", width: 110,
+          { headerName: "realized", field: "realized_pnl_dollars", flex: 1, minWidth: 90,
             valueFormatter: dollarFmt, cellStyle: pnlCell },
-          { headerName: "unrealized", field: "unrealized_pnl_dollars", width: 110,
+          { headerName: "unrealized", field: "unrealized_pnl_dollars", flex: 1, minWidth: 95,
             valueFormatter: dollarFmt, cellStyle: pnlCell },
-          { headerName: "fees", field: "fees_paid_dollars", width: 90,
+          { headerName: "fees", field: "fees_paid_dollars", flex: 1, minWidth: 70,
             valueFormatter: dollarFmt, cellStyle: { color: "#888" } },
-          { headerName: "net", field: "net_pnl_dollars", width: 110,
+          { headerName: "net", field: "net_pnl_dollars", flex: 1, minWidth: 80,
             sort: "desc", sortIndex: 0,
             valueFormatter: dollarFmt,
             cellStyle: p => ({ ...pnlCell(p), fontWeight: "700" }) },
         ];
       } else {
         // Flat per-position view.
+        const settledOnly = this.pnl.statusFilter === "settled";
         colDefs = [
-          { headerName: "name", field: "title", width: 320, pinned: "left",
+          { headerName: "name", field: "title", flex: 3, minWidth: 150, pinned: "left",
             tooltipField: "ticker",
             valueFormatter: p => p.value || p.data?.ticker,
             cellStyle: p => p.data?.is_golf ? null : { color: "#888" } },
           // Friendly player name parsed from title; falls back to the
           // ticker player_code (e.g. "HMAT") when the title is unavailable
           // (legacy/settled tickers Kalshi has purged).
-          { headerName: "golfer", field: "player_code", width: 160,
+          { headerName: "golfer", field: "player_code", flex: 2, minWidth: 110,
             valueGetter: p => extractPlayerName(p.data?.title) || p.data?.player_code || "" },
-          { headerName: "market", field: "market_type", width: 80 },
-          { headerName: "event", field: "event_code", width: 80 },
+          { headerName: "market", field: "market_type", flex: 1, minWidth: 65 },
+          { headerName: "event", field: "event_code", flex: 1, minWidth: 60 },
           // Human-readable event name parsed from the title. Falls back to
           // event_code when title is missing.
-          { headerName: "event name", field: "event_name", width: 180,
+          { headerName: "event name", field: "event_name", flex: 2, minWidth: 110,
             valueGetter: p => extractEventName(p.data?.title) || p.data?.event_code || "" },
-          { headerName: "side", field: "side", width: 60,
+          { headerName: "side", field: "side", flex: 1, minWidth: 55,
             cellStyle: p => p.value === "yes"
               ? { color: "#4caf50", fontWeight: "600" }
               : (p.value === "no" ? { color: "#e74c3c", fontWeight: "600" } : null) },
-          { headerName: "status", field: "is_open", width: 80,
-            valueFormatter: p => p.value ? "open" : "settled",
-            cellStyle: p => p.value ? { color: "#4a90e2" } : { color: "#888" } },
-          { headerName: "contracts", field: "contracts", width: 95,
-            cellStyle: { textAlign: "right" } },
-          { headerName: "avg cost", field: "avg_cost_dollars", width: 85,
-            valueFormatter: p => p.value ? (p.value * 100).toFixed(1) + "c" : "" },
-          { headerName: "mark", field: "mark_dollars", width: 75,
-            valueFormatter: p => p.value ? (p.value * 100).toFixed(1) + "c" : "",
-            cellStyle: { color: "#aaa" } },
-          { headerName: "realized", field: "realized_pnl_dollars", width: 100,
+          ...(!settledOnly ? [
+            { headerName: "status", field: "is_open", flex: 1, minWidth: 70,
+              valueFormatter: p => p.value ? "open" : "settled",
+              cellStyle: p => p.value ? { color: "#4a90e2" } : { color: "#888" } },
+            { headerName: "contracts", field: "contracts", flex: 1, minWidth: 85,
+              cellStyle: { textAlign: "right" } },
+            { headerName: "avg cost", field: "avg_cost_dollars", flex: 1, minWidth: 80,
+              valueFormatter: p => p.value ? (p.value * 100).toFixed(1) + "c" : "" },
+            { headerName: "mark", field: "mark_dollars", flex: 1, minWidth: 65,
+              valueFormatter: p => p.value ? (p.value * 100).toFixed(1) + "c" : "",
+              cellStyle: { color: "#aaa" } },
+          ] : []),
+          { headerName: "realized", field: "realized_pnl_dollars", flex: 1, minWidth: 85,
             valueFormatter: dollarFmt, cellStyle: pnlCell },
-          { headerName: "unrealized", field: "unrealized_pnl_dollars", width: 105,
-            valueFormatter: dollarFmt, cellStyle: pnlCell },
-          { headerName: "fees", field: "fees_paid_dollars", width: 75,
+          ...(!settledOnly ? [
+            { headerName: "unrealized", field: "unrealized_pnl_dollars", flex: 1, minWidth: 90,
+              valueFormatter: dollarFmt, cellStyle: pnlCell },
+          ] : []),
+          { headerName: "fees", field: "fees_paid_dollars", flex: 1, minWidth: 65,
             valueFormatter: dollarFmt, cellStyle: { color: "#888" } },
-          { headerName: "net", field: "net_pnl_dollars", width: 100,
+          { headerName: "net", field: "net_pnl_dollars", flex: 1, minWidth: 80,
             sort: "desc", sortIndex: 0,
             valueFormatter: dollarFmt,
             cellStyle: p => ({ ...pnlCell(p), fontWeight: "700" }) },
-          { headerName: "return %", field: "return_pct", width: 85,
-            valueFormatter: p => p.value != null
-              ? Number(p.value).toFixed(1) + "%" : "",
-            cellStyle: pnlCell },
+          ...(!settledOnly ? [
+            { headerName: "return %", field: "return_pct", flex: 1, minWidth: 75,
+              valueFormatter: p => p.value != null
+                ? Number(p.value).toFixed(1) + "%" : "",
+              cellStyle: pnlCell },
+          ] : []),
         ];
       }
       this.bindGrid("pnl", "#grid-pnl", colDefs, this.pnlGroupedRows(), null);
@@ -649,6 +679,105 @@ function makerDashboard() {
       }
     },
 
+    // ── NoVig (read-only) ────────────────────────────────────────
+    async loadNovig(forceRefresh = false) {
+      const url = forceRefresh ? "/api/novig?refresh=1" : "/api/novig";
+      const r = await fetch(url);
+      if (!r.ok) { alert(`Failed to load NoVig: ${r.status}`); return; }
+      const data = await r.json();
+      if (data.error) { alert(`NoVig error: ${data.error}`); return; }
+      this.novig.rows = data.rows || [];
+      this.novig.tournamentName = data.tournament_name || "";
+      this.novig.fetchedTs = data.fetched_ts || new Date().toISOString();
+      this.novig.fromCache = !!data.from_cache;
+      this.renderNovigGrid();
+    },
+
+    visibleNovig() {
+      let rows = this.novig.rows;
+      if (this.novig.marketFilter !== "all") {
+        rows = rows.filter(r => r.market_type === this.novig.marketFilter);
+      }
+      if (this.novig.sideFilter !== "both") {
+        rows = rows.filter(r => r.side === this.novig.sideFilter);
+      }
+      const minE = Number(this.novig.minEdge);
+      if (Number.isFinite(minE)) {
+        rows = rows.filter(r => Number(r.edge) >= minE);
+      }
+      const minV = Number(this.novig.minVolume);
+      if (Number.isFinite(minV) && minV > 0) {
+        rows = rows.filter(r => Number(r.volume || 0) >= minV);
+      }
+      return rows;
+    },
+    novigPositiveCount() {
+      return this.visibleNovig().filter(r => Number(r.edge) > 0).length;
+    },
+    novigMaxEdge() {
+      const rows = this.visibleNovig();
+      if (!rows.length) return 0;
+      return rows.reduce((m, r) => Math.max(m, Number(r.edge) || 0), -Infinity);
+    },
+    novigTotalVolume() {
+      return this.visibleNovig().reduce((s, r) => s + Number(r.volume || 0), 0);
+    },
+
+    renderNovigGrid() {
+      // `flex` distributes whatever horizontal space remains after pinned/
+      // fixed-width columns claim their share. `minWidth` keeps headers
+      // readable when the window is narrow.
+      const colDefs = [
+        { headerName: "player", field: "player_name", width: 200, minWidth: 180, pinned: "left",
+          valueFormatter: p => {
+            if (!p.value) return "";
+            // "scheffler, scottie" → "Scheffler, Scottie"
+            return p.value.split(", ").map(s =>
+              s ? s.charAt(0).toUpperCase() + s.slice(1) : s).join(", ");
+          } },
+        { headerName: "market", field: "market_type", flex: 1, minWidth: 110,
+          valueFormatter: p => {
+            const m = { winner: "Winner", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20" };
+            return m[p.value] || p.value;
+          } },
+        { headerName: "side", field: "side", flex: 1, minWidth: 80,
+          cellStyle: p => ({ color: p.value === "yes" ? "#4caf50" : "#e74c3c",
+                             fontWeight: "600" }),
+          valueFormatter: p => (p.value || "").toUpperCase() },
+        { headerName: "price", field: "eff_price", flex: 1, minWidth: 100,
+          valueFormatter: p => (p.value * 100).toFixed(1) + "c",
+          cellStyle: { fontWeight: "600", textAlign: "right" } },
+        { headerName: "american", field: "american_odds", flex: 1, minWidth: 110,
+          valueFormatter: p => p.value > 0 ? "+" + p.value : String(p.value),
+          cellStyle: { textAlign: "right" } },
+        { headerName: "sim prob", field: "sim_prob", flex: 1, minWidth: 110,
+          valueFormatter: p => (p.value * 100).toFixed(1) + "%",
+          cellStyle: { textAlign: "right" } },
+        { headerName: "my fair", field: "my_fair", flex: 1, minWidth: 100,
+          valueFormatter: p => {
+            if (p.value === null || p.value === undefined) return "";
+            return p.value > 0 ? "+" + p.value : String(p.value);
+          },
+          cellStyle: { textAlign: "right", color: "#888" } },
+        { headerName: "edge (pp)", field: "edge", flex: 1, minWidth: 110, sort: "desc", sortIndex: 0,
+          valueFormatter: p => Number(p.value).toFixed(1),
+          cellStyle: p => {
+            const v = Number(p.value);
+            if (v >= 5)  return { backgroundColor: "#1b5e20", color: "white", fontWeight: "600", textAlign: "right" };
+            if (v >= 2)  return { backgroundColor: "#2e7d32", color: "white", fontWeight: "600", textAlign: "right" };
+            if (v >= 0)  return { backgroundColor: "#4a6741", color: "white", textAlign: "right" };
+            if (v >= -2) return { backgroundColor: "#6d4c41", color: "white", textAlign: "right" };
+            return            { backgroundColor: "#b71c1c", color: "white", textAlign: "right" };
+          } },
+        { headerName: "volume", field: "volume", flex: 1, minWidth: 110,
+          valueFormatter: p => "$" + Number(p.value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+          cellStyle: { textAlign: "right", color: "#aaa" } },
+        { headerName: "market id", field: "ticker", flex: 2, minWidth: 220,
+          cellStyle: { color: "#666", fontFamily: "monospace", fontSize: "11px" } },
+      ];
+      this.bindGrid("novig", "#grid-novig", colDefs, this.visibleNovig(), null);
+    },
+
     // ── Grid binding helper ──────────────────────────────────────
     bindGrid(name, selector, colDefs, rowData, onCellValueChanged, extraOptions) {
       const div = document.querySelector(selector);
@@ -663,6 +792,7 @@ function makerDashboard() {
             grids[name].setGridOption(k, v);
           }
         }
+        fitGrid(grids[name]);
         return;
       }
       const options = {
@@ -672,10 +802,16 @@ function makerDashboard() {
         animateRows: false,
         rowHeight: 28,
         headerHeight: 32,
+        // Stretch columns to fill the container on first render. Grids
+        // created while their tab is hidden have width=0, so this won't
+        // do anything visible until the tab is shown — we also call
+        // fitGrid() on every bind, which catches that case.
+        autoSizeStrategy: { type: "fitGridWidth", defaultMinWidth: 80 },
         ...(extraOptions || {}),
       };
       if (onCellValueChanged) options.onCellValueChanged = onCellValueChanged;
       grids[name] = agGrid.createGrid(div, options);
+      fitGrid(grids[name]);
     },
   };
 }
