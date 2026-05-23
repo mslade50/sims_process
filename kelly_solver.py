@@ -304,7 +304,14 @@ def compute_optimal_outright_sizing(
         for k in new_contracts
     )
     scaled = False
-    if total_new_dollars > available_cash and available_cash > 0:
+    if available_cash <= 0:
+        # Matchup reservation already meets/exceeds balance — no cash left
+        # for outrights. Zero everything out rather than letting full-Kelly
+        # stakes through uncapped.
+        new_contracts = {k: 0.0 for k in new_contracts}
+        scaled = True
+        scale = 0.0
+    elif total_new_dollars > available_cash:
         scale = available_cash / total_new_dollars
         new_contracts = {k: v * scale for k, v in new_contracts.items()}
         scaled = True

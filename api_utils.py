@@ -285,6 +285,7 @@ def fetch_historical_hourly_wind(lat, lon, month, start_year=2019, end_year=2025
     or None on failure.
     """
     import os
+    from requests.exceptions import ConnectTimeout, ConnectionError as ReqConnectionError
     all_frames = []
     for year in range(start_year, end_year + 1):
         url = (
@@ -296,7 +297,7 @@ def fetch_historical_hourly_wind(lat, lon, month, start_year=2019, end_year=2025
             f"&windspeed_unit=mph&timezone=auto"
         )
         try:
-            resp = requests.get(url, timeout=15)
+            resp = requests.get(url, timeout=5)
             data = resp.json()
             if "hourly" not in data or "wind_speed_10m" not in data["hourly"]:
                 continue
@@ -307,6 +308,9 @@ def fetch_historical_hourly_wind(lat, lon, month, start_year=2019, end_year=2025
             df["hour"] = df["datetime"].dt.hour
             df = df[(df["hour"] >= 6) & (df["hour"] <= 20)]
             all_frames.append(df)
+        except (ConnectTimeout, ReqConnectionError) as e:
+            print(f"  [climo wind] {year} connect failed — host unreachable, skipping remaining years")
+            break
         except Exception as e:
             print(f"  [climo wind] {year} fetch failed: {e}")
             continue

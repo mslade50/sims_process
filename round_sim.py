@@ -1106,9 +1106,12 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
 
     def _matches_target_rt(detected_title):
         t = detected_title.lower()
+        # Also check against whitespace-stripped title so contracted slugs
+        # like 'cjcup' match Kalshi's 'THE CJ CUP Byron Nelson' (-> 'thecjcupbyronnelson').
+        t_nospace = _re.sub(r"\s+", "", t)
         if _distinct_target_words_rt:
-            return any(w in t for w in _distinct_target_words_rt)
-        return all(w in t for w in _all_target_words_rt)
+            return any(w in t or w in t_nospace for w in _distinct_target_words_rt)
+        return all(w in t or w in t_nospace for w in _all_target_words_rt)
 
     tourn_counts = Counter()
     for m in all_markets:
@@ -3513,7 +3516,50 @@ def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
     return new_rows
 
 
-def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
+def _dedup_finish_positions(outrights_df, spreadsheet, event_id):
+    """Return rows from `outrights_df` not already in the Finish Positions sheet.
+
+    Dedup key: (player_name, market_type, sportsbook, american_odds) for this
+    event. Finish Positions are tournament-level (no round column), so the
+    dedup is across the whole event.
+    """
+    if outrights_df is None or outrights_df.empty:
+        return outrights_df
+
+    from sheets_storage import TAB_FINISH_POS, FINISH_POS_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_FINISH_POS, FINISH_POS_HEADERS)
+    existing = ws.get_all_records()
+
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id):
+            key = (
+                str(row.get("player_name", "")).lower().strip(),
+                str(row.get("market_type", "")).lower().strip(),
+                str(row.get("sportsbook", "")).lower().strip(),
+                str(row.get("american_odds", "")),
+            )
+            existing_keys.add(key)
+
+    if not existing_keys:
+        return outrights_df
+
+    mask = []
+    for _, r in outrights_df.iterrows():
+        key = (
+            str(r.get("player_name", "")).lower().strip(),
+            str(r.get("market_type", r.get("market", ""))).lower().strip(),
+            str(r.get("bookmaker", r.get("book", r.get("sportsbook", "")))).lower().strip(),
+            str(r.get("american_odds", "")),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = outrights_df[mask].copy()
+    print(f"  [reprice] Outrights: {len(outrights_df)} total, {len(new_rows)} new (deduped {len(outrights_df) - len(new_rows)})")
+    return new_rows
+
+
+def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name, new_op=None):
     """Format and send Telegram alert for newly-priced (since last reprice) bets."""
     lines = []
     lines.append(f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>")
@@ -3556,18 +3602,37 @@ def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name):
             lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
         lines.append("")
 
-    if (new_mu is None or new_mu.empty) and (new_se is None or new_se.empty):
+    if new_op is not None and not new_op.empty:
+        lines.append(f"<b>New Outright Edges ({len(new_op)}):</b>")
+        for _, r in new_op.iterrows():
+            player = str(r.get("player_name", "?")).title()
+            market = r.get("market_type", r.get("market", "?"))
+            side = r.get("side", "")
+            book = r.get("bookmaker", r.get("book", "?"))
+            edge = r.get("edge", "?")
+            mkt_odds = r.get("american_odds", "?")
+            fair_odds = r.get("my_fair", "?")
+            side_str = f" {side}" if side else ""
+            lines.append(f"  {player} {market}{side_str}")
+            lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
+        lines.append("")
+
+    if ((new_mu is None or new_mu.empty)
+            and (new_se is None or new_se.empty)
+            and (new_op is None or new_op.empty)):
         lines.append("No new or moved bets found.")
 
     _send_telegram("\n".join(lines))
 
 
-def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, event_id):
+def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, event_id,
+                              outrights_combined=None):
     """Dedup against Sheets, store only new rows, send Telegram alert."""
     from sheets_storage import (
         get_spreadsheet,
         store_round_matchups,
         store_score_edges,
+        store_finish_positions,
         load_dg_id_lookup,
     )
 
@@ -3575,6 +3640,7 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
 
     new_mu = _dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
     new_se = _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round)
+    new_op = _dedup_finish_positions(outrights_combined, spreadsheet, event_id)
 
     try:
         dg_id_lookup = load_dg_id_lookup(tourney_name, name_replacements)
@@ -3597,6 +3663,14 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
     else:
         print("  [reprice] No new score edge rows to store.")
 
+    if new_op is not None and not new_op.empty:
+        store_finish_positions(
+            new_op, tourney_name, event_id,
+            dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
+        )
+    else:
+        print("  [reprice] No new outright rows to store.")
+
     # Telegram filter: only sharp books in matchup alerts
     TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
     _tg_mu = None
@@ -3604,11 +3678,26 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
         _tg_mu = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
         if _tg_mu.empty:
             _tg_mu = None
-    _send_reprice_alert(_tg_mu, new_se, sim_round, tourney_name)
+
+    # Telegram filter for outrights: only include exchange (kalshi/novig) taker
+    # rows with non-trivial edge to keep alerts actionable.
+    _tg_op = None
+    if new_op is not None and not new_op.empty:
+        _book_col = "bookmaker" if "bookmaker" in new_op.columns else "book"
+        _tg_op = new_op[
+            new_op[_book_col].astype(str).str.lower().isin({"kalshi", "novig"})
+            & (new_op.get("pricing", "taker").astype(str).str.lower() == "taker")
+            & (pd.to_numeric(new_op["edge"], errors="coerce").fillna(0) > EDGE_THRESHOLD_TOPN)
+        ].copy()
+        if _tg_op.empty:
+            _tg_op = None
+
+    _send_reprice_alert(_tg_mu, new_se, sim_round, tourney_name, new_op=_tg_op)
 
     n_mu = len(new_mu) if new_mu is not None and not new_mu.empty else 0
     n_se = len(new_se) if new_se is not None and not new_se.empty else 0
-    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges. Telegram sent.")
+    n_op = len(new_op) if new_op is not None and not new_op.empty else 0
+    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges + {n_op} outrights. Telegram sent.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4075,6 +4164,57 @@ def main():
             traceback.print_exc()
     elif args.skip_tournament_sim:
         print(f"\n  Skipping tournament simulation (--skip-tournament-sim)")
+    elif args.price_only and round_num >= 1:
+        # In --price-only / --reprice: skip the expensive tournament sim, but
+        # still reprice Kalshi + Novig outrights against fresh API odds using
+        # the cached finish_probs from the previous full run.
+        print(f"\n  [reprice-outrights] Loading cached finish probs for Kalshi + Novig pricing...")
+        _fp_path = None
+        for _cand in ("simulated_probs_live.csv", f"top_finish_probs_live_{tourney}.csv"):
+            if os.path.exists(_cand):
+                _fp_path = _cand
+                break
+        if _fp_path is None:
+            print(f"  [reprice-outrights] No cached finish_probs found — skipping Kalshi/Novig pricing.")
+        else:
+            try:
+                finish_probs = pd.read_csv(_fp_path)
+                finish_probs["player_name"] = (
+                    finish_probs["player_name"].astype(str).str.lower().str.strip().replace(name_replacements)
+                )
+                print(f"  [reprice-outrights] Loaded {len(finish_probs)} players from {_fp_path}")
+
+                # Price Kalshi outrights (no dead-heat)
+                print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
+                kalshi_edges = price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup)
+                if not kalshi_edges.empty:
+                    kalshi_taker = kalshi_edges[kalshi_edges["pricing"] == "taker"].copy()
+                    kalshi_mids = kalshi_edges[kalshi_edges["pricing"] == "mid"].copy()
+                    if not kalshi_taker.empty:
+                        outrights_combined = pd.concat([outrights_combined, kalshi_taker], ignore_index=True)
+                        kalshi_sharp = kalshi_taker[kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
+                        if not kalshi_sharp.empty:
+                            outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
+                            outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+
+                # Price NoVig outrights (no dead-heat)
+                print(f"\n    Pricing NoVig outrights (no dead-heat)...")
+                try:
+                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=tourney)
+                    if not novig_edges.empty:
+                        novig_taker = novig_edges[novig_edges["edge"] > 0].copy()
+                        if not novig_taker.empty:
+                            outrights_combined = pd.concat([outrights_combined, novig_taker], ignore_index=True)
+                            novig_sharp = novig_taker[novig_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
+                            if not novig_sharp.empty:
+                                outrights_sharp = pd.concat([outrights_sharp, novig_sharp], ignore_index=True)
+                                outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+                except Exception as e:
+                    print(f"    Warning: NoVig pricing failed: {e}")
+            except Exception as e:
+                print(f"  [reprice-outrights] Failed: {e}")
+                import traceback
+                traceback.print_exc()
     else:
         print(f"\n  Skipping tournament simulation (round_num < 1)")
 
@@ -4150,7 +4290,8 @@ def main():
     if args.reprice:
         print(f"\n  [reprice] Dedup + store + alert...")
         try:
-            _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id)
+            _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id,
+                                      outrights_combined=outrights_combined)
         except Exception as e:
             print(f"  [reprice] Warning: {e}")
             import traceback; traceback.print_exc()
