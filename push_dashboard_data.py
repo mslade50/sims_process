@@ -217,6 +217,20 @@ def git_push(dry_run=False):
     _run(["git", "add", "dashboard_data/"])
     _run(["git", "add", "sim_inputs.py"])
 
+    tourney = get_tourney()
+    if tourney:
+        prep_files = [
+            f"pre_course_fit_{tourney}.csv",
+            f"pre_sim_summary_{tourney}.csv",
+            f"final_predictions_{tourney}.csv",
+            "this_week_dists_v2.csv",
+            "sg_dist_player.csv",
+            f"permanent_data/avg_expected_cat_sg_{tourney}.csv",
+        ]
+        for f in prep_files:
+            if os.path.exists(os.path.join(PROJECT_ROOT, f)):
+                _run(["git", "add", "-f", f])
+
     # Check if there are staged changes
     ret = _run(["git", "diff", "--staged", "--quiet"])
     if ret.returncode == 0:
