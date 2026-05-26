@@ -227,14 +227,30 @@ class KalshiClient:
         return data.get("market", data)
 
     def get_markets(self, series_ticker: str) -> list[dict]:
-        """Fetch all open markets for a series, handling pagination."""
+        """Fetch all open markets for a series, handling pagination + 429 retry.
+
+        Kalshi throttles burst paginated reads — page 2+ of large series like
+        KXPGATOP20 / KXPGATOUR will 429 if hit back-to-back. Retry with
+        retry-after backoff (5 attempts, capped at 5s each) before giving up.
+        """
         all_mkts = []
         cursor = None
         while True:
             params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
             if cursor:
                 params["cursor"] = cursor
-            data = self._get("/markets", params=params)
+            data = None
+            for attempt in range(5):
+                try:
+                    data = self._get("/markets", params=params)
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code != 429:
+                        raise
+                    wait = float(e.response.headers.get("retry-after", 1.0)) * (attempt + 1)
+                    time.sleep(min(wait, 5.0))
+            if data is None:
+                data = self._get("/markets", params=params)  # final attempt, let it raise
             mkts = data.get("markets", [])
             all_mkts.extend(mkts)
             cursor = data.get("cursor")

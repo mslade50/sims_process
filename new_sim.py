@@ -1621,15 +1621,24 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     _kalshi_client = _kalshi_httpx.Client(timeout=15.0, headers=_KALSHI_HEADERS)
 
     def _kalshi_get_markets(series_ticker):
-        """Fetch all open markets for a series, handling pagination."""
+        """Fetch all open markets for a series, handling pagination + 429 retry."""
         all_mkts = []
         cursor = None
         while True:
             params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
             if cursor:
                 params["cursor"] = cursor
-            resp = _kalshi_client.get(f"{_KALSHI_API}/markets", params=params)
-            resp.raise_for_status()
+            # 429-retry: Kalshi throttles burst paginated reads; back off and retry
+            for attempt in range(5):
+                resp = _kalshi_client.get(f"{_KALSHI_API}/markets", params=params)
+                if resp.status_code == 429:
+                    wait = float(resp.headers.get("retry-after", 1.0)) * (attempt + 1)
+                    _time.sleep(min(wait, 5.0))
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                resp.raise_for_status()  # re-raise final 429 after retries
             data = resp.json()
             mkts = data.get("markets", [])
             all_mkts.extend(mkts)
