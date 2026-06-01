@@ -329,6 +329,11 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
 
     df = get_bet_ledger(**filters)
 
+    # Hide score_bet from the default view — they pollute the equity curve and P&L.
+    # To see them, explicitly pick "Score Bet" in the Bet Type filter.
+    if not bet_type and "bet_type" in df.columns:
+        df = df[df["bet_type"] != "score_bet"]
+
     # Hide Kalshi/NoVig results until scraped prices are validated.
     # Rows stay in the ledger; we just don't render them on this page.
     if "bookmaker" in df.columns:
