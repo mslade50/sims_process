@@ -255,7 +255,21 @@ python scoring_baseline.py
 
 **How the backup uses these**: If the nightly backup detects that the Sheet `round` is stale, it copies `expected_score_rN`, `wind_rN`, `dew_rN` into the primary fields and runs the pipeline. If you've already updated the Sheet manually, the backup won't overwrite your values.
 
-### 2.1c Write Base Rates Reference
+### 2.1c Push Tournament Config to Sheet
+```bash
+python init_weekly.py
+```
+
+**What this does:**
+- Reads `tourney`, `event_ids[0]`, `course_id`, `cut_line`, and `course_pars` from `sim_inputs.py`
+- Writes them to the `round_config` tab in the Google Sheet
+- Resets `round` to `0`
+
+**Why this runs AFTER humidity + scoring_baseline:** Those two scripts read tournament config directly from `sim_inputs.py`, so they don't need the Sheet updated first. But everything downstream (`cat_dists_player.py`, `live_stats_engine.py`, `round_sim.py`) reads from the Sheet via `sheet_config.py` — so the Sheet must reflect the new tournament before they'll work. If you skip this step, downstream scripts will silently run against last week's tournament.
+
+**Note:** `cat_dists_player.py` (Phase 1.3) also depends on this — if you ran it earlier, re-run it now that the Sheet is updated.
+
+### 2.1d Write Base Rates Reference
 ```bash
 python write_base_rates.py
 ```
@@ -589,12 +603,12 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 
 ```bash
 # Pre-tournament pipeline
-python init_weekly.py                            # Step 0: Push tourney/event_id/course_id/round=0 to Sheet
-python cat_dists_player.py                       # Step 1: SG distributions
-python humidity.py                               # Step 2: Auto-populate weather to Sheet
-python update_sheet_courses.py                   # Step 2: Auto-populate course codes
-python scoring_baseline.py                       # Step 3: Scoring baselines + expected scores
-python write_base_rates.py                       # Step 4: Base rates reference tab
+python humidity.py                               # Step 1: Auto-populate weather to Sheet (reads sim_inputs)
+python update_sheet_courses.py                   # Step 1: Auto-populate course codes
+python scoring_baseline.py                       # Step 2: Scoring baselines + expected scores (reads sim_inputs)
+python init_weekly.py                            # Step 3: Push tourney/event_id/course_id/round=0 to Sheet
+python cat_dists_player.py                       # Step 4: SG distributions (reads Sheet — must run AFTER init_weekly)
+python write_base_rates.py                       # Step 5: Base rates reference tab
 
 # Pre-tournament sim (two-pass)
 python new_sim.py                                # First pass (pre_course_fit preds)
