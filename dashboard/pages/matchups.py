@@ -140,7 +140,7 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
             d["headerName"] = "Bet Against Odds"
             d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}
         elif col == "edge_on":
-            d["headerName"] = "Edge"
+            d["headerName"] = "Kelly Edge"
             d["valueFormatter"] = {"function": "d3.format('.1f')(params.value) + '%'"}
             d["cellStyle"] = {
                 "styleConditions": [

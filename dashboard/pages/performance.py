@@ -768,7 +768,7 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
         "bet_on": "Bet On", "opponent": "Opponent", "bookmaker": "Book",
         "bet_type": "Type", "round": "R", "event_name": "Event",
         "archetype": "Archetype", "archetype_against": "Arch. Against",
-        "edge": "Edge", "raw_edge": "Raw Edge",
+        "edge": "Kelly Edge", "raw_edge": "Raw Edge",
         "dec_odds": "Odds", "pred_on": "Pred", "result": "Result",
         "units_wagered": "Wagered", "units_won": "Won",
     }

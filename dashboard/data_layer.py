@@ -215,8 +215,14 @@ def _normalize_tab(tab_df, bet_type):
         n["book_odds"] = tab_df.get("american_odds", "")
         n["fair_odds"] = tab_df.get("my_fair", "")
 
-    # edge: matchups have edge_on, finish pos has edge
-    n["edge"] = tab_df.get("edge_on", tab_df.get("edge", ""))
+    # edge: matchups have edge_on (already Kelly EV in pp from round_sim).
+    # Finish-pos has edge as probability-edge — recompute as Kelly EV to match.
+    if bet_type in ("finish_position", "finish_position_live"):
+        sim_prob = pd.to_numeric(tab_df.get("sim_prob", ""), errors="coerce")
+        dec_odds = pd.to_numeric(tab_df.get("decimal_odds", ""), errors="coerce")
+        n["edge"] = (sim_prob * dec_odds - 1.0) * 100.0
+    else:
+        n["edge"] = tab_df.get("edge_on", tab_df.get("edge", ""))
 
     n["pred_on"] = tab_df.get("pred_on", tab_df.get("my_pred", ""))
     n["sample_on"] = tab_df.get("sample_on", tab_df.get("sample", ""))

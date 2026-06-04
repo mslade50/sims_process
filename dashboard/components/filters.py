@@ -48,9 +48,9 @@ def round_selector(id_prefix, available_rounds=None, default=None):
 
 
 def edge_slider(id_prefix, min_val=0, max_val=25, default=3):
-    """Min edge slider."""
+    """Min Kelly edge slider (EV per unit wagered, %)."""
     return dbc.Col([
-        html.Label(f"Min Edge: {default}%", id=f"{id_prefix}-edge-label",
+        html.Label(f"Min Kelly Edge: {default}%", id=f"{id_prefix}-edge-label",
                     className="form-label small text-muted"),
         dcc.Slider(
             id=f"{id_prefix}-edge-slider",
