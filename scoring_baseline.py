@@ -1296,7 +1296,30 @@ def compute_sg_variance_analysis(event_id_list, min_year):
     }
 
 
-def compute_sg_category_variance_analysis(event_id_list, min_year):
+# Winsorize the extreme left tail of category SG distributions before computing
+# variance/skew. The worst ~0.5% of rounds in a PGA field are frequently posted
+# by non-PGA-regular players (Monday qualifiers, sponsor invites, KFT call-ups)
+# whose blow-ups distort the std and (especially) the skew. Capping rather than
+# dropping keeps the sample size and removes only the outliers' leverage.
+LEFT_TRIM_PCT = 0.005
+
+
+def _winsorize_left(values, pct=LEFT_TRIM_PCT):
+    """Cap values below the `pct` quantile at that quantile (left tail only).
+
+    Self-disables on small samples (fewer than 1/pct points) so per-player
+    trailing windows are untouched and only the large pooled distributions
+    (event field, tour-wide baseline) are affected. Returns a 1-D float array.
+    """
+    arr = np.asarray(values, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if pct <= 0 or arr.size < 1.0 / pct:
+        return arr
+    floor = np.quantile(arr, pct)
+    return np.clip(arr, floor, None)
+
+
+def compute_sg_category_variance_analysis(event_id_list, min_year, course_id=None):
     """
     Per-category SG variance analysis — computes course variance multipliers
     AND skewness for OTT, APP, ARG, PUTT.
@@ -1349,7 +1372,7 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
     baseline_raw = pd.read_sql_query(baseline_skew_query, conn, params=[current_year - 5])
     baseline_skew = {}
     for c, name in zip(CAT_COLS, CAT_NAMES):
-        vals = baseline_raw[c].dropna()
+        vals = _winsorize_left(baseline_raw[c].values)
         baseline_skew[name] = round(float(sp_stats.skew(vals)), 2)
 
     print(f"\n  [sg_cat_var] Global baseline (PGA, {current_year-5}-{current_year}):")
@@ -1358,13 +1381,39 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
 
     # Step 2: Player-year combos at this course (same as total analysis)
     placeholders = ",".join("?" * len(event_id_list))
+
+    # Course filter: restrict the at-course stats to the SPECIFIC course being
+    # played this week. Events like the RBC Canadian Open rotate venues, so
+    # event_id alone pools multiple distinct courses. Falls back to event-level
+    # (all venues) if this course has no history at the event — e.g. a debut
+    # venue — so we never silently emit nothing (which would leave stale values
+    # on the sheet).
+    course_clause = ""
+    course_params = []
+    if course_id is not None:
+        n_course = conn.execute(
+            f"SELECT COUNT(*) FROM player_rounds "
+            f"WHERE event_id IN ({placeholders}) AND course_num = ? "
+            f"AND year >= ? AND tour = ?",
+            list(event_id_list) + [course_id, min_year, tour_override],
+        ).fetchone()[0]
+        if n_course == 0:
+            print(f"  [sg_cat_var] WARNING: course_id {course_id} has no rounds at "
+                  f"event(s) {list(event_id_list)} since {min_year} — falling back "
+                  f"to EVENT-LEVEL (all venues).")
+        else:
+            course_clause = " AND course_num = ?"
+            course_params = [course_id]
+            print(f"  [sg_cat_var] Course filter ON: course_num={course_id} "
+                  f"({n_course} rounds at this event/course).")
+
     player_year_query = f"""
         SELECT DISTINCT player_name, year, MIN(round_date) AS event_start
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?{course_clause}
         GROUP BY player_name, year
     """
-    params = list(event_id_list) + [min_year, tour_override]
+    params = list(event_id_list) + [min_year, tour_override] + course_params
     player_years = pd.read_sql_query(player_year_query, conn, params=params)
     player_years["event_start"] = pd.to_datetime(player_years["event_start"])
     print(f"  [sg_cat_var] Found {len(player_years)} player-year combos at this course (tour='{tour_override}')")
@@ -1397,10 +1446,10 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
     event_sg_query = f"""
         SELECT player_name, year, {cat_cols_str}
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
+        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?{course_clause}
           AND sg_total_adj IS NOT NULL
     """
-    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year, tour_override])
+    event_sg = pd.read_sql_query(event_sg_query, conn, params=list(event_id_list) + [min_year, tour_override] + course_params)
     conn.close()
 
     # Step 5: Trailing 50-round std per category per player-year
@@ -1448,7 +1497,11 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
         row_data = {"year": yr, "qual_players": n_qual}
         for c, name in zip(CAT_COLS, CAT_NAMES):
             valid_event = yr_event[c].dropna()
-            actual_std = float(valid_event.std()) if len(valid_event) >= 10 else None
+            # Cap the worst ~0.5% (fringe-player blow-ups) before measuring the
+            # event-field std and skew. field_exp_std (per-player trailing std)
+            # is left as-is — that is each player's own genuine volatility.
+            ve = _winsorize_left(valid_event.values)
+            actual_std = float(np.std(ve, ddof=1)) if len(ve) >= 10 else None
 
             field_stds = [trailing_cat_stds[k][c] for k in qual_keys
                           if trailing_cat_stds[k][c] is not None]
@@ -1461,9 +1514,9 @@ def compute_sg_category_variance_analysis(event_id_list, min_year):
             else:
                 row_data[f"{name}_mult"] = None
 
-            # Per-year skewness at this course
-            if len(valid_event) >= 20:
-                row_data[f"{name}_skew"] = round(float(sp_stats.skew(valid_event)), 2)
+            # Per-year skewness at this course (winsorized to limit blow-up leverage)
+            if len(ve) >= 20:
+                row_data[f"{name}_skew"] = round(float(sp_stats.skew(ve)), 2)
             else:
                 row_data[f"{name}_skew"] = None
 
@@ -1811,7 +1864,7 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
         hist_avgs = compute_historical_round_averages(detail_df)
         regression = compute_wind_variance_regression(detail_df)
         sg_result = compute_sg_variance_analysis(historical_event_ids, min_year=start_yr)
-        sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr)
+        sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr, course_id=course_id)
 
     # --- Cut adjustment for R3/R4 ---
     cut_adj = 0.25 if CUT_LINE < 120 else 0.0
