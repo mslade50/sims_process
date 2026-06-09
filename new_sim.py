@@ -3838,6 +3838,7 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
                 'our_p': our_p,
                 'line': r.get('american_odds'),
                 'edge': edge,
+                'implied': imp,  # market implied prob (1/decimal); lower = better price
             })
 
     # Exchange YES + NO (kalshi, novig)
@@ -3857,11 +3858,31 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
                 'our_p': pd.to_numeric(r.get('sim_prob'), errors='coerce'),
                 'line': r.get('american_odds'),
                 'edge': float(edge),
+                'implied': pd.to_numeric(r.get('eff_price'), errors='coerce'),  # exch buy price
             }
             (rows_yes if r['side'] == 'yes' else rows_no).append(rec)
 
     rows_yes.sort(key=lambda x: x['edge'], reverse=True)
     rows_no.sort(key=lambda x: x['edge'], reverse=True)
+
+    # Flag, per player, the row with the BEST price across our books (lowest implied
+    # = highest payout). Ties flag all. Used to green-highlight the player name.
+    def _mark_best(rows):
+        best = {}
+        for x in rows:
+            imp = pd.to_numeric(x.get('implied'), errors='coerce')
+            if pd.isna(imp) or imp <= 0:
+                continue
+            k = x['player'].lower()
+            if k not in best or imp < best[k]:
+                best[k] = imp
+        for x in rows:
+            imp = pd.to_numeric(x.get('implied'), errors='coerce')
+            k = x['player'].lower()
+            x['is_best'] = bool(pd.notna(imp) and imp > 0 and k in best and abs(imp - best[k]) < 1e-9)
+
+    _mark_best(rows_yes)
+    _mark_best(rows_no)
 
     if not rows_yes and not rows_no:
         print("  [outrights email] No outright edges — skipping")
@@ -3882,9 +3903,13 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
         for x in rows:
             ec = "#d4edda" if x['edge'] > 5 else "#fff3cd" if x['edge'] > 2 else "#ffffff"
             op = f"{x['our_p'] * 100:.1f}%" if pd.notna(x['our_p']) else "—"
+            # Green-highlight the player name where this row is the best price for them.
+            pstyle = "padding:5px 8px; font-weight:600;"
+            if x.get('is_best'):
+                pstyle += " background:#c6f6d5; color:#1a7f37;"
             out.append(
                 "<tr>"
-                f'<td style="padding:5px 8px; font-weight:600;">{x["player"]}</td>'
+                f'<td style="{pstyle}">{x["player"]}</td>'
                 f'<td style="padding:5px 8px; text-align:center;">{x["market"]}</td>'
                 f'<td style="padding:5px 8px; text-align:center;">{x["book"]}</td>'
                 f'<td style="padding:5px 8px; text-align:center;">{op}</td>'
@@ -3900,7 +3925,7 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
     t2 = _tbl(rows_no) if rows_no else "<p style='color:#999;'>No NO-side edges.</p>"
     body = f"""<html><body style="font-family:Arial,sans-serif; max-width:1000px; margin:0 auto; padding:20px;">
         <h2>Outrights &mdash; {tourney.replace('_', ' ').title()}</h2>
-        <p style="color:#666;">{timestamp_str} | every outright edge down to 0%</p>
+        <p style="color:#666;">{timestamp_str} | every outright (winner) edge down to 0% | <span style="background:#c6f6d5; color:#1a7f37; font-weight:600; padding:1px 4px;">green</span> = best price across our books</p>
         <h3 style="color:#2c5282;">Outright edges &mdash; betcris / betonline / pinnacle / kalshi / novig ({len(rows_yes)})</h3>
         {t1}
         <h3 style="color:#9b2c2c; margin-top:26px;">NO edges &mdash; kalshi / novig fade side ({len(rows_no)})</h3>
