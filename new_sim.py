@@ -1462,6 +1462,10 @@ else:
     combined_finish_df = pd.DataFrame()
     print("\n[finish-pos] TOTAL: 0 +EV bets found")
 
+# Snapshot per-book outright edges (pre-groupby; combined_finish_df gets its bookmaker
+# field comma-joined below). Feeds the standalone Outrights email.
+_outright_sb_perbook = combined_finish_df.copy() if not combined_finish_df.empty else pd.DataFrame()
+
 # Build full SB line lookup (best price per player+market across ALL sportsbooks, pre-edge-filter)
 _all_sb_lines_lookup = {}  # (player, market_type) → best american odds
 if _all_sb_lines_raw:
@@ -3793,6 +3797,130 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
         print(f"  [warn] Exchange email failed: {e}")
 
 
+def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
+    """Outrights email — pure edge tables, no email-worthiness threshold.
+
+    Table 1: ALL outright edges (edge > 0) at the sharp sportsbooks
+    (betcris / betonline / pinnacle) PLUS Kalshi/NoVig YES outrights.
+    Table 2: Kalshi/NoVig NO-side edges (edge > 0) — the fade side.
+    """
+    if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
+        return
+    SHARP = {'betcris', 'betonline', 'pinnacle'}
+
+    def _fair(p):
+        try:
+            return f"{int(prob_to_american(float(p))):+d}"
+        except Exception:
+            return "—"
+
+    def _line(v):
+        return f"{int(v):+d}" if pd.notna(v) else "—"
+
+    rows_yes, rows_no = [], []
+
+    # Sportsbook YES outrights (sharp books only, per-book, edge > 0)
+    if sb_outrights_df is not None and not sb_outrights_df.empty and 'bookmaker' in sb_outrights_df.columns:
+        sb = sb_outrights_df[
+            sb_outrights_df['bookmaker'].astype(str).str.lower().isin(SHARP)
+            & (pd.to_numeric(sb_outrights_df['edge'], errors='coerce') > 0)
+        ]
+        for _, r in sb.iterrows():
+            imp = pd.to_numeric(r.get('implied_prob'), errors='coerce')
+            edge = float(r['edge'])
+            our_p = (imp + edge / 100.0) if pd.notna(imp) else float('nan')
+            rows_yes.append({
+                'player': str(r['player_name']).title(),
+                'market': str(r['market_type']),
+                'book': str(r['bookmaker']).lower(),
+                'our_p': our_p,
+                'line': r.get('american_odds'),
+                'edge': edge,
+            })
+
+    # Exchange YES + NO (kalshi, novig)
+    for exch in (kalshi_df, novig_df):
+        if exch is None or exch.empty or 'side' not in exch.columns:
+            continue
+        for _, r in exch.iterrows():
+            edge = pd.to_numeric(r.get('edge'), errors='coerce')
+            if pd.isna(edge) or edge <= 0:
+                continue
+            rec = {
+                'player': str(r.get('player_name', '')).title(),
+                'market': str(r.get('market_type', '')),
+                'book': str(r.get('bookmaker', '')).lower(),
+                'our_p': pd.to_numeric(r.get('sim_prob'), errors='coerce'),
+                'line': r.get('american_odds'),
+                'edge': float(edge),
+            }
+            (rows_yes if r['side'] == 'yes' else rows_no).append(rec)
+
+    rows_yes.sort(key=lambda x: x['edge'], reverse=True)
+    rows_no.sort(key=lambda x: x['edge'], reverse=True)
+
+    if not rows_yes and not rows_no:
+        print("  [outrights email] No outright edges — skipping")
+        return
+
+    def _tbl(rows):
+        hdr = ('<table style="border-collapse:collapse; font-family:Arial,sans-serif; '
+               'font-size:12px; width:100%;">'
+               '<tr style="background:#343a40; color:white;">'
+               '<th style="padding:5px 8px; text-align:left;">Player</th>'
+               '<th style="padding:5px 8px; text-align:center;">Market</th>'
+               '<th style="padding:5px 8px; text-align:center;">Book</th>'
+               '<th style="padding:5px 8px; text-align:center;">Our %</th>'
+               '<th style="padding:5px 8px; text-align:center;">Fair</th>'
+               '<th style="padding:5px 8px; text-align:center;">Line</th>'
+               '<th style="padding:5px 8px; text-align:center;">Edge</th></tr>')
+        out = [hdr]
+        for x in rows:
+            ec = "#d4edda" if x['edge'] > 5 else "#fff3cd" if x['edge'] > 2 else "#ffffff"
+            op = f"{x['our_p'] * 100:.1f}%" if pd.notna(x['our_p']) else "—"
+            out.append(
+                "<tr>"
+                f'<td style="padding:5px 8px; font-weight:600;">{x["player"]}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{x["market"]}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{x["book"]}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{op}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{_fair(x["our_p"])}</td>'
+                f'<td style="padding:5px 8px; text-align:center;">{_line(x["line"])}</td>'
+                f'<td style="padding:5px 8px; text-align:center; font-weight:bold; background:{ec};">{x["edge"]:.1f}%</td>'
+                "</tr>")
+        out.append("</table>")
+        return "".join(out)
+
+    timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
+    t1 = _tbl(rows_yes) if rows_yes else "<p style='color:#999;'>No YES outright edges.</p>"
+    t2 = _tbl(rows_no) if rows_no else "<p style='color:#999;'>No NO-side edges.</p>"
+    body = f"""<html><body style="font-family:Arial,sans-serif; max-width:1000px; margin:0 auto; padding:20px;">
+        <h2>Outrights &mdash; {tourney.replace('_', ' ').title()}</h2>
+        <p style="color:#666;">{timestamp_str} | every outright edge down to 0%</p>
+        <h3 style="color:#2c5282;">Outright edges &mdash; betcris / betonline / pinnacle / kalshi / novig ({len(rows_yes)})</h3>
+        {t1}
+        <h3 style="color:#9b2c2c; margin-top:26px;">NO edges &mdash; kalshi / novig fade side ({len(rows_no)})</h3>
+        {t2}
+        <p style="color:#999; font-size:11px; margin-top:30px;">
+            Sportsbooks: per-book line, edge = our prob &minus; implied. Exchanges: ask/effective
+            price (Kalshi incl. fees), edge = our prob &minus; price. Our % is the model probability.
+        </p>
+    </body></html>"""
+
+    try:
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = f"Outrights -- {tourney.replace('_', ' ').title()}"
+        msg["From"] = EMAIL_FROM
+        msg["To"] = ", ".join(EMAIL_TO)
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_FROM, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+        print(f"  [ok] Outrights email sent ({len(rows_yes)} YES, {len(rows_no)} NO)")
+    except Exception as e:
+        print(f"  [warn] Outrights email failed: {e}")
+
+
 # --- Process matchups ---
 df_match = pd.DataFrame(rows_mu).drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first')
 if not df_match.empty:
@@ -4068,6 +4196,20 @@ if not df_match.empty:
             novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
             sb_priority_keys=_sb_priority_keys,
         )
+
+        # Email 4: Outrights — every outright edge (down to 0%) at the sharp
+        # sportsbooks + Kalshi/NoVig YES, plus a Kalshi/NoVig NO-edge table.
+        try:
+            _sb_outright_perbook = (_outright_sb_perbook
+                                    if '_outright_sb_perbook' in dir() and not _outright_sb_perbook.empty
+                                    else None)
+            send_outrights_email(
+                sb_outrights_df=_sb_outright_perbook,
+                kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+                novig_df=_novig_df if not _novig_df.empty else None,
+            )
+        except Exception as _oe:
+            print(f"  [warn] Outrights email failed: {_oe}")
 
         # Email 3: sportsbook priority (capital-deployment guide)
         try:
