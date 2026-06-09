@@ -115,7 +115,7 @@ def main():
     print(f"[cascade-parity] n={N}, sims={SIMS:,}, gate=k{K:.0f} SE\n")
 
     fs_py, win_py = run_py(inp, seed=SEED)
-    fs_rust, win_rust = run_rust(inp)
+    fs_rust, win_rust, *_ = run_rust(inp)
 
     # Aggregate both via the (validated) Rust aggregator for an apples-to-apples
     # comparison of the DISTRIBUTIONS produced by each kernel's final_scores.

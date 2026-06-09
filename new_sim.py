@@ -593,307 +593,14 @@ print(f"\n[sim] {n_players} players, {SIMULATIONS:,} simulations")
 # ======================
 # ─── Sim block (skip when --price-only loads cached arrays) ───────
 if not args.price_only:
-    cats_r1 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-    sg_r1 = np.empty((n_players, SIMULATIONS), dtype=float)
-
-    for i, (mu, std_c) in enumerate(player_params_v2):
-        # Category means shifted by weather delta
-        cat_mu = mu - weather_delta_r1[i] * WEATHER_CAT_SPLIT
-        Z = RNG.standard_normal(size=(SIMULATIONS, 4))
-        corr_z = Z @ L_corr.T                          # correlated unit-variance draws
-        for j in range(4):                              # apply per-player skewness
-            corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-        draws = cat_mu + corr_z * std_c                 # scale by per-player category stds
-        cats_r1[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
-        sg_r1[i] = cats_r1[i].sum(axis=1)
-
-    strokes_r1 = np.rint(PAR - sg_r1).astype(int)
-
-    # --- Validation: R1 ---
-    r1_total_std_realized = np.std(sg_r1, axis=1).mean()
-    r1_cat_stds_realized = np.std(cats_r1, axis=1).mean(axis=0)
-    print(f"\n[check] R1 total std (realized): {r1_total_std_realized:.3f}  (v1 blend would be ~{round_std.mean():.3f})")
-    print(f"[check] R1 category stds (realized): OTT={r1_cat_stds_realized[0]:.3f}, "
-          f"APP={r1_cat_stds_realized[1]:.3f}, ARG={r1_cat_stds_realized[2]:.3f}, PUTT={r1_cat_stds_realized[3]:.3f}")
-    # Realized skewness check
-    from scipy.stats import skew as _skew_fn, norm as _norm_dist
-    r1_cat_skew_realized = np.array([_skew_fn(cats_r1[:, :, j].ravel()) for j in range(4)])
-    print(f"[check] R1 category skew (realized): OTT={r1_cat_skew_realized[0]:+.3f}, "
-          f"APP={r1_cat_skew_realized[1]:+.3f}, ARG={r1_cat_skew_realized[2]:+.3f}, PUTT={r1_cat_skew_realized[3]:+.3f}")
-    print(f"[check] R1 category skew  (targets): OTT={effective_skew[:, 0].mean():+.3f}, "
-          f"APP={effective_skew[:, 1].mean():+.3f}, ARG={effective_skew[:, 2].mean():+.3f}, "
-          f"PUTT={effective_skew[:, 3].mean():+.3f}")
-    print(f"[check] R1 mean SG (field): {sg_r1.mean():.4f}  (should be near 0)")
-
-
-    # ======================
-    # R1 -> R2 skill update (same logic as v1)
-    # ======================
-    resid_r1  = sg_r1 - my_pred_base[:, None]
-    resid2_r1 = resid_r1**2
-    ott_r1    = cats_r1[:, :, 0]
-    putt_r1   = cats_r1[:, :, 3]
-
-    high_m  = (my_pred_base >  1.0)
-    midh_m  = (my_pred_base >  0.5) & (my_pred_base <= 1.0)
-    midl_m  = (my_pred_base > -0.5) & (my_pred_base <= 0.5)
-    low_m   = (my_pred_base <= -0.5)
-
-    C_high = coeff_vec_r1(coefficients_r1_high)
-    C_midh = coeff_vec_r1(coefficients_r1_midh)
-    C_midl = coeff_vec_r1(coefficients_r1_midl)
-    C_low  = coeff_vec_r1(coefficients_r1_low)
-
-    C = np.zeros((n_players, 6), dtype=float)
-    C[high_m] = C_high
-    C[midh_m] = C_midh
-    C[midl_m] = C_midl
-    C[low_m]  = C_low
-
-    tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
-    mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-    tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
-
-    ott_adj_r1  = ott_r1  * C[:, [0]]
-    putt_adj_r1 = putt_r1 * C[:, [3]]
-    sg_adj_r1   = ott_adj_r1 + putt_adj_r1
-    total_adjustment_r1 = tot_resid_adj_r1 + sg_adj_r1
-
-    updated_skill_r2 = my_pred_base[:, None] + total_adjustment_r1
-    sg_r2_mean = updated_skill_r2 + (r2_mu - my_pred_base)[:, None]
-
-
-    # ======================
-    # R2: Category-first draws with skill update shift
-    # ======================
-    cats_r2 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-    sg_r2 = np.empty((n_players, SIMULATIONS), dtype=float)
-
-    for i, (mu, std_c) in enumerate(player_params_v2):
-        # Category means shifted by weather delta
-        cat_mu = mu - weather_delta_r2[i] * WEATHER_CAT_SPLIT
-        # Skill update shift: distribute evenly across 4 categories
-        base_total_mu = mu.sum() - weather_delta_r2[i]
-        skill_shift = sg_r2_mean[i] - base_total_mu  # shape (SIMULATIONS,)
-        cat_mu_shifted = cat_mu + skill_shift[:, None] / 4.0
-        Z = RNG.standard_normal(size=(SIMULATIONS, 4))
-        corr_z = Z @ L_corr.T
-        for j in range(4):
-            corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-        draws = cat_mu_shifted + corr_z * std_c
-        cats_r2[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
-        sg_r2[i] = cats_r2[i].sum(axis=1)
-
-    strokes_r2 = np.rint(PAR - sg_r2).astype(int)
-    r1_r2_scores = strokes_r1 + strokes_r2
-
-
-    # ======================
-    # CUT LOGIC after 36 (Top-N and ties)
-    # ======================
-    made_cut_mask = np.ones_like(r1_r2_scores, dtype=bool)
-    if CUT_LINE >= n_players:
-        print(f"[cut] CUT_LINE={CUT_LINE} >= field size ({n_players}); treating as no-cut event")
-    else:
-        for j in range(SIMULATIONS):
-            sc = r1_r2_scores[:, j]
-            cut_score = np.sort(sc)[CUT_LINE - 1]
-            top_cut = sc <= cut_score
-            if USE_10_SHOT_RULE:
-                within_10 = sc <= (sc.min() + 10)
-                made_cut_mask[:, j] = top_cut | within_10
-            else:
-                made_cut_mask[:, j] = top_cut
-
-
-    # ======================
-    # R2 -> R3 skill update (position buckets; uses R1+R2 stats)
-    # ======================
-    resid_r2  = sg_r2 - sg_r2_mean
-    resid2_r2 = resid_r2**2
-    resid3_r2 = resid_r2**3
-
-    avg_ott_r2  = 0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])
-    avg_app_r2  = 0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])
-    avg_arg_r2  = 0.5 * (cats_r1[:, :, 2] + cats_r2[:, :, 2])
-    avg_putt_r2 = 0.5 * (cats_r1[:, :, 3] + cats_r2[:, :, 3])
-    delta_app_r2 = cats_r2[:, :, 1] - cats_r1[:, :, 1]
-
-    pos_lt_6_mask  = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    pos_6_30_mask  = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    pos_gt_30_mask = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    for j in range(SIMULATIONS):
-        pos = rank_positions_from_strokes(r1_r2_scores[:, j])
-        pos_lt_6_mask[:, j]  = (pos < 6)
-        pos_6_30_mask[:, j]  = (pos >= 6) & (pos <= 30)
-        pos_gt_30_mask[:, j] = (pos > 30)
-
-    def apply_block(adj_dict, mask):
-        out = {}
-        for key, coeff in adj_dict.items():
-            if key == 'residual':
-                base = resid_r2
-            elif key == 'residual2':
-                base = resid2_r2
-            elif key == 'residual3':
-                base = resid3_r2
-            elif key == 'avg_ott':
-                base = avg_ott_r2
-            elif key == 'avg_putt':
-                base = avg_putt_r2
-            elif key == 'avg_app':
-                base = avg_app_r2
-            elif key == 'avg_arg':
-                base = avg_arg_r2
-            elif key == 'delta_app':
-                base = delta_app_r2
-            else:
-                continue
-            out[f"{key}_adj"] = np.where(mask, base * coeff, 0.0)
-        return out
-
-    adj_lt6  = apply_block(coefficients_r2,          pos_lt_6_mask)
-    adj_6_30 = apply_block(coefficients_r2_6_30,     pos_6_30_mask)
-    adj_30up = apply_block(coefficients_r2_30_up,    pos_gt_30_mask)
-
-    all_keys = set(adj_lt6) | set(adj_6_30) | set(adj_30up)
-    adj_sum = {}
-    for k in all_keys:
-        adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
-
-    shape2 = resid_r2.shape
-    tot_resid_adj_r2 = (
-        ensure_array(adj_sum.get('residual_adj', 0.0),  shape2) +
-        ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
-        ensure_array(adj_sum.get('residual3_adj', 0.0), shape2)
-    )
-    tot_sg_adj_r2 = (
-        ensure_array(adj_sum.get('avg_ott_adj', 0.0),   shape2) +
-        ensure_array(adj_sum.get('avg_putt_adj', 0.0),  shape2) +
-        ensure_array(adj_sum.get('avg_app_adj', 0.0),   shape2) +
-        ensure_array(adj_sum.get('avg_arg_adj', 0.0),   shape2) +
-        ensure_array(adj_sum.get('delta_app_adj', 0.0), shape2)
-    )
-    sg_adj_r1 = ensure_array(sg_adj_r1, shape2)
-    total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
-
-    updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
-    sg_r3_mean = updated_skill_r3 + (r3_mu - my_pred_base)[:, None]
-
-
-    # ======================
-    # R3: Category-first draws (no weather)
-    # ======================
-    cats_r3 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-    sg_r3 = np.empty((n_players, SIMULATIONS), dtype=float)
-
-    for i, (mu, std_c) in enumerate(player_params_v2):
-        # No weather delta for R3
-        base_total_mu = mu.sum()
-        skill_shift = sg_r3_mean[i] - base_total_mu  # shape (SIMULATIONS,)
-        cat_mu_shifted = mu + skill_shift[:, None] / 4.0
-        Z = RNG.standard_normal(size=(SIMULATIONS, 4))
-        corr_z = Z @ L_corr.T
-        for j in range(4):
-            corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-        draws = cat_mu_shifted + corr_z * std_c
-        cats_r3[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
-        sg_r3[i] = cats_r3[i].sum(axis=1)
-
-    strokes_r3 = np.rint(PAR - sg_r3).astype(int)
-    r1_r3_scores = r1_r2_scores + strokes_r3
-
-
-    # ======================
-    # R3 -> R4 (AVG-SG ONLY; position buckets)
-    # ======================
-    avg_ott_r3  = 0.66 * (0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])) + 0.34 * cats_r3[:, :, 0]
-    avg_app_r3  = 0.66 * (0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])) + 0.34 * cats_r3[:, :, 1]
-    avg_arg_r3  = 0.66 * (0.5 * (cats_r1[:, :, 2] + cats_r2[:, :, 2])) + 0.34 * cats_r3[:, :, 2]
-    avg_putt_r3 = 0.66 * (0.5 * (cats_r1[:, :, 3] + cats_r2[:, :, 3])) + 0.34 * cats_r3[:, :, 3]
-
-    pos_lt_6_mask_r3  = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    pos_6_20_mask_r3  = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    pos_gt_20_mask_r3 = np.zeros((n_players, SIMULATIONS), dtype=bool)
-    for j in range(SIMULATIONS):
-        pos = rank_positions_from_strokes(r1_r3_scores[:, j])
-        pos_lt_6_mask_r3[:, j]  = (pos < 6)
-        pos_6_20_mask_r3[:, j]  = (pos >= 6) & (pos <= 20)
-        pos_gt_20_mask_r3[:, j] = (pos > 20)
-
-    def apply_block_r3_avg(adj_dict, mask):
-        out = {}
-        for key, coeff in adj_dict.items():
-            if key == 'sg_ott_avg':
-                base = avg_ott_r3
-            elif key == 'sg_putt_avg':
-                base = avg_putt_r3
-            elif key == 'sg_app_avg':
-                base = avg_app_r3
-            elif key == 'sg_arg_avg':
-                base = avg_arg_r3
-            else:
-                continue
-            out[f"{key}_adj_r3"] = np.where(mask, base * coeff, 0.0)
-        return out
-
-    adj_lt6_r3  = apply_block_r3_avg(coefficients_r3,       pos_lt_6_mask_r3)
-    adj_6_20_r3 = apply_block_r3_avg(coefficients_r3_mid,   pos_6_20_mask_r3)
-    adj_20up_r3 = apply_block_r3_avg(coefficients_r3_high,  pos_gt_20_mask_r3)
-
-    all_keys_r3 = set(adj_lt6_r3) | set(adj_6_20_r3) | set(adj_20up_r3)
-    adj_sum_r3 = {}
-    for k in all_keys_r3:
-        adj_sum_r3[k] = adj_lt6_r3.get(k, 0.0) + adj_6_20_r3.get(k, 0.0) + adj_20up_r3.get(k, 0.0)
-
-    shape3 = (n_players, SIMULATIONS)
-    tot_sg_adj_r3 = (
-        ensure_array(adj_sum_r3.get('sg_ott_avg_adj_r3', 0.0),  shape3) +
-        ensure_array(adj_sum_r3.get('sg_putt_avg_adj_r3', 0.0), shape3) +
-        ensure_array(adj_sum_r3.get('sg_app_avg_adj_r3', 0.0),  shape3) +
-        ensure_array(adj_sum_r3.get('sg_arg_avg_adj_r3', 0.0),  shape3)
-    )
-    total_adjustment_r3 = tot_sg_adj_r3
-
-    updated_skill_r4 = updated_skill_r3 - (tot_sg_adj_r2 + tot_resid_adj_r2) + total_adjustment_r3
-    sg_r4_mean = updated_skill_r4 + (r4_mu - my_pred_base)[:, None]
-
-
-    # ======================
-    # R4: Category-first draws (no weather)
-    # ======================
-    cats_r4 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
-    sg_r4 = np.empty((n_players, SIMULATIONS), dtype=float)
-
-    for i, (mu, std_c) in enumerate(player_params_v2):
-        base_total_mu = mu.sum()
-        skill_shift = sg_r4_mean[i] - base_total_mu
-        cat_mu_shifted = mu + skill_shift[:, None] / 4.0
-        Z = RNG.standard_normal(size=(SIMULATIONS, 4))
-        corr_z = Z @ L_corr.T
-        for j in range(4):
-            corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-        draws = cat_mu_shifted + corr_z * std_c
-        cats_r4[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
-        sg_r4[i] = cats_r4[i].sum(axis=1)
-
-    strokes_r4 = np.rint(PAR - sg_r4).astype(int)
-
-    # Missed-cut penalty for R3+R4
-    r3_r4 = strokes_r3 + strokes_r4
-    r3_r4[~made_cut_mask] = 200
-
-    # Final integer 72-hole totals
-    final_scores = r1_r2_scores + r3_r4
-    np.save(f"final_scores_{tourney}.npy", final_scores)
-
-    # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy) ───
-    # The Python draw above runs as a shadow; by default we replace final_scores
-    # with the Rust sims_kernel cascade (inputs map 1:1 to the SIMS_DUMP_FIXTURE
-    # hook, seed 456). Everything downstream consumes only final_scores, so
-    # nothing else changes; dtype is matched to the Python on-disk format. If the
-    # Rust wheel is unavailable or errors, we warn and keep the Python shadow
-    # output rather than crash a live run.
+    # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy Python draw) ───
+    # Compute final_scores + per-category SG means via the Rust sims_kernel up
+    # front (inputs map 1:1 to the seed-456 dump-hook contract). On --use-python
+    # or any Rust error, leave final_scores=None so the legacy Python draw below
+    # runs as the fallback (and still emits validation diagnostics). Everything
+    # downstream consumes only final_scores + win prob + the per-category means.
+    final_scores = None
+    _rust_cat_means = None
     if not args.use_python:
         try:
             import sims_kernel as _sk
@@ -904,7 +611,7 @@ if not args.price_only:
             _r3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg']]
             _mu = np.stack([m for (m, s) in player_params_v2])
             _std = np.stack([s for (m, s) in player_params_v2])
-            _rust_fs, _ = _sk.run_pretournament(
+            _fs, _win, _cm1, _cm2, _cm3, _cm4 = _sk.run_pretournament(
                 _A(_mu), _A(_std), _A(effective_skew), _A(L_corr),
                 _A(my_pred_base), _A(r2_mu), _A(r3_mu), _A(r4_mu),
                 _A(weather_delta_r1), _A(weather_delta_r2),
@@ -914,35 +621,333 @@ if not args.price_only:
                 _r3(coefficients_r3), _r3(coefficients_r3_mid), _r3(coefficients_r3_high),
                 int(CUT_LINE), bool(USE_10_SHOT_RULE), int(SIMULATIONS), 456,
             )
-            final_scores = np.ascontiguousarray(_rust_fs).astype(final_scores.dtype)
+            final_scores = np.ascontiguousarray(_fs).astype(np.int32)
+            _rust_cat_means = (_cm1, _cm2, _cm3, _cm4)
             np.save(f"final_scores_{tourney}.npy", final_scores)
-            print(f"[rust] final_scores from sims_kernel.run_pretournament "
+            print(f"[rust] final_scores + cat-means from sims_kernel.run_pretournament "
                   f"v{_sk.version()} (shape={final_scores.shape}, dtype={final_scores.dtype})")
         except Exception as _rust_err:
             print(f"[rust] WARNING: Rust kernel unavailable/failed ({_rust_err!r}); "
                   f"falling back to Python draw output. Pass --use-python to silence.")
-    else:
-        print("[rust] --use-python set: keeping legacy Python draw output.")
+            final_scores = None
+            _rust_cat_means = None
+    _python_drew = final_scores is None
+
+    if _python_drew:
+        cats_r1 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
+        sg_r1 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+        for i, (mu, std_c) in enumerate(player_params_v2):
+            # Category means shifted by weather delta
+            cat_mu = mu - weather_delta_r1[i] * WEATHER_CAT_SPLIT
+            Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+            corr_z = Z @ L_corr.T                          # correlated unit-variance draws
+            for j in range(4):                              # apply per-player skewness
+                corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+            draws = cat_mu + corr_z * std_c                 # scale by per-player category stds
+            cats_r1[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+            sg_r1[i] = cats_r1[i].sum(axis=1)
+
+        strokes_r1 = np.rint(PAR - sg_r1).astype(int)
+
+        # --- Validation: R1 ---
+        r1_total_std_realized = np.std(sg_r1, axis=1).mean()
+        r1_cat_stds_realized = np.std(cats_r1, axis=1).mean(axis=0)
+        print(f"\n[check] R1 total std (realized): {r1_total_std_realized:.3f}  (v1 blend would be ~{round_std.mean():.3f})")
+        print(f"[check] R1 category stds (realized): OTT={r1_cat_stds_realized[0]:.3f}, "
+              f"APP={r1_cat_stds_realized[1]:.3f}, ARG={r1_cat_stds_realized[2]:.3f}, PUTT={r1_cat_stds_realized[3]:.3f}")
+        # Realized skewness check
+        from scipy.stats import skew as _skew_fn, norm as _norm_dist
+        r1_cat_skew_realized = np.array([_skew_fn(cats_r1[:, :, j].ravel()) for j in range(4)])
+        print(f"[check] R1 category skew (realized): OTT={r1_cat_skew_realized[0]:+.3f}, "
+              f"APP={r1_cat_skew_realized[1]:+.3f}, ARG={r1_cat_skew_realized[2]:+.3f}, PUTT={r1_cat_skew_realized[3]:+.3f}")
+        print(f"[check] R1 category skew  (targets): OTT={effective_skew[:, 0].mean():+.3f}, "
+              f"APP={effective_skew[:, 1].mean():+.3f}, ARG={effective_skew[:, 2].mean():+.3f}, "
+              f"PUTT={effective_skew[:, 3].mean():+.3f}")
+        print(f"[check] R1 mean SG (field): {sg_r1.mean():.4f}  (should be near 0)")
 
 
-    # ======================
-    # Validation checks
-    # ======================
-    print(f"\n{'='*50}")
-    print("  CATEGORY-FIRST VALIDATION CHECKS")
-    print(f"{'='*50}")
+        # ======================
+        # R1 -> R2 skill update (same logic as v1)
+        # ======================
+        resid_r1  = sg_r1 - my_pred_base[:, None]
+        resid2_r1 = resid_r1**2
+        ott_r1    = cats_r1[:, :, 0]
+        putt_r1   = cats_r1[:, :, 3]
 
-    # 1. Total std dev per round
-    for rnd, sg_arr, label in [(1, sg_r1, "R1"), (2, sg_r2, "R2"), (3, sg_r3, "R3"), (4, sg_r4, "R4")]:
-        std_realized = np.std(sg_arr, axis=1).mean()
-        print(f"  {label} total std (realized avg): {std_realized:.3f}")
+        high_m  = (my_pred_base >  1.0)
+        midh_m  = (my_pred_base >  0.5) & (my_pred_base <= 1.0)
+        midl_m  = (my_pred_base > -0.5) & (my_pred_base <= 0.5)
+        low_m   = (my_pred_base <= -0.5)
 
-    # 2. Category stds vs expected
-    print(f"\n  Category stds (R1 realized vs input*course_mult):")
-    for k, cat in enumerate(["OTT", "APP", "ARG", "PUTT"]):
-        realized = np.std(cats_r1[:, :, k], axis=1).mean()
-        expected_avg = np.mean([p[1][k] for p in player_params_v2])
-        print(f"    {cat}: realized={realized:.3f}, expected_avg={expected_avg:.3f}, ratio={realized/expected_avg:.3f}")
+        C_high = coeff_vec_r1(coefficients_r1_high)
+        C_midh = coeff_vec_r1(coefficients_r1_midh)
+        C_midl = coeff_vec_r1(coefficients_r1_midl)
+        C_low  = coeff_vec_r1(coefficients_r1_low)
+
+        C = np.zeros((n_players, 6), dtype=float)
+        C[high_m] = C_high
+        C[midh_m] = C_midh
+        C[midl_m] = C_midl
+        C[low_m]  = C_low
+
+        tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
+        mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
+        tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
+
+        ott_adj_r1  = ott_r1  * C[:, [0]]
+        putt_adj_r1 = putt_r1 * C[:, [3]]
+        sg_adj_r1   = ott_adj_r1 + putt_adj_r1
+        total_adjustment_r1 = tot_resid_adj_r1 + sg_adj_r1
+
+        updated_skill_r2 = my_pred_base[:, None] + total_adjustment_r1
+        sg_r2_mean = updated_skill_r2 + (r2_mu - my_pred_base)[:, None]
+
+
+        # ======================
+        # R2: Category-first draws with skill update shift
+        # ======================
+        cats_r2 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
+        sg_r2 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+        for i, (mu, std_c) in enumerate(player_params_v2):
+            # Category means shifted by weather delta
+            cat_mu = mu - weather_delta_r2[i] * WEATHER_CAT_SPLIT
+            # Skill update shift: distribute evenly across 4 categories
+            base_total_mu = mu.sum() - weather_delta_r2[i]
+            skill_shift = sg_r2_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+            cat_mu_shifted = cat_mu + skill_shift[:, None] / 4.0
+            Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+            corr_z = Z @ L_corr.T
+            for j in range(4):
+                corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+            draws = cat_mu_shifted + corr_z * std_c
+            cats_r2[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+            sg_r2[i] = cats_r2[i].sum(axis=1)
+
+        strokes_r2 = np.rint(PAR - sg_r2).astype(int)
+        r1_r2_scores = strokes_r1 + strokes_r2
+
+
+        # ======================
+        # CUT LOGIC after 36 (Top-N and ties)
+        # ======================
+        made_cut_mask = np.ones_like(r1_r2_scores, dtype=bool)
+        if CUT_LINE >= n_players:
+            print(f"[cut] CUT_LINE={CUT_LINE} >= field size ({n_players}); treating as no-cut event")
+        else:
+            for j in range(SIMULATIONS):
+                sc = r1_r2_scores[:, j]
+                cut_score = np.sort(sc)[CUT_LINE - 1]
+                top_cut = sc <= cut_score
+                if USE_10_SHOT_RULE:
+                    within_10 = sc <= (sc.min() + 10)
+                    made_cut_mask[:, j] = top_cut | within_10
+                else:
+                    made_cut_mask[:, j] = top_cut
+
+
+        # ======================
+        # R2 -> R3 skill update (position buckets; uses R1+R2 stats)
+        # ======================
+        resid_r2  = sg_r2 - sg_r2_mean
+        resid2_r2 = resid_r2**2
+        resid3_r2 = resid_r2**3
+
+        avg_ott_r2  = 0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])
+        avg_app_r2  = 0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])
+        avg_arg_r2  = 0.5 * (cats_r1[:, :, 2] + cats_r2[:, :, 2])
+        avg_putt_r2 = 0.5 * (cats_r1[:, :, 3] + cats_r2[:, :, 3])
+        delta_app_r2 = cats_r2[:, :, 1] - cats_r1[:, :, 1]
+
+        pos_lt_6_mask  = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        pos_6_30_mask  = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        pos_gt_30_mask = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        for j in range(SIMULATIONS):
+            pos = rank_positions_from_strokes(r1_r2_scores[:, j])
+            pos_lt_6_mask[:, j]  = (pos < 6)
+            pos_6_30_mask[:, j]  = (pos >= 6) & (pos <= 30)
+            pos_gt_30_mask[:, j] = (pos > 30)
+
+        def apply_block(adj_dict, mask):
+            out = {}
+            for key, coeff in adj_dict.items():
+                if key == 'residual':
+                    base = resid_r2
+                elif key == 'residual2':
+                    base = resid2_r2
+                elif key == 'residual3':
+                    base = resid3_r2
+                elif key == 'avg_ott':
+                    base = avg_ott_r2
+                elif key == 'avg_putt':
+                    base = avg_putt_r2
+                elif key == 'avg_app':
+                    base = avg_app_r2
+                elif key == 'avg_arg':
+                    base = avg_arg_r2
+                elif key == 'delta_app':
+                    base = delta_app_r2
+                else:
+                    continue
+                out[f"{key}_adj"] = np.where(mask, base * coeff, 0.0)
+            return out
+
+        adj_lt6  = apply_block(coefficients_r2,          pos_lt_6_mask)
+        adj_6_30 = apply_block(coefficients_r2_6_30,     pos_6_30_mask)
+        adj_30up = apply_block(coefficients_r2_30_up,    pos_gt_30_mask)
+
+        all_keys = set(adj_lt6) | set(adj_6_30) | set(adj_30up)
+        adj_sum = {}
+        for k in all_keys:
+            adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
+
+        shape2 = resid_r2.shape
+        tot_resid_adj_r2 = (
+            ensure_array(adj_sum.get('residual_adj', 0.0),  shape2) +
+            ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
+            ensure_array(adj_sum.get('residual3_adj', 0.0), shape2)
+        )
+        tot_sg_adj_r2 = (
+            ensure_array(adj_sum.get('avg_ott_adj', 0.0),   shape2) +
+            ensure_array(adj_sum.get('avg_putt_adj', 0.0),  shape2) +
+            ensure_array(adj_sum.get('avg_app_adj', 0.0),   shape2) +
+            ensure_array(adj_sum.get('avg_arg_adj', 0.0),   shape2) +
+            ensure_array(adj_sum.get('delta_app_adj', 0.0), shape2)
+        )
+        sg_adj_r1 = ensure_array(sg_adj_r1, shape2)
+        total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
+
+        updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
+        sg_r3_mean = updated_skill_r3 + (r3_mu - my_pred_base)[:, None]
+
+
+        # ======================
+        # R3: Category-first draws (no weather)
+        # ======================
+        cats_r3 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
+        sg_r3 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+        for i, (mu, std_c) in enumerate(player_params_v2):
+            # No weather delta for R3
+            base_total_mu = mu.sum()
+            skill_shift = sg_r3_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+            cat_mu_shifted = mu + skill_shift[:, None] / 4.0
+            Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+            corr_z = Z @ L_corr.T
+            for j in range(4):
+                corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+            draws = cat_mu_shifted + corr_z * std_c
+            cats_r3[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+            sg_r3[i] = cats_r3[i].sum(axis=1)
+
+        strokes_r3 = np.rint(PAR - sg_r3).astype(int)
+        r1_r3_scores = r1_r2_scores + strokes_r3
+
+
+        # ======================
+        # R3 -> R4 (AVG-SG ONLY; position buckets)
+        # ======================
+        avg_ott_r3  = 0.66 * (0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])) + 0.34 * cats_r3[:, :, 0]
+        avg_app_r3  = 0.66 * (0.5 * (cats_r1[:, :, 1] + cats_r2[:, :, 1])) + 0.34 * cats_r3[:, :, 1]
+        avg_arg_r3  = 0.66 * (0.5 * (cats_r1[:, :, 2] + cats_r2[:, :, 2])) + 0.34 * cats_r3[:, :, 2]
+        avg_putt_r3 = 0.66 * (0.5 * (cats_r1[:, :, 3] + cats_r2[:, :, 3])) + 0.34 * cats_r3[:, :, 3]
+
+        pos_lt_6_mask_r3  = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        pos_6_20_mask_r3  = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        pos_gt_20_mask_r3 = np.zeros((n_players, SIMULATIONS), dtype=bool)
+        for j in range(SIMULATIONS):
+            pos = rank_positions_from_strokes(r1_r3_scores[:, j])
+            pos_lt_6_mask_r3[:, j]  = (pos < 6)
+            pos_6_20_mask_r3[:, j]  = (pos >= 6) & (pos <= 20)
+            pos_gt_20_mask_r3[:, j] = (pos > 20)
+
+        def apply_block_r3_avg(adj_dict, mask):
+            out = {}
+            for key, coeff in adj_dict.items():
+                if key == 'sg_ott_avg':
+                    base = avg_ott_r3
+                elif key == 'sg_putt_avg':
+                    base = avg_putt_r3
+                elif key == 'sg_app_avg':
+                    base = avg_app_r3
+                elif key == 'sg_arg_avg':
+                    base = avg_arg_r3
+                else:
+                    continue
+                out[f"{key}_adj_r3"] = np.where(mask, base * coeff, 0.0)
+            return out
+
+        adj_lt6_r3  = apply_block_r3_avg(coefficients_r3,       pos_lt_6_mask_r3)
+        adj_6_20_r3 = apply_block_r3_avg(coefficients_r3_mid,   pos_6_20_mask_r3)
+        adj_20up_r3 = apply_block_r3_avg(coefficients_r3_high,  pos_gt_20_mask_r3)
+
+        all_keys_r3 = set(adj_lt6_r3) | set(adj_6_20_r3) | set(adj_20up_r3)
+        adj_sum_r3 = {}
+        for k in all_keys_r3:
+            adj_sum_r3[k] = adj_lt6_r3.get(k, 0.0) + adj_6_20_r3.get(k, 0.0) + adj_20up_r3.get(k, 0.0)
+
+        shape3 = (n_players, SIMULATIONS)
+        tot_sg_adj_r3 = (
+            ensure_array(adj_sum_r3.get('sg_ott_avg_adj_r3', 0.0),  shape3) +
+            ensure_array(adj_sum_r3.get('sg_putt_avg_adj_r3', 0.0), shape3) +
+            ensure_array(adj_sum_r3.get('sg_app_avg_adj_r3', 0.0),  shape3) +
+            ensure_array(adj_sum_r3.get('sg_arg_avg_adj_r3', 0.0),  shape3)
+        )
+        total_adjustment_r3 = tot_sg_adj_r3
+
+        updated_skill_r4 = updated_skill_r3 - (tot_sg_adj_r2 + tot_resid_adj_r2) + total_adjustment_r3
+        sg_r4_mean = updated_skill_r4 + (r4_mu - my_pred_base)[:, None]
+
+
+        # ======================
+        # R4: Category-first draws (no weather)
+        # ======================
+        cats_r4 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
+        sg_r4 = np.empty((n_players, SIMULATIONS), dtype=float)
+
+        for i, (mu, std_c) in enumerate(player_params_v2):
+            base_total_mu = mu.sum()
+            skill_shift = sg_r4_mean[i] - base_total_mu
+            cat_mu_shifted = mu + skill_shift[:, None] / 4.0
+            Z = RNG.standard_normal(size=(SIMULATIONS, 4))
+            corr_z = Z @ L_corr.T
+            for j in range(4):
+                corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
+            draws = cat_mu_shifted + corr_z * std_c
+            cats_r4[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
+            sg_r4[i] = cats_r4[i].sum(axis=1)
+
+        strokes_r4 = np.rint(PAR - sg_r4).astype(int)
+
+        # Missed-cut penalty for R3+R4
+        r3_r4 = strokes_r3 + strokes_r4
+        r3_r4[~made_cut_mask] = 200
+
+        # Final integer 72-hole totals
+        final_scores = r1_r2_scores + r3_r4
+        np.save(f"final_scores_{tourney}.npy", final_scores)
+
+
+    if _python_drew:
+        # ======================
+        # Validation checks
+        # ======================
+        print(f"\n{'='*50}")
+        print("  CATEGORY-FIRST VALIDATION CHECKS")
+        print(f"{'='*50}")
+
+        # 1. Total std dev per round
+        for rnd, sg_arr, label in [(1, sg_r1, "R1"), (2, sg_r2, "R2"), (3, sg_r3, "R3"), (4, sg_r4, "R4")]:
+            std_realized = np.std(sg_arr, axis=1).mean()
+            print(f"  {label} total std (realized avg): {std_realized:.3f}")
+
+        # 2. Category stds vs expected
+        print(f"\n  Category stds (R1 realized vs input*course_mult):")
+        for k, cat in enumerate(["OTT", "APP", "ARG", "PUTT"]):
+            realized = np.std(cats_r1[:, :, k], axis=1).mean()
+            expected_avg = np.mean([p[1][k] for p in player_params_v2])
+            print(f"    {cat}: realized={realized:.3f}, expected_avg={expected_avg:.3f}, ratio={realized/expected_avg:.3f}")
 
     # 3. Win prob sanity
     simulated_winners_v2 = []
@@ -959,87 +964,88 @@ if not args.price_only:
     if win_counts.iloc[0] > 0.25:
         print(f"  [WARN] Top win prob > 25% — may indicate variance too low")
 
-    # 4. Mean SG near 0
-    print(f"\n  Mean field SG: R1={sg_r1.mean():.4f}, R2={sg_r2.mean():.4f}, R3={sg_r3.mean():.4f}, R4={sg_r4.mean():.4f}")
+    if _python_drew:
+        # 4. Mean SG near 0
+        print(f"\n  Mean field SG: R1={sg_r1.mean():.4f}, R2={sg_r2.mean():.4f}, R3={sg_r3.mean():.4f}, R4={sg_r4.mean():.4f}")
 
-    # 5. Category correlations
-    r1_flat = cats_r1.reshape(-1, 4)
-    sample_idx = RNG.choice(r1_flat.shape[0], size=min(100000, r1_flat.shape[0]), replace=False)
-    r1_sample = r1_flat[sample_idx]
-    realized_corr = np.corrcoef(r1_sample.T)
-    print(f"\n  Realized category correlations (R1 sample):")
-    cat_labels = ["OTT", "APP", "ARG", "PUTT"]
-    for i_c in range(4):
-        for j_c in range(i_c+1, 4):
-            print(f"    {cat_labels[i_c]}-{cat_labels[j_c]}: realized={realized_corr[i_c,j_c]:.4f}, input={R[i_c,j_c]:.4f}")
+        # 5. Category correlations
+        r1_flat = cats_r1.reshape(-1, 4)
+        sample_idx = RNG.choice(r1_flat.shape[0], size=min(100000, r1_flat.shape[0]), replace=False)
+        r1_sample = r1_flat[sample_idx]
+        realized_corr = np.corrcoef(r1_sample.T)
+        print(f"\n  Realized category correlations (R1 sample):")
+        cat_labels = ["OTT", "APP", "ARG", "PUTT"]
+        for i_c in range(4):
+            for j_c in range(i_c+1, 4):
+                print(f"    {cat_labels[i_c]}-{cat_labels[j_c]}: realized={realized_corr[i_c,j_c]:.4f}, input={R[i_c,j_c]:.4f}")
 
-    # 6. Per-player realized vs predicted (mean & std)
-    print(f"\n  Per-player validation:")
+        # 6. Per-player realized vs predicted (mean & std)
+        print(f"\n  Per-player validation:")
 
-    # R1 mean (cleanest — no skill updates)
-    r1_mean_realized = sg_r1.mean(axis=1)
-    mean_delta = r1_mean_realized - r1_mu
+        # R1 mean (cleanest — no skill updates)
+        r1_mean_realized = sg_r1.mean(axis=1)
+        mean_delta = r1_mean_realized - r1_mu
 
-    # Per-round realized std
-    r1_std_real = sg_r1.std(axis=1)
-    r2_std_real = sg_r2.std(axis=1)
-    r3_std_real = sg_r3.std(axis=1)
-    r4_std_real = sg_r4.std(axis=1)
-    avg_std_real = (r1_std_real + r2_std_real + r3_std_real + r4_std_real) / 4.0
-    std_delta = avg_std_real - round_std
+        # Per-round realized std
+        r1_std_real = sg_r1.std(axis=1)
+        r2_std_real = sg_r2.std(axis=1)
+        r3_std_real = sg_r3.std(axis=1)
+        r4_std_real = sg_r4.std(axis=1)
+        avg_std_real = (r1_std_real + r2_std_real + r3_std_real + r4_std_real) / 4.0
+        std_delta = avg_std_real - round_std
 
-    # Tournament-wide mean (all 4 rounds averaged)
-    tourn_sg = (sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0
-    tourn_mean_realized = tourn_sg.mean(axis=1)
-    tourn_mean_delta = tourn_mean_realized - my_pred_base
+        # Tournament-wide mean (all 4 rounds averaged)
+        tourn_sg = (sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0
+        tourn_mean_realized = tourn_sg.mean(axis=1)
+        tourn_mean_delta = tourn_mean_realized - my_pred_base
 
-    print(f"  {'':30s}  {'R1 Mean':>10s}  {'Avg Std':>10s}  {'Tourn Mean':>10s}")
-    print(f"  {'MAE (all players)':30s}  {np.abs(mean_delta).mean():10.4f}  {np.abs(std_delta).mean():10.4f}  {np.abs(tourn_mean_delta).mean():10.4f}")
-    print(f"  {'Max abs delta':30s}  {np.abs(mean_delta).max():10.4f}  {np.abs(std_delta).max():10.4f}  {np.abs(tourn_mean_delta).max():10.4f}")
+        print(f"  {'':30s}  {'R1 Mean':>10s}  {'Avg Std':>10s}  {'Tourn Mean':>10s}")
+        print(f"  {'MAE (all players)':30s}  {np.abs(mean_delta).mean():10.4f}  {np.abs(std_delta).mean():10.4f}  {np.abs(tourn_mean_delta).mean():10.4f}")
+        print(f"  {'Max abs delta':30s}  {np.abs(mean_delta).max():10.4f}  {np.abs(std_delta).max():10.4f}  {np.abs(tourn_mean_delta).max():10.4f}")
 
-    # Per-round std summary
-    print(f"\n  Std dev by round (field avg):")
-    print(f"    R1: pred={round_std.mean():.3f}  real={r1_std_real.mean():.3f}  d={r1_std_real.mean() - round_std.mean():+.3f}")
-    print(f"    R2: pred={round_std.mean():.3f}  real={r2_std_real.mean():.3f}  d={r2_std_real.mean() - round_std.mean():+.3f}")
-    print(f"    R3: pred={round_std.mean():.3f}  real={r3_std_real.mean():.3f}  d={r3_std_real.mean() - round_std.mean():+.3f}")
-    print(f"    R4: pred={round_std.mean():.3f}  real={r4_std_real.mean():.3f}  d={r4_std_real.mean() - round_std.mean():+.3f}")
+        # Per-round std summary
+        print(f"\n  Std dev by round (field avg):")
+        print(f"    R1: pred={round_std.mean():.3f}  real={r1_std_real.mean():.3f}  d={r1_std_real.mean() - round_std.mean():+.3f}")
+        print(f"    R2: pred={round_std.mean():.3f}  real={r2_std_real.mean():.3f}  d={r2_std_real.mean() - round_std.mean():+.3f}")
+        print(f"    R3: pred={round_std.mean():.3f}  real={r3_std_real.mean():.3f}  d={r3_std_real.mean() - round_std.mean():+.3f}")
+        print(f"    R4: pred={round_std.mean():.3f}  real={r4_std_real.mean():.3f}  d={r4_std_real.mean() - round_std.mean():+.3f}")
 
-    # Flag players with largest discrepancies
-    _val_df = pd.DataFrame({
-        'player_name': player_names,
-        'pred': my_pred_base,
-        'r1_pred': r1_mu,
-        'r1_mean_real': r1_mean_realized,
-        'mean_delta': mean_delta,
-        'pred_std': round_std,
-        'r1_std_real': r1_std_real,
-        'r2_std_real': r2_std_real,
-        'r3_std_real': r3_std_real,
-        'r4_std_real': r4_std_real,
-        'avg_std_real': avg_std_real,
-        'std_delta': std_delta,
-        'tourn_mean_real': tourn_mean_realized,
-        'tourn_mean_delta': tourn_mean_delta,
-    })
+        # Flag players with largest discrepancies
+        _val_df = pd.DataFrame({
+            'player_name': player_names,
+            'pred': my_pred_base,
+            'r1_pred': r1_mu,
+            'r1_mean_real': r1_mean_realized,
+            'mean_delta': mean_delta,
+            'pred_std': round_std,
+            'r1_std_real': r1_std_real,
+            'r2_std_real': r2_std_real,
+            'r3_std_real': r3_std_real,
+            'r4_std_real': r4_std_real,
+            'avg_std_real': avg_std_real,
+            'std_delta': std_delta,
+            'tourn_mean_real': tourn_mean_realized,
+            'tourn_mean_delta': tourn_mean_delta,
+        })
 
-    # Top 5 mean misses
-    print(f"\n  Biggest R1 mean misses:")
-    for _, r in _val_df.nlargest(5, 'mean_delta').iterrows():
-        print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
-    for _, r in _val_df.nsmallest(5, 'mean_delta').iterrows():
-        print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
+        # Top 5 mean misses
+        print(f"\n  Biggest R1 mean misses:")
+        for _, r in _val_df.nlargest(5, 'mean_delta').iterrows():
+            print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
+        for _, r in _val_df.nsmallest(5, 'mean_delta').iterrows():
+            print(f"    {r['player_name']:28s}  pred={r['r1_pred']:+.3f}  real={r['r1_mean_real']:+.3f}  d={r['mean_delta']:+.4f}")
 
-    # Top 5 std misses (avg across all rounds)
-    print(f"\n  Biggest avg std misses (pred vs realized avg of R1-R4):")
-    for _, r in _val_df.nlargest(5, 'std_delta').iterrows():
-        print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
-              f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
-    for _, r in _val_df.nsmallest(5, 'std_delta').iterrows():
-        print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
-              f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
+        # Top 5 std misses (avg across all rounds)
+        print(f"\n  Biggest avg std misses (pred vs realized avg of R1-R4):")
+        for _, r in _val_df.nlargest(5, 'std_delta').iterrows():
+            print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
+                  f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
+        for _, r in _val_df.nsmallest(5, 'std_delta').iterrows():
+            print(f"    {r['player_name']:28s}  pred={r['pred_std']:.3f}  real={r['avg_std_real']:.3f}  d={r['std_delta']:+.4f}  "
+                  f"[R1={r['r1_std_real']:.2f} R2={r['r2_std_real']:.2f} R3={r['r3_std_real']:.2f} R4={r['r4_std_real']:.2f}]")
 
-    # Save full validation file
-    _val_df.to_csv(f'sim_validation_{tourney}.csv', index=False)
+        # Save full validation file
+        _val_df.to_csv(f'sim_validation_{tourney}.csv', index=False)
     print(f"\n  [ok] Saved sim_validation_{tourney}.csv")
 
     print(f"{'='*50}\n")
@@ -1091,11 +1097,15 @@ if not args.price_only:
 
     # Per-player expected SG summaries
     COLS = ["ott", "app", "arg", "putt"]
-    r1m = cats_r1.mean(axis=1); r2m = cats_r2.mean(axis=1); r3m = cats_r3.mean(axis=1); r4m = cats_r4.mean(axis=1)
-    r1_total_mean = sg_r1.mean(axis=1); r2_total_mean = sg_r2.mean(axis=1)
-    r3_total_mean = sg_r3.mean(axis=1); r4_total_mean = sg_r4.mean(axis=1)
-    per_round_avg_cat = ((cats_r1 + cats_r2 + cats_r3 + cats_r4) / 4.0).mean(axis=1)
-    tourn_total_per_round_mean = ((sg_r1 + sg_r2 + sg_r3 + sg_r4) / 4.0).mean(axis=1)
+    if _python_drew:
+        r1m = cats_r1.mean(axis=1); r2m = cats_r2.mean(axis=1); r3m = cats_r3.mean(axis=1); r4m = cats_r4.mean(axis=1)
+    else:
+        r1m, r2m, r3m, r4m = _rust_cat_means   # each (n,4) from sims_kernel
+    # totals via sum-of-category-means == mean-of-sg (identical to the old code)
+    r1_total_mean = r1m.sum(axis=1); r2_total_mean = r2m.sum(axis=1)
+    r3_total_mean = r3m.sum(axis=1); r4_total_mean = r4m.sum(axis=1)
+    per_round_avg_cat = (r1m + r2m + r3m + r4m) / 4.0
+    tourn_total_per_round_mean = per_round_avg_cat.sum(axis=1)
 
     rows_avg = []
     for i, p in enumerate(player_names):

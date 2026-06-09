@@ -97,11 +97,39 @@ pub struct Output {
     pub final_scores: Vec<i64>,
     /// (n,) simulated win probability (RNG.choice tiebreak among min-score ties).
     pub win_prob: Vec<f64>,
+    /// (n*4) row-major per-player per-category SG means over sims, per round.
+    /// Feeds new_sim's avg_expected_cat_sg_{tourney}.csv (mean over ALL sims of
+    /// the raw category draws; the missed-cut penalty does NOT touch these).
+    pub cat_means_r1: Vec<f64>,
+    pub cat_means_r2: Vec<f64>,
+    pub cat_means_r3: Vec<f64>,
+    pub cat_means_r4: Vec<f64>,
 }
 
 #[inline]
 fn idx(i: usize, s: usize, sims: usize) -> usize {
     i * sims + s
+}
+
+/// Per-player per-category mean over sims of one round's category draws.
+/// Returns (n*4) row-major, matching numpy `cats_rN.mean(axis=1)`.
+fn cat_means(cats: &[[f64; 4]], n: usize, sims: usize) -> Vec<f64> {
+    let mut out = vec![0.0f64; n * 4];
+    let inv = 1.0 / sims as f64;
+    for i in 0..n {
+        let mut acc = [0.0f64; 4];
+        for s in 0..sims {
+            let c = cats[idx(i, s, sims)];
+            acc[0] += c[0];
+            acc[1] += c[1];
+            acc[2] += c[2];
+            acc[3] += c[3];
+        }
+        for j in 0..4 {
+            out[i * 4 + j] = acc[j] * inv;
+        }
+    }
+    out
 }
 
 /// Draw one round for all players into `cats`/`sg`/`strokes`.
@@ -454,11 +482,21 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
         *w /= inv;
     }
 
+    // ---- per-category means over sims (for avg_expected_cat_sg) ----
+    let cat_means_r1 = cat_means(&cats_r1, n, sims);
+    let cat_means_r2 = cat_means(&cats_r2, n, sims);
+    let cat_means_r3 = cat_means(&cats_r3, n, sims);
+    let cat_means_r4 = cat_means(&cats_r4, n, sims);
+
     Output {
         n,
         sims,
         final_scores,
         win_prob: win_counts,
+        cat_means_r1,
+        cat_means_r2,
+        cat_means_r3,
+        cat_means_r4,
     }
 }
 

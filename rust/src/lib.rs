@@ -142,7 +142,9 @@ fn rows4(a: &numpy::ndarray::ArrayView2<f64>) -> Vec<[f64; 4]> {
 ///   r1_*: [ott, putt, residual, residual2]
 ///   r2_*: [residual, residual2, residual3, avg_ott, avg_putt, avg_app, avg_arg, delta_app]
 ///   r3_*: [sg_ott_avg, sg_putt_avg, sg_app_avg, sg_arg_avg]
-/// Returns (final_scores (n,sims) i64, win_prob (n,) f64).
+/// Returns (final_scores (n,sims) i64, win_prob (n,) f64,
+///          cat_means_r1, cat_means_r2, cat_means_r3, cat_means_r4 — each (n,4) f64,
+///          per-player per-category SG means over sims; feed avg_expected_cat_sg).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn run_pretournament<'py>(
@@ -164,7 +166,14 @@ fn run_pretournament<'py>(
     use_10_shot_rule: bool,
     sims: usize,
     seed: u64,
-) -> (Bound<'py, PyArray2<i64>>, Bound<'py, PyArray1<f64>>) {
+) -> (
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray2<f64>>,
+) {
     use cascade::{CoeffR1, CoeffR2, CoeffR3, Inputs};
     let mu_v = mu.as_array();
     let n = mu_v.nrows();
@@ -204,8 +213,20 @@ fn run_pretournament<'py>(
         use_10_shot_rule,
     };
     let out = cascade::run_pretournament(&inp);
-    let fs = numpy::ndarray::Array2::from_shape_vec((out.n, out.sims), out.final_scores).unwrap();
-    (fs.into_pyarray_bound(py), out.win_prob.into_pyarray_bound(py))
+    let no = out.n;
+    let fs = numpy::ndarray::Array2::from_shape_vec((no, out.sims), out.final_scores).unwrap();
+    let cm1 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r1).unwrap();
+    let cm2 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r2).unwrap();
+    let cm3 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r3).unwrap();
+    let cm4 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r4).unwrap();
+    (
+        fs.into_pyarray_bound(py),
+        out.win_prob.into_pyarray_bound(py),
+        cm1.into_pyarray_bound(py),
+        cm2.into_pyarray_bound(py),
+        cm3.into_pyarray_bound(py),
+        cm4.into_pyarray_bound(py),
+    )
 }
 
 /// round_sim finish-prob aggregation. Returns (prob_raw (n,n), top_dh (n,3),

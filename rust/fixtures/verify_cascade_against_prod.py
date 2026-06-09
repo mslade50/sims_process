@@ -136,7 +136,7 @@ def verify(event):
         return True
 
     # --- B. Rust statistical equivalence vs production ---
-    rust_fs, rust_win = run_rust(d, seed)
+    rust_fs, rust_win, *_ = run_rust(d, seed)
     rust_fs = np.ascontiguousarray(rust_fs)
     u_p, ndh_p, top_p = k.aggregate(np.ascontiguousarray(prod_fs))
     u_r, ndh_r, top_r = k.aggregate(rust_fs)
