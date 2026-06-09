@@ -1,0 +1,5 @@
+/target
+*.pyd
+*.so
+# Frozen fixtures ARE committed (CI oracle) — do not ignore ops_fixture.npz.
+prod_final_scores_*.npy

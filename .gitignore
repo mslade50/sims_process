@@ -186,6 +186,9 @@ cleanup_backup_*.tar.gz
 !dashboard_data/
 !maker_dashboard/
 
+# Rust sim-kernel crate (PyO3 extension); rust/.gitignore handles target/, *.pyd/.so, oracle .npy
+!rust/
+
 # Kalshi maker dashboard — track source, ignore runtime artifacts
 !maker_dashboard/**/*.html
 !maker_dashboard/**/*.css

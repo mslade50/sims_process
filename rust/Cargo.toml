@@ -1,0 +1,40 @@
+[package]
+name = "sims_kernel"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"            # f64::round_ties_even stabilized in 1.77
+description = "Rust Monte Carlo kernel for new_sim/round_sim (statistical-equivalence port)"
+license = "MIT"
+
+# Two crate types:
+#   cdylib -> the PyO3 extension module (the production delivery)
+#   rlib   -> lets the optional `bin` target + integration tests link the kernel
+[lib]
+name = "sims_kernel"
+crate-type = ["cdylib", "rlib"]
+
+# Optional/debug-only standalone CLI (NOT a permanent fail-open fallback).
+[[bin]]
+name = "sims_kernel_cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+# Stable-ABI bindings: one abi3-py310 wheel covers CI 3.10 + local 3.11.
+# NOTE: `extension-module` is intentionally NOT here — it would break `cargo
+# test`/`cargo build` by unlinking libpython. maturin adds it at wheel-build time
+# via pyproject.toml `features`. Keeping it out lets the unit tests link normally.
+pyo3 = { version = "0.22", features = ["abi3-py310"] }
+numpy = "0.22"
+# PCG64 (XSL-RR) — same family as numpy default_rng; statistical target only.
+rand = "0.8"
+rand_pcg = "0.3"
+rand_distr = "0.4"
+# RNG-free post-sim parallelism (h2h, aggregation) only.
+rayon = "1.10"
+
+[profile.release]
+# IEEE-strict: no fast-math. Parity invariant — do not enable lto+fast-float tricks
+# that would reorder FP reductions across the *.5 rounding boundary.
+opt-level = 3
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "sims_kernel"
+version = "0.1.0"
+description = "Rust Monte Carlo kernel for new_sim/round_sim (statistical-equivalence port)"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# abi3 stable-ABI wheel; bindings auto-detected from pyo3.
+features = ["pyo3/extension-module"]
+module-name = "sims_kernel"
