@@ -52,6 +52,20 @@ MAX_AGE_HOURS = 6  # ignore scraped files older than this
 SCRAPED_BOOKS = {"betonline", "pinnacle", "betcris"}
 
 
+def _target_event_ids() -> set[str]:
+    """This week's canonical DataGolf event id(s) from sim_inputs (as strings).
+
+    The scraped JSON now tags each line/file with the DataGolf event_id; we use
+    this to keep only the current event when a file spans multiple events (e.g.
+    a live event plus the next major's winner board). Empty set => don't filter.
+    """
+    try:
+        from sim_inputs import event_ids
+        return {str(e).strip() for e in event_ids if str(e).strip()}
+    except Exception:
+        return set()
+
+
 def _fetch_scraped_json(market: str) -> dict | None:
     """Fetch scraped odds JSON from GitHub, falling back to local paths.
 
@@ -128,8 +142,25 @@ def load_betcris_outrights() -> pd.DataFrame:
     if not data:
         return pd.DataFrame()
 
+    # The betcris outrights file can hold multiple events at once (the current
+    # event plus the next major's winner board), each line tagged with its
+    # DataGolf event_id. Keep only this week's event so a player who appears in
+    # both (e.g. Scheffler to win here AND to win the next major) doesn't collide
+    # on the (player, market_type) dedup below.
+    lines = data.get("lines", [])
+    targets = _target_event_ids()
+    if targets:
+        scoped = [l for l in lines if str(l.get("event_id") or "").strip() in targets]
+        if scoped:
+            lines = scoped
+        else:
+            logger.warning(
+                "No betcris outright lines matched target event_ids %s "
+                "(event_id missing/unresolved?) — using all lines unfiltered", targets
+            )
+
     rows = []
-    for line in data.get("lines", []):
+    for line in lines:
         # JSON stores names as "Last, First". new_sim's player_name pipeline
         # uses lowercase "first last" — convert here so the merge keys align.
         raw = str(line.get("player", "")).strip()
@@ -156,6 +187,7 @@ def load_betcris_outrights() -> pd.DataFrame:
         rows.append({
             "player_name": player,
             "market_type": str(line.get("market_type", "")),
+            "event_id": str(line.get("event_id") or "").strip(),
             "bookmaker": "betcris",
             "american_odds": am,
             "decimal_odds": dec,
@@ -163,7 +195,9 @@ def load_betcris_outrights() -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.drop_duplicates(subset=["player_name", "market_type"], keep="first")
+        # Include event_id in the key so distinct events never overwrite each
+        # other even in the unfiltered fallback path.
+        df = df.drop_duplicates(subset=["player_name", "market_type", "event_id"], keep="first")
     return df
 
 
@@ -259,6 +293,17 @@ def load_matchup_odds(
     # 1. Load scraped odds for our books (GitHub -> local fallback)
     if not force_api:
         scraped_data = _fetch_scraped_json(market)
+        # Guard against a stale/wrong-event scraped file: the matchup JSON is
+        # tagged with the target DataGolf event_id. If it doesn't match this
+        # week's event, ignore it and fall back to the API. (No tag => trust it.)
+        targets = _target_event_ids()
+        sid = str((scraped_data or {}).get("event_id") or "").strip()
+        if scraped_data and targets and sid and sid not in targets:
+            logger.warning(
+                f"Scraped {market} is for event {sid}, not target {targets} "
+                f"— ignoring scraped file, using DataGolf API"
+            )
+            scraped_data = None
         if scraped_data:
             try:
                 scraped_df = _parse_datagolf_json(scraped_data)
