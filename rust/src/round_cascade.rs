@@ -22,6 +22,8 @@ use crate::rng::NormalStream;
 const CLIP_CAT: (f64, f64) = (-8.0, 8.0);
 const MISSED_CUT_PENALTY: i64 = 200;
 const STROKE_CLIP: f64 = 12.0;
+// Phase 5 single-round draw splits weather across categories (added back here).
+const WEATHER_CAT_SPLIT: [f64; 4] = [0.35, 0.35, 0.15, 0.15];
 
 /// A completed round's known data (constant across sims, tiled).
 pub struct KnownRound {
@@ -411,6 +413,88 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
     }
 }
 
+// ============================================================
+// Phase 5: single-round score card (seed 789, simulate_round_scores_catfirst)
+// ============================================================
+
+/// Inputs for the single-round category-first draw (round_sim.py:1884). One round,
+/// per player. KEY DIFF from the cascade: weather IS split here and ADDED per
+/// category (cat_mu = mu + shift + wx_delta*WEATHER_CAT_SPLIT), and the stroke clip
+/// is to int(round(player_avg)) +/- 12. The glue filters NaN-score players out.
+pub struct SingleRoundInputs {
+    pub n: usize,
+    pub sims: usize,
+    pub seed: u64, // 789
+    pub mu: Vec<[f64; 4]>,
+    pub std_course: Vec<[f64; 4]>,
+    pub eff_skew: Vec<[f64; 4]>,
+    pub l_corr: [[f64; 4]; 4],
+    /// scores_rN - wx_delta (round SG target with weather removed).
+    pub skill: Vec<f64>,
+    pub wx_delta: Vec<f64>,
+    /// expected score for stroke conversion (course_score_adj or global avg).
+    pub player_avg: Vec<f64>,
+}
+
+pub struct SingleRoundOutput {
+    pub n: usize,
+    pub sims: usize,
+    pub scores: Vec<i64>, // (n*sims) row-major int round scores
+    pub cat_mu: Vec<f64>, // (n*4) per-player re-centered category means (cat_mu_lookup)
+}
+
+/// rint(player_avg - sg) -> int, then clip to int(round(player_avg)) +/- 12.
+/// Matches numpy `np.rint(...).astype(int)` then `np.clip(_, round(avg)-12, +12)`.
+#[inline]
+fn score_single(player_avg: f64, sg: f64) -> i64 {
+    let center = player_avg.round_ties_even() as i64;
+    let sc = (player_avg - sg).round_ties_even() as i64;
+    sc.clamp(center - 12, center + 12)
+}
+
+pub fn run_single_round(inp: &SingleRoundInputs) -> SingleRoundOutput {
+    let n = inp.n;
+    let sims = inp.sims;
+    let ns = n * sims;
+    let skew: Vec<[Skew; 4]> = (0..n)
+        .map(|i| {
+            let e = inp.eff_skew[i];
+            [Skew::new(e[0]), Skew::new(e[1]), Skew::new(e[2]), Skew::new(e[3])]
+        })
+        .collect();
+    let mut stream = NormalStream::new(inp.seed);
+    let mut scores = vec![0i64; ns];
+    let mut cat_mu_out = vec![0.0f64; n * 4];
+    for i in 0..n {
+        let m = inp.mu[i];
+        let base_sum = m[0] + m[1] + m[2] + m[3];
+        let shift = (inp.skill[i] - base_sum) / 4.0;
+        let wd = inp.wx_delta[i];
+        let mut cat_mu = [0.0f64; 4];
+        for j in 0..4 {
+            cat_mu[j] = m[j] + shift + wd * WEATHER_CAT_SPLIT[j];
+        }
+        cat_mu_out[i * 4..i * 4 + 4].copy_from_slice(&cat_mu);
+        let sc = inp.std_course[i];
+        let sk = &skew[i];
+        let pa = inp.player_avg[i];
+        for s in 0..sims {
+            let z = stream.next_row4();
+            let mut c = [0.0f64; 4];
+            for j in 0..4 {
+                let l = inp.l_corr[j];
+                let corr_z = z[0] * l[0] + z[1] * l[1] + z[2] * l[2] + z[3] * l[3];
+                let skewed = sk[j].apply(corr_z);
+                let draw = cat_mu[j] + skewed * sc[j];
+                c[j] = draw.clamp(CLIP_CAT.0, CLIP_CAT.1);
+            }
+            let total = sum4(c);
+            scores[idx(i, s, sims)] = score_single(pa, total);
+        }
+    }
+    SingleRoundOutput { n, sims, scores, cat_mu: cat_mu_out }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +574,43 @@ mod tests {
         let out = run_remaining_rounds(&base_inputs(12, 400, 3));
         let t: f64 = out.win_prob.iter().sum();
         assert!((t - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn single_round_runs_and_clips() {
+        let n = 20;
+        let sims = 500;
+        let inp = SingleRoundInputs {
+            n, sims, seed: 789,
+            mu: vec![[0.1, 0.1, 0.0, 0.0]; n],
+            std_course: vec![[1.0, 1.0, 0.8, 0.8]; n],
+            eff_skew: vec![[0.0; 4]; n],
+            l_corr: ident_l(),
+            skill: (0..n).map(|i| i as f64 * 0.05 - 0.2).collect(),
+            wx_delta: vec![0.3; n],
+            player_avg: vec![71.0; n],
+        };
+        let out = run_single_round(&inp);
+        assert_eq!(out.scores.len(), n * sims);
+        assert_eq!(out.cat_mu.len(), n * 4);
+        // round(71) +/- 12 = [59, 83]
+        for &v in &out.scores {
+            assert!((59..=83).contains(&v), "score {v} out of clip band");
+        }
+    }
+
+    #[test]
+    fn single_round_deterministic() {
+        let mk = || SingleRoundInputs {
+            n: 12, sims: 300, seed: 789,
+            mu: vec![[0.1, 0.1, 0.0, 0.0]; 12],
+            std_course: vec![[1.0, 1.0, 0.8, 0.8]; 12],
+            eff_skew: vec![[0.0; 4]; 12],
+            l_corr: ident_l(),
+            skill: vec![0.2; 12],
+            wx_delta: vec![0.0; 12],
+            player_avg: vec![70.5; 12],
+        };
+        assert_eq!(run_single_round(&mk()).scores, run_single_round(&mk()).scores);
     }
 }

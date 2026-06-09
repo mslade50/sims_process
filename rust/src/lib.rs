@@ -347,6 +347,51 @@ fn run_remaining_rounds<'py>(
     )
 }
 
+/// Single-round category-first score draw (round_sim simulate_round_scores_catfirst,
+/// seed 789). Weather IS split per category and added back here. Returns
+/// (scores (n,sims) i64, cat_mu (n,4) f64). The caller must pass only players with a
+/// valid scores_rN (NaN players are filtered in Python) and map rows back by order.
+#[pyfunction]
+#[pyo3(signature = (mu, std_course, eff_skew, l_corr, skill, wx_delta, player_avg, sims, seed=789))]
+#[allow(clippy::too_many_arguments)]
+fn run_single_round<'py>(
+    py: Python<'py>,
+    mu: PyReadonlyArray2<'py, f64>,
+    std_course: PyReadonlyArray2<'py, f64>,
+    eff_skew: PyReadonlyArray2<'py, f64>,
+    l_corr: PyReadonlyArray2<'py, f64>,
+    skill: PyReadonlyArray1<'py, f64>,
+    wx_delta: PyReadonlyArray1<'py, f64>,
+    player_avg: PyReadonlyArray1<'py, f64>,
+    sims: usize,
+    seed: u64,
+) -> (Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<f64>>) {
+    use round_cascade::{run_single_round as rsr, SingleRoundInputs};
+    let mu_v = mu.as_array();
+    let n = mu_v.nrows();
+    let lc_v = l_corr.as_array();
+    let mut lc = [[0.0f64; 4]; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            lc[i][j] = lc_v[(i, j)];
+        }
+    }
+    let inp = SingleRoundInputs {
+        n, sims, seed,
+        mu: rows4(&mu_v),
+        std_course: rows4(&std_course.as_array()),
+        eff_skew: rows4(&eff_skew.as_array()),
+        l_corr: lc,
+        skill: skill.as_slice().unwrap().to_vec(),
+        wx_delta: wx_delta.as_slice().unwrap().to_vec(),
+        player_avg: player_avg.as_slice().unwrap().to_vec(),
+    };
+    let out = rsr(&inp);
+    let sc = numpy::ndarray::Array2::from_shape_vec((out.n, out.sims), out.scores).unwrap();
+    let cm = numpy::ndarray::Array2::from_shape_vec((out.n, 4), out.cat_mu).unwrap();
+    (sc.into_pyarray_bound(py), cm.into_pyarray_bound(py))
+}
+
 #[pymodule]
 fn sims_kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
@@ -360,5 +405,6 @@ fn sims_kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(h2h, m)?)?;
     m.add_function(wrap_pyfunction!(run_pretournament, m)?)?;
     m.add_function(wrap_pyfunction!(run_remaining_rounds, m)?)?;
+    m.add_function(wrap_pyfunction!(run_single_round, m)?)?;
     Ok(())
 }
