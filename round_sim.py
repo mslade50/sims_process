@@ -127,6 +127,11 @@ SKEW_CONFIDENCE_N_CF = 100.0
 
 RNG_CF = np.random.default_rng(789)  # separate seed for catfirst draws
 
+# Set in main() from --use-python. When False (default), the heavy sim draws
+# (tournament cascade seed 42 + single-round score card seed 789) run via the Rust
+# sims_kernel; the Python draws remain as a flagged fallback.
+_USE_PYTHON = False
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tournament Sim Helper Functions
@@ -540,6 +545,47 @@ def simulate_remaining_rounds(
                 player_expected_r2[i] = row['course_score_adj'].iloc[0]
         if np.unique(player_expected_r2).size > 1:
             print(f"    Multi-course R2: expected scores = {dict(zip(*np.unique(player_expected_r2, return_counts=True)))}")
+
+    # ─── Rust kernel (default; --use-python forces the legacy Python cascade) ───
+    # All inputs are assembled above; sims_kernel.run_remaining_rounds (seed 42)
+    # returns the same (final_scores, made_cut_mask). On --use-python or any Rust
+    # error we fall through to the Python cascade below.
+    if not _USE_PYTHON:
+        try:
+            import sims_kernel as _sk
+            _A = np.ascontiguousarray
+            _cv1 = lambda c: [c['ott'], c['putt'], c['residual'], c['residual2']]
+            _cv2 = lambda c: [c['residual'], c['residual2'], c['residual3'], c['avg_ott'],
+                              c['avg_putt'], c['avg_app'], c['avg_arg'], c['delta_app']]
+            _cv3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg']]
+            _mu = np.stack([m for (m, s) in player_cf_params])
+            _std = np.stack([s for (m, s) in player_cf_params])
+
+            def _ks(r):
+                return _A(known_strokes[r].astype(np.int64)) if (completed_round >= r and r in known_strokes) else None
+
+            def _kc(r):
+                if completed_round >= r and r in known_strokes:
+                    return _A(np.asarray(known_categories.get(r, np.zeros((n_players, 4))), dtype=float))
+                return None
+
+            _fs, _mc, _win = _sk.run_remaining_rounds(
+                int(completed_round), float(default_par),
+                _A(_mu), _A(_std), _A(effective_skew), _A(L_corr),
+                _A(my_pred_base.astype(float)), _A(player_expected_r2.astype(float)),
+                _ks(1), _kc(1), _ks(2), _kc(2), _ks(3), _kc(3),
+                _cv1(coefficients_r1_high), _cv1(coefficients_r1_midh),
+                _cv1(coefficients_r1_midl), _cv1(coefficients_r1_low),
+                _cv2(coefficients_r2), _cv2(coefficients_r2_6_30), _cv2(coefficients_r2_30_up),
+                _cv3(coefficients_r3), _cv3(coefficients_r3_mid), _cv3(coefficients_r3_high),
+                int(CUT_LINE), bool(USE_10_SHOT_RULE), int(num_sims), 42,
+            )
+            print(f"  [rust] tournament cascade via sims_kernel.run_remaining_rounds "
+                  f"(completed_round={completed_round}, {num_sims:,} sims)")
+            return np.ascontiguousarray(_fs).astype(int), np.ascontiguousarray(_mc)
+        except Exception as _rust_err:
+            print(f"  [rust] WARNING: run_remaining_rounds failed ({_rust_err!r}); "
+                  f"falling back to Python cascade. Pass --use-python to silence.")
 
     # Initialize accumulators
     if completed_round >= 1 and 1 in known_strokes:
@@ -1904,6 +1950,45 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     player_cf_params, effective_skew, L_corr = dists_result
 
     has_course_adj = "course_score_adj" in model_preds.columns
+
+    # ─── Rust kernel (default; --use-python forces the legacy Python loop) ───
+    # Build per-(valid)player input arrays and draw via sims_kernel.run_single_round
+    # (seed 789, weather split). Returns the same {player: int scores} + cat_mu_lookup.
+    if not _USE_PYTHON:
+        try:
+            import sims_kernel as _sk
+            _players, _mu, _std, _skew, _skill, _wx, _pavg = [], [], [], [], [], [], []
+            for idx, (_, row) in enumerate(model_preds.iterrows()):
+                player = row["player_name"]
+                scores_rn = row[scores_col]
+                if pd.isna(scores_rn):
+                    continue
+                if has_course_adj and pd.notna(row.get("course_score_adj")):
+                    player_avg = row["course_score_adj"]
+                else:
+                    player_avg = expected_avg
+                mu, std_c = player_cf_params[idx]
+                wx_delta = wx_lookup.get(player, 0.0)
+                _players.append(player)
+                _mu.append(mu); _std.append(std_c); _skew.append(effective_skew[idx])
+                _skill.append(float(scores_rn) - wx_delta); _wx.append(wx_delta)
+                _pavg.append(float(player_avg))
+            if _players:
+                _A = np.ascontiguousarray
+                _scores, _catmu = _sk.run_single_round(
+                    _A(np.stack(_mu)), _A(np.stack(_std)), _A(np.stack(_skew)), _A(L_corr),
+                    _A(np.asarray(_skill, dtype=float)), _A(np.asarray(_wx, dtype=float)),
+                    _A(np.asarray(_pavg, dtype=float)), int(num_sims), 789,
+                )
+                sim_dict = {p: np.ascontiguousarray(_scores[k]).astype(int)
+                            for k, p in enumerate(_players)}
+                cat_mu_lookup = {p: np.ascontiguousarray(_catmu[k]).copy()
+                                 for k, p in enumerate(_players)}
+                print(f"  [rust] catfirst {len(sim_dict)} players × {num_sims:,} via run_single_round")
+                return sim_dict, cat_mu_lookup
+        except Exception as _rust_err:
+            print(f"  [rust] WARNING: run_single_round failed ({_rust_err!r}); "
+                  f"falling back to Python catfirst. Pass --use-python to silence.")
 
     sim_dict = {}
     cat_mu_lookup = {}
@@ -3727,6 +3812,9 @@ def main():
                         help="Skip email sending and bet storage")
     parser.add_argument("--legacy", action="store_true",
                         help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
+    parser.add_argument("--use-python", action="store_true",
+                        help="Use the legacy Python sim draws instead of the Rust sims_kernel "
+                             "(the Rust cascade + score-card draws are the production default)")
     parser.add_argument("--sim-only", action="store_true",
                         help="Run round score sim, save sim_cache parquet, then exit (no pricing/email)")
     parser.add_argument("--price-only", action="store_true",
@@ -3737,6 +3825,9 @@ def main():
                         help="Override expected score estimate (only valid with --price-only/--reprice). "
                              "Shifts every cached score by (new - cached_expected_avg) and re-prices.")
     args = parser.parse_args()
+
+    global _USE_PYTHON
+    _USE_PYTHON = args.use_python
 
     if args.score_est is not None and not args.price_only and not args.reprice:
         parser.error("--score-est requires --price-only or --reprice")
