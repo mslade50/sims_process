@@ -454,25 +454,10 @@ def _build_outrights(tourney: str, repl: dict) -> dict:
         sim_df["player_name"] = sim_df["player_name"].str.lower().replace(repl)
         logger.info(f"Loaded finish equity: {eq_path.name} ({len(sim_df)} rows)")
 
-    # Load Kalshi outrights (scraped)
-    kalshi = _fetch_scraped_json("kalshi_outrights_latest.json")
+    # Kalshi/NoVig outrights are no longer published as scraped JSON (the sim
+    # fetches them live; the scraper keeps them in its DB archive only). The
+    # odds screen now shows sim fair prices + DataGolf-sourced book odds.
     kalshi_by_market = {}
-    if kalshi:
-        for item in kalshi.get("lines", []):
-            player = _norm(item.get("player_name", ""), repl)
-            mtype = item.get("market_type", "").lower()
-            if item.get("bid", 1) == 0:
-                continue
-            if mtype not in kalshi_by_market:
-                kalshi_by_market[mtype] = {}
-            yes_price = item.get("yes_price") or item.get("ask")
-            no_price = item.get("no_price") or item.get("bid")
-            if yes_price:
-                kalshi_by_market[mtype][player] = {
-                    "yes": int(yes_price) if yes_price > 1 else int(round((1/yes_price - 1) * 100)),
-                    "no": int(no_price) if no_price and no_price > 1 else None,
-                }
-        logger.info(f"Loaded Kalshi outrights: {sum(len(v) for v in kalshi_by_market.values())} lines")
 
     # Fetch DataGolf API outrights (pinnacle, betcris, betonline, etc.)
     dg_by_market = {}
