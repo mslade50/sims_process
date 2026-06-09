@@ -114,22 +114,26 @@ the kernel extension with the round_sim phase (Task 3) rather than rushing it on
 
 ---
 
-## Task 3 (LATER — larger phase, likely beyond tomorrow morning) — `round_sim`
+## Task 3 — `round_sim`
 
-a. **Phase 5 (single-round score card).** Port `round_sim.py` `simulate_round_scores_catfirst`
-   (~L1884, seed 789 RNG_CF; weather IS split via `WEATHER_CAT_SPLIT=[.35,.35,.15,.15]`;
-   scores clipped `[round(avg)±12]`) + `build_score_card` (~L2383) + `build_round_score_probs`
-   (~L2421). Add Rust `run_single_round` + `ref_single_round.py` + a stat-parity test.
-b. **round_sim production verification.** Add a `SIMS_DUMP_FIXTURE` hook to `round_sim.py`
-   (mirror `new_sim.py`) dumping `run_remaining_rounds` inputs; capture a live-round fixture
-   (rbc_canada is mid-tournament Thu–Sun this week) → `verify_round_cascade_against_prod.py`.
-c. **CI wheel build (plan §8) — REQUIRED before flipping round_sim** (not before Tasks 1/2):
-   `nightly-round-sim.yml` and `reprice.yml` run round_sim on ubuntu with no local wheel.
+a. **Phase 5 (single-round score card).** ✅ DONE (commit fe6ad34) — `run_single_round` in
+   `round_cascade.rs` + lib.rs binding + `ref_single_round.py` + `test_single_round_parity.py`.
+   cat_mu bit-exact; score CDF + mean within 5 SE.
+d. **Flip round_sim to Rust default.** ✅ DONE (commit e61f07a) — both kernels wired behind
+   `--use-python` (Rust default + try/except fallback): `simulate_remaining_rounds` →
+   `run_remaining_rounds`, `simulate_round_scores_catfirst` → `run_single_round`.
+   `compute_finish_probabilities`/`build_score_card` aggregation stay Python. Verified:
+   score card ran in situ (`--sim-only` round 0); cascade wiring matched Python within 5 SE
+   via a `completed_round=0` harness on real catfirst dists.
+b. **round_sim production verification — REMAINING.** Add a `SIMS_DUMP_FIXTURE` hook to
+   `round_sim.py` (mirror `new_sim.py`) dumping `run_remaining_rounds` inputs; capture a
+   live-round fixture (round ≥ 1) → `verify_round_cascade_against_prod.py`. The cascade is
+   gated to `round_num >= 1`, so this happens during a live tournament round (the real test
+   this week). NOTE: the cascade has NOT yet run in situ — only the score card has.
+c. **CI wheel build — REMAINING.** `nightly-round-sim.yml` / `reprice.yml` run round_sim on
+   ubuntu with no local wheel, so they currently hit the Python fallback (works, no speedup).
    Build via maturin for `{ubuntu manylinux, windows}`, publish as a release artifact, add
-   `pip install <wheel>` to both workflows. (`new_sim` runs manually, not in CI, so this
-   was not needed for new_sim.)
-d. **Flip round_sim to Rust default** (mirror the new_sim `--use-python` pattern at the
-   `run_remaining_rounds` call site) + run for real.
+   `pip install <wheel>` to both workflows so Rust runs in CI too.
 
 ---
 
