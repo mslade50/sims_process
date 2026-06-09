@@ -3807,6 +3807,7 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
     SHARP = {'betcris', 'betonline', 'pinnacle'}
+    WIN = {'win', 'winner'}  # winner market ONLY (sportsbooks use 'win'; Kalshi/NoVig use 'winner')
 
     def _fair(p):
         try:
@@ -3823,6 +3824,7 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
     if sb_outrights_df is not None and not sb_outrights_df.empty and 'bookmaker' in sb_outrights_df.columns:
         sb = sb_outrights_df[
             sb_outrights_df['bookmaker'].astype(str).str.lower().isin(SHARP)
+            & sb_outrights_df['market_type'].astype(str).str.lower().isin(WIN)
             & (pd.to_numeric(sb_outrights_df['edge'], errors='coerce') > 0)
         ]
         for _, r in sb.iterrows():
@@ -3845,6 +3847,8 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
         for _, r in exch.iterrows():
             edge = pd.to_numeric(r.get('edge'), errors='coerce')
             if pd.isna(edge) or edge <= 0:
+                continue
+            if str(r.get('market_type', '')).lower() not in WIN:
                 continue
             rec = {
                 'player': str(r.get('player_name', '')).title(),
