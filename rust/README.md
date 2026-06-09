@@ -3,10 +3,11 @@
 Statistical-equivalence port of the `new_sim.py` / `round_sim.py` numerical kernels.
 See `../RUST_MIGRATION_PLAN.md` for the full plan, parity targets, and rollout phases.
 
-**Status:** Phases 0–2 complete and validated. The full pre-tournament cascade
-(`run_pretournament`) + RNG-free aggregation are ported and proven equivalent.
-Not yet done: Phase 3 (wire into `new_sim.py --sim-only`, shadow dual-run, cutover)
-and Phases 4–6 (`round_sim`).
+**Status:** Complete and in production. Both `new_sim` and `round_sim` run the Rust
+kernels by default. `new_sim` is fully cut over (Python draw removed); `round_sim`
+keeps its Python draws as a `--use-python` fallback pending its first live-round
+test. Kernels: `run_pretournament`, `run_remaining_rounds`, `run_single_round`,
+`aggregate`/`aggregate_round`, `h2h`. 25 cargo tests + 6 Python parity gates green.
 
 ## What's here
 
@@ -60,6 +61,34 @@ python rust/fixtures/test_cascade_parity.py  # full cascade  — statistical (5 
 
 No BLAS / native deps: `L_corr` is injected from Python, so manylinux/Windows
 builds are trivial and reproducible.
+
+## Install on another machine
+
+The kernel ships as an `abi3-py310` wheel — one wheel works on any CPython ≥ 3.10.
+
+**Windows (offline, no Rust toolchain):** a prebuilt wheel is committed at
+`rust/prebuilt/`. After a `git pull` / OneDrive sync:
+
+```bash
+pip install --force-reinstall --no-deps rust/prebuilt/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl
+python -c "import sims_kernel as k; print(k.version(), k.selftest())"
+```
+
+**Linux / CI / any platform:** the `build-wheels.yml` GitHub Action builds the
+manylinux + Windows wheels on every `rust/` change and attaches them to a rolling
+`wheels-latest` prerelease:
+
+```bash
+pip install --force-reinstall --no-deps \
+  https://github.com/mslade50/sims_process/releases/download/wheels-latest/<wheel-name>
+```
+
+**From source (needs Rust):** `maturin build --release -m rust/Cargo.toml`, then
+install from `rust/target/wheels/`.
+
+If `sims_kernel` is unimportable, `new_sim.py` (cutover) fails the sim; `round_sim.py`
+falls back to the Python draws with a warning. Refresh the committed Windows wheel
+whenever the kernel source changes (or pull from the `wheels-latest` release).
 
 ## Parity invariants (do not regress)
 

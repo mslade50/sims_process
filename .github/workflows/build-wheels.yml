@@ -1,0 +1,77 @@
+name: Build wheels
+
+# Builds the sims_kernel Rust wheel (PyO3/maturin, abi3-py310) for Linux
+# (manylinux) + Windows, so other machines and the nightly-round-sim / reprice
+# workflows can `pip install` it instead of falling back to the Python sim
+# kernels. Triggers on rust/ changes or manually.
+#
+# Outputs:
+#  * per-OS build artifacts (download from the run), and
+#  * a rolling `wheels-latest` prerelease so any machine / workflow can:
+#      pip install --force-reinstall --no-deps \
+#        https://github.com/mslade50/sims_process/releases/download/wheels-latest/<wheel>
+#
+# The Windows wheel is ALSO committed at rust/prebuilt/ for offline install on
+# the OneDrive-synced Windows machines (no Rust toolchain needed there).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/build-wheels.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # rolling-release upload
+
+jobs:
+  build:
+    name: wheel-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Build abi3 wheel (maturin --release)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release -m rust/Cargo.toml --out wheelhouse
+          manylinux: auto   # linux only; ignored on windows
+
+      - name: Smoke-test the wheel
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --force-reinstall --no-deps wheelhouse/*.whl
+          python -c "import sims_kernel as k; assert k.selftest(); print('selftest OK', k.version())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sims_kernel-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  release:
+    name: publish rolling wheels-latest
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Publish to rolling prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wheels-latest
+          name: sims_kernel wheels (latest main)
+          prerelease: true
+          files: dl/**/*.whl
