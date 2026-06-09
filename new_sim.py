@@ -29,6 +29,11 @@ _parser.add_argument("--price-only", action="store_true",
                      help="Skip sim (load cache), run pricing + email + storage")
 _parser.add_argument("--reprice", action="store_true",
                      help="Like --price-only but dedup against existing Sheets rows")
+_parser.add_argument("--use-python", action="store_true",
+                     help="Use the legacy Python draw cascade instead of the Rust "
+                          "sims_kernel, which is now the PRODUCTION DEFAULT. The "
+                          "Python kernel still runs as a shadow; this flag just "
+                          "keeps its output instead of the Rust one.")
 args = _parser.parse_args()
 if args.reprice:
     args.price_only = True
@@ -882,6 +887,43 @@ if not args.price_only:
     final_scores = r1_r2_scores + r3_r4
     np.save(f"final_scores_{tourney}.npy", final_scores)
 
+    # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy) ───
+    # The Python draw above runs as a shadow; by default we replace final_scores
+    # with the Rust sims_kernel cascade (inputs map 1:1 to the SIMS_DUMP_FIXTURE
+    # hook, seed 456). Everything downstream consumes only final_scores, so
+    # nothing else changes; dtype is matched to the Python on-disk format. If the
+    # Rust wheel is unavailable or errors, we warn and keep the Python shadow
+    # output rather than crash a live run.
+    if not args.use_python:
+        try:
+            import sims_kernel as _sk
+            _A = np.ascontiguousarray
+            _r1 = lambda c: [c['ott'], c['putt'], c['residual'], c['residual2']]
+            _r2 = lambda c: [c['residual'], c['residual2'], c['residual3'], c['avg_ott'],
+                             c['avg_putt'], c['avg_app'], c['avg_arg'], c['delta_app']]
+            _r3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg']]
+            _mu = np.stack([m for (m, s) in player_params_v2])
+            _std = np.stack([s for (m, s) in player_params_v2])
+            _rust_fs, _ = _sk.run_pretournament(
+                _A(_mu), _A(_std), _A(effective_skew), _A(L_corr),
+                _A(my_pred_base), _A(r2_mu), _A(r3_mu), _A(r4_mu),
+                _A(weather_delta_r1), _A(weather_delta_r2),
+                _r1(coefficients_r1_high), _r1(coefficients_r1_midh),
+                _r1(coefficients_r1_midl), _r1(coefficients_r1_low),
+                _r2(coefficients_r2), _r2(coefficients_r2_6_30), _r2(coefficients_r2_30_up),
+                _r3(coefficients_r3), _r3(coefficients_r3_mid), _r3(coefficients_r3_high),
+                int(CUT_LINE), bool(USE_10_SHOT_RULE), int(SIMULATIONS), 456,
+            )
+            final_scores = np.ascontiguousarray(_rust_fs).astype(final_scores.dtype)
+            np.save(f"final_scores_{tourney}.npy", final_scores)
+            print(f"[rust] final_scores from sims_kernel.run_pretournament "
+                  f"v{_sk.version()} (shape={final_scores.shape}, dtype={final_scores.dtype})")
+        except Exception as _rust_err:
+            print(f"[rust] WARNING: Rust kernel unavailable/failed ({_rust_err!r}); "
+                  f"falling back to Python draw output. Pass --use-python to silence.")
+    else:
+        print("[rust] --use-python set: keeping legacy Python draw output.")
+
 
     # ======================
     # Validation checks
@@ -1211,6 +1253,11 @@ books_to_use = ['betcris', 'betmgm', 'betonline', 'bovada', 'caesars', 'draftkin
 
 def decimal_to_american(decimal_odds):
     if pd.isna(decimal_odds):
+        return np.nan
+    if decimal_odds <= 1.0:
+        # Not a real bettable line (1.0 = stake back, no profit; <1.0 impossible).
+        # Shows up as a missing-book placeholder (e.g. when scraped Betcris odds
+        # are unavailable). Treat as no-odds, same as NaN, to avoid /0 at -100/(d-1).
         return np.nan
     if decimal_odds >= 2.0:
         return int(round((decimal_odds - 1) * 100))
