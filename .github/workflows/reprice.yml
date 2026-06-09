@@ -41,6 +41,14 @@ jobs:
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz boto3
 
+    - name: Install sims_kernel Rust wheel (falls back to Python if unavailable)
+      if: steps.window.outputs.skip != 'true'
+      run: |
+        pip install --force-reinstall --no-deps \
+          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" \
+          && python -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())" \
+          || echo "sims_kernel wheel unavailable — round_sim --reprice will use the Python fallback"
+
     - name: Detect round from sheet config
       id: detect
       if: steps.window.outputs.skip != 'true'

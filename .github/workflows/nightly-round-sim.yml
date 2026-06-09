@@ -16,16 +16,23 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
     - name: Install dependencies
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz
+
+    - name: Install sims_kernel Rust wheel (falls back to Python if unavailable)
+      run: |
+        pip install --force-reinstall --no-deps \
+          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" \
+          && python -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())" \
+          || echo "sims_kernel wheel unavailable — round_sim will use the Python fallback"
 
     - name: Fetch scraped odds from golf_scraping repo
       env:
@@ -47,3 +54,33 @@ jobs:
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python nightly_round_sim.py
+
+    # ── Persist the sim cache to GitHub Actions cache so reprice.yml can restore it.
+    # WITHOUT these two steps the nightly sim writes the cache only into the runner's
+    # filesystem (discarded at job end) and every reprice misses -> never reprices.
+    # Re-added after commit 6b606d1 dropped them. Key/path MUST match reprice.yml's
+    # restore: key=sim-cache-<tourney>-r<N>, path=<tourney>/sim_cache_r*.parquet+_meta.json
+    - name: Detect sim cache for Actions cache
+      id: cache-key
+      run: |
+        CACHE_FILE=$(find . -name "sim_cache_r*.parquet" -newer /tmp -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2 || true)
+        if [ -n "$CACHE_FILE" ]; then
+          TOURNEY_DIR=$(dirname "$CACHE_FILE" | sed 's|^\./||')
+          ROUND=$(echo "$CACHE_FILE" | grep -oP 'r\d+')
+          echo "cache_key=sim-cache-${TOURNEY_DIR##*/}-${ROUND}" >> $GITHUB_OUTPUT
+          echo "cache_path=${TOURNEY_DIR}" >> $GITHUB_OUTPUT
+          echo "Found cache: $CACHE_FILE (key=sim-cache-${TOURNEY_DIR##*/}-${ROUND})"
+        else
+          echo "cache_key=" >> $GITHUB_OUTPUT
+          echo "cache_path=" >> $GITHUB_OUTPUT
+          echo "No sim cache found"
+        fi
+
+    - name: Save sim cache to Actions cache
+      if: steps.cache-key.outputs.cache_key != ''
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ steps.cache-key.outputs.cache_path }}/sim_cache_r*.parquet
+          ${{ steps.cache-key.outputs.cache_path }}/sim_cache_r*_meta.json
+        key: ${{ steps.cache-key.outputs.cache_key }}
