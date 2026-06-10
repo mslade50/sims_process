@@ -157,11 +157,46 @@ def _build_matchups(tourney: str, repl: dict) -> list:
     return rows
 
 
+def _resolve_event_name(event_id, tour, tourney) -> str:
+    """Human event name embedded in sim_fairs.json so the board can scope by name
+    when DataGolf is unavailable at board-build time. Resolved here via the
+    DataGolf schedule (reliable in the sim's env); falls back to a humanized slug.
+    event_id is unique only within a tour, so prefer the sim's tour."""
+    slug = (tourney or "").replace("_", " ").title()
+    if not event_id:
+        return slug
+    try:
+        import os
+        import requests
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(PROJECT_ROOT / ".env")
+        except Exception:
+            pass
+        key = os.getenv("DATAGOLF_API_KEY")
+        if not key:
+            return slug
+        r = requests.get("https://feeds.datagolf.com/get-schedule",
+                         params={"tour": "all", "file_format": "json", "key": key}, timeout=15)
+        r.raise_for_status()
+        cand = [e for e in (r.json().get("schedule") or [])
+                if str(e.get("event_id")) == str(event_id)]
+        for e in cand:
+            if str(e.get("tour", "")).lower() == str(tour).lower() and e.get("event_name"):
+                return e["event_name"].strip()
+        if cand and cand[0].get("event_name"):
+            return cand[0]["event_name"].strip()
+    except Exception as e:
+        logger.warning(f"event-name resolve failed ({e}); using slug '{slug}'")
+    return slug
+
+
 def build_payload() -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
     event_ids = getattr(si, "event_ids", []) or []
     event_id = str(event_ids[0]) if event_ids else None
+    tour = getattr(si, "tour", "pga")
     cut_line = int(getattr(si, "CUT_LINE", getattr(si, "cutline", 65)))
     repl = _name_replacements()
     if not tourney:
@@ -170,6 +205,7 @@ def build_payload() -> dict:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     payload = {
         "event_id": event_id,
+        "event_name": _resolve_event_name(event_id, tour, tourney),
         "tourney": tourney,
         "generated_at": now,
         "outrights": _build_outrights(tourney, cut_line, repl),
