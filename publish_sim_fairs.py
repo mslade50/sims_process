@@ -157,6 +157,21 @@ def _build_matchups(tourney: str, repl: dict) -> list:
     return rows
 
 
+def _build_field(tourney: str, repl: dict) -> list:
+    """The full simulated roster (every player, NO p>0 filter) so the board can
+    drop players that aren't in our sim without relying on probabilistic markets
+    (make_cut/top-N) to enumerate the field."""
+    eq = _find(f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv",
+               f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv",
+               "simulated_probs_live.csv", "simulated_probs.csv")
+    if eq is None:
+        return []
+    df = pd.read_csv(eq)
+    if "player_name" not in df.columns:
+        return []
+    return sorted({_norm(n, repl) for n in df["player_name"].dropna() if str(n).strip()})
+
+
 def _resolve_event_name(event_id, tour, tourney) -> str:
     """Human event name embedded in sim_fairs.json so the board can scope by name
     when DataGolf is unavailable at board-build time. Resolved here via the
@@ -208,6 +223,7 @@ def build_payload() -> dict:
         "event_name": _resolve_event_name(event_id, tour, tourney),
         "tourney": tourney,
         "generated_at": now,
+        "field": _build_field(tourney, repl),
         "outrights": _build_outrights(tourney, cut_line, repl),
         "matchups": _build_matchups(tourney, repl),
     }
