@@ -17,7 +17,7 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Run cleanup script
       run: |
@@ -54,7 +54,7 @@ jobs:
           ! -name "__pycache__" \
           ! -name "permanent_data" ! -name "backups" \
           ! -name "dashboard" ! -name "dashboard_data" ! -name "maker_dashboard" \
-          ! -name "archive"
+          ! -name "archive" ! -name "rust"
         echo ""
         
         # Delete CSV files (except in permanent_data folder)
@@ -100,6 +100,7 @@ jobs:
           ! -name "dashboard_data" \
           ! -name "maker_dashboard" \
           ! -name "archive" \
+          ! -name "rust" \
           -exec rm -rf {} + 2>/dev/null || true
 
         # Clear tournament-specific dashboard_data/ files (keep persistent data for Render)
@@ -109,7 +110,15 @@ jobs:
           ! -name "sg_diagnostic.parquet" \
           ! -name "luck_attribution.parquet" \
           -delete 2>/dev/null || true
-        
+
+        # Clear committed per-tournament prep that lives UNDER permanent_data/ (so it
+        # is missed by the root-CSV sweep). Root prep (final_predictions_*, pre_course_fit_*,
+        # this_week_dists_v2, sg_dist_player) is already removed above. This is a TARGETED
+        # pattern — it must NOT touch the permanent reference data (correlation matrices,
+        # bet_ledger.parquet, sg_diagnostic.parquet, wind_test.csv, course_coordinates.csv).
+        echo "🗑️  Clearing stale per-tournament prep under permanent_data/..."
+        rm -f permanent_data/avg_expected_cat_sg_*.csv 2>/dev/null || true
+
         echo ""
         echo "✅ Cleanup complete!"
         echo "================================================"
@@ -155,7 +164,10 @@ jobs:
           "dashboard/app.py"
           "kalshi_maker.py"
           "new_sim.py"
+          "round_sim.py"
           "sim_inputs.py"
+          "rust/Cargo.toml"
+          "rust/src/lib.rs"
         )
         missing=()
         for f in "${critical[@]}"; do
