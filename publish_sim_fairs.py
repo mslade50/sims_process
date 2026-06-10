@@ -217,25 +217,62 @@ def build_payload() -> dict:
 # ─── publish (commit to repo; board fetches via SIMS_PROCESS_PAT) ──────────────
 
 def _git_push() -> None:
-    """Commit sim_fairs.json to this repo and push. The golf_scraping odds board
-    fetches it from GitHub with the SIMS_PROCESS_PAT it already has."""
+    """Publish sim_fairs.json to origin/main WITHOUT touching the local working
+    tree, index, or branches. Builds a commit on top of origin/main via git
+    plumbing and pushes it, so finishing a sim run can never rebase, autostash,
+    or wedge the live repo. On any failure it logs and skips (next run retries).
+
+    Note: local main is left behind by the published commit (working-tree
+    sim_fairs.json matches what was pushed); a routine `git pull` fast-forwards it."""
+    import os
     import subprocess
+    import tempfile
 
-    def git(*args):
+    def git(*args, env=None):
         return subprocess.run(["git", "-C", str(PROJECT_ROOT), *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
 
-    git("add", "--", "sim_fairs.json")
-    if git("diff", "--cached", "--quiet", "--", "sim_fairs.json").returncode == 0:
-        logger.info("sim_fairs.json unchanged — nothing to push")
+    if git("fetch", "origin", "main").returncode != 0:
+        logger.warning("sim_fairs publish: git fetch failed; skipping")
         return
-    git("commit", "-m", "sim_fairs: update model fair probabilities", "--", "sim_fairs.json")
-    git("pull", "--rebase", "--autostash")
-    p = git("push")
-    if p.returncode != 0:
-        logger.warning(f"git push failed: {(p.stderr or p.stdout).strip()[:200]}")
-    else:
-        logger.info("Pushed sim_fairs.json")
+    base = git("rev-parse", "origin/main").stdout.strip()
+    if not base:
+        logger.warning("sim_fairs publish: no origin/main; skipping")
+        return
+    blob = git("hash-object", "-w", "sim_fairs.json").stdout.strip()
+    if not blob:
+        logger.warning("sim_fairs publish: could not hash sim_fairs.json")
+        return
+    if git("rev-parse", f"{base}:sim_fairs.json").stdout.strip() == blob:
+        logger.info("sim_fairs.json unchanged on origin/main — nothing to push")
+        return
+
+    idx = os.path.join(tempfile.gettempdir(), f"sim_fairs_index_{os.getpid()}")
+    try:
+        env = {**os.environ, "GIT_INDEX_FILE": idx}
+        if (git("read-tree", base, env=env).returncode != 0 or
+                git("update-index", "--add", "--cacheinfo",
+                    f"100644,{blob},sim_fairs.json", env=env).returncode != 0):
+            raise RuntimeError("tree assembly failed")
+        tree = git("write-tree", env=env).stdout.strip()
+        commit = git("commit-tree", tree, "-p", base, "-m",
+                     "sim_fairs: update model fair probabilities").stdout.strip()
+        if not commit:
+            raise RuntimeError("commit-tree failed")
+        p = git("push", "origin", f"{commit}:main")
+        if p.returncode == 0:
+            logger.info("Pushed sim_fairs.json to origin/main")
+        else:
+            logger.warning(f"sim_fairs push rejected (retries next run): "
+                           f"{(p.stderr or p.stdout).strip()[:160]}")
+    except Exception as e:
+        logger.warning(f"sim_fairs publish failed ({e}); skipping push")
+    finally:
+        try:
+            if os.path.exists(idx):
+                os.remove(idx)
+        except OSError:
+            pass
 
 
 def publish(push: bool = True) -> dict:
