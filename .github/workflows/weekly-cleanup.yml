@@ -185,6 +185,26 @@ jobs:
         fi
         echo "✅ All critical files still present after cleanup."
 
+    - name: Guard — never delete code/build files
+      run: |
+        # Hard rule: the weekly cleanup may only remove transient DATA. If it ever
+        # removed a tracked code/build file — because a denylist entry is wrong or a
+        # new code directory was not added to the keep-list — abort BEFORE committing
+        # so the deletion is never pushed. The cleanup's intended deletions are all
+        # data extensions (csv/xlsx/txt/parquet/pdf), so they never match this filter.
+        # `git ls-files --deleted` lists tracked files now missing from the worktree
+        # (the deletions are not yet staged at this point — the commit step is next).
+        DELETED_CODE=$(git ls-files --deleted | grep -iE '\.(py|pyx|rs|toml|lock|sh|yml|yaml|cfg|ini)$' || true)
+        if [ -n "$DELETED_CODE" ]; then
+          echo "❌ ABORT — weekly cleanup removed tracked code/build files (refusing to commit):"
+          echo "$DELETED_CODE" | sed 's/^/   - /'
+          echo ""
+          echo "The cleanup must only remove transient data. Add the offending dir/file"
+          echo "to the keep-list in the delete step before re-running."
+          exit 1
+        fi
+        echo "✅ Guard passed — no tracked code/build files were deleted."
+
     - name: Commit and push cleanup
       run: |
         git config user.name "github-actions[bot]"
