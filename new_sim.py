@@ -746,6 +746,18 @@ if not args.price_only:
                 else:
                     made_cut_mask[:, j] = top_cut
 
+        # Persist exact P(make cut) for the odds board. The downstream rank-prob
+        # re-derivation is biased (dead-heat spread + ignores the 10-shot rule),
+        # so ship the simulated cut mask mean directly (true cut: top-N + ties,
+        # plus the 10-shot rule when enabled). Rows are in player_names order.
+        try:
+            pd.DataFrame({"player_name": player_names,
+                          "make_cut": made_cut_mask.mean(axis=1)}).to_csv(
+                f"make_cut_probs_{tourney}.csv", index=False)
+            print(f"  [make_cut] wrote make_cut_probs_{tourney}.csv")
+        except Exception as _mc_e:
+            print(f"  [make_cut] persist failed: {_mc_e}")
+
 
         # ======================
         # R2 -> R3 skill update (position buckets; uses R1+R2 stats)
@@ -4344,5 +4356,15 @@ try:
     print(f"{'='*60}")
 except Exception as e:
     print(f"  [dashboard push] Warning: {e}")
+
+# Publish compact sim fair probabilities to R2 for the golf odds board
+try:
+    import publish_sim_fairs
+    print(f"\n{'='*60}")
+    print("  Publishing sim fairs to R2 (odds board)...")
+    publish_sim_fairs.publish()
+    print(f"{'='*60}")
+except Exception as e:
+    print(f"  [publish_sim_fairs] Warning: {e}")
 
 print("\n[done] Sim complete.")
