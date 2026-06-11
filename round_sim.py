@@ -4597,6 +4597,16 @@ def main():
         except Exception as e:
             print(f"  [dashboard push] Warning: {e}")
 
+        # Publish sim fairs + round samples (round scores / matchups / 3-balls) for the odds board
+        try:
+            import publish_sim_fairs
+            print(f"\n{'='*60}")
+            print("  Publishing sim fairs + round samples for the odds board...")
+            publish_sim_fairs.publish()
+            print(f"{'='*60}")
+        except Exception as e:
+            print(f"  [publish_sim_fairs] Warning: {e}")
+
 
 if __name__ == "__main__":
     main()

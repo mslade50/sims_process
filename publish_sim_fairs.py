@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent
 LOCAL_OUT = PROJECT_ROOT / "sim_fairs.json"
+LOCAL_SAMPLES = PROJECT_ROOT / "round_samples.parquet"
+ROUND_SAMPLE_N = 2000  # downsampled sims kept for board-side 3-ball/round-matchup pricing
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -206,6 +208,62 @@ def _resolve_event_name(event_id, tour, tourney) -> str:
     return slug
 
 
+def _latest_round(tourney: str):
+    """Highest round N for which the sim has produced round-level data."""
+    import glob
+    import re
+    best = None
+    for pat in (f"{tourney}/round_score_probs_r*.parquet", "round_score_probs_r*.parquet",
+                f"{tourney}/sim_cache_r*.parquet", "sim_cache_r*.parquet"):
+        for p in glob.glob(str(PROJECT_ROOT / pat)):
+            m = re.search(r"_r(\d+)\.parquet$", p)
+            if m:
+                best = max(best or 0, int(m.group(1)))
+    return best
+
+
+def _build_round_scores(tourney: str, rnd, repl: dict) -> dict:
+    """Exact per-player round-score PMF for over/under pricing:
+    {player: {score: prob}} for round `rnd`. Board computes P(under line) = CDF."""
+    if not rnd:
+        return {}
+    f = _find(f"{tourney}/round_score_probs_r{rnd}.parquet", f"round_score_probs_r{rnd}.parquet")
+    if f is None:
+        return {}
+    df = pd.read_parquet(f)
+    if not {"player_name", "score", "prob"} <= set(df.columns):
+        return {}
+    out = {}
+    for nm, g in df.groupby("player_name"):
+        pmf = {int(s): round(float(p), 6) for s, p in zip(g["score"], g["prob"]) if p > 0}
+        if pmf:
+            out[_norm(nm, repl)] = pmf
+    logger.info(f"round_scores (R{rnd}) PMF: {len(out)} players")
+    return out
+
+
+def _build_round_samples(tourney: str, rnd, repl: dict):
+    """Downsampled joint per-round score matrix (players x ROUND_SAMPLE_N) from the
+    sim cache, so the board can compute EXACT round-matchup + 3-ball fairs (joint
+    preserved -> shared wave/weather conditions cancel). Returns a DataFrame or None."""
+    if not rnd:
+        return None
+    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    if f is None:
+        return None
+    import numpy as np
+    df = pd.read_parquet(f)               # index = player, columns = sim indices
+    n = df.shape[1]
+    if n > ROUND_SAMPLE_N:                 # fixed-stride downsample keeps the joint
+        idx = np.linspace(0, n - 1, ROUND_SAMPLE_N).round().astype(int)
+        df = df.iloc[:, idx]
+    df = df.astype("int16")
+    df.index = [_norm(p, repl) for p in df.index]
+    df.columns = [str(i) for i in range(df.shape[1])]
+    logger.info(f"round_samples (R{rnd}): {df.shape[0]} players x {df.shape[1]} sims")
+    return df
+
+
 def build_payload() -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
@@ -217,29 +275,32 @@ def build_payload() -> dict:
     if not tourney:
         raise RuntimeError("sim_inputs.tourney is not set")
 
+    rnd = _latest_round(tourney)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),
         "tourney": tourney,
         "generated_at": now,
+        "round": rnd,                       # live round these round_* markets price
         "field": _build_field(tourney, repl),
         "outrights": _build_outrights(tourney, cut_line, repl),
         "matchups": _build_matchups(tourney, repl),
+        "round_scores": _build_round_scores(tourney, rnd, repl),
     }
     return payload
 
 
 # ─── publish (commit to repo; board fetches via SIMS_PROCESS_PAT) ──────────────
 
-def _git_push() -> None:
-    """Publish sim_fairs.json to origin/main WITHOUT touching the local working
-    tree, index, or branches. Builds a commit on top of origin/main via git
-    plumbing and pushes it, so finishing a sim run can never rebase, autostash,
-    or wedge the live repo. On any failure it logs and skips (next run retries).
+def _git_push(files=("sim_fairs.json",)) -> None:
+    """Publish the given repo-relative files to origin/main WITHOUT touching the
+    local working tree, index, or branches. Builds one commit on top of origin/main
+    via git plumbing and pushes it, so finishing a sim run can never rebase,
+    autostash, or wedge the live repo. On any failure it logs and skips.
 
-    Note: local main is left behind by the published commit (working-tree
-    sim_fairs.json matches what was pushed); a routine `git pull` fast-forwards it."""
+    Note: local main is left behind by the published commit (working-tree files
+    match what was pushed); a routine `git pull` fast-forwards it."""
     import os
     import subprocess
     import tempfile
@@ -255,34 +316,40 @@ def _git_push() -> None:
     if not base:
         logger.warning("sim_fairs publish: no origin/main; skipping")
         return
-    blob = git("hash-object", "-w", "sim_fairs.json").stdout.strip()
-    if not blob:
-        logger.warning("sim_fairs publish: could not hash sim_fairs.json")
-        return
-    if git("rev-parse", f"{base}:sim_fairs.json").stdout.strip() == blob:
-        logger.info("sim_fairs.json unchanged on origin/main — nothing to push")
+
+    blobs = {}  # repo path -> blob, only for files that actually changed
+    for fp in files:
+        if not (PROJECT_ROOT / fp).exists():
+            continue
+        blob = git("hash-object", "-w", fp).stdout.strip()
+        if blob and git("rev-parse", f"{base}:{fp}").stdout.strip() != blob:
+            blobs[fp] = blob
+    if not blobs:
+        logger.info("sim publish: nothing changed on origin/main")
         return
 
     idx = os.path.join(tempfile.gettempdir(), f"sim_fairs_index_{os.getpid()}")
     try:
         env = {**os.environ, "GIT_INDEX_FILE": idx}
-        if (git("read-tree", base, env=env).returncode != 0 or
-                git("update-index", "--add", "--cacheinfo",
-                    f"100644,{blob},sim_fairs.json", env=env).returncode != 0):
-            raise RuntimeError("tree assembly failed")
+        if git("read-tree", base, env=env).returncode != 0:
+            raise RuntimeError("read-tree failed")
+        for fp, blob in blobs.items():
+            if git("update-index", "--add", "--cacheinfo", f"100644,{blob},{fp}",
+                   env=env).returncode != 0:
+                raise RuntimeError(f"update-index failed for {fp}")
         tree = git("write-tree", env=env).stdout.strip()
         commit = git("commit-tree", tree, "-p", base, "-m",
-                     "sim_fairs: update model fair probabilities").stdout.strip()
+                     "sim_fairs: update model fairs + round samples").stdout.strip()
         if not commit:
             raise RuntimeError("commit-tree failed")
         p = git("push", "origin", f"{commit}:main")
         if p.returncode == 0:
-            logger.info("Pushed sim_fairs.json to origin/main")
+            logger.info(f"Pushed {', '.join(blobs)} to origin/main")
         else:
-            logger.warning(f"sim_fairs push rejected (retries next run): "
+            logger.warning(f"sim publish push rejected (retries next run): "
                            f"{(p.stderr or p.stdout).strip()[:160]}")
     except Exception as e:
-        logger.warning(f"sim_fairs publish failed ({e}); skipping push")
+        logger.warning(f"sim publish failed ({e}); skipping push")
     finally:
         try:
             if os.path.exists(idx):
@@ -292,14 +359,21 @@ def _git_push() -> None:
 
 
 def publish(push: bool = True) -> dict:
-    """Build sim_fairs.json, write it, and (optionally) commit+push so the board
-    can fetch it. Safe to call from new_sim.py inside a try/except."""
+    """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
+    write them, and (optionally) commit+push so the board can fetch them. Safe to
+    call from new_sim.py / round_sim.py inside a try/except."""
     payload = build_payload()
     with open(LOCAL_OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
+    files = ["sim_fairs.json"]
+    samples = _build_round_samples(payload["tourney"], payload.get("round"), _name_replacements())
+    if samples is not None:
+        samples.to_parquet(LOCAL_SAMPLES)
+        files.append("round_samples.parquet")
+        logger.info(f"Wrote {LOCAL_SAMPLES}")
     if push:
-        _git_push()
+        _git_push(files)
     return payload
 
 
@@ -312,16 +386,14 @@ def main():
     payload = build_payload()
     o = payload["outrights"]
     logger.info(f"event {payload['event_id']} ({payload['tourney']}) @ {payload['generated_at']}")
-    logger.info(f"  outright markets: {{{', '.join(f'{k}:{len(v)}' for k, v in o.items())}}}")
-    logger.info(f"  matchup pairs: {len(payload['matchups'])}")
+    logger.info(f"  round: {payload.get('round')} | outright markets: "
+                f"{{{', '.join(f'{k}:{len(v)}' for k, v in o.items())}}}")
+    logger.info(f"  matchup pairs: {len(payload['matchups'])} | round_scores players: "
+                f"{len(payload.get('round_scores') or {})}")
 
     if args.dry_run:
         return
-    with open(LOCAL_OUT, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
-    logger.info(f"Wrote {LOCAL_OUT}")
-    if not args.no_push:
-        _git_push()
+    publish(push=not args.no_push)
 
 
 if __name__ == "__main__":
