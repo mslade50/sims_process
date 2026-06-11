@@ -364,14 +364,30 @@ def load_matchup_sim_data(allow_pre_fallback=False):
     """
     import json as _json
     live_fs = f"final_scores_live_{tourney}.npy"
+    live_pn = f"player_names_live_{tourney}.json"
     pre_fs = os.path.join(".", tourney, "final_scores.npy")
     pn_path = os.path.join(".", tourney, "player_names.json")
 
-    if os.path.exists(live_fs) and os.path.exists(pn_path):
-        print(f"    [matchups] using live final_scores: {live_fs}")
+    if os.path.exists(live_fs):
+        # The live npy's rows are in round_sim's live field order. Pairing it
+        # with new_sim's alphabetical player_names.json silently computes
+        # P(wrong player beats wrong player) — only the sidecar written by the
+        # same round_sim run is a valid label set.
+        if not os.path.exists(live_pn):
+            print(f"    [matchups] {live_fs} present but {live_pn} missing — "
+                  f"refusing to pair live scores with pre-tournament name order; "
+                  f"skipping matchups (rerun round_sim to regenerate both)")
+            return None, None
         final_scores = np.load(live_fs)
-        with open(pn_path) as f:
+        with open(live_pn) as f:
             player_names = _json.load(f)
+        if len(player_names) != final_scores.shape[0]:
+            print(f"    [matchups] live name/score mismatch "
+                  f"({len(player_names)} names vs {final_scores.shape[0]} rows) — "
+                  f"skipping matchups")
+            return None, None
+        print(f"    [matchups] using live final_scores: {live_fs} "
+              f"({final_scores.shape[0]} players)")
         return final_scores, player_names
 
     if allow_pre_fallback and os.path.exists(pre_fs) and os.path.exists(pn_path):

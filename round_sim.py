@@ -392,6 +392,80 @@ def load_tournament_config(sheet_config):
     }
 
 
+def _filter_to_active_players(result, completed_round):
+    """
+    Drop players who are out of the tournament (missed cut / WD / DQ) from the
+    known-rounds result before simulating R{completed_round+1}..R4.
+
+    Primary rule: a player with no DataGolf tee time for the NEXT round is out.
+    This also covers the rare secondary cut after R3 (filters on r4_teetime) and
+    mid-event WDs. Fallback when tee times aren't posted yet: the score-derived
+    cut line already computed in result["made_cut"].
+
+    Without this filter, eliminated players get simulated weekend rounds (and a
+    phantom par round for any round file they're missing from), polluting
+    finish probabilities and final_scores for every alive player.
+    """
+    players = result["player_names"]
+    if not players:
+        return result
+    next_round = completed_round + 1
+    teetime_col = f"r{next_round}_teetime"
+
+    active_mask = None
+    source = None
+
+    field = None
+    try:
+        from api_utils import fetch_field_updates
+        field = fetch_field_updates(API_KEY, teetime_col=teetime_col,
+                                    fill_missing_teetimes=False)
+    except Exception as e:
+        print(f"    Warning: field updates fetch failed ({e})")
+
+    if field is not None and teetime_col in field.columns and field[teetime_col].notna().any():
+        names = (field["player_name"].astype(str).str.lower().str.strip()
+                 .replace(name_replacements))
+        active = set(names[field[teetime_col].notna()])
+        active_mask = np.array([p in active for p in players])
+        source = f"R{next_round} tee times"
+    elif result.get("made_cut") is not None:
+        active_mask = np.asarray(result["made_cut"], dtype=bool)
+        source = "computed cut line (tee times unavailable)"
+        print(f"    Warning: R{next_round} tee times unavailable — "
+              f"falling back to score-derived cut line for field filtering")
+
+    if active_mask is None:
+        print("    Warning: cannot determine active players — field NOT filtered for the cut")
+        return result
+
+    n_active = int(active_mask.sum())
+    if n_active < 5:
+        print(f"    Warning: only {n_active} active players via {source} — "
+              f"looks wrong, field NOT filtered")
+        return result
+
+    dropped = [p for p, a in zip(players, active_mask) if not a]
+    if not dropped:
+        print(f"    Field filter ({source}): all {len(players)} players active")
+        return result
+
+    print(f"    Field filter ({source}): keeping {n_active} of {len(players)} players; "
+          f"dropped {len(dropped)} (cut/WD): {dropped}")
+
+    result["player_names"] = [p for p, a in zip(players, active_mask) if a]
+    result["strokes"] = {r: arr[active_mask] for r, arr in result["strokes"].items()}
+    result["categories"] = {r: arr[active_mask] for r, arr in result["categories"].items()}
+    if result.get("cumulative") is not None:
+        result["cumulative"] = result["cumulative"][active_mask]
+    if result.get("made_cut") is not None:
+        result["made_cut"] = np.asarray(result["made_cut"], dtype=bool)[active_mask]
+    keep = set(result["player_names"])
+    result["player_preds"] = {p: v for p, v in result["player_preds"].items() if p in keep}
+    result["course_x"] = {p: v for p, v in result["course_x"].items() if p in keep}
+    return result
+
+
 def load_known_rounds(completed_round, course_map, default_par):
     """
     Load actual scores and SG categories from completed rounds.
@@ -502,6 +576,11 @@ def load_known_rounds(completed_round, course_map, default_par):
                 result["made_cut"] = np.ones(len(result["player_names"]), dtype=bool)
         else:
             result["made_cut"] = np.ones(len(result["player_names"]), dtype=bool)
+
+    # Once a real cut exists, remove eliminated players from the field entirely
+    # so they never enter the R3/R4 sims or finish probabilities.
+    if completed_round >= 2 and completed_round <= 3:
+        result = _filter_to_active_players(result, completed_round)
 
     return result
 
@@ -670,9 +749,10 @@ def simulate_remaining_rounds(
             else:
                 made_cut_mask[:, j] = top_cut
     else:
-        # Use known cut status - broadcast to all sims
-        # Players who missed cut in reality stay out
-        pass  # made_cut_mask already all True, we'll handle in final scores
+        # Real cut already happened: load_known_rounds filtered the field to
+        # active players (tee-time based), so everyone here made the cut and
+        # the all-True mask is correct. The Rust kernel assumes the same.
+        pass
 
     # R2 -> R3 skill update
     resid_r2 = sg_r2 - updated_skill_r2
@@ -3937,10 +4017,14 @@ def main():
     if (not model_preds.empty
             and _wind_col in model_preds.columns
             and _dew_col in model_preds.columns):
+        # Must mirror live_stats_engine's scores_rN weather term EXACTLY
+        # (scores_rN = pred + avg_wind - wind_adj - dew_adj), since the sim
+        # recovers pure skill as scores_rN - wx_delta and re-adds wx_delta
+        # per category. Both adj columns are score-space costs.
         _avg_wind = model_preds[_wind_col].mean()
         _wx_lookup = dict(zip(
             model_preds["player_name"],
-            _avg_wind - model_preds[_wind_col] + model_preds[_dew_col],
+            _avg_wind - model_preds[_wind_col] - model_preds[_dew_col],
         ))
         print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
     elif args.price_only and cached_meta and cached_meta.get("wx_lookup"):
@@ -4147,8 +4231,16 @@ def main():
                 # the maker has to either skip matchups mid-event or use the stale
                 # pre-tournament final_scores from new_sim.py.
                 np.save(f"final_scores_live_{tourney}.npy", final_scores)
+                # Name sidecar: npy rows are in player_names order (r1_live_model
+                # order, post filtering) — NOT new_sim's alphabetical
+                # player_names.json. kalshi_maker must pair the live npy with
+                # THIS file or its H2H probs index the wrong players.
+                import json as _json
+                with open(f"player_names_live_{tourney}.json", "w") as _f:
+                    _json.dump(list(player_names), _f)
                 print(f"    Saved final_scores_live_{tourney}.npy "
-                      f"({final_scores.shape[0]} players x {final_scores.shape[1]:,} sims)")
+                      f"({final_scores.shape[0]} players x {final_scores.shape[1]:,} sims) "
+                      f"+ player_names_live_{tourney}.json")
 
                 # Price outrights against market
                 print(f"    Fetching outright odds and calculating edges...")

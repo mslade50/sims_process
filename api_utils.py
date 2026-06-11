@@ -10,6 +10,7 @@ This module centralizes:
   - Name cleaning
 """
 
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -92,17 +93,21 @@ def fetch_live_stats(round_num, api_key, include_score=False):
     return df
 
 
-def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False):
+def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
+                        fill_missing_teetimes=True):
     """
     Fetch field updates (tee times, course assignments) from DataGolf.
-    
+
     Source: Originally duplicated across all 4 live_stats files.
-    
+
     Args:
         api_key: DataGolf API key
         teetime_col: Which round's tee time column to extract (e.g. 'r1_teetime')
         include_course: If True, also extracts the 'course' column (for multi-course events)
-    
+        fill_missing_teetimes: If False, skip the 10:00 AM default fill so callers
+            can distinguish "tee times not posted yet" (all NaN) from real data.
+            Needed by cut filtering, where a NaN tee time means the player is out.
+
     Returns:
         DataFrame with player_name + requested columns, or None on failure.
     """
@@ -152,7 +157,7 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False)
     # tee times are set, e.g. R3 before cut), fill with 10:00 AM default.
     # This gives every player identical wind/dew, effectively zeroing out
     # the player-vs-field weather differential (skill-only differentiation).
-    if teetime_col not in df.columns or df[teetime_col].isna().all():
+    if fill_missing_teetimes and (teetime_col not in df.columns or df[teetime_col].isna().all()):
         today_str = datetime.now().strftime("%Y-%m-%d")
         default_teetime = f"{today_str} 10:00"
         df[teetime_col] = default_teetime
@@ -239,7 +244,12 @@ def compute_wind_factor(event_ids, wind_override, baseline_wind):
         return wind_override
 
     try:
-        wind_test_df = pd.read_csv("wind_test.csv")
+        # Lives in permanent_data/ (survives weekly cleanup); root checked
+        # second for backward compatibility.
+        _wt_path = os.path.join("permanent_data", "wind_test.csv")
+        if not os.path.exists(_wt_path):
+            _wt_path = "wind_test.csv"
+        wind_test_df = pd.read_csv(_wt_path)
         first_event_id = str(event_ids[0]).strip()
 
         filtered = wind_test_df[

@@ -268,7 +268,8 @@ def _merge_r2(df):
     r1_model = pd.read_csv(_resolve_csv("r1_live_model.csv"))
     r1_model = clean_names(r1_model)
     r1_stats = ["great_shots", "poor_shots", "sg_app", "sg_arg", "sg_ott", "sg_putt"]
-    r1_keep = ["player_name"] + r1_stats
+    # sg_adj_r1 (R1's ott/putt adjustment) comes along so _totals_r2 can undo it
+    r1_keep = ["player_name"] + r1_stats + ["sg_adj_r1"]
     r1_keep = [c for c in r1_keep if c in r1_model.columns]
     r1_renamed = r1_model[r1_keep].copy()
     for c in r1_stats:
@@ -334,6 +335,25 @@ def _merge_r3r4(df, round_num):
     if "great_shots_avg" not in df.columns or df["great_shots_avg"].isna().all():
         if "great_shots" in df.columns:
             df["great_shots_avg"] = df["great_shots"].fillna(0)
+
+    # --- Blend this round's category SG into the running averages ---
+    # Source: live_stats_r3.py (0.66/0.34) and live_stats_r4.py (0.75/0.25);
+    # this line was lost in the engine consolidation. Without it the sg_*_avg
+    # columns stay frozen at the R2-era 0.5*(R1+R2) snapshot and the current
+    # round's categories never reach the skill update. Matches the sim
+    # cascades (round_sim.py:772-775 / round_cascade.rs use 0.66/0.34 for the
+    # R3->R4 update). Where this round's category is missing (ShotLink gaps),
+    # keep the prior average instead of letting NaN wipe the adjustment.
+    blend_w = 0.66 if round_num == 3 else 0.75
+    for sg in ["app", "ott", "arg", "putt"]:
+        avg_col, cur_col = f"sg_{sg}_avg", f"sg_{sg}"
+        if avg_col not in df.columns or cur_col not in df.columns:
+            continue
+        prior_avg = df[avg_col]
+        cur = df[cur_col]
+        blended = prior_avg * blend_w + cur * (1.0 - blend_w)
+        df[avg_col] = blended.where(cur.notna() & prior_avg.notna(),
+                                    prior_avg.where(cur.isna(), cur))
 
     # --- Current round predictions (wind/dew/teetime) ---
     if os.path.exists(pred_file):
@@ -543,6 +563,11 @@ def _totals_r1(df):
         0.5,
     )
 
+    # Persist R1's category-SG piece so the R2 run can undo it when the
+    # avg-based category terms replace it (original live_stats_r2.py read
+    # sg_adj_r1 from r1_live_model.csv for exactly this).
+    df["sg_adj_r1"] = df["ott_adj"] + df["putt_adj"]
+
     df["total_adjustment"] = df["ott_adj"] + df["putt_adj"] + df["tot_resid_adj"]
     df["updated_pred"] = df["pred"] + df["total_adjustment"]
 
@@ -570,11 +595,23 @@ def _totals_r2(df):
         df[c] = df.get(c, 0)
     df["tot_sg_adj"] = df[sg_cols].fillna(0).sum(axis=1)
 
-    # Total adjustment = residual components + SG components
+    # Undo R1's OTT/PUTT adjustment: the avg-based category terms above
+    # re-price the same signal from two rounds of data, so the R1-only
+    # estimate must be replaced, not stacked on top. Original behavior
+    # (live_stats_r2.py: `total_adjustment = sum(adj) - sg_adj_r1`) that was
+    # lost in the engine consolidation; matches round_sim.py:750 /
+    # new_sim.py:831 ("avoid double counting R1 part").
+    if "sg_adj_r1" in df.columns:
+        df["r1_sg_adj_undo"] = -df["sg_adj_r1"].fillna(0)
+    else:
+        df["r1_sg_adj_undo"] = 0.0
+
+    # Total adjustment = residual components + SG components + R1 undo
     # Explicitly listed to avoid catching sg_total_adj (which is raw data, not an adjustment)
     adj_components = [
         "residual_adj", "residual2_adj", "residual3_adj",
         "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj", "delta_app_adj",
+        "r1_sg_adj_undo",
     ]
     adj_components = [c for c in adj_components if c in df.columns]
     df["total_adjustment"] = df[adj_components].sum(axis=1)
@@ -783,6 +820,16 @@ def create_next_round_predictions(round_num):
     else:
         print(f"Warning: Tee times for R{next_round} not yet available.")
         print("Saving skill-only predictions. Run again once tee times are available.")
+        # No tee times to filter on, so drop cut/WD players by live position
+        # instead (position parses to 999 for "CUT"/missing). Otherwise this
+        # fallback file re-admits the whole pre-cut field to weekend sims.
+        if next_round >= 3 and "position" in live_model.columns:
+            pos = pd.to_numeric(live_model["position"], errors="coerce").fillna(999)
+            out_players = set(live_model.loc[pos >= 900, "player_name"])
+            if out_players:
+                before = len(preds)
+                preds = preds[~preds["player_name"].isin(out_players)].copy()
+                print(f"  Dropped {before - len(preds)} cut/WD players (no live position)")
         preds[f"scores_r{next_round}"] = preds[pred_name]  # Skill only, no weather
         _save_predictions(preds, next_round)
         return
@@ -812,9 +859,12 @@ def create_next_round_predictions(round_num):
 
     avg_wind = preds[wind_col].mean()
 
-    # Expected score: skill + avg_field_wind - player_wind_advantage + player_dew
+    # Expected SG: skill + field wind level - player wind cost - player dew cost.
+    # Both wind_adj and dew_adj are SCORE-space (positive = costs strokes;
+    # dew_calculation is negative so humid windows are a benefit), so both
+    # subtract. round_sim's wx_lookup mirrors this weather term — lockstep.
     preds[f"scores_r{next_round}"] = (
-        preds[pred_name] + avg_wind - preds[wind_col] + preds[dew_col]
+        preds[pred_name] + avg_wind - preds[wind_col] - preds[dew_col]
     )
 
     # --- Diagnostics ---
@@ -970,7 +1020,12 @@ def create_pre_event_predictions():
 
     # Expected scoring
     expected_scoring = round(score_adj_r1 - avg_skill + avg_wind, 2)
-    preds["scores_r1"] = preds["my_pred"] + avg_wind - preds["wind_adj1"] + preds["dew_adj1"]
+    # dew_adj is SCORE-space like wind_adj (dew_calculation comes from
+    # humidity.py's score regression: negative coef -> humid = lower scores
+    # = easier), so it must be SUBTRACTED like wind: a player in the more
+    # humid window gains expected SG. round_sim's wx_lookup mirrors this
+    # exact weather term — keep them in lockstep.
+    preds["scores_r1"] = preds["my_pred"] + avg_wind - preds["wind_adj1"] - preds["dew_adj1"]
 
     # --- Diagnostics ---
     print(f"  Players: {len(preds)}")
@@ -1015,7 +1070,7 @@ def export_results(df, round_num):
         summary_cols = [
             "player_name", "tot_resid_adj", "total_adjustment",
             "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj",
-            "delta_app_adj", "updated_pred_r3",
+            "delta_app_adj", "r1_sg_adj_undo", "updated_pred_r3",
         ]
     else:
         adj_cols = [f"{c}_adj_r{round_num}" for c in
@@ -1741,16 +1796,22 @@ def _apply_sheet_overrides(config):
     if COURSE_SCORE_MAP and len(COURSE_SCORE_MAP) > 1:
         print(f"  Course score map: {COURSE_SCORE_MAP}")
 
-    # Override dew/wind calculation factors if set in sheet
-    if config.get("dew_calculation") is not None:
-        # Patch the imported value
+    # Override dew/wind calculation factors if set in sheet.
+    # Must assign THIS module's globals (declared above) — patching
+    # sim_inputs alone does nothing here because the consumers read the
+    # from-import copies bound at import time. Guard on non-zero: blank
+    # sheet cells parse to 0.0 and must not clobber sim_inputs values
+    # (dew_calculation=0.0 would silently zero every dew adjustment).
+    if config.get("dew_calculation"):
         import sim_inputs
         sim_inputs.dew_calculation = config["dew_calculation"]
+        dew_calculation = config["dew_calculation"]
         print(f"  Dew calculation factor: {config['dew_calculation']}")
 
-    if config.get("wind_override") is not None:
+    if config.get("wind_override"):
         import sim_inputs
         sim_inputs.wind_override = config["wind_override"]
+        wind_override = config["wind_override"]
         print(f"  Wind override: {config['wind_override']}")
 
 
