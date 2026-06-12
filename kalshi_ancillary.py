@@ -36,12 +36,15 @@ import httpx
 import numpy as np
 import pandas as pd
 
+import kalshi_match as km
+
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 TAKER_TARGET = 300         # contracts we want filled as a taker
 MAKER_MAX_SPREAD = 0.04    # only consider posting if the yes spread is < 4c
 MAKER_IMPROVE = 0.01       # post at ask - 1c
 DEFAULT_EDGE = 2.0         # min edge in percentage points (matches outright threshold)
+MIN_LEG_COST = 0.02        # drop sub-2c legs: Kelly + the 7% fee model are unreliable there
 PRICE_EPS = 1e-4
 
 # Kalshi position sizing: 0.4 fractional Kelly on a $50k bankroll, 1 unit = $500.
@@ -96,7 +99,14 @@ def leader_topn_fairs(standings, player_names, made_cut=None):
     for the lead)*(1/N). This sums to exactly 1.0 across the field. Top-N uses the
     NO-dead-heat count ("including ties" -> a tied top-N finish pays full $1).
     """
-    import sims_kernel as sk
+    try:
+        import sims_kernel as sk
+    except ImportError as _e:
+        raise RuntimeError(
+            "sims_kernel (Rust) not importable — ancillary leader/top-N pricing needs it. "
+            "Build: python -m maturin develop --release -m rust/Cargo.toml. "
+            f"({_e!r})"
+        )
     s = np.ascontiguousarray(np.asarray(standings, dtype=np.int64))
     if made_cut is not None:
         s = s.copy()
@@ -174,14 +184,28 @@ def _get_markets(client, series_ticker):
         params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
         if cursor:
             params["cursor"] = cursor
-        resp = client.get(f"{KALSHI_API}/markets", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        # Retry on 429 (back-to-back page-2 requests are the documented trigger);
+        # accumulate partial pages rather than losing the whole series on a throttle.
+        data = None
+        for attempt in range(4):
+            resp = client.get(f"{KALSHI_API}/markets", params=params)
+            if resp.status_code == 429:
+                wait = float(resp.headers.get("Retry-After", 0) or 0) or 0.5 * (attempt + 1)
+                time.sleep(min(wait, 5.0))
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        if data is None:
+            print(f"  [ancillary] {series_ticker}: throttled (429) — returning "
+                  f"{len(out)} partial markets")
+            break
         mkts = data.get("markets", [])
         out.extend(mkts)
         cursor = data.get("cursor")
         if not cursor or len(mkts) < 200:
             break
+        time.sleep(0.05)   # inter-page courtesy sleep
     return out
 
 
@@ -189,13 +213,16 @@ def _get_orderbook(client, ticker):
     resp = client.get(f"{KALSHI_API}/markets/{ticker}/orderbook")
     resp.raise_for_status()
     data = resp.json()
-    ob = data.get("orderbook", data.get("orderbook_fp", data))
+    ob = data.get("orderbook_fp", data.get("orderbook", data))   # _fp-first (safe)
 
     def parse(raw):
         out = []
         for item in (raw or []):
             if isinstance(item, list) and len(item) == 2:
-                out.append((float(item[0]), int(float(item[1]))))
+                price = float(item[0])
+                if price > 1:           # bare-cents integer arrays -> dollars
+                    price /= 100.0
+                out.append((price, int(float(item[1]))))
         return out
 
     return {
@@ -372,24 +399,42 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
 
     rows = []
     mismatches = set()
+    pickup_report = []          # per-series {series, raw, matched, target, reason, ambiguous}
+    field_set = set(players)
+    event_tag = sim_data.get("event_tag")   # optional sim_inputs.kalshi_event_tags override
 
-    # ---- Player-per-market series (leader, top-N) ----------------------------
+    def _match_single(series, kind="subtitle"):
+        """Fetch + sim-player-overlap match a single-event series; record the report."""
+        try:
+            fetched = _get_markets(client, series)
+        except Exception as e:
+            if verbose:
+                print(f"  [ancillary] fetch {series} failed: {e!r}")
+            pickup_report.append({"series": series, "raw": 0, "matched": 0, "target": None,
+                                  "reason": f"fetch error: {e!r}", "ambiguous": False, "leader": 0})
+            return []
+        filtered, rep = km.match_markets(fetched, field_set, name_replacements,
+                                         kind=kind, event_tag=event_tag)
+        rep["series"] = series
+        pickup_report.append(rep)
+        if verbose:
+            extra = (f" [{rep['reason']}]" if rep["reason"] else "") + (" [AMBIGUOUS]" if rep["ambiguous"] else "")
+            print(f"  [ancillary] {series}: raw={rep['raw']} matched={rep['matched']} "
+                  f"event={rep['target']}{extra}")
+        return filtered
+
+    # ---- Player-per-market series (leader, top-N) via sim-player overlap ----
+    event_votes = {}
     for series, (mtype, src, col) in PLAYER_SERIES.items():
         table = fair_tables.get(src)
         if table is None:
             continue
-        try:
-            markets = _match_tournament(_get_markets(client, series), tourney)
-        except Exception as e:
-            if verbose:
-                print(f"  [ancillary] fetch {series} failed: {e}")
-            continue
-        if not markets:
-            continue
-        if verbose:
-            print(f"  [ancillary] {series} ({mtype}): {len(markets)} markets")
+        markets = _match_single(series, kind="subtitle")
+        rep = pickup_report[-1]
+        if rep.get("target"):
+            event_votes[rep["target"]] = event_votes.get(rep["target"], 0) + (rep.get("leader") or 0)
         for m in markets:
-            player = _norm_name(m.get("yes_sub_title") or "", name_replacements)
+            player = km.norm_name(km.player_from_market(m, "subtitle"), name_replacements, field_set)
             if player not in table.index:
                 if player:
                     mismatches.add(player)
@@ -412,13 +457,24 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
                     "player_name": player, "my_pred": pred_lookup.get(player)}
             rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
 
-    # ---- Event markets (playoff) ---------------------------------------------
-    if "playoff" in EVENT_SERIES.values() and sim_data.get("final_scores") is not None:
+    # Canonical event_code for this tournament (from player-series overlap). Used to
+    # match event-level series (playoff) that carry no player to overlap on.
+    canonical_event = max(event_votes, key=event_votes.get) if event_votes else None
+
+    # ---- Event markets (playoff): filter by the resolved event_code ----
+    if sim_data.get("final_scores") is not None:
         fair_yes = playoff_prob(sim_data["final_scores"])
         try:
-            markets = _match_tournament(_get_markets(client, "KXPGAPLAYOFF"), tourney)
-        except Exception:
-            markets = []
+            fetched = _get_markets(client, "KXPGAPLAYOFF")
+        except Exception as e:
+            if verbose:
+                print(f"  [ancillary] fetch KXPGAPLAYOFF failed: {e!r}")
+            fetched = []
+        markets = ([m for m in fetched if km.ticker_event_code(m.get("ticker", "")) == canonical_event]
+                   if canonical_event else [])
+        pickup_report.append({"series": "KXPGAPLAYOFF", "raw": len(fetched), "matched": len(markets),
+                              "target": canonical_event, "ambiguous": False, "leader": len(markets),
+                              "reason": "" if canonical_event else "no canonical event resolved"})
         for m in markets:
             q_bid, q_ask = _market_quote(m)
             if q_bid <= 0 and q_ask <= 0:
@@ -435,66 +491,87 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
                     "ticker": m["ticker"], "player_name": "(field)", "my_pred": None}
             rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
         if verbose:
-            print(f"  [ancillary] KXPGAPLAYOFF (playoff): fair P(playoff)={fair_yes:.3f}, "
-                  f"{len(markets)} market(s)")
+            print(f"  [ancillary] KXPGAPLAYOFF: raw={len(fetched)} matched={len(markets)} "
+                  f"P(playoff)={fair_yes:.3f}")
 
-    # ---- 3-ball groups (lowest score in the round; dead-heat $1/N like leader) ----
+    # ---- 3-ball groups: per-group member overlap (each group is its own event_code) ----
     sim_dict = sim_data.get("sim_dict")
     if sim_dict is not None:
         try:
-            markets = _match_tournament(_get_markets(client, "KXPGA3BALL"), tourney)
-        except Exception:
-            markets = []
+            fetched = _get_markets(client, "KXPGA3BALL")
+        except Exception as e:
+            if verbose:
+                print(f"  [ancillary] fetch KXPGA3BALL failed: {e!r}")
+            fetched = []
         groups = defaultdict(list)
-        for m in markets:
+        for m in fetched:
             groups[m.get("event_ticker", "")].append(m)
-        priceable = 0
+        matched_groups = 0
         for ev, gms in groups.items():
-            # Each market's yes_sub_title is "<Player> beats <X> and <Y>".
-            members = [_norm_name((m.get("yes_sub_title") or "").split(" beats ")[0],
-                                  name_replacements) for m in gms]
-            missing = [p for p in members if p not in sim_dict]
-            if len(members) < 2 or missing:
-                mismatches.update(p for p in missing if p)
-                continue
-            probs = nball_probs(sim_dict, members)
-            priceable += 1
-            for m in gms:
-                player = _norm_name((m.get("yes_sub_title") or "").split(" beats ")[0],
-                                    name_replacements)
-                fair_yes = float(probs.get(player, 0.0))
-                if fair_yes <= 0:
-                    continue
-                q_bid, q_ask = _market_quote(m)
-                if q_bid <= 0 and q_ask <= 0:
-                    continue
-                try:
-                    ob = _get_orderbook(client, m["ticker"])
-                    time.sleep(0.03)
-                except Exception:
-                    continue
-                bid, ask = _best_bid_ask(m, ob)
-                if ask <= 0:
-                    continue
-                base = {"market_type": "3ball", "series": "KXPGA3BALL",
-                        "ticker": m["ticker"], "player_name": player,
-                        "my_pred": pred_lookup.get(player)}
-                rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
+            # Expected group size from one market's roster ("X beats Y and Z" -> 3).
+            expected_size = len(km.three_ball_members(gms[0])) if gms else 0
+            members = [km.norm_name((m.get("yes_sub_title") or "").split(" beats ")[0],
+                                    name_replacements, field_set) for m in gms]
+            in_field = [p for p in members if p in sim_dict]
+            # Price ONLY a complete group: every leg present AND every member resolves.
+            # A missing leg would make nball price lowest-of-2 and inflate every YES fair.
+            complete = (expected_size >= 2 and len(gms) == expected_size
+                        and len(in_field) == len(members))
+            if complete:
+                probs = nball_probs(sim_dict, members)
+                matched_groups += 1
+                for m in gms:
+                    player = km.norm_name((m.get("yes_sub_title") or "").split(" beats ")[0],
+                                          name_replacements, field_set)
+                    fair_yes = float(probs.get(player, 0.0))
+                    if fair_yes <= 0:
+                        continue
+                    q_bid, q_ask = _market_quote(m)
+                    if q_bid <= 0 and q_ask <= 0:
+                        continue
+                    try:
+                        ob = _get_orderbook(client, m["ticker"])
+                        time.sleep(0.03)
+                    except Exception:
+                        continue
+                    bid, ask = _best_bid_ask(m, ob)
+                    if ask <= 0:
+                        continue
+                    base = {"market_type": "3ball", "series": "KXPGA3BALL",
+                            "ticker": m["ticker"], "player_name": player,
+                            "my_pred": pred_lookup.get(player)}
+                    rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
+            elif in_field:
+                # ours but incomplete (missing leg) or a member didn't resolve -> log, don't price
+                mismatches.update(p for p in members if p not in sim_dict)
+                if verbose:
+                    print(f"  [ancillary] 3-ball {ev}: skipped (legs={len(gms)} "
+                          f"expected={expected_size}, in_field={len(in_field)}/{len(members)})")
+        pickup_report.append({"series": "KXPGA3BALL", "raw": len(groups), "matched": matched_groups,
+                              "target": "per-group", "ambiguous": False, "leader": matched_groups, "reason": ""})
         if verbose:
-            print(f"  [ancillary] KXPGA3BALL (3ball): {len(groups)} groups, "
-                  f"{priceable} priceable from sim")
+            print(f"  [ancillary] KXPGA3BALL: {len(groups)} groups, {matched_groups} matched (members in field)")
 
     client.close()
 
     cols = ["market_type", "series", "player_name", "side", "pricing", "fair_prob",
             "cost", "edge_pp", "stake", "units", "fill", "yes_bid", "yes_ask",
             "my_pred", "ticker"]
+    sized = []
     for r in rows:
+        if r["cost"] < MIN_LEG_COST:
+            continue   # too cheap to size reliably (1-2c legs)
         contracts, _d, units = kelly_contracts(r["fair_prob"], r["cost"])
+        fill = r.get("fill")
+        if fill is not None and not (isinstance(fill, float) and np.isnan(fill)):
+            contracts = min(contracts, int(fill))   # don't size beyond fillable depth (takers)
         r["stake"] = contracts
         r["units"] = round(units, 2)
+        sized.append(r)
+    rows = sized
     df = pd.DataFrame(rows, columns=cols)
     if not df.empty:
         df = df.sort_values(["pricing", "edge_pp"], ascending=[True, False]).reset_index(drop=True)
     df.attrs["name_mismatches"] = mismatches
+    df.attrs["pickup_report"] = pickup_report
     return df

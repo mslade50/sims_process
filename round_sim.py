@@ -40,7 +40,7 @@ _cfg = _load_sheet_config()
 tourney          = _cfg["tourney"]
 STD_DEV          = _cfg["std_dev"]
 PAR              = 72  # constant
-CUT_LINE         = _cfg["cut_line"]
+CUT_LINE         = _cfg["cut_line"]   # from golf_sims sheet (per event); 0 or >= field = NO CUT
 USE_10_SHOT_RULE = _cfg["use_10_shot_rule"]
 SIMULATIONS      = _cfg["simulations"]
 _event_id        = _cfg["event_id"]
@@ -563,19 +563,31 @@ def load_known_rounds(completed_round, course_map, default_par):
     if result["strokes"]:
         result["cumulative"] = sum(result["strokes"].values())
 
-        # Determine made cut status (if completed_round >= 2)
-        if completed_round >= 2:
+        # Determine made cut status (if completed_round >= 2).
+        # CUT_LINE comes from the golf_sims sheet (per event). Convention:
+        # cut_line <= 0  OR  cut_line >= field size  ==  NO CUT (signature events,
+        # Tour Championship, etc.) -> everyone is "made". Otherwise top-N + 10-shot.
+        if completed_round >= 2 and CUT_LINE >= 1:
             r1_r2 = result["strokes"].get(1, 0) + result["strokes"].get(2, 0)
             if isinstance(r1_r2, np.ndarray):
-                cut_score = np.sort(r1_r2)[min(CUT_LINE - 1, len(r1_r2) - 1)]
-                result["made_cut"] = r1_r2 <= cut_score
-                if USE_10_SHOT_RULE:
-                    within_10 = r1_r2 <= (r1_r2.min() + 10)
-                    result["made_cut"] = result["made_cut"] | within_10
+                _nf = len(r1_r2)
+                if CUT_LINE >= _nf:
+                    result["made_cut"] = np.ones(_nf, dtype=bool)
+                    print(f"    Cut rule: NO CUT (cut_line={CUT_LINE} >= field {_nf}) — all made")
+                else:
+                    cut_score = np.sort(r1_r2)[CUT_LINE - 1]
+                    result["made_cut"] = r1_r2 <= cut_score
+                    if USE_10_SHOT_RULE:
+                        within_10 = r1_r2 <= (r1_r2.min() + 10)
+                        result["made_cut"] = result["made_cut"] | within_10
+                    print(f"    Cut rule: top-{CUT_LINE}"
+                          f"{' + 10-shot' if USE_10_SHOT_RULE else ''} (field {_nf})")
             else:
                 result["made_cut"] = np.ones(len(result["player_names"]), dtype=bool)
         else:
             result["made_cut"] = np.ones(len(result["player_names"]), dtype=bool)
+            if completed_round >= 2:
+                print(f"    Cut rule: NO CUT (cut_line={CUT_LINE}) — all made")
 
     # Once a real cut exists, remove eliminated players from the field entirely
     # so they never enter the R3/R4 sims or finish probabilities.
@@ -4397,7 +4409,9 @@ def main():
                         print(f"    No fillable ancillary edges "
                               f"(taker 300@ask+fee / maker ask-1c, spread<4c)")
                 except Exception as _anc_err:
+                    import traceback as _tb
                     print(f"    Warning: ancillary Kalshi pricing failed: {_anc_err!r}")
+                    _tb.print_exc()
 
                 # Price outrights against market
                 print(f"    Fetching outright odds and calculating edges...")
@@ -4572,6 +4586,13 @@ def main():
                 _all_mismatches.setdefault(name, set()).add("kalshi_outrights")
     except NameError:
         pass
+    try:
+        if (ancillary_edges is not None and hasattr(ancillary_edges, "attrs")
+                and ancillary_edges.attrs.get("name_mismatches")):
+            for name in ancillary_edges.attrs["name_mismatches"]:
+                _all_mismatches.setdefault(name, set()).add("kalshi_ancillary")
+    except NameError:
+        pass
 
     if _all_mismatches and not args.dry_run:
         _mm_lines = [f"<b>R{sim_round} Name Mismatches — {tourney.replace('_', ' ').title()}</b>", ""]
@@ -4583,6 +4604,38 @@ def main():
         _mm_lines.append("Fix: add to name_replacements in sim_inputs.py")
         _send_telegram("\n".join(_mm_lines))
         print(f"  Sent Telegram alert for {len(_all_mismatches)} name mismatches")
+
+    # ── Kalshi ancillary pickup-sanity tripwire ─────────────────────────────
+    # raw>0 but matched==0 on a series = the series HAD markets but none matched our
+    # event (tournament-tag drift / matcher break) — the signal that distinguishes a
+    # broken pickup from genuine "no liquidity". Fires loud + Telegram.
+    try:
+        _pr = (ancillary_edges.attrs.get("pickup_report")
+               if ancillary_edges is not None and hasattr(ancillary_edges, "attrs") else None)
+    except NameError:
+        _pr = None
+    if _pr:
+        _drift = [r for r in _pr if (r.get("raw") or 0) > 0 and r.get("matched", 0) == 0]
+        _ambig = [r for r in _pr if r.get("ambiguous")]
+        _total_matched = sum(r.get("matched", 0) for r in _pr)
+        _any_raw = any((r.get("raw") or 0) > 0 for r in _pr)
+        _pickup_failed = _any_raw and _total_matched == 0
+        if _drift or _ambig or _pickup_failed:
+            _pl = [f"<b>R{sim_round} Kalshi Pickup Sanity — {tourney.replace('_', ' ').title()}</b>", ""]
+            if _pickup_failed:
+                _pl.append("PICKUP FAILURE: 0 markets matched our event across ALL series "
+                           "(matcher broke or wrong slug).")
+            for r in _drift:
+                _pl.append(f"TAG DRIFT: {r['series']} fetched {r['raw']} markets, "
+                           f"matched 0 for tourney={tourney}")
+            for r in _ambig:
+                _pl.append(f"AMBIGUOUS: {r['series']} target={r.get('target')} "
+                           f"({r.get('reason', '')})")
+            _pl += ["", "Verify sim_inputs.tourney / kalshi_event_tags vs Kalshi's live event tags."]
+            print("  [ancillary] PICKUP SANITY ALERT:\n    " + "\n    ".join(_pl[2:]))
+            if not args.dry_run:
+                _send_telegram("\n".join(_pl))
+                print("  Sent Telegram pickup-sanity alert")
 
     # ── Compute archetypes (before export + email so type_on appears everywhere) ──
     try:
