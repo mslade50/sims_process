@@ -246,7 +246,9 @@ def git_push(dry_run=False):
             break
         if "rejected" in (result.stderr or "") or "non-fast-forward" in (result.stderr or ""):
             print(f"  Push rejected (attempt {attempt + 1}/3), pulling with rebase...")
-            rebase = _run(["git", "pull", "--rebase"])
+            # --autostash so a dirty tree (sim artifacts regenerate every run) doesn't
+            # abort the rebase; the stash is reapplied after.
+            rebase = _run(["git", "pull", "--rebase", "--autostash"])
             if rebase.returncode != 0:
                 print(f"  ERROR: pull --rebase failed: {rebase.stderr.strip()}")
                 break
