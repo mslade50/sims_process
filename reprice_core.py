@@ -1,0 +1,374 @@
+"""reprice_core.py — pure matchup pricing / edge / dedup / alert helpers for the
+cache-free repricer (reprice.py).
+
+These functions MIRROR round_sim.py's matchup pipeline exactly so the lightweight
+repricer prices identically to the full sim. The one new piece is price_from_h2h:
+instead of computing P(a beats b) from per-sim draws (round_sim.price_matchups),
+it looks the probabilities up in the committed round-H2H fair table — which was
+built from those same joint draws, so it reconstructs the four my_odds_* columns
+EXACTLY (P(a<b) and P(tie) are sufficient; everything else is algebra).
+
+This module deliberately has NO heavy / module-load side effects (no Google Sheet
+read, no Rust kernel, no Excel) so importing it is cheap and can't fail the way
+importing round_sim can.
+
+KEEP IN SYNC with round_sim.py:
+  - SHARP_BOOKS / HALF_SHOT_ADJ            (round_sim.py:71-72)
+  - american_to_implied / implied_to_american (round_sim.py:1910-1925)
+  - calculate_edges                        (round_sim.py:2339)
+  - build_matchup_outputs                  (round_sim.py:2416)
+  - _dedup_round_matchups                  (round_sim.py:3707)
+  - _send_telegram                         (round_sim.py:1928)
+"""
+
+import os
+from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+import requests
+
+# ── constants (mirror round_sim.py:71-72) ──────────────────────────────────────
+SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
+HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
+# Only sharp books generate Telegram matchup alerts (mirror round_sim:3942).
+TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
+
+
+# ── odds helpers (mirror round_sim.py:1910-1925) ───────────────────────────────
+def american_to_implied(odds):
+    """American odds → implied probability (0–1)."""
+    if pd.isna(odds) or odds == 0:
+        return None
+    if odds > 0:
+        return 100 / (odds + 100)
+    return abs(odds) / (abs(odds) + 100)
+
+
+def implied_to_american(prob):
+    """Implied probability (0–1) → American odds (int)."""
+    if prob is None or pd.isna(prob) or prob <= 0 or prob >= 1:
+        return None
+    if prob >= 0.5:
+        return int(round(-100 * prob / (1 - prob)))
+    return int(round(100 * (1 - prob) / prob))
+
+
+def _norm_name(name, repl):
+    """lower + strip + name_replacements — both sides of the join must use this."""
+    n = str(name).strip().lower()
+    return repl.get(n, n)
+
+
+# ── round-H2H table → matchup probabilities ────────────────────────────────────
+def build_h2h_lookup(h2h_df):
+    """{(player_a, player_b): (P(a<b), P(tie))} keyed in the table's canonical
+    (lexicographic) player order. Also returns the set of known players."""
+    lookup = {}
+    known = set()
+    for a, b, p_lt, p_tie in zip(
+        h2h_df["player_a"], h2h_df["player_b"], h2h_df["p_a_lt_b"], h2h_df["p_tie"]
+    ):
+        a, b = str(a), str(b)
+        lookup[(a, b)] = (float(p_lt), float(p_tie))
+        known.add(a)
+        known.add(b)
+    return lookup, known
+
+
+def price_from_h2h(matchup_df, lookup, known, repl=None):
+    """Attach fair win probabilities to each matchup row from the H2H table.
+
+    Drop-in replacement for round_sim.price_matchups(matchup_df, sim_dict): produces
+    the identical my_odds_p1 / my_odds_p2 (ties push) and my_odds_p1_tl /
+    my_odds_p2_tl (ties loss) columns, and tracks name mismatches the same way.
+    """
+    repl = repl or {}
+    cols = {"fair_p1": [], "fair_p2": [], "tl_p1": [], "tl_p2": []}
+    name_mismatches = defaultdict(set)
+
+    for _, row in matchup_df.iterrows():
+        p1 = _norm_name(row["Player 1"], repl)
+        p2 = _norm_name(row["Player 2"], repl)
+        book = row.get("Bookmaker", "unknown")
+
+        if p1 not in known or p2 not in known:
+            if p1 not in known:
+                name_mismatches[p1].add(book)
+            if p2 not in known:
+                name_mismatches[p2].add(book)
+            for k in cols:
+                cols[k].append(None)
+            continue
+
+        # Look up in canonical (sorted) orientation, then orient to p1.
+        a, b = (p1, p2) if p1 <= p2 else (p2, p1)
+        hit = lookup.get((a, b))
+        if hit is None:
+            for k in cols:
+                cols[k].append(None)
+            continue
+        p_a_lt_b, p_tie = hit
+        p1_lt = p_a_lt_b if p1 <= p2 else (1.0 - p_a_lt_b - p_tie)   # P(p1 < p2)
+        p2_lt = 1.0 - p1_lt - p_tie                                  # P(p2 < p1)
+        non_tie = p1_lt + p2_lt
+
+        cols["fair_p1"].append(p1_lt / non_tie if non_tie else 0.5)
+        cols["fair_p2"].append(p2_lt / non_tie if non_tie else 0.5)
+        cols["tl_p1"].append(p1_lt)
+        cols["tl_p2"].append(p2_lt)
+
+    matchup_df["my_odds_p1"] = cols["fair_p1"]
+    matchup_df["my_odds_p2"] = cols["fair_p2"]
+    matchup_df["my_odds_p1_tl"] = cols["tl_p1"]
+    matchup_df["my_odds_p2_tl"] = cols["tl_p2"]
+
+    if name_mismatches:
+        print(f"  Warning: {len(name_mismatches)} scraped players not found in fairs")
+        matchup_df.attrs["name_mismatches"] = dict(name_mismatches)
+
+    return matchup_df
+
+
+# ── edges (verbatim mirror of round_sim.calculate_edges) ───────────────────────
+def calculate_edges(df):
+    """Calculate edges, fair odds, half-shot spreads for all matchup rows."""
+    df = df.dropna(subset=["my_odds_p1", "my_odds_p2"]).copy()
+
+    df["p1_dec"] = np.where(
+        df["P1 Odds"] > 0,
+        df["P1 Odds"] / 100 + 1,
+        100 / df["P1 Odds"].abs() + 1,
+    )
+    df["p2_dec"] = np.where(
+        df["P2 Odds"] > 0,
+        df["P2 Odds"] / 100 + 1,
+        100 / df["P2 Odds"].abs() + 1,
+    )
+
+    use_tl = df["Ties"] == "separate bet offered"
+    prob_p1 = np.where(use_tl, df["my_odds_p1_tl"], df["my_odds_p1"])
+    prob_p2 = np.where(use_tl, df["my_odds_p2_tl"], df["my_odds_p2"])
+
+    df["edge_p1"] = (prob_p1 * (df["p1_dec"] - 1) - (1 - prob_p1)) * 100
+    df["edge_p2"] = (prob_p2 * (df["p2_dec"] - 1) - (1 - prob_p2)) * 100
+
+    df["Fair_p1"] = df["my_odds_p1"].apply(
+        lambda p: implied_to_american(p) if pd.notna(p) else None
+    )
+    df["Fair_p2"] = df["my_odds_p2"].apply(
+        lambda p: implied_to_american(p) if pd.notna(p) else None
+    )
+
+    df["p1_implied"] = df["P1 Odds"].apply(
+        lambda o: round(american_to_implied(o) * 100, 1) if pd.notna(o) else None
+    )
+    df["p2_implied"] = df["P2 Odds"].apply(
+        lambda o: round(american_to_implied(o) * 100, 1) if pd.notna(o) else None
+    )
+
+    df["half_shot_p1"] = (df["my_odds_p1"] - df["my_odds_p1_tl"]) * 400
+    df["half_shot_p2"] = (df["my_odds_p2"] - df["my_odds_p2_tl"]) * 400
+
+    df["p1_pushwins"] = (1 - df["my_odds_p2_tl"]) * 100
+    df["p2_pushwins"] = (1 - df["my_odds_p1_tl"]) * 100
+    df["p1_nopush"] = df["my_odds_p1_tl"] * 100
+    df["p2_nopush"] = df["my_odds_p2_tl"] * 100
+
+    for book, adj in HALF_SHOT_ADJ.items():
+        mask = df["Bookmaker"].str.lower() == book
+        if not mask.any():
+            continue
+        for side, odds_col in [("p1", "P1 Odds"), ("p2", "P2 Odds")]:
+            pw_imp = (df.loc[mask, odds_col] - adj).apply(
+                lambda o: round(american_to_implied(o) * 100, 1) if pd.notna(o) else None
+            )
+            np_imp = (df.loc[mask, odds_col] + adj).apply(
+                lambda o: round(american_to_implied(o) * 100, 1) if pd.notna(o) else None
+            )
+            df.loc[mask, f"{side}_pushwins_imp"] = pw_imp
+            df.loc[mask, f"{side}_nopush_imp"] = np_imp
+            df.loc[mask, f"{side}_+0.5"] = df.loc[mask, f"{side}_pushwins"] - pw_imp
+            df.loc[mask, f"{side}_-0.5"] = df.loc[mask, f"{side}_nopush"] - np_imp
+
+    return df
+
+
+# ── combined/sharp split (verbatim mirror of round_sim.build_matchup_outputs) ───
+def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None):
+    """Filter, annotate, and split matchup DataFrame into combined + sharp."""
+    df["p1_pred"] = df["Player 1"].map(pred_lookup)
+    df["p2_pred"] = df["Player 2"].map(pred_lookup)
+    df["Sample_P1"] = df["Player 1"].map(sample_lookup)
+    df["Sample_P2"] = df["Player 2"].map(sample_lookup)
+    df["Round"] = f"r{sim_round}"
+
+    df["edge_on"] = df[["edge_p1", "edge_p2"]].max(axis=1).round(1)
+    df["bet_on"] = df.apply(
+        lambda r: r["Player 1"] if r["edge_p1"] > r["edge_p2"] else r["Player 2"],
+        axis=1,
+    )
+    df["pred_on"] = df.apply(
+        lambda r: r["p1_pred"] if r["edge_p1"] > r["edge_p2"] else r["p2_pred"],
+        axis=1,
+    )
+    df["pred_against"] = df.apply(
+        lambda r: r["p2_pred"] if r["edge_p1"] > r["edge_p2"] else r["p1_pred"],
+        axis=1,
+    )
+    df["sample_on"] = df.apply(
+        lambda r: r["Sample_P1"] if r["edge_p1"] > r["edge_p2"] else r["Sample_P2"],
+        axis=1,
+    )
+
+    if wx_lookup:
+        df["wx_on"] = df["bet_on"].map(wx_lookup).fillna(0)
+        df["wx_against"] = df.apply(
+            lambda r: wx_lookup.get(
+                r["Player 2"] if r["bet_on"] == r["Player 1"] else r["Player 1"], 0
+            ),
+            axis=1,
+        )
+        df["wx_diff"] = df["wx_on"] - df["wx_against"]
+
+    combined = df[df["edge_on"] > 3].copy()
+    combined = combined[combined["sample_on"].fillna(0) >= 20]
+    combined = combined[
+        ((combined["pred_on"] > 0) & (combined["edge_on"] > 7))
+        | (combined["pred_on"] > 1)
+    ]
+    combined = combined[
+        ~((combined["edge_on"] < 5) & (combined["pred_on"] < 1))
+    ]
+
+    sharp = combined[combined["Bookmaker"].str.lower().isin(SHARP_BOOKS)].copy()
+    sharp["matchup_key"] = [
+        "-".join(sorted([p1, p2]))
+        for p1, p2 in zip(sharp["Player 1"], sharp["Player 2"])
+    ]
+    sharp = sharp.sort_values("edge_on", ascending=False).drop_duplicates(
+        "matchup_key", keep="first"
+    )
+    sharp = sharp.drop(columns="matchup_key")
+
+    for out in [combined, sharp]:
+        out["p1_pred"] = out["p1_pred"].round(2)
+        out["p2_pred"] = out["p2_pred"].round(2)
+        out["edge_p1"] = out["edge_p1"].round(1)
+        out["edge_p2"] = out["edge_p2"].round(1)
+
+    display_cols = [
+        "Player 1", "Player 2", "Round", "Bookmaker", "Ties",
+        "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
+        "edge_p1", "edge_p2", "edge_on", "bet_on",
+        "p1_pred", "p2_pred", "pred_on", "pred_against",
+        "Sample_P1", "Sample_P2", "sample_on",
+        "half_shot_p1", "half_shot_p2",
+    ]
+    for col in ["wx_diff"]:
+        if col in combined.columns:
+            display_cols.append(col)
+    for col in ["p1_+0.5", "p2_+0.5", "p1_-0.5", "p2_-0.5"]:
+        if col in combined.columns:
+            display_cols.append(col)
+
+    combined = combined[[c for c in display_cols if c in combined.columns]]
+    sharp = sharp[[c for c in display_cols if c in sharp.columns]]
+
+    print(f"  Combined matchups: {len(combined)} rows")
+    print(f"  Sharp filtered:    {len(sharp)} rows")
+    return combined, sharp
+
+
+# ── dedup vs Sheets (verbatim mirror of round_sim._dedup_round_matchups) ────────
+def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
+    """Return rows from `combined` not already in the Round Matchups sheet.
+
+    Dedup key: (player_1, player_2, bookmaker, p1_odds, p2_odds) for event+round.
+    """
+    if combined is None or combined.empty:
+        return combined
+
+    from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
+    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
+    existing = ws.get_all_records()
+
+    existing_keys = set()
+    for row in existing:
+        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
+            existing_keys.add((
+                str(row.get("player_1", "")).lower().strip(),
+                str(row.get("player_2", "")).lower().strip(),
+                str(row.get("bookmaker", "")).lower().strip(),
+                str(row.get("p1_odds", "")),
+                str(row.get("p2_odds", "")),
+            ))
+
+    if not existing_keys:
+        return combined
+
+    mask = []
+    for _, r in combined.iterrows():
+        key = (
+            str(r.get("Player 1", "")).lower().strip(),
+            str(r.get("Player 2", "")).lower().strip(),
+            str(r.get("Bookmaker", "")).lower().strip(),
+            str(r.get("P1 Odds", "")),
+            str(r.get("P2 Odds", "")),
+        )
+        mask.append(key not in existing_keys)
+
+    new_rows = combined[mask].copy()
+    print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new "
+          f"(deduped {len(combined) - len(new_rows)})")
+    return new_rows
+
+
+# ── Telegram (mirror of round_sim._send_telegram + matchup section) ─────────────
+def send_telegram(text):
+    """Send a Telegram message. Non-blocking — logs warning on failure."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception:
+        print("  Warning: Telegram alert failed")
+
+
+def _fmt_odds(v):
+    if isinstance(v, (int, float)) and not pd.isna(v):
+        return f"+{int(v)}" if v > 0 else str(int(v))
+    return str(v)
+
+
+def send_matchup_alert(new_mu, sim_round, tourney_name):
+    """Telegram alert for newly-priced round matchups (sharp books only).
+
+    Sends only when there is something new (the cache-free repricer fires on every
+    scrape, so a 'nothing new' ping every time would be noise)."""
+    if new_mu is None or new_mu.empty:
+        return
+    tg = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
+    if tg.empty:
+        return
+
+    lines = [f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>", ""]
+    lines.append(f"<b>New Matchups ({len(tg)}):</b>")
+    for _, r in tg.iterrows():
+        bet = r.get("bet_on", "?")
+        edge = r.get("edge_on", "?")
+        book = r.get("Bookmaker", "?")
+        is_p1 = str(r.get("bet_on", "")).lower() == str(r.get("Player 1", "")).lower()
+        opp = r.get("Player 2", "") if is_p1 else r.get("Player 1", "")
+        mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
+        fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
+        lines.append(f"  {bet} vs {opp}")
+        lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
+
+    send_telegram("\n".join(lines))

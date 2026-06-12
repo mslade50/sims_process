@@ -264,6 +264,119 @@ def _build_round_samples(tourney: str, rnd, repl: dict):
     return df
 
 
+def _cache_meta(tourney: str, rnd) -> dict:
+    """Read the sim_cache meta sidecar (carries pred_lookup + wx_lookup)."""
+    if not rnd:
+        return {}
+    f = _find(f"{tourney}/sim_cache_r{rnd}_meta.json", f"sim_cache_r{rnd}_meta.json")
+    if f is None:
+        return {}
+    try:
+        with open(f) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _sample_lookup(tourney: str, repl: dict) -> dict:
+    """Per-player sample sizes from pre_sim_summary (used by the matchup filter)."""
+    f = _find(f"pre_sim_summary_{tourney}.csv", f"{tourney}/pre_sim_summary_{tourney}.csv")
+    if f is None:
+        return {}
+    try:
+        df = pd.read_csv(f)
+    except Exception:
+        return {}
+    if not {"player_name", "sample"} <= set(df.columns):
+        return {}
+    out = {}
+    for _, r in df.iterrows():
+        if pd.notna(r["player_name"]) and pd.notna(r["sample"]):
+            out[_norm(r["player_name"], repl)] = int(r["sample"])
+    return out
+
+
+def _build_round_h2h(tourney: str, rnd, repl: dict):
+    """All-pairs round head-to-head computed from the FULL sim-cache joint draws.
+
+    Returns (df[player_a, player_b, p_a_lt_b, p_tie], meta) or (None, None).
+
+    The joint is preserved (shared wave/weather conditions cancel), so a stored
+    (P(a<b), P(tie)) pair is mathematically conclusive for pricing any H2H — it
+    reconstructs every column round_sim.price_matchups produces, EXACTLY, with no
+    draws needed at reprice time. Players are stored in canonical (lexicographic)
+    order so (a, b) lookups are deterministic; the consumer orients to whichever
+    side the book offers.
+    """
+    if not rnd:
+        return None, None
+    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    if f is None:
+        return None, None
+    import numpy as np
+
+    cache = pd.read_parquet(f)                       # index = player, cols = sim indices
+    names = [_norm(p, repl) for p in cache.index]
+    order = sorted(range(len(names)), key=lambda i: names[i])
+    players = [names[i] for i in order]
+    S = cache.values[order].astype(np.int16)         # (n_players, n_sims)
+    n, sims = S.shape
+
+    a_col, b_col, lt_col, tie_col = [], [], [], []
+    for i in range(n):
+        Sj = S[i + 1:]                               # all partners j > i
+        if Sj.shape[0] == 0:
+            continue
+        si = S[i][None, :]
+        lt = (si < Sj).sum(axis=1) / sims            # P(player_i < player_j)
+        eq = (si == Sj).sum(axis=1) / sims           # P(tie)
+        for k in range(Sj.shape[0]):
+            a_col.append(players[i])
+            b_col.append(players[i + 1 + k])
+            lt_col.append(round(float(lt[k]), 5))
+            tie_col.append(round(float(eq[k]), 5))
+
+    df = pd.DataFrame({"player_a": a_col, "player_b": b_col,
+                       "p_a_lt_b": lt_col, "p_tie": tie_col})
+    df["p_a_lt_b"] = df["p_a_lt_b"].astype("float32")
+    df["p_tie"] = df["p_tie"].astype("float32")
+
+    cmeta = _cache_meta(tourney, rnd)
+    pred = {_norm(k, repl): round(float(v), 4)
+            for k, v in (cmeta.get("pred_lookup") or {}).items()}
+    wx = {_norm(k, repl): round(float(v), 6)
+          for k, v in (cmeta.get("wx_lookup") or {}).items()}
+    meta = {
+        "tourney": tourney,
+        "round": rnd,
+        "num_players": n,
+        "num_sims": sims,
+        "pred": pred,
+        "sample": _sample_lookup(tourney, repl),
+        "wx": wx,
+    }
+    logger.info(f"round_h2h (R{rnd}): {len(df)} pairs from {n} players x {sims} sims")
+    return df, meta
+
+
+def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
+    """Build + write round_h2h_r{N}.parquet (+ _meta.json) at repo root. Returns
+    the repo-relative file list (empty if no sim cache exists for the round)."""
+    repl = repl if repl is not None else _name_replacements()
+    df, meta = _build_round_h2h(tourney, rnd, repl)
+    if df is None:
+        logger.info("round_h2h: no sim cache; skipping")
+        return []
+    meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    pq = f"round_h2h_r{rnd}.parquet"
+    mj = f"round_h2h_r{rnd}_meta.json"
+    df.to_parquet(PROJECT_ROOT / pq, index=False)
+    with open(PROJECT_ROOT / mj, "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    logger.info(f"Wrote {pq} + {mj}")
+    return [pq, mj]
+
+
 def build_payload() -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
@@ -372,6 +485,7 @@ def publish(push: bool = True) -> dict:
         samples.to_parquet(LOCAL_SAMPLES)
         files.append("round_samples.parquet")
         logger.info(f"Wrote {LOCAL_SAMPLES}")
+    files.extend(write_round_h2h(payload["tourney"], payload.get("round"), _name_replacements()))
     if push:
         _git_push(files)
     return payload
@@ -381,7 +495,25 @@ def main():
     ap = argparse.ArgumentParser(description="Publish sim fair probabilities (commit to repo)")
     ap.add_argument("--dry-run", action="store_true", help="build + summary, no write/push")
     ap.add_argument("--no-push", action="store_true", help="write local file, skip git push")
+    ap.add_argument("--round-h2h-only", action="store_true",
+                    help="Build + push ONLY the round H2H artifact (for the cache-free "
+                         "repricer). Skips the sim_fairs.json rebuild so a --sim-only "
+                         "backup run can ship it without clobbering the board's fairs.")
     args = ap.parse_args()
+
+    if args.round_h2h_only:
+        si = _sim_inputs()
+        tourney = getattr(si, "tourney", None)
+        if not tourney:
+            raise RuntimeError("sim_inputs.tourney is not set")
+        rnd = _latest_round(tourney)
+        logger.info(f"round-h2h-only: {tourney} R{rnd}")
+        files = write_round_h2h(tourney, rnd)
+        if args.dry_run:
+            return
+        if files and not args.no_push:
+            _git_push(tuple(files))
+        return
 
     payload = build_payload()
     o = payload["outrights"]
