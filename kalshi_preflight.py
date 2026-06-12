@@ -103,8 +103,22 @@ def discover_golf_series(client):
 
 
 def load_field(tourney):
-    """Field player_names (sim 'last, first' lowercase) from the best local source."""
+    """Field player_names (sim 'last, first' lowercase). Prefer the LIVE DataGolf
+    field — authoritative for the CURRENT event, so a CI run never resolves a stale
+    week — then fall back to committed local files for offline/dev use."""
     import pandas as pd
+    api_key = os.getenv("DATAGOLF_API_KEY")
+    if api_key:
+        try:
+            from api_utils import fetch_field_updates
+            fdf = fetch_field_updates(api_key)
+            if fdf is not None and "player_name" in getattr(fdf, "columns", []) and len(fdf):
+                names = set(fdf["player_name"].dropna().astype(str).str.lower().str.strip())
+                if names:
+                    print(f"  field source: DataGolf live ({len(names)} players)")
+                    return names
+        except Exception as e:
+            print(f"  DataGolf field fetch failed ({e!r}); falling back to local files")
     p = f"player_names_live_{tourney}.json"
     if os.path.exists(p):
         return set(json.load(open(p)))

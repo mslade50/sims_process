@@ -1,0 +1,40 @@
+name: Kalshi Preflight
+
+# Confirms our configured tournament resolves to exactly one Kalshi event (by live
+# DataGolf-field overlap) and that every priceable golf series open for it is handled.
+#
+# Kalshi opens golf markets PROGRESSIVELY through the week — winner/top-N early,
+# R2/R3 leaders mid-week, 3-balls Thu/Fri once pairings post — so a single Monday run
+# would pass resolution but miss everything that opens later. Hence it runs DAILY.
+#
+# Silent on success. On a problem (resolution failed / low or ambiguous overlap / a
+# NEW priceable series with open markets we don't handle) it exits non-zero — which
+# turns the build red + notifies — and Telegrams the detail. The field is pulled LIVE
+# from DataGolf, so the check is never fooled by a stale committed field file.
+
+on:
+  schedule:
+    - cron: '0 13 * * *'      # daily 13:00 UTC (~9am ET) — catches markets as they open
+  workflow_dispatch:           # manual run
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install httpx pandas numpy requests python-dotenv
+
+      - name: Run Kalshi preflight
+        env:
+          DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python kalshi_preflight.py
