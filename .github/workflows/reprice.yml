@@ -4,6 +4,11 @@ on:
   repository_dispatch:
     types: [sentinel-scrape-complete]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Smoke test: price + print only (no dedup/store/Telegram/R2 push)"
+        type: boolean
+        default: false
 
 concurrency:
   group: reprice
@@ -63,10 +68,10 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
-      run: python reprice.py
+      run: python reprice.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
     - name: Push odds screen data to R2
-      if: steps.window.outputs.skip != 'true'
+      if: steps.window.outputs.skip != 'true' && inputs.dry_run != true
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
