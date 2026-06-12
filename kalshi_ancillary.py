@@ -539,7 +539,9 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
                         continue
                     base = {"market_type": "3ball", "series": "KXPGA3BALL",
                             "ticker": m["ticker"], "player_name": player,
-                            "my_pred": pred_lookup.get(player)}
+                            "my_pred": pred_lookup.get(player),
+                            "opponents": ", ".join(o.split(",")[0].strip().title()
+                                                   for o in members if o != player)}
                     rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
             elif in_field:
                 # ours but incomplete (missing leg) or a member didn't resolve -> log, don't price
@@ -554,9 +556,9 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
 
     client.close()
 
-    cols = ["market_type", "series", "player_name", "side", "pricing", "fair_prob",
-            "cost", "edge_pp", "stake", "units", "fill", "yes_bid", "yes_ask",
-            "my_pred", "ticker"]
+    cols = ["market_type", "series", "player_name", "opponents", "side", "pricing",
+            "fair_prob", "cost", "edge_pp", "stake", "units", "fill", "yes_bid",
+            "yes_ask", "my_pred", "ticker"]
     sized = []
     for r in rows:
         if r["cost"] < MIN_LEG_COST:

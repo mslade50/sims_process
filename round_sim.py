@@ -3546,10 +3546,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             side = str(r["side"]).upper()
             _stake = int(r.get("stake", 0) or 0)
             stake_cell = f"{_stake:,}c" if _stake else "—"
+            _opp = r.get("opponents")
+            _opp = "" if (_opp is None or (isinstance(_opp, float) and pd.isna(_opp))) else str(_opp)
             anc_rows += (
                 "<tr>"
                 f"<td style='padding:4px 10px;'>{r['market_type']}</td>"
                 f"<td style='padding:4px 10px;'>{str(r['player_name']).title()}</td>"
+                f"<td style='padding:4px 10px; color:#666; font-size:11px;'>{_opp}</td>"
                 f"<td style='padding:4px 10px; text-align:center;'>{side}</td>"
                 f"<td style='padding:4px 10px; text-align:center;'>{pricing}</td>"
                 f"<td style='padding:4px 10px; text-align:center;'>{r['fair_prob']*100:.1f}%</td>"
@@ -3569,6 +3572,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             <tr style="background:#f0f0f0;">
                 <th style="padding:6px 10px; text-align:left;">Market</th>
                 <th style="padding:6px 10px; text-align:left;">Player</th>
+                <th style="padding:6px 10px; text-align:left;">Opponents</th>
                 <th style="padding:6px 10px;">Side</th>
                 <th style="padding:6px 10px;">Pricing</th>
                 <th style="padding:6px 10px;">Fair</th>
