@@ -68,6 +68,12 @@ pub struct Output {
     pub final_scores: Vec<i64>, // (n*sims) row-major
     pub made_cut: Vec<bool>,    // (n*sims) row-major
     pub win_prob: Vec<f64>,     // (n,)
+    /// End-of-R2 cumulative strokes (n*sims) row-major. Full field (cut not applied).
+    /// Feeds Kalshi "Round 2 Leader / Top-N" pricing.
+    pub r1_r2: Vec<i64>,
+    /// End-of-R3 cumulative strokes (n*sims) row-major. RAW (cut NOT applied here);
+    /// the caller masks missed-cut sims via `made_cut` before ranking R3 standings.
+    pub r1_r3: Vec<i64>,
 }
 
 #[inline]
@@ -200,6 +206,10 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
 
     // ---- R1 -> R2 skill update ----
     // sg_r1_actual = default_par - strokes_r1 (rounded/known), NOT raw sg.
+    // Field skill = mean(my_pred) over the field, added to the R1 residual to match
+    // live_stats _residuals_r1 (residual = sg_total + pred_avg - pred) and new_sim's
+    // run_pretournament baseline. resid = sg_r1 + field_skill - my_pred.
+    let field_skill = inp.my_pred_base.iter().sum::<f64>() / n as f64;
     let mut sg_adj_r1 = vec![0.0f64; ns];
     let mut updated_skill_r2 = vec![0.0f64; ns];
     for i in 0..n {
@@ -216,7 +226,7 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
         for s in 0..sims {
             let k = idx(i, s, sims);
             let sg_actual = par - strokes_r1[k] as f64;
-            let resid = sg_actual - mp;
+            let resid = sg_actual + field_skill - mp;
             let resid2 = resid * resid;
             let mut tr = resid * c.residual + resid2 * c.residual2;
             if resid < 0.0 && tr > 0.2 {
@@ -410,6 +420,8 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
         final_scores,
         made_cut,
         win_prob: win_counts,
+        r1_r2,
+        r1_r3,
     }
 }
 

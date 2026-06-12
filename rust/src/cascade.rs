@@ -239,6 +239,9 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
     let mut sg_adj_r1 = vec![0.0f64; ns];
     let mut updated_skill_r2 = vec![0.0f64; ns];
     let mut sg_r2_mean = vec![0.0f64; ns];
+    // Field-average skill = mean(my_pred) over the field. Added to the R1 residual
+    // to match ETR's rust_sim baseline: resid = sg_r1 + field_skill - my_pred.
+    let field_skill = inp.my_pred_base.iter().sum::<f64>() / n as f64;
     for i in 0..n {
         let mp = inp.my_pred_base[i];
         let c = if mp > 1.0 {
@@ -253,7 +256,7 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
         let r2off = inp.r2_mu[i] - mp;
         for s in 0..sims {
             let k = idx(i, s, sims);
-            let resid = sg_r1[k] - mp;
+            let resid = sg_r1[k] + field_skill - mp;
             let resid2 = resid * resid;
             let mut tot_resid_adj = resid * c.residual + resid2 * c.residual2;
             if resid < 0.0 && tot_resid_adj > 0.2 {

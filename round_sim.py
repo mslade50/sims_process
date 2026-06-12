@@ -648,7 +648,7 @@ def simulate_remaining_rounds(
                     return _A(np.asarray(known_categories.get(r, np.zeros((n_players, 4))), dtype=float))
                 return None
 
-            _fs, _mc, _win = _sk.run_remaining_rounds(
+            _fs, _mc, _win, _r2, _r3 = _sk.run_remaining_rounds(
                 int(completed_round), float(default_par),
                 _A(_mu), _A(_std), _A(effective_skew), _A(L_corr),
                 _A(my_pred_base.astype(float)), _A(player_expected_r2.astype(float)),
@@ -661,7 +661,8 @@ def simulate_remaining_rounds(
             )
             print(f"  [rust] tournament cascade via sims_kernel.run_remaining_rounds "
                   f"(completed_round={completed_round}, {num_sims:,} sims)")
-            return np.ascontiguousarray(_fs).astype(int), np.ascontiguousarray(_mc)
+            return (np.ascontiguousarray(_fs).astype(int), np.ascontiguousarray(_mc),
+                    np.ascontiguousarray(_r2).astype(int), np.ascontiguousarray(_r3).astype(int))
         except Exception as _rust_err:
             print(f"  [rust] WARNING: run_remaining_rounds failed ({_rust_err!r}); "
                   f"falling back to Python cascade. Pass --use-python to silence.")
@@ -684,7 +685,10 @@ def simulate_remaining_rounds(
     # R1 -> R2 skill update
     sg_r1_actual = default_par - strokes_r1.astype(float)
 
-    resid_r1 = sg_r1_actual - my_pred_base[:, None]
+    # Field skill (mean base pred) added to the R1 residual to match live_stats
+    # _residuals_r1 (sg_total_adj = sg_total + pred_avg) and new_sim's cascade.
+    field_skill = float(np.mean(my_pred_base))
+    resid_r1 = sg_r1_actual + field_skill - my_pred_base[:, None]
     resid2_r1 = resid_r1 ** 2
     ott_r1 = cats_r1[:, :, 0]
     putt_r1 = cats_r1[:, :, 3]
@@ -916,7 +920,9 @@ def simulate_remaining_rounds(
     # Final 72-hole totals
     final_scores = r1_r2_scores + r3_r4
 
-    return final_scores, made_cut_mask
+    # r1_r2_scores / r1_r3_scores are RAW cumulative standings (cut NOT applied) so
+    # the caller can rank end-of-R2 / end-of-R3 for Kalshi leader/top-N markets.
+    return final_scores, made_cut_mask, r1_r2_scores, r1_r3_scores
 
 
 def compute_finish_probabilities(final_scores, player_names, made_cut_mask, num_sims):
@@ -926,6 +932,47 @@ def compute_finish_probabilities(final_scores, player_names, made_cut_mask, num_
     Returns DataFrame with columns: player_name, simulated_win_prob, top_5, top_10, top_20
     """
     n_players = len(player_names)
+
+    # ─── Rust kernel (default; --use-python forces the legacy pandas aggregation) ───
+    # sims_kernel.aggregate_round replaces the 15.6M-row groupby/iterrows loop below
+    # (the old 4-minute bottleneck). Validated integer-exact vs pandas by
+    # validate_rust_python.py: prob_u / top_N_nodh exact, top_N dead-heat ~1e-15.
+    # Win prob is the vectorized exact expectation of the random-tiebreak winner the
+    # pandas loop estimated stochastically. On --use-python or any Rust error we fall
+    # through to the pandas reference below.
+    if not _USE_PYTHON:
+        try:
+            import sims_kernel as _sk
+            _fs = np.ascontiguousarray(np.asarray(final_scores, dtype=np.int64))
+            _prob_raw, _top_dh, _top_nodh = _sk.aggregate_round(_fs)
+            _prob_raw = np.ascontiguousarray(_prob_raw)
+            _top_dh = np.ascontiguousarray(_top_dh)
+            _top_nodh = np.ascontiguousarray(_top_nodh)
+
+            _mins = _fs.min(axis=0)
+            _is_min = (_fs == _mins[None, :])
+            _tie_ct = _is_min.sum(axis=0)
+            _win_prob = (_is_min / _tie_ct).sum(axis=1) / num_sims
+
+            finish_probs = pd.DataFrame({
+                "player_name": list(player_names),
+                "simulated_win_prob": _win_prob,
+                "top_5": _top_dh[:, 0], "top_10": _top_dh[:, 1], "top_20": _top_dh[:, 2],
+                "top_5_nodh": _top_nodh[:, 0], "top_10_nodh": _top_nodh[:, 1],
+                "top_20_nodh": _top_nodh[:, 2],
+            })
+            _rows, _cols = np.nonzero(_prob_raw)
+            rank_probs = pd.DataFrame({
+                "player_name": np.asarray(player_names)[_rows],
+                "rank": (_cols + 1).astype(int),
+                "prob_u": _prob_raw[_rows, _cols],
+            })
+            print(f"  [rust] finish probs via sims_kernel.aggregate_round "
+                  f"({n_players} players x {num_sims:,} sims)")
+            return finish_probs, rank_probs
+        except Exception as _rust_err:
+            print(f"  [rust] WARNING: aggregate_round failed ({_rust_err!r}); "
+                  f"falling back to pandas. Pass --use-python to silence.")
 
     # Win probabilities (playoff tiebreaker: random winner)
     simulated_winners = []
@@ -1423,28 +1470,31 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
                 "depth_at_best": nf.get("depth_at_best", 0),
             })
 
-        # YES mid (maker, no fees)
-        yes_mid_am = implied_to_american(min(max(s["mid"], 1e-4), 1 - 1e-4))
-        if yes_mid_am is not None:
-            rows.append({
-                **base_row, "side": "yes", "pricing": "mid",
-                "american_odds": yes_mid_am,
-                "sim_prob": s["sim_yes"], "implied_prob": s["mid"],
-                "edge": round(s["yes_mid_edge"], 1),
-                "my_fair": implied_to_american(min(max(s["sim_yes"], 1e-4), 1 - 1e-4)),
-            })
-
-        # NO mid (maker, no fees)
-        no_mid_price = 1 - s["mid"]
-        no_mid_am = implied_to_american(min(max(no_mid_price, 1e-4), 1 - 1e-4))
-        if no_mid_am is not None:
-            rows.append({
-                **base_row, "side": "no", "pricing": "mid",
-                "american_odds": no_mid_am,
-                "sim_prob": s["sim_no"], "implied_prob": no_mid_price,
-                "edge": round(s["no_mid_edge"], 1),
-                "my_fair": implied_to_american(min(max(s["sim_no"], 1e-4), 1 - 1e-4)),
-            })
+        # Maker rows (no fees): post at ask-1c, ONLY when the yes spread is tight
+        # (< 4c) — matches the ancillary table's maker rule. `pricing` stays "mid"
+        # so the downstream maker/taker split is unchanged.
+        _spread = s["ask"] - s["bid"]
+        if 0 < _spread < 0.04:
+            yes_cost = s["ask"] - 0.01   # post YES at ask - 1c
+            if 0 < yes_cost < 1:
+                rows.append({
+                    **base_row, "side": "yes", "pricing": "mid",
+                    "american_odds": implied_to_american(min(max(yes_cost, 1e-4), 1 - 1e-4)),
+                    "sim_prob": s["sim_yes"], "implied_prob": yes_cost,
+                    "edge": round((s["sim_yes"] - yes_cost) * 100, 1),
+                    "my_fair": implied_to_american(min(max(s["sim_yes"], 1e-4), 1 - 1e-4)),
+                    "yes_bid": s["bid"], "yes_ask": s["ask"],
+                })
+            no_cost = (1 - s["bid"]) - 0.01   # post NO at its ask - 1c
+            if 0 < no_cost < 1:
+                rows.append({
+                    **base_row, "side": "no", "pricing": "mid",
+                    "american_odds": implied_to_american(min(max(no_cost, 1e-4), 1 - 1e-4)),
+                    "sim_prob": s["sim_no"], "implied_prob": no_cost,
+                    "edge": round((s["sim_no"] - no_cost) * 100, 1),
+                    "my_fair": implied_to_american(min(max(s["sim_no"], 1e-4), 1 - 1e-4)),
+                    "yes_bid": s["bid"], "yes_ask": s["ask"],
+                })
 
     print(f"  Stage 2 orderbook: fetched {len(stage1) - ob_fail}/{len(stage1)} orderbooks")
 
@@ -3005,7 +3055,8 @@ def load_sample_data():
 
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
                              win_positive_top10=None, win_negative_top10=None,
-                             wx_lookup=None, score_edges=None, kalshi_mids=None):
+                             wx_lookup=None, score_edges=None, kalshi_mids=None,
+                             ancillary_df=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -3014,6 +3065,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         - bet_on player's pred > EMAIL_MIN_PRED
         - bet_on player's sample > EMAIL_MIN_SAMPLE
     """
+    from kalshi_ancillary import kelly_contracts  # 0.4-Kelly $50k contract sizing
     matchups_html = ""
     if not sharp_df.empty:
         # Filter: pred and sample thresholds on the bet_on side
@@ -3052,6 +3104,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred = row["pred_on"]
                 sample = int(row["sample_on"])
                 archetype = row.get("type_on", "")
+                archetype_a = row.get("type_a", "")
                 half_shot = (
                     row.get("half_shot_p1", "")
                     if row["bet_on"] == row["Player 1"]
@@ -3074,6 +3127,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; font-weight:600;">{bet_player}</td>
                     <td style="padding:6px 10px; color:#666;">vs {opponent}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype_a}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{ties}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
@@ -3093,6 +3147,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:left;">Bet On</th>
                     <th style="padding:6px 10px; text-align:left;">Opponent</th>
                     <th style="padding:6px 10px; text-align:center;">Type</th>
+                    <th style="padding:6px 10px; text-align:center;">Type_a</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Ties</th>
                     <th style="padding:6px 10px; text-align:center;">Line</th>
@@ -3164,15 +3219,15 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     fill_str = "—"
                     top_str = "—"
 
-                # Units = kelly stake / $200 (matches Sheet's units_wagered convention)
-                if is_exchange and pd.notna(imp_prob) and pd.notna(sim_prob_row) and imp_prob > 0 and imp_prob < 1:
-                    _dec = 1.0 / imp_prob
-                    _b = _dec - 1.0
-                    _f = max((_b * sim_prob_row - (1 - sim_prob_row)) / _b, 0) if _b > 0 else 0
-                    _stake_dollars = BANKROLL * KELLY_FRACTION * _f
+                # Kalshi/NoVig: Stake = 0.4-Kelly contracts on a $50k bankroll,
+                # Units = kelly$ / $500. Non-exchange rows keep the $ stake / $200 units.
+                if is_exchange and pd.notna(imp_prob) and pd.notna(sim_prob_row):
+                    _contracts, _dollars, _units = kelly_contracts(sim_prob_row, imp_prob)
+                    stake_str = f"{_contracts:,}c" if _contracts else "—"
+                    units_str = f"{_units:.1f}u" if _units > 0 else "—"
                 else:
                     _stake_dollars = float(stake) if pd.notna(stake) else 0.0
-                units_str = format_units(_stake_dollars)
+                    units_str = format_units(_stake_dollars)
 
                 rows_html += f"""
                 <tr>
@@ -3425,11 +3480,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 pred_str = f"{pred:.2f}" if pd.notna(pred) else ""
                 wx_str = f"{_mk_wx_sg:+.2f}" if _mk_wx_sg != 0 else "0.00"
 
-                # Cent pricing (Kalshi maker = mid price, no fees)
+                # Cent pricing (Kalshi maker = post at ask-1c, no fees)
                 imp_prob = row.get("implied_prob")
                 sim_prob_row = row.get("sim_prob")
                 line_c_str = f"{imp_prob * 100:.1f}&cent;" if pd.notna(imp_prob) else ""
                 fair_c_str = f"{sim_prob_row * 100:.1f}&cent;" if pd.notna(sim_prob_row) else ""
+                _mk_contracts, _mk_dollars, _mk_units = kelly_contracts(sim_prob_row, imp_prob)
+                mk_stake_str = f"{_mk_contracts:,}c" if _mk_contracts else "—"
 
                 rows_html += f"""
                 <tr>
@@ -3441,29 +3498,75 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; color:#2c5282;">{line_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; color:#2c5282; font-weight:500;">{fair_c_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:600;">{mk_stake_str}</td>
                     <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{wx_str}</td>
                 </tr>"""
 
             kalshi_mids_html = f"""
             <h3 style="color:#2c5282; margin:30px 0 8px 0;">
-                Kalshi Maker Opportunities (Mid Price, No Fees)
+                Kalshi Maker Opportunities (Post at Ask&minus;1&cent;, spread &lt; 4&cent;, No Fees)
             </h3>
             <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
                 <tr style="background:#343a40; color:white;">
                     <th style="padding:6px 10px; text-align:left;">Player</th>
                     <th style="padding:6px 10px; text-align:center;">Market</th>
                     <th style="padding:6px 10px; text-align:center;">Side</th>
-                    <th style="padding:6px 10px; text-align:center;">Mid Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Post</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
-                    <th style="padding:6px 10px; text-align:center;">Mid&cent;</th>
+                    <th style="padding:6px 10px; text-align:center;">Post&cent;</th>
                     <th style="padding:6px 10px; text-align:center;">Fair&cent;</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Stake</th>
                     <th style="padding:6px 10px; text-align:center;">Pred</th>
                     <th style="padding:6px 10px; text-align:center;">Wx SG</th>
                 </tr>
                 {rows_html}
             </table>"""
+
+    # ── Ancillary Kalshi edges (round leaders/top-N, playoff) ──
+    ancillary_html = ""
+    if ancillary_df is not None and not ancillary_df.empty:
+        anc_rows = ""
+        for _, r in ancillary_df.iterrows():
+            fill = "" if pd.isna(r.get("fill")) else int(r["fill"])
+            pricing = str(r["pricing"])
+            side = str(r["side"]).upper()
+            _stake = int(r.get("stake", 0) or 0)
+            stake_cell = f"{_stake:,}c" if _stake else "—"
+            anc_rows += (
+                "<tr>"
+                f"<td style='padding:4px 10px;'>{r['market_type']}</td>"
+                f"<td style='padding:4px 10px;'>{str(r['player_name']).title()}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{side}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{pricing}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{r['fair_prob']*100:.1f}%</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{r['cost']*100:.1f}&cent;</td>"
+                f"<td style='padding:4px 10px; text-align:center; color:#0a7;'>+{r['edge_pp']:.1f}</td>"
+                f"<td style='padding:4px 10px; text-align:center; font-weight:600;'>{stake_cell}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{fill}</td>"
+                "</tr>"
+            )
+        ancillary_html = f"""
+        <h3 style="margin-bottom:4px;">Ancillary Kalshi Edges ({len(ancillary_df)})</h3>
+        <p style="color:#666; font-size:11px; margin-top:0;">
+            Taker = can fill 300 @ ask + fee and still +edge |
+            Maker = post at ask&minus;1&cent; (no fee), yes spread &lt; 4&cent;
+        </p>
+        <table style="border-collapse:collapse; font-size:13px; margin-bottom:20px;">
+            <tr style="background:#f0f0f0;">
+                <th style="padding:6px 10px; text-align:left;">Market</th>
+                <th style="padding:6px 10px; text-align:left;">Player</th>
+                <th style="padding:6px 10px;">Side</th>
+                <th style="padding:6px 10px;">Pricing</th>
+                <th style="padding:6px 10px;">Fair</th>
+                <th style="padding:6px 10px;">Cost</th>
+                <th style="padding:6px 10px;">Edge</th>
+                <th style="padding:6px 10px;">Stake</th>
+                <th style="padding:6px 10px;">Fill</th>
+            </tr>
+            {anc_rows}
+        </table>"""
 
     html = f"""
     <html>
@@ -3478,6 +3581,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         {outrights_html}
 
         {kalshi_mids_html}
+
+        {ancillary_html}
 
         {win_pos_html}
 
@@ -3503,7 +3608,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          all_books_csv_path=None,
                          finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None,
-                         wx_lookup=None, score_edges=None, kalshi_mids=None):
+                         wx_lookup=None, score_edges=None, kalshi_mids=None,
+                         ancillary_df=None, ancillary_csv_path=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -3524,7 +3630,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                                         win_negative_top10=win_negative_top10,
                                         wx_lookup=wx_lookup,
                                         score_edges=score_edges,
-                                        kalshi_mids=kalshi_mids)
+                                        kalshi_mids=kalshi_mids,
+                                        ancillary_df=ancillary_df)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -3554,6 +3661,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                 att.add_header(
                     "Content-Disposition", "attachment",
                     filename=os.path.basename(win_edges_csv_path),
+                )
+                msg.attach(att)
+
+        # Attach ancillary Kalshi edges CSV
+        if ancillary_csv_path and os.path.exists(ancillary_csv_path):
+            with open(ancillary_csv_path, "rb") as f:
+                att = MIMEApplication(f.read(), _subtype="csv")
+                att.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(ancillary_csv_path),
                 )
                 msg.attach(att)
 
@@ -3890,6 +4007,9 @@ def main():
                         help="Skip tournament simulation (matchups + score card only)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip email sending and bet storage")
+    parser.add_argument("--no-store", action="store_true",
+                        help="Send the email but skip bet storage + dashboard push "
+                             "(for test emails without writing bets)")
     parser.add_argument("--legacy", action="store_true",
                         help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
     parser.add_argument("--use-python", action="store_true",
@@ -4160,6 +4280,8 @@ def main():
     finish_equity_csv_path = None
     win_positive_top10 = pd.DataFrame()
     win_negative_top10 = pd.DataFrame()
+    ancillary_edges = pd.DataFrame()
+    ancillary_csv_path = None
 
     if not args.skip_tournament_sim and not args.price_only and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
@@ -4197,7 +4319,7 @@ def main():
 
                 # Simulate remaining rounds
                 print(f"    Simulating remaining rounds ({TOURNAMENT_SIMULATIONS:,} sims)...")
-                final_scores, made_cut_mask = simulate_remaining_rounds(
+                final_scores, made_cut_mask, r1_r2_standings, r1_r3_standings = simulate_remaining_rounds(
                     completed_round=round_num,
                     player_names=player_names,
                     known_strokes=known_data["strokes"],
@@ -4241,6 +4363,41 @@ def main():
                 print(f"    Saved final_scores_live_{tourney}.npy "
                       f"({final_scores.shape[0]} players x {final_scores.shape[1]:,} sims) "
                       f"+ player_names_live_{tourney}.json")
+
+                # End-of-R2 / end-of-R3 standings (RAW; cut applied downstream via
+                # made_cut_mask) for Kalshi round-leader / round-top-N pricing.
+                np.save(f"standings_r2_live_{tourney}.npy", r1_r2_standings)
+                np.save(f"standings_r3_live_{tourney}.npy", r1_r3_standings)
+                np.save(f"made_cut_live_{tourney}.npy", made_cut_mask)
+
+                # ── Price ancillary Kalshi markets (round leaders/top-N, playoff) ──
+                # Graceful: never let this break the existing pipeline.
+                try:
+                    import kalshi_ancillary as _ka
+                    print(f"    Pricing ancillary Kalshi markets...")
+                    ancillary_edges = _ka.price_ancillary_markets(
+                        {
+                            "player_names": player_names,
+                            "standings_r2": r1_r2_standings,
+                            "standings_r3": r1_r3_standings,
+                            "made_cut": made_cut_mask,
+                            "final_scores": final_scores,
+                            "pred_lookup": pred_lookup,
+                            "sim_dict": sim_dict_cf,
+                        },
+                        tourney, name_replacements,
+                        edge_threshold=EDGE_THRESHOLD_TOPN,
+                    )
+                    if not ancillary_edges.empty:
+                        ancillary_csv_path = f"kalshi_ancillary_edges_{tourney}.csv"
+                        ancillary_edges.to_csv(ancillary_csv_path, index=False)
+                        print(f"    Saved {ancillary_csv_path} "
+                              f"({len(ancillary_edges)} fillable ancillary edges)")
+                    else:
+                        print(f"    No fillable ancillary edges "
+                              f"(taker 300@ask+fee / maker ask-1c, spread<4c)")
+                except Exception as _anc_err:
+                    print(f"    Warning: ancillary Kalshi pricing failed: {_anc_err!r}")
 
                 # Price outrights against market
                 print(f"    Fetching outright odds and calculating edges...")
@@ -4442,6 +4599,14 @@ def main():
             sharp['type_on'] = (
                 sharp['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
             )
+            # type_a = archetype of the opponent (the player we're betting AGAINST)
+            _opp = sharp['Player 2'].where(
+                sharp['bet_on'].astype(str) == sharp['Player 1'].astype(str),
+                sharp['Player 1'],
+            )
+            sharp['type_a'] = (
+                _opp.astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+            )
         if not outrights_combined.empty:
             _fp_name_col = 'player_name' if 'player_name' in outrights_combined.columns else 'Player'
             outrights_combined['type_on'] = (
@@ -4521,12 +4686,14 @@ def main():
             wx_lookup=_wx_lookup,
             score_edges=score_edges,
             kalshi_mids=kalshi_mids,
+            ancillary_df=ancillary_edges,
+            ancillary_csv_path=ancillary_csv_path,
         )
     else:
         print(f"\n  [dry-run] Skipping email")
 
     # ── Storage ──────────────────────────────────────────────────────────────
-    if not args.dry_run:
+    if not args.dry_run and not args.no_store:
         from sheets_storage import (
             is_valid_run_time,
             get_spreadsheet,
@@ -4580,8 +4747,8 @@ def main():
     print(f"  Done.")
     print(f"{'='*60}")
 
-    # Push dashboard data to Render (skip on dry-run)
-    if not args.dry_run:
+    # Push dashboard data to Render (skip on dry-run / no-store)
+    if not args.dry_run and not args.no_store:
         try:
             from push_dashboard_data import copy_files, git_push
             print(f"\n{'='*60}")

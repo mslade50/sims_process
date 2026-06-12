@@ -292,7 +292,13 @@ fn run_remaining_rounds<'py>(
     use_10_shot_rule: bool,
     sims: usize,
     seed: u64,
-) -> (Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<bool>>, Bound<'py, PyArray1<f64>>) {
+) -> (
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<bool>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+) {
     use cascade::{CoeffR1, CoeffR2, CoeffR3};
     use round_cascade::{Inputs, KnownRound};
     let mu_v = mu.as_array();
@@ -338,12 +344,17 @@ fn run_remaining_rounds<'py>(
         cut_line, use_10_shot_rule,
     };
     let out = round_cascade::run_remaining_rounds(&inp);
-    let fs = numpy::ndarray::Array2::from_shape_vec((out.n, out.sims), out.final_scores).unwrap();
-    let mc = numpy::ndarray::Array2::from_shape_vec((out.n, out.sims), out.made_cut).unwrap();
+    let (no, ns2) = (out.n, out.sims);
+    let fs = numpy::ndarray::Array2::from_shape_vec((no, ns2), out.final_scores).unwrap();
+    let mc = numpy::ndarray::Array2::from_shape_vec((no, ns2), out.made_cut).unwrap();
+    let r2 = numpy::ndarray::Array2::from_shape_vec((no, ns2), out.r1_r2).unwrap();
+    let r3 = numpy::ndarray::Array2::from_shape_vec((no, ns2), out.r1_r3).unwrap();
     (
         fs.into_pyarray_bound(py),
         mc.into_pyarray_bound(py),
         out.win_prob.into_pyarray_bound(py),
+        r2.into_pyarray_bound(py),
+        r3.into_pyarray_bound(py),
     )
 }
 
