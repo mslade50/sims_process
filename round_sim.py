@@ -1224,26 +1224,42 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
             params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
             if cursor:
                 params["cursor"] = cursor
-            resp = _client.get(f"{_KALSHI_API}/markets", params=params)
-            resp.raise_for_status()
-            data = resp.json()
+            # Retry on 429 (back-to-back page requests throttle) + accumulate partial
+            # pages, so a transient rate-limit no longer silently drops a whole series.
+            data = None
+            for attempt in range(4):
+                resp = _client.get(f"{_KALSHI_API}/markets", params=params)
+                if resp.status_code == 429:
+                    wait = float(resp.headers.get("Retry-After", 0) or 0) or 0.5 * (attempt + 1)
+                    _time.sleep(min(wait, 5.0))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            if data is None:
+                print(f"  [warn] {series_ticker}: throttled (429) — returning {len(all_mkts)} partial markets")
+                break
             mkts = data.get("markets", [])
             all_mkts.extend(mkts)
             cursor = data.get("cursor")
             if not cursor or len(mkts) < 200:
                 break
+            _time.sleep(0.05)   # inter-page courtesy sleep
         return all_mkts
 
     def _get_orderbook(ticker):
         resp = _client.get(f"{_KALSHI_API}/markets/{ticker}/orderbook")
         resp.raise_for_status()
         data = resp.json()
-        ob = data.get("orderbook", data.get("orderbook_fp", data))
+        ob = data.get("orderbook_fp", data.get("orderbook", data))   # _fp-first (safe)
         def parse_levels(raw):
             out = []
             for item in (raw or []):
                 if isinstance(item, list) and len(item) == 2:
-                    out.append((float(item[0]), int(float(item[1]))))
+                    price = float(item[0])
+                    if price > 1:        # bare-cents integer arrays -> dollars
+                        price /= 100.0
+                    out.append((price, int(float(item[1]))))
             return out
         return {
             "yes": parse_levels(ob.get("yes_dollars") or ob.get("yes", [])),
