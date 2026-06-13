@@ -4400,6 +4400,7 @@ def main():
                             "final_scores": final_scores,
                             "pred_lookup": pred_lookup,
                             "sim_dict": sim_dict_cf,
+                            "completed_round": round_num,
                         },
                         tourney, name_replacements,
                         edge_threshold=EDGE_THRESHOLD_TOPN,

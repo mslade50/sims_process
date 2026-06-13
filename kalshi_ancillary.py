@@ -402,6 +402,7 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
     pickup_report = []          # per-series {series, raw, matched, target, reason, ambiguous}
     field_set = set(players)
     event_tag = sim_data.get("event_tag")   # optional sim_inputs.kalshi_event_tags override
+    completed_round = int(sim_data.get("completed_round", 0))
 
     def _match_single(series, kind="subtitle"):
         """Fetch + sim-player-overlap match a single-event series; record the report."""
@@ -428,6 +429,12 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
     for series, (mtype, src, col) in PLAYER_SERIES.items():
         table = fair_tables.get(src)
         if table is None:
+            continue
+        # Skip a round's markets once that round is complete: they're SETTLED for our
+        # event, and the only OPEN ones belong to a FUTURE event whose field overlaps
+        # ours (e.g. at R2-complete, KXPGAR2LEAD only has next week's US Open markets).
+        series_round = 2 if src == "standings_r2" else 3
+        if completed_round >= series_round:
             continue
         markets = _match_single(series, kind="subtitle")
         rep = pickup_report[-1]
