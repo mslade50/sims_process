@@ -890,9 +890,10 @@ def grade_finish_position(row, results_df):
     elif dead_heat_factor > 0:
         # Partial win due to dead heat
         result = "win_dh"  # Dead heat win
-        # Dead heat: you win (factor * profit) and get back (factor * stake) + ((1-factor) * stake pushed)
-        # Simplified: profit = stake * (decimal_odds - 1) * dead_heat_factor
-        units_won = units_wagered * (decimal_odds - 1) * dead_heat_factor
+        # Standard dead-heat settlement: stake splits into a winning fraction
+        # (factor) settled at full odds and a losing fraction (1 - factor) that
+        # is LOST, not pushed. Net P&L = stake * (decimal_odds * factor - 1).
+        units_won = units_wagered * (decimal_odds * dead_heat_factor - 1)
     else:
         # Dead heat resulted in effective loss (rare edge case)
         result = "loss"
