@@ -224,6 +224,9 @@ grouped_bankroll_*.xlsx
 # Distribution adjustment files (generated per tournament)
 this_week_dists_adjusted.csv
 
+# Local machine state: last event synced by .githooks/post-merge (sync_event_files.py)
+.synced_event
+
 # =============================================================================
 # EXCEPTIONS: Files that SHOULD be committed
 # =============================================================================

@@ -429,6 +429,23 @@ def _filter_to_active_players(result, completed_round):
         active = set(names[field[teetime_col].notna()])
         active_mask = np.array([p in active for p in players])
         source = f"R{next_round} tee times"
+
+        # Guard: the next-round tee-time field should be (almost) a subset of the
+        # players we loaded known-rounds data for. If fewer than 90% of the tee-time
+        # players are present in the known-rounds set, the r*_live_model.csv are
+        # almost certainly from a DIFFERENT event than the current field (the
+        # Memorial-vs-RBC bug). Abort loudly instead of simulating a stale field and
+        # storing garbage bets.
+        n_field_active = len(active)
+        match_rate = int(active_mask.sum()) / n_field_active if n_field_active else 0.0
+        if match_rate < 0.90:
+            raise RuntimeError(
+                f"Field/known-rounds event mismatch: only {int(active_mask.sum())}/"
+                f"{n_field_active} ({match_rate:.0%}) of R{next_round} tee-time players "
+                f"are present in the loaded known-rounds data (r*_live_model.csv). This "
+                f"means the live-model files are from a different event than the current "
+                f"field. Regenerate the live models for the current event before simulating."
+            )
     elif result.get("made_cut") is not None:
         active_mask = np.asarray(result["made_cut"], dtype=bool)
         source = "computed cut line (tee times unavailable)"
