@@ -210,9 +210,19 @@ def _get_markets(client, series_ticker):
 
 
 def _get_orderbook(client, ticker):
-    resp = client.get(f"{KALSHI_API}/markets/{ticker}/orderbook")
-    resp.raise_for_status()
-    data = resp.json()
+    # Retry on 429 (per-market orderbook reads throttle on bursts) before giving up.
+    data = None
+    for attempt in range(4):
+        resp = client.get(f"{KALSHI_API}/markets/{ticker}/orderbook")
+        if resp.status_code == 429:
+            wait = float(resp.headers.get("Retry-After", 0) or 0) or 0.5 * (attempt + 1)
+            time.sleep(min(wait, 5.0))
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        break
+    if data is None:
+        return {"yes": [], "no": []}   # throttled out -> empty book (caller skips the market)
     ob = data.get("orderbook_fp", data.get("orderbook", data))   # _fp-first (safe)
 
     def parse(raw):
