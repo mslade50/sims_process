@@ -64,6 +64,11 @@ TAB_SCORE_EDGES = "Score Edges"
 
 DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
 
+# Minimum Kelly edge (sim_prob * decimal_odds - 1, i.e. EV per unit staked) to
+# log a finish-position bet. Matches the dashboard's Kelly-EV metric. Matchups
+# are NOT subject to this gate.
+MIN_KELLY_EDGE = 0.05
+
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
 
@@ -422,6 +427,31 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
         if combined_finish_df.empty:
             print("  [storage] No finish position bets remaining after stake filter.")
             return
+
+    # Filter out bets below the Kelly-edge threshold. Kelly edge =
+    # sim_prob * decimal_odds - 1 (EV per unit staked). The stored `edge` column
+    # is a *probability* edge, so it cannot be used here. Rows whose edge can't
+    # be computed (missing sim_prob/odds) are kept and warned about, never
+    # silently dropped.
+    def _kelly_edge(r):
+        sp = _safe_float(_extract_sim_prob(r))
+        d = _safe_float(_get(r, "decimal_odds", default=None))
+        if np.isnan(sp) or np.isnan(d):
+            return np.nan
+        return sp * d - 1.0
+
+    ke = combined_finish_df.apply(_kelly_edge, axis=1)
+    before = len(combined_finish_df)
+    n_unknown = int(ke.isna().sum())
+    combined_finish_df = combined_finish_df[(ke >= MIN_KELLY_EDGE) | ke.isna()].copy()
+    dropped = before - len(combined_finish_df)
+    if dropped:
+        print(f"  [storage] Filtered out {dropped} finish position rows with Kelly edge < {MIN_KELLY_EDGE:.0%}")
+    if n_unknown:
+        print(f"  [storage] WARNING: {n_unknown} finish position rows had uncomputable Kelly edge (kept)")
+    if combined_finish_df.empty:
+        print("  [storage] No finish position bets remaining after Kelly-edge filter.")
+        return
 
     year = datetime.now().year
     ts = _now_est_iso()
