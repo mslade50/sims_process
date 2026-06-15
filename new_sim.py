@@ -585,6 +585,13 @@ r4_mu = indexer['r4_pred'].reindex(player_names).to_numpy(dtype=float)
 my_pred_base = indexer['my_pred'].reindex(player_names).to_numpy(dtype=float)
 round_std = indexer['std'].reindex(player_names).to_numpy(dtype=float)  # for validation only
 
+# Field-average skill = mean my_pred over the field (matches the Rust/ETR sim's
+# ModelPredictions::field_skill = sum(my_pred)/n). Added to the R1 skill-update
+# residual so the residual baseline matches the ETR sim:
+#   resid_r1 = sg_r1 + field_skill - my_pred   (was: sg_r1 - my_pred)
+field_skill = float(np.nanmean(my_pred_base))
+print(f"[skill] field_skill (mean my_pred over field) = {field_skill:.4f}")
+
 print(f"\n[sim] {n_players} players, {SIMULATIONS:,} simulations")
 
 
@@ -670,7 +677,7 @@ if not args.price_only:
         # ======================
         # R1 -> R2 skill update (same logic as v1)
         # ======================
-        resid_r1  = sg_r1 - my_pred_base[:, None]
+        resid_r1  = sg_r1 + field_skill - my_pred_base[:, None]
         resid2_r1 = resid_r1**2
         ott_r1    = cats_r1[:, :, 0]
         putt_r1   = cats_r1[:, :, 3]
@@ -1075,27 +1082,53 @@ if not args.price_only:
     long_df = df_long.melt(id_vars='simulation_id', var_name='player_name', value_name='score')
     long_df['rank'] = long_df.groupby('simulation_id')['score'].rank(method='min')
 
-    def dead_heat_factor(position, tie_count, threshold):
-        start = position
-        end = position + tie_count - 1
-        overlap_start = max(start, 1)
-        overlap_end = min(end, threshold)
-        overlap_count = max(0, overlap_end - overlap_start + 1)
-        return overlap_count / tie_count
+    # Top-5/10/20 dead-heat finish probabilities via the Rust kernel
+    # (sims_kernel.aggregate_round) — the same path round_sim uses. Replaces the
+    # 100k-group x 156-row iterrows loop that was the ~7-minute bottleneck.
+    # aggregate_round returns top_dh ALREADY divided by sims (probabilities),
+    # validated integer-exact vs the pandas dead-heat (~1e-15). Falls back to the
+    # pandas loop on --use-python or any Rust error.
+    topn_df = None
+    if not args.use_python:
+        try:
+            import sims_kernel as _sk
+            _fs = np.ascontiguousarray(np.asarray(final_scores, dtype=np.int64))
+            _, _top_dh, _ = _sk.aggregate_round(_fs)
+            topn_df = pd.DataFrame({
+                "player_name": list(player_names),
+                "top_5":  _top_dh[:, 0],
+                "top_10": _top_dh[:, 1],
+                "top_20": _top_dh[:, 2],
+            })
+            print(f"[rust] top-5/10/20 via sims_kernel.aggregate_round "
+                  f"({n_players} players x {SIMULATIONS:,} sims)")
+        except Exception as _agg_err:
+            print(f"[rust] WARNING: aggregate_round top-N failed ({_agg_err!r}); "
+                  f"falling back to pandas loop. Pass --use-python to silence.")
+            topn_df = None
 
-    player_stats = {p: {"top_5": 0.0, "top_10": 0.0, "top_20": 0.0} for p in player_names}
-    for sim_id, group in long_df.groupby("simulation_id", sort=False):
-        pos_counts = group['rank'].value_counts().to_dict()
-        for _, row in group.iterrows():
-            p = row['player_name']
-            pos = int(row['rank'])
-            tie_ct = pos_counts[pos]
-            player_stats[p]["top_5"]  += dead_heat_factor(pos, tie_ct, 5)
-            player_stats[p]["top_10"] += dead_heat_factor(pos, tie_ct, 10)
-            player_stats[p]["top_20"] += dead_heat_factor(pos, tie_ct, 20)
+    if topn_df is None:
+        def dead_heat_factor(position, tie_count, threshold):
+            start = position
+            end = position + tie_count - 1
+            overlap_start = max(start, 1)
+            overlap_end = min(end, threshold)
+            overlap_count = max(0, overlap_end - overlap_start + 1)
+            return overlap_count / tie_count
 
-    topn_df = pd.DataFrame.from_dict(player_stats, orient='index')
-    topn_df = topn_df.div(SIMULATIONS).reset_index().rename(columns={'index': 'player_name'})
+        player_stats = {p: {"top_5": 0.0, "top_10": 0.0, "top_20": 0.0} for p in player_names}
+        for sim_id, group in long_df.groupby("simulation_id", sort=False):
+            pos_counts = group['rank'].value_counts().to_dict()
+            for _, row in group.iterrows():
+                p = row['player_name']
+                pos = int(row['rank'])
+                tie_ct = pos_counts[pos]
+                player_stats[p]["top_5"]  += dead_heat_factor(pos, tie_ct, 5)
+                player_stats[p]["top_10"] += dead_heat_factor(pos, tie_ct, 10)
+                player_stats[p]["top_20"] += dead_heat_factor(pos, tie_ct, 20)
+        topn_df = pd.DataFrame.from_dict(player_stats, orient='index')
+        topn_df = topn_df.div(SIMULATIONS).reset_index().rename(columns={'index': 'player_name'})
+
     topn_df.to_csv(f"top_finish_probs_{tourney}.csv", index=False)
 
     finish_equity_df = pd.merge(sim_win_probs, topn_df, on="player_name", how="outer").fillna(0)
