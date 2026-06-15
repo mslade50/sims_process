@@ -1639,6 +1639,111 @@ def compute_sg_category_variance_analysis(event_id_list, min_year, course_id=Non
     }
 
 
+# Earliest year reliably present in dg_historical.db — floor for the "venue's own
+# older history" lookup used when an intermittent host has no in-window playing.
+PRE_WINDOW_MIN_YEAR = 2017
+
+# Rotating-major event_ids whose host venue changes year to year (PGA=33,
+# US Open=26, Open Championship=100). For these the per-category variance almost
+# always falls back to event-level (the venue rarely has in-window history), so
+# blending the venue's own pre-window same-course profile is ON by default.
+# The Masters (14) is intentionally excluded: it never leaves Augusta National,
+# so it always has in-window same-course data and never falls back — the blend
+# would never fire anyway.
+ROTATING_MAJOR_EVENT_IDS = {26, 33, 100}
+
+# Pre-window same-course variance blend. Default ON for rotating majors, OFF
+# otherwise; override with --blend-prewindow-course / --no-blend-prewindow-course.
+# Set in main() from argparse; mirrors the _USE_PYTHON flag pattern.
+_BLEND_PREWINDOW_COURSE = any(eid in ROTATING_MAJOR_EVENT_IDS for eid in event_ids)
+
+
+def _course_has_rounds_since(event_id_list, course_id, min_year):
+    """True if this exact venue has any rounds at the event within [min_year, now]."""
+    if course_id is None:
+        return True
+    conn = sqlite3.connect(DG_HISTORICAL_DB)
+    placeholders = ",".join("?" * len(event_id_list))
+    n = conn.execute(
+        f"SELECT COUNT(*) FROM player_rounds "
+        f"WHERE event_id IN ({placeholders}) AND course_num = ? "
+        f"AND year >= ? AND tour = ?",
+        list(event_id_list) + [course_id, min_year, tour_override],
+    ).fetchone()[0]
+    conn.close()
+    return n > 0
+
+
+def _maybe_blend_prewindow_course(event_result, event_id_list, course_id):
+    """50/50-blend the venue's own pre-window history into an event-level result.
+
+    The per-category analysis falls back to EVENT-LEVEL (all venues since start_yr)
+    when this exact venue has no playing within the standard window. Rotating
+    majors (US Open, Open Championship) revisit venues on long cycles, so a
+    venue's only same-course data can predate start_yr (e.g. Shinnecock last
+    hosted in 2018). Equal-weighting the venue's own variance/skew profile against
+    the all-venues event profile preserves course-specific structure instead of
+    discarding it.
+
+    OPT-IN: only runs when --blend-prewindow-course is passed (_BLEND_PREWINDOW_COURSE).
+    Default behaviour keeps the plain event-level values; on weeks where a blend is
+    possible it prints a one-line note so the option is discoverable.
+
+    No-op (returns event_result unchanged) when: the flag is off, no course filter,
+    the venue already has in-window data (no fallback occurred), or no pre-window
+    same-course data exists.
+    """
+    if event_result is None or course_id is None:
+        return event_result
+    # Only relevant if the main result actually fell back to event-level.
+    if _course_has_rounds_since(event_id_list, course_id, start_yr):
+        return event_result
+    # Require genuine pre-window same-course history; otherwise the pre-window
+    # call would itself fall back to event-level and we'd blend a result with
+    # itself (true debut venue). Keep the event-level values in that case.
+    if not _course_has_rounds_since(event_id_list, course_id, PRE_WINDOW_MIN_YEAR):
+        return event_result
+    # Fell back to event-level AND this venue has its own pre-window history: an
+    # intermittent-host (rotating major) week. Blending is opt-in — surface the
+    # option but default to event-level.
+    if not _BLEND_PREWINDOW_COURSE:
+        print(f"  [sg_cat_var] NOTE: course {course_id} has same-course history "
+              f"before {start_yr} that could be blended in. Using event-level "
+              f"values (default). Re-run with --blend-prewindow-course to "
+              f"50/50-blend this venue's own variance/skew profile.")
+        return event_result
+    # Same-venue history that predates the standard window.
+    pre = compute_sg_category_variance_analysis(
+        event_id_list, min_year=PRE_WINDOW_MIN_YEAR, course_id=course_id)
+    if pre is None:
+        print(f"  [sg_cat_var] No pre-{start_yr} same-course history for course "
+              f"{course_id} — keeping event-level values.")
+        return event_result
+
+    pre_years = sorted({r["year"] for r in pre["per_year"]})
+    CAT_NAMES = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
+    print(f"\n  [sg_cat_var] 50/50 BLEND: same-course {pre_years} vs "
+          f"event-level (all venues since {start_yr})")
+    print(f"  {'Cat':>8} | {'Course':>7} | {'Event':>7} | {'Blend':>7}   "
+          f"skew crse/evt->bln")
+    blended_mults, blended_skew = {}, {}
+    for name in CAT_NAMES:
+        mc = pre["category_mults"].get(name, 1.0)
+        me = event_result["category_mults"].get(name, 1.0)
+        sc = pre["category_skew"].get(name, 0.0)
+        se = event_result["category_skew"].get(name, 0.0)
+        blended_mults[name] = round(0.5 * mc + 0.5 * me, 2)
+        blended_skew[name] = round(0.5 * sc + 0.5 * se, 2)
+        print(f"  {name:>8} | {mc:>7} | {me:>7} | {blended_mults[name]:>7}   "
+              f"{sc:+.2f}/{se:+.2f}->{blended_skew[name]:+.2f}")
+
+    event_result["category_mults"] = blended_mults
+    event_result["category_skew"] = blended_skew
+    event_result["blend_note"] = (
+        f"50/50 blend: course {pre_years} + event-level since {start_yr}")
+    return event_result
+
+
 def _write_details_tab(spreadsheet, table_rows, regression, sg_result,
                        sg_cat_result, field_strength, wind_factor, cut_adj):
     """
@@ -1865,6 +1970,7 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
         regression = compute_wind_variance_regression(detail_df)
         sg_result = compute_sg_variance_analysis(historical_event_ids, min_year=start_yr)
         sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr, course_id=course_id)
+        sg_cat_result = _maybe_blend_prewindow_course(sg_cat_result, historical_event_ids, course_id)
 
     # --- Cut adjustment for R3/R4 ---
     cut_adj = 0.25 if CUT_LINE < 120 else 0.0
@@ -1989,8 +2095,10 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
                 if skew_row_idx:
                     cells.append(gspread.Cell(row=skew_row_idx, col=2,
                                              value=str(cat_skew.get(cat_key, 0))))
+            blend_note = sg_cat_result.get("blend_note")
             updated_params.append(
                 f"cat_mult/skew auto-set from {len(sg_cat_result['per_year'])} year(s)"
+                + (f" [{blend_note}]" if blend_note else "")
             )
 
         # 3) Clear old analysis tables from cols E-S, rows 22-64
@@ -2137,10 +2245,33 @@ def prompt_coefficient_approval(wind_factor, course_wind_effect):
 # ===========================================================================
 
 def main():
+    global _BLEND_PREWINDOW_COURSE
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Scoring baselines + expected scores + variance profiles.")
+    blend_grp = parser.add_mutually_exclusive_group()
+    blend_grp.add_argument(
+        "--blend-prewindow-course", dest="blend_prewindow_course",
+        action="store_true",
+        help=(f"Force ON: 50/50-blend this venue's own pre-{start_yr} same-course "
+              f"variance/skew when the category analysis falls back to event-level "
+              f"(e.g. Shinnecock 2018). Default ON for rotating majors "
+              f"{sorted(ROTATING_MAJOR_EVENT_IDS)}, OFF otherwise."))
+    blend_grp.add_argument(
+        "--no-blend-prewindow-course", dest="blend_prewindow_course",
+        action="store_false",
+        help="Force OFF: always use plain event-level variance (no pre-window blend).")
+    parser.set_defaults(blend_prewindow_course=_BLEND_PREWINDOW_COURSE)
+    args = parser.parse_args()
+
+    _BLEND_PREWINDOW_COURSE = args.blend_prewindow_course
+
     print(f"\n{'='*80}")
     print(f"  SCORING BASELINE PIPELINE")
     print(f"  Tournament: {tourney} | Event IDs: {event_ids} | Course ID: {course_id}")
     print(f"  Par: {course_par} | Start Year: {start_yr}")
+    print(f"  Pre-window same-course blend: "
+          f"{'ON (50/50)' if _BLEND_PREWINDOW_COURSE else 'OFF (event-level)'}")
     print(f"{'='*80}\n")
 
     # Step 2: Get coordinates
