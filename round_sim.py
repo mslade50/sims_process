@@ -70,6 +70,9 @@ TOURNAMENT_SIMULATIONS = 100_000  # For tournament sim (R through R4)
 
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
+# Email banner warns (orange) when a sharp book prices fewer than this many
+# matchup lines, and flags red at 0 ("NO LINES") — catches a book offline / barely posting.
+MATCHUP_LINE_WARN_THRESHOLD = 10
 
 # Score card: generate fair UNDER prices at these offsets from expected avg
 SCORE_CARD_RANGE = 3.0        # +-3 strokes from expected
@@ -3111,7 +3114,7 @@ def load_sample_data():
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
                              win_positive_top10=None, win_negative_top10=None,
                              wx_lookup=None, score_edges=None, kalshi_mids=None,
-                             ancillary_df=None):
+                             ancillary_df=None, matchup_book_counts=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -3121,6 +3124,35 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         - bet_on player's sample > EMAIL_MIN_SAMPLE
     """
     from kalshi_ancillary import kelly_contracts  # 0.4-Kelly $50k contract sizing
+
+    # --- Sharp-book matchup line-count banner (top of email) ---
+    # Confirms how many matchup lines were priced from each sharp book so a book
+    # that's offline (0) or barely posting (< threshold) is obvious at a glance.
+    book_lines_html = ""
+    if matchup_book_counts is not None:
+        _disp = {"pinnacle": "Pinnacle", "betonline": "BetOnline", "betcris": "BetCris"}
+        _cells, _alert = [], False
+        for _b in SHARP_BOOKS:
+            _n = int(matchup_book_counts.get(_b, 0))
+            if _n == 0:
+                _c, _tag, _alert = "#c0392b", " &#9888; NO LINES", True
+            elif _n < MATCHUP_LINE_WARN_THRESHOLD:
+                _c, _tag, _alert = "#e67e22", " &#9888; few", True
+            else:
+                _c, _tag = "#1e7e34", ""
+            _cells.append(
+                f'<span style="color:{_c}; font-weight:bold;">{_disp.get(_b, _b.title())}: {_n}{_tag}</span>'
+            )
+        _bg = "#fdecea" if _alert else "#eef7ee"
+        _border = "#c0392b" if _alert else "#1e7e34"
+        book_lines_html = (
+            f'<div style="background:{_bg}; border-left:4px solid {_border}; '
+            f'padding:8px 12px; margin:8px 0; font-size:13px;">'
+            f'<strong>Matchup lines priced</strong> &nbsp; '
+            + ' &nbsp;&middot;&nbsp; '.join(_cells)
+            + '</div>'
+        )
+
     matchups_html = ""
     if not sharp_df.empty:
         # Filter: pred and sample thresholds on the bet_on side
@@ -3633,6 +3665,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         <h2 style="margin-bottom:4px;">R{sim_round} Round Sim - {tourney.replace('_', ' ').title()}</h2>
         <p style="color:#666; margin-top:0;">{datetime.now().strftime('%B %d, %Y %I:%M %p')}</p>
 
+        {book_lines_html}
+
         {matchups_html}
 
         {score_edges_html}
@@ -3668,7 +3702,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          finish_equity_csv_path=None,
                          win_positive_top10=None, win_negative_top10=None,
                          wx_lookup=None, score_edges=None, kalshi_mids=None,
-                         ancillary_df=None, ancillary_csv_path=None):
+                         ancillary_df=None, ancillary_csv_path=None,
+                         matchup_book_counts=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -3690,7 +3725,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                                         wx_lookup=wx_lookup,
                                         score_edges=score_edges,
                                         kalshi_mids=kalshi_mids,
-                                        ancillary_df=ancillary_df)
+                                        ancillary_df=ancillary_df,
+                                        matchup_book_counts=matchup_book_counts)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -4248,11 +4284,17 @@ def main():
 
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
+    matchup_book_counts = {b: 0 for b in SHARP_BOOKS}  # sharp-book line counts for email banner
     try:
         from odds_loader import load_matchup_odds
         matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY)
         matchup_df = price_matchups(matchup_df, sim_dict)
         matchup_df = calculate_edges(matchup_df)
+        if "Bookmaker" in matchup_df.columns and not matchup_df.empty:
+            _vc = matchup_df["Bookmaker"].astype(str).str.lower().value_counts()
+            matchup_book_counts = {b: int(_vc.get(b, 0)) for b in SHARP_BOOKS}
+        print("  Matchup lines priced per sharp book: "
+              + ", ".join(f"{b}={matchup_book_counts[b]}" for b in SHARP_BOOKS))
         combined, sharp = build_matchup_outputs(
             matchup_df, sim_round, pred_lookup, sample_lookup, wx_lookup=_wx_lookup
         )
@@ -4763,6 +4805,7 @@ def main():
                 wx_lookup=_wx_lookup,
                 score_edges=score_edges,
                 kalshi_mids=kalshi_mids,
+                matchup_book_counts=matchup_book_counts,
             )
 
         print(f"\n{'='*60}\n  Done (--reprice).\n{'='*60}")
@@ -4789,6 +4832,7 @@ def main():
             kalshi_mids=kalshi_mids,
             ancillary_df=ancillary_edges,
             ancillary_csv_path=ancillary_csv_path,
+            matchup_book_counts=matchup_book_counts,
         )
     else:
         print(f"\n  [dry-run] Skipping email")
