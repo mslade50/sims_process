@@ -27,6 +27,31 @@ jobs:
         echo "🗑️  Starting weekly data cleanup..."
         echo "================================================"
         
+        # Current tournament slug from sim_inputs.py (regex parse — no import, no deps).
+        # Files & folders whose name contains this slug are CURRENT-WEEK and MUST be
+        # preserved; only data tied to PAST weeks is cleaned. Abort if unreadable
+        # (fail safe rather than risk deleting current-week files).
+        TOURNEY=$(sed -nE "s/^tourney[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" sim_inputs.py | head -1 | tr '[:upper:]' '[:lower:]')
+        if [ -z "$TOURNEY" ]; then
+          echo "❌ Could not read current tourney from sim_inputs.py — aborting (refuse to delete current-week files)."
+          exit 1
+        fi
+        echo "📅 Current tournament (PRESERVED): $TOURNEY"
+        echo ""
+
+        # Exclusions applied to every data sweep: the current tourney slug plus the
+        # tracked generic current-week artifacts that carry no slug (round H2H fair
+        # tables, round samples, and the rebuilt-weekly distribution files). Anything
+        # tied to the active week is kept. NOTE: if a new tracked generic per-week
+        # file is added, list it here or the next cleanup will delete it.
+        KEEP=(
+          ! -name "*${TOURNEY}*"
+          ! -name "round_h2h_r*.parquet"
+          ! -name "round_samples.parquet"
+          ! -name "sg_dist_player.csv"
+          ! -name "this_week_dists_v2.csv"
+        )
+
         # Count files before cleanup
         csv_count=$(find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" | wc -l)
         xlsx_count=$(find . -maxdepth 1 -name "*.xlsx" | wc -l)
@@ -38,44 +63,45 @@ jobs:
         echo "  - Text files in root: $txt_count"
         echo ""
         
-        # List files that will be deleted (for logging)
-        echo "📋 CSV files to be removed:"
-        find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" -type f
+        # List files that will be deleted (for logging) — current-week files excluded
+        echo "📋 Past-week CSV files to be removed (current week '$TOURNEY' kept):"
+        find . -maxdepth 1 -name "*.csv" "${KEEP[@]}" ! -path "./permanent_data/*" -type f
         echo ""
-        
-        echo "📋 Excel files to be removed:"
-        find . -maxdepth 1 -name "*.xlsx" -type f
+
+        echo "📋 Past-week Excel files to be removed:"
+        find . -maxdepth 1 -name "*.xlsx" "${KEEP[@]}" -type f
         echo ""
-        
-        echo "📋 Tournament folders to be removed:"
+
+        echo "📋 Past-week tournament folders to be removed:"
         find . -maxdepth 1 -type d \
           ! -name "." ! -name ".." \
           ! -name ".git" ! -name ".github" ! -name ".githooks" ! -name ".claude" \
           ! -name "__pycache__" \
           ! -name "permanent_data" ! -name "backups" \
           ! -name "dashboard" ! -name "dashboard_data" ! -name "maker_dashboard" \
-          ! -name "archive" ! -name "rust"
+          ! -name "archive" ! -name "rust" \
+          ! -name "*${TOURNEY}*"
         echo ""
         
-        # Delete CSV files (except in permanent_data folder)
-        echo "🗑️  Deleting CSV files..."
-        find . -maxdepth 1 -name "*.csv" ! -path "./permanent_data/*" -type f -delete
-        
-        # Delete Excel files
-        echo "🗑️  Deleting Excel files..."
-        find . -maxdepth 1 -name "*.xlsx" -type f -delete
+        # Delete CSV files (except permanent_data/ and current-week files)
+        echo "🗑️  Deleting past-week CSV files..."
+        find . -maxdepth 1 -name "*.csv" "${KEEP[@]}" ! -path "./permanent_data/*" -type f -delete
+
+        # Delete Excel files (except current-week)
+        echo "🗑️  Deleting past-week Excel files..."
+        find . -maxdepth 1 -name "*.xlsx" "${KEEP[@]}" -type f -delete
         
         # Delete text files (scraped sportsbook data) — protect requirements.txt
         echo "🗑️  Deleting text files..."
         find . -maxdepth 1 -name "*.txt" ! -name "requirements.txt" -type f -delete
 
-        # Delete Parquet files in root (not permanent_data/)
-        echo "🗑️  Deleting root Parquet files..."
-        find . -maxdepth 1 -name "*.parquet" -type f -delete
+        # Delete Parquet files in root (not permanent_data/, not current-week)
+        echo "🗑️  Deleting past-week root Parquet files..."
+        find . -maxdepth 1 -name "*.parquet" "${KEEP[@]}" -type f -delete
 
-        # Delete PDF files in root
-        echo "🗑️  Deleting PDF files..."
-        find . -maxdepth 1 -name "*.pdf" -type f -delete
+        # Delete PDF files in root (except current-week)
+        echo "🗑️  Deleting past-week PDF files..."
+        find . -maxdepth 1 -name "*.pdf" "${KEEP[@]}" -type f -delete
 
         # Delete stale artifacts (Windows nul file, etc.)
         rm -f ./nul 2>/dev/null || true
@@ -101,23 +127,22 @@ jobs:
           ! -name "maker_dashboard" \
           ! -name "archive" \
           ! -name "rust" \
+          ! -name "*${TOURNEY}*" \
           -exec rm -rf {} + 2>/dev/null || true
 
-        # Clear tournament-specific dashboard_data/ files (keep persistent data for Render)
-        echo "🗑️  Clearing tournament-specific dashboard_data/ files..."
-        find ./dashboard_data -type f \
-          ! -name ".gitkeep" \
-          ! -name "sg_diagnostic.parquet" \
-          ! -name "luck_attribution.parquet" \
-          -delete 2>/dev/null || true
+        # dashboard_data/ is intentionally NOT cleared: it holds the CURRENT week's
+        # data under generic filenames (model_predictions_*, sg_dist_player, etc.),
+        # is overwritten every week by push_dashboard_data, and is served live by
+        # Render. Wiping it mid-week deleted current-week files (the bug this fix
+        # addresses); since it self-overwrites it never accumulates stale data.
+        echo "ℹ️  Skipping dashboard_data/ (current-week data, overwritten weekly by push_dashboard_data)."
 
-        # Clear committed per-tournament prep that lives UNDER permanent_data/ (so it
-        # is missed by the root-CSV sweep). Root prep (final_predictions_*, pre_course_fit_*,
-        # this_week_dists_v2, sg_dist_player) is already removed above. This is a TARGETED
-        # pattern — it must NOT touch the permanent reference data (correlation matrices,
-        # bet_ledger.parquet, sg_diagnostic.parquet, wind_test.csv, course_coordinates.csv).
-        echo "🗑️  Clearing stale per-tournament prep under permanent_data/..."
-        rm -f permanent_data/avg_expected_cat_sg_*.csv 2>/dev/null || true
+        # Clear PAST-week per-tournament prep under permanent_data/ — keep the CURRENT
+        # tourney and all permanent reference data (correlation matrices, bet_ledger,
+        # sg_diagnostic, wind_test, course_coordinates).
+        echo "🗑️  Clearing past-week per-tournament prep under permanent_data/ (keeping ${TOURNEY})..."
+        find permanent_data -maxdepth 1 -type f -name "avg_expected_cat_sg_*.csv" \
+          ! -name "*${TOURNEY}*" -delete 2>/dev/null || true
 
         echo ""
         echo "✅ Cleanup complete!"
@@ -133,16 +158,18 @@ jobs:
         echo "================================================"
         echo "🎯 CLEANUP SUMMARY"
         echo "================================================"
-        echo "✅ Deleted all CSV files (except permanent_data/)"
-        echo "✅ Deleted all Excel workbooks"
-        echo "✅ Deleted all text files"
-        echo "✅ Deleted all tournament folders"
-        echo "✅ Cleared tournament files from dashboard_data/ (kept sg_diagnostic, luck_attribution)"
+        echo "✅ Deleted PAST-week CSV files (kept current week + permanent_data/)"
+        echo "✅ Deleted PAST-week Excel workbooks"
+        echo "✅ Deleted all text files (except requirements.txt)"
+        echo "✅ Deleted PAST-week tournament folders (kept current week's folder)"
+        echo "✅ Cleared PAST-week prep from permanent_data/ (kept current tourney)"
+        echo "ℹ️  dashboard_data/ left intact (current-week data, overwritten weekly)"
         echo ""
-        echo "📁 Protected folders:"
+        echo "📁 Protected (always kept):"
+        echo "  - Anything tied to the current week (tourney slug from sim_inputs.py)"
         echo "  - permanent_data/ (correlation matrices, reference data)"
         echo "  - dashboard/ (dashboard app code)"
-        echo "  - dashboard_data/ (staging dir, cleared)"
+        echo "  - dashboard_data/ (current-week data for Render)"
         echo "  - backups/ (code backups)"
         echo "  - .github/ (workflows)"
         echo "  - .git/ (version control)"
