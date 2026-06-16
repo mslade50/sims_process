@@ -62,6 +62,20 @@ def _read_parquet_safe(path):
         return pd.DataFrame()
 
 
+# Bookmakers to exclude from every dashboard view (defunct / unwanted).
+# PointsBet exited the US market (rebranded to Fanatics in 2023); its stale
+# rows should not appear in bet history, ROI-by-book, matchups, or filters.
+EXCLUDED_BOOKMAKERS = ["pointsbet"]
+
+
+def _drop_excluded_books(df):
+    """Drop rows from excluded bookmakers (case-insensitive substring match)."""
+    if df.empty or "bookmaker" not in df.columns or not EXCLUDED_BOOKMAKERS:
+        return df
+    pattern = "|".join(EXCLUDED_BOOKMAKERS)
+    return df[~df["bookmaker"].astype(str).str.lower().str.contains(pattern, na=False)]
+
+
 # ── Tournament Config ────────────────────────────────────────────────────────
 
 def get_tournament_config():
@@ -307,6 +321,9 @@ def _load_all_bets_from_sheets():
             df = df[~small_finish]
             print(f"  [dashboard] Filtered out {n_dropped} finish position bets with kelly_stake < $1")
 
+    # Drop excluded bookmakers (e.g. defunct PointsBet) from every view
+    df = _drop_excluded_books(df)
+
     _SHEETS_CACHE["data"] = df
     _SHEETS_CACHE["timestamp"] = now
     print(f"  [dashboard] Loaded {len(df)} bets from Google Sheets ({len(df[df['result'].astype(str).str.strip() != ''])} graded)")
@@ -418,6 +435,9 @@ def _load_matchups_from_sheets(tab_name, headers):
         _MATCHUP_CACHE[cache_key]["data"] = df
         _MATCHUP_CACHE[cache_key]["timestamp"] = now
         return df
+
+    # Drop excluded bookmakers (e.g. defunct PointsBet) from matchup views
+    df = _drop_excluded_books(df)
 
     # Convert numeric columns
     for col in ["edge_on", "edge_p1", "edge_p2", "pred_on", "pred_against",

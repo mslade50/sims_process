@@ -262,15 +262,23 @@ def _convert_to_units(df):
         is_loss = is_finish & (df["result"] == "loss")
         df.loc[is_loss, "units_won"] = -df.loc[is_loss, "units_wagered"]
 
-        is_win = is_finish & (df["result"].isin(["win", "win_dh"]))
-        if "book_odds" in df.columns and is_win.any():
-            book_odds = pd.to_numeric(df.loc[is_win, "book_odds"], errors="coerce")
+        # Plain wins are recomputed as a full win: units_wagered * (dec - 1).
+        # win_dh (dead-heat) payouts are NOT recomputed — grade_bets.py already
+        # wrote the dead-heat-adjusted units_won = units_wagered * (dec*factor - 1)
+        # to the Sheet on this same kelly/$200 unit basis. Recomputing them as a
+        # full win ignores the dead-heat factor and overstates P&L. Only fall back
+        # to the full-win recompute for a win_dh row missing a stored units_won.
+        is_win = is_finish & (df["result"] == "win")
+        dh_missing = is_finish & (df["result"] == "win_dh") & df["units_won"].isna()
+        recompute = is_win | dh_missing
+        if "book_odds" in df.columns and recompute.any():
+            book_odds = pd.to_numeric(df.loc[recompute, "book_odds"], errors="coerce")
             dec = pd.Series(np.nan, index=book_odds.index)
             pos = book_odds >= 0
             dec[pos] = book_odds[pos] / 100.0 + 1.0
             neg = book_odds < 0
             dec[neg] = 100.0 / book_odds[neg].abs() + 1.0
-            df.loc[is_win, "units_won"] = df.loc[is_win, "units_wagered"] * (dec - 1)
+            df.loc[recompute, "units_won"] = df.loc[recompute, "units_wagered"] * (dec - 1)
 
     return df
 
