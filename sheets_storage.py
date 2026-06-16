@@ -218,6 +218,58 @@ def _append_rows(ws, rows):
     ws.append_rows(rows, value_input_option="USER_ENTERED")
 
 
+# Dedup-key column indices per bet tab (0-based, into the row lists built below).
+# Two rows are "identical" if they match on these — player(s) / market / event /
+# book / odds — ignoring run_timestamp, our computed fair/edge/pred, and the grading
+# columns. So a re-run or the second (regressed) sim pass never writes a bet twice;
+# the FIRST write (your pre-regression bet) is the one kept.
+_DEDUP_KEYS = {
+    "tournament_mu": [3, 4, 5, 8, 10, 11],     # event_id, player_1, player_2, bookmaker, p1_odds, p2_odds
+    "round_mu":      [3, 4, 5, 6, 9, 11, 12],  # event_id, round, player_1, player_2, bookmaker, p1_odds, p2_odds
+    "finish_pos":    [3, 4, 6, 7, 8],          # event_id, player_name, market_type, sportsbook, decimal_odds
+    "score_edges":   [3, 4, 5, 6, 7, 9, 10],   # event_id, round, player, line, book, mkt_under, mkt_over
+}
+
+
+def _norm_key_cell(v):
+    """Normalize one cell for dedup comparison so a number written via USER_ENTERED
+    (-150, 2.5) matches the string Sheets returns on read-back ('-150', '2.5')."""
+    s = str(v).strip()
+    if s == "":
+        return ""
+    try:
+        f = float(s)
+    except (ValueError, OverflowError):
+        return s.lower()
+    if f == int(f):
+        return str(int(f))
+    return format(f, ".6f").rstrip("0").rstrip(".")
+
+
+def _append_rows_deduped(ws, rows, key_indices):
+    """Append rows, skipping any whose dedup key already exists in the tab (or earlier
+    in this batch). Keeps the first occurrence — so a re-run or the second sim pass
+    never writes an identical bet row again. Returns (written, skipped)."""
+    if not rows:
+        return 0, 0
+
+    def _key(r):
+        return tuple(_norm_key_cell(r[i]) if i < len(r) else "" for i in key_indices)
+
+    seen = {_key(r) for r in ws.get_all_values()[1:]}  # [1:] skips the header row
+    fresh, skipped = [], 0
+    for row in rows:
+        k = _key(row)
+        if k in seen:
+            skipped += 1
+            continue
+        seen.add(k)
+        fresh.append(row)
+    if fresh:
+        ws.append_rows(fresh, value_input_option="USER_ENTERED")
+    return len(fresh), skipped
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Time Gate
 # ══════════════════════════════════════════════════════════════════════════════
@@ -362,8 +414,9 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_TOURNAMENT_MU, TOURNAMENT_MU_HEADERS)
-    _append_rows(ws, rows)
-    print(f"  [storage] Wrote {len(rows)} tournament matchup rows to '{TAB_TOURNAMENT_MU}'")
+    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["tournament_mu"])
+    print(f"  [storage] Wrote {written} tournament matchup rows to '{TAB_TOURNAMENT_MU}'"
+          + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
     # Parquet write-through
     _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup, ts=ts)
@@ -488,8 +541,9 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, tab, FINISH_POS_HEADERS)
-    _append_rows(ws, rows)
-    print(f"  [storage] Wrote {len(rows)} finish position rows to '{tab}'")
+    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["finish_pos"])
+    print(f"  [storage] Wrote {written} finish position rows to '{tab}'"
+          + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
     # Parquet write-through
     if tab == TAB_FINISH_POS:
@@ -566,8 +620,9 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
-    _append_rows(ws, rows)
-    print(f"  [storage] Wrote {len(rows)} R{sim_round} matchup rows to '{TAB_ROUND_MU}'")
+    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["round_mu"])
+    print(f"  [storage] Wrote {written} R{sim_round} matchup rows to '{TAB_ROUND_MU}'"
+          + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
     # Parquet write-through
     _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
@@ -621,8 +676,9 @@ def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
-    _append_rows(ws, rows)
-    print(f"  [storage] Wrote {len(rows)} score edge rows to '{TAB_SCORE_EDGES}'")
+    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["score_edges"])
+    print(f"  [storage] Wrote {written} score edge rows to '{TAB_SCORE_EDGES}'"
+          + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
 
 
