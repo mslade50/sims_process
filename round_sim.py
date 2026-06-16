@@ -92,7 +92,7 @@ EDGE_THRESHOLD_WIN = 2.0     # minimum edge (pp) sim_prob - implied_prob
 EDGE_THRESHOLD_TOPN = 2.0   # minimum edge (pp) sim_prob - implied_prob
 BANKROLL = 10000.0
 KELLY_FRACTION = 0.25
-RETAIL_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'barstool', 'espn', 'pointsbet']
+RETAIL_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'barstool', 'espn']
 BOOKS_TO_USE = ['betcris', 'betmgm', 'betonline', 'bovada', 'caesars', 'draftkings', 'fanduel', 'pinnacle', 'unibet']
 
 # Category order for correlation matrix

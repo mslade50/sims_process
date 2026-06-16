@@ -1299,7 +1299,7 @@ EDGE_THRESHOLD_WIN   = 2.0
 EDGE_THRESHOLD_TOPN  = 2.0
 BANKROLL             = 10000.0
 KELLY_FRACTION       = 0.25
-RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','pointsbet','wynnbet','unibet','betway','betfred','betrivers']
+RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','wynnbet','unibet','betway','betfred','betrivers']
 
 _all_sb_lines_raw = []  # accumulate ALL sportsbook lines (pre-edge-filter) for exchange comparison
 BANKROLLS            = {'pinnacle': 10000, 'betcris': 10000, 'betonline': 8000, 'retail': 4000, 'bovada': 3000}
