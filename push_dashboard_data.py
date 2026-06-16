@@ -204,7 +204,13 @@ def copy_files(dry_run=False):
 
 
 def git_push(dry_run=False):
-    """Stage dashboard_data/, commit, and push (with pull+rebase retry)."""
+    """Stage and commit ONLY the dashboard-deploy files, then push (pull+rebase retry).
+
+    The commit is scoped to an explicit pathspec (dashboard_data/, sim_inputs.py, and
+    the per-tourney prep files) so a stray ``git add``ed file or a mid-edit change
+    elsewhere can never be swept into the auto-deploy commit and pushed to origin/main.
+    Live pred files still publish every run — only unrelated staged work is excluded.
+    """
     import subprocess
 
     if dry_run:
@@ -213,9 +219,8 @@ def git_push(dry_run=False):
     def _run(cmd):
         return subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
 
-    _run(["git", "add", "dashboard_data/"])
-    _run(["git", "add", "sim_inputs.py"])
-
+    # The exact set of paths this deploy commit is allowed to touch.
+    paths = ["dashboard_data", "sim_inputs.py"]
     tourney = get_tourney()
     if tourney:
         prep_files = [
@@ -226,17 +231,19 @@ def git_push(dry_run=False):
             "sg_dist_player.csv",
             f"permanent_data/avg_expected_cat_sg_{tourney}.csv",
         ]
-        for f in prep_files:
-            if os.path.exists(os.path.join(PROJECT_ROOT, f)):
-                _run(["git", "add", "-f", f])
+        paths += [f for f in prep_files
+                  if os.path.exists(os.path.join(PROJECT_ROOT, f))]
 
-    # Check if there are staged changes
-    ret = _run(["git", "diff", "--staged", "--quiet"])
-    if ret.returncode == 0:
-        print("\n  No changes to commit.")
+    # Stage only these paths (force: some prep files are gitignored).
+    _run(["git", "add", "-f", "--", *paths])
+
+    # Nothing changed among OUR paths? (anything else staged is irrelevant.)
+    if _run(["git", "diff", "--staged", "--quiet", "--", *paths]).returncode == 0:
+        print("\n  No dashboard changes to commit.")
         return
 
-    _run(["git", "commit", "-m", "Update dashboard data for Render deploy"])
+    # Commit ONLY our pathspec — any other staged change is left untouched, never pushed.
+    _run(["git", "commit", "-m", "Update dashboard data for Render deploy", "--", *paths])
 
     # Push with up to 3 retries (pull+rebase on rejection)
     for attempt in range(3):
