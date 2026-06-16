@@ -259,3 +259,6 @@ permanent_data/*.parquet
 # Git configuration
 !.gitignore
 !.gitattributes
+
+# Local Sheets backups (betting ledger dumps — never commit)
+sheet_backups/

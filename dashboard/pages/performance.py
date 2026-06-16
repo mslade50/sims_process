@@ -423,17 +423,20 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
         stamped = df["type_on"].astype(str).str.strip()
         df["archetype"] = stamped.where(stamped != "", np.nan)
 
-        # Within-ledger backfill: some Finish Position bets ship with a blank
-        # type_on, but the same player usually has stamped matchup bets in the
-        # same event. Use those before falling through to sg_diagnostic.
+        # Within-EVENT backfill: a Finish Position bet may ship with a blank
+        # type_on while the same player has a stamped matchup bet IN THE SAME
+        # EVENT. Borrow that — but key on (event_id, bet_on), never bet_on
+        # alone. A player's archetype is event-specific; smearing one label
+        # across their whole history is what mislabeled e.g. Hovland as a Ball
+        # Striker at events where the diagnostic classified him Balanced.
         same_player = (
             df[df["archetype"].notna()]
             .sort_values("run_timestamp")
-            .drop_duplicates(subset=["bet_on"], keep="last")[["bet_on", "archetype"]]
+            .drop_duplicates(subset=["event_id", "bet_on"], keep="last")[["event_id", "bet_on", "archetype"]]
             .rename(columns={"archetype": "_arch_self"})
         )
         if not same_player.empty:
-            df = df.merge(same_player, on="bet_on", how="left")
+            df = df.merge(same_player, on=["event_id", "bet_on"], how="left")
             df["archetype"] = df["archetype"].fillna(df["_arch_self"])
             df.drop(columns=["_arch_self"], errors="ignore", inplace=True)
     else:
@@ -441,7 +444,10 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
 
     arch_lookup = get_archetype_lookup()
     if not arch_lookup.empty and "event_id" in df.columns:
-        # Fallback 1: exact (event_id, player) match in sg_diagnostic.parquet
+        # Exact (event_id, player) match in sg_diagnostic.parquet — the
+        # authoritative per-event archetype. No most-recent fallback: a label
+        # borrowed from a different event silently misattributes P&L to the
+        # wrong archetype, so leave the rest as "Unknown" instead.
         missing = df["archetype"].isna()
         if missing.any():
             df = df.merge(arch_lookup.rename(columns={"archetype": "_arch_event"}),
@@ -452,40 +458,17 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
             df["archetype"] = df["archetype"].fillna(df.get("_arch_event"))
             df.drop(columns=["_arch_event"], errors="ignore", inplace=True)
 
-        # Fallback 2: most recent archetype for this player from any event
-        missing = df["archetype"].isna()
-        if missing.any():
-            latest = arch_lookup.sort_values("event_id").drop_duplicates(
-                subset=["player_name"], keep="last"
-            )[["player_name", "archetype"]].rename(columns={"archetype": "_arch_fallback"})
-            df = df.merge(latest, left_on="bet_on", right_on="player_name",
-                          how="left", suffixes=("", "_fb"))
-            df.drop(columns=["player_name_fb", "player_name"], errors="ignore", inplace=True)
-            df["archetype"] = df["archetype"].fillna(df.get("_arch_fallback"))
-            df.drop(columns=["_arch_fallback"], errors="ignore", inplace=True)
-
     df["archetype"] = df["archetype"].fillna("Unknown")
 
-    # Opponent archetype: bet rows don't carry a stamped value, so we rely on
-    # sg_diagnostic.parquet (event match, then most-recent fallback).
+    # Opponent archetype: bet rows carry no stamp, so use the authoritative
+    # per-event sg_diagnostic match only (no most-recent fallback — a
+    # cross-event label misattributes the "vs archetype" P&L).
     if not arch_lookup.empty and "event_id" in df.columns:
         opp_lookup = arch_lookup.rename(columns={"player_name": "opp_name", "archetype": "archetype_against"})
         df = df.merge(opp_lookup, left_on=["event_id", "opponent"],
                       right_on=["event_id", "opp_name"],
                       how="left", suffixes=("", "_opp"))
         df.drop(columns=["opp_name"], errors="ignore", inplace=True)
-
-        missing_opp = df["archetype_against"].isna()
-        if missing_opp.any():
-            latest_opp = arch_lookup.sort_values("event_id").drop_duplicates(
-                subset=["player_name"], keep="last"
-            )[["player_name", "archetype"]].rename(columns={"player_name": "opp_name2", "archetype": "_opp_fb"})
-            df = df.merge(latest_opp, left_on="opponent", right_on="opp_name2",
-                          how="left", suffixes=("", "_ofb"))
-            df.drop(columns=["opp_name2"], errors="ignore", inplace=True)
-            df["archetype_against"] = df["archetype_against"].fillna(df.get("_opp_fb"))
-            df.drop(columns=["_opp_fb"], errors="ignore", inplace=True)
-
         df["archetype_against"] = df["archetype_against"].fillna("")
     else:
         df["archetype_against"] = ""
