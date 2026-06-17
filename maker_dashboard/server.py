@@ -28,6 +28,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 PROPOSALS_PATH = os.path.join(REPO_ROOT, "permanent_data", "maker_proposals.parquet")
 PNL_HISTORY_PATH = os.path.join(REPO_ROOT, "permanent_data", "pnl_history.parquet")
+# Durable raw-API stores. Kalshi's /portfolio/fills feed only retains ~2 months,
+# so we persist every fill/settlement we've ever seen and only top up the recent
+# pages on each load — otherwise historical cost basis vanishes as fills age out.
+FILLS_STORE_PATH = os.path.join(REPO_ROOT, "permanent_data", "kalshi_fills.parquet")
+SETTLEMENTS_STORE_PATH = os.path.join(REPO_ROOT, "permanent_data", "kalshi_settlements.parquet")
 
 # In-memory PnL cache. The /markets batched call is cheap but we still don't
 # want to hammer Kalshi on every UI filter toggle. Frontend reads from cache
@@ -61,6 +66,90 @@ def _classify_ticker(ticker):
             player_code = parts[2] if len(parts) >= 3 else ""
             return mt, event_code, player_code
     return "", "", ""
+
+
+def _load_store(path):
+    """Load a persisted raw-API store (fills/settlements) as a list of dicts.
+    Returns [] if the file is missing or unreadable."""
+    if not os.path.exists(path):
+        return []
+    try:
+        return pd.read_parquet(path).to_dict(orient="records")
+    except Exception as e:
+        print(f"[pnl] failed to read store {os.path.basename(path)}: {e}")
+        return []
+
+
+def _persist_store(records, path, id_field):
+    """Atomically write the merged record set, deduped on id_field (last wins).
+    tempfile + os.replace so a crash mid-write can't corrupt the store."""
+    import tempfile
+    if not records:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        df = pd.DataFrame(records).drop_duplicates(subset=[id_field], keep="last")
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".parquet")
+        os.close(fd)
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        print(f"[pnl] failed to persist store {os.path.basename(path)}: {e}")
+
+
+def _fetch_incremental(authed_request, base_path, list_key, id_field, known_ids):
+    """Paginate a Kalshi portfolio endpoint newest-first, returning only the
+    records whose id_field is not already in known_ids.
+
+    The feed is append-only and time-ordered, so once a page contributes
+    nothing new we've reached the part of history we already hold and can stop.
+    On a cold store (known_ids empty) this walks every page (full first sync);
+    afterwards it only pulls the most-recent page(s). Raises RuntimeError on a
+    non-200 so the caller can surface it like the old inline fetch did."""
+    new_records, cursor = [], None
+    while True:
+        path = f"{base_path}?limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        r = authed_request("GET", path)
+        if r.status_code != 200:
+            raise RuntimeError(f"{list_key} {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        page = data.get(list_key, [])
+        page_new = [rec for rec in page if rec.get(id_field) not in known_ids]
+        new_records.extend(page_new)
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+        # Reached known history — everything older is already stored.
+        if known_ids and not page_new:
+            break
+    return new_records
+
+
+def _sync_pnl_stores(authed_request):
+    """Top up the durable fills/settlements stores and return the merged record
+    lists + how many were newly pulled. Shared by the /api/pnl route and the
+    headless `--sync` CLI. Cron the CLI regularly (e.g. alongside the nightly
+    job) so fills are captured before they age out of Kalshi's ~2-month feed."""
+    stored_fills = _load_store(FILLS_STORE_PATH)
+    known_fill_ids = {f.get("fill_id") for f in stored_fills}
+    new_fills = _fetch_incremental(
+        authed_request, "/trade-api/v2/portfolio/fills",
+        "fills", "fill_id", known_fill_ids)
+    all_fills = stored_fills + new_fills
+    if new_fills:
+        _persist_store(all_fills, FILLS_STORE_PATH, "fill_id")
+
+    stored_setts = _load_store(SETTLEMENTS_STORE_PATH)
+    known_setts = {s.get("ticker") for s in stored_setts}
+    new_setts = _fetch_incremental(
+        authed_request, "/trade-api/v2/portfolio/settlements",
+        "settlements", "ticker", known_setts)
+    settlements = stored_setts + new_setts
+    if new_setts:
+        _persist_store(settlements, SETTLEMENTS_STORE_PATH, "ticker")
+    return all_fills, settlements, len(new_fills), len(new_setts)
 
 
 def _fetch_market_summary(tickers):
@@ -510,35 +599,14 @@ def pnl():
     from kalshi_maker import _authed_request, _is_golf_ticker
     from collections import defaultdict as _dd
 
-    # ── 1. Fetch all fills (paginated, all-time). ───────────────────────
-    all_fills, cursor = [], None
-    while True:
-        path = "/trade-api/v2/portfolio/fills?limit=200"
-        if cursor:
-            path += f"&cursor={cursor}"
-        r = _authed_request("GET", path)
-        if r.status_code != 200:
-            return jsonify({"error": f"fills {r.status_code}: {r.text[:200]}"}), 500
-        data = r.json()
-        all_fills.extend(data.get("fills", []))
-        cursor = data.get("cursor")
-        if not cursor:
-            break
-
-    # ── 2. Fetch settlements (paginated, all-time). ─────────────────────
-    settlements, cursor = [], None
-    while True:
-        path = "/trade-api/v2/portfolio/settlements?limit=200"
-        if cursor:
-            path += f"&cursor={cursor}"
-        r = _authed_request("GET", path)
-        if r.status_code != 200:
-            return jsonify({"error": f"settlements {r.status_code}: {r.text[:200]}"}), 500
-        data = r.json()
-        settlements.extend(data.get("settlements", []))
-        cursor = data.get("cursor")
-        if not cursor:
-            break
+    # ── 1+2. Fills & settlements — durable store + incremental top-up. We
+    # persist every record ever seen (fills age out of Kalshi's feed after
+    # ~2 months) and only pull pages newer than what we already hold. ──
+    try:
+        all_fills, settlements, n_new_fills, n_new_setts = _sync_pnl_stores(
+            _authed_request)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
     settlements_by_ticker = {s["ticker"]: s for s in settlements}
 
     # ── 3. Fetch current positions (for is_open + MTM). ─────────────────
@@ -679,38 +747,53 @@ def pnl():
         cashflow = b["cashflow"]
         fees = b["fees"]
         sett = settlements_by_ticker.get(ticker)
-        settlement_rev = 0.0
         market_result = ""
         settled_time = None
+        # Held-to-settlement counts/costs from the settlement record. Unlike the
+        # /fills feed (which Kalshi only retains for ~2 months) these never age
+        # out, so they are the authoritative cost basis for old settled tickers.
+        held_yes = held_no = settle_cost = settle_fee = 0.0
         if sett is not None:
-            settlement_rev = float(sett.get("revenue") or 0) / 100.0
             market_result = sett.get("market_result", "")
             settled_time = sett.get("settled_time")
-            # fees on the settlement row are usually duplicates of per-fill
-            # fees, so we don't double-count.
+            held_yes = float(sett.get("yes_count_fp") or 0)
+            held_no = float(sett.get("no_count_fp") or 0)
+            settle_cost = (float(sett.get("yes_total_cost_dollars") or 0)
+                           + float(sett.get("no_total_cost_dollars") or 0))
+            settle_fee = float(sett.get("fee_cost") or 0)
+        # Settlement payout = winning contracts held to settlement * $1. We do
+        # NOT use the settlement `revenue` field: a recent Kalshi schema change
+        # left it zero or partial on many winning tickers, which silently
+        # understated wins. The count*result payout is always exact for binary
+        # markets.
+        if market_result == "yes":
+            payout = held_yes
+        elif market_result == "no":
+            payout = held_no
+        else:
+            payout = 0.0
 
         pos_fp = pos_by_ticker.get(ticker)
         is_open = pos_fp is not None
-        if is_open:
-            side = "yes" if pos_fp > 0 else "no"
-            contracts = int(round(abs(pos_fp)))
-        else:
-            contracts = 0
-            net_yes = b["yes_buys"] - b["yes_sells"]
-            net_no = b["no_buys"] - b["no_sells"]
-            side = ("yes" if abs(net_yes) >= abs(net_no)
-                    else "no") if (net_yes or net_no) else ""
 
         market_type, event_code, player_code = _classify_ticker(ticker)
         sm = summaries.get(ticker) or {}
         title = sm.get("title") or cached_titles.get(ticker, "")
 
-        # MTM for open positions. Use post-auto-conv yes_long/no_long so
-        # we value each leg at its own mid (matters for tickers where the
-        # raw fills span both sides before netting).
         mark = None
         unreal = 0.0
+        settlement_rev = 0.0
         if is_open:
+            # ── OPEN: cost basis from fills (complete for in-window tickers),
+            # valued at the current mid. ──
+            side = "yes" if pos_fp > 0 else "no"
+            contracts = int(round(abs(pos_fp)))
+            realized = cashflow - fees
+            cost_basis = abs(cashflow)
+            invested = b["invested"]
+            avg_cost = (-cashflow / contracts) if contracts > 0 else 0.0
+            # MTM. Use post-auto-conv yes_long/no_long so each leg is valued at
+            # its own mid (matters when raw fills span both sides before net).
             yes_bid = sm.get("yes_bid", 0.0)
             yes_ask = sm.get("yes_ask", 0.0)
             if yes_bid > 0 and yes_ask > 0 and yes_ask >= yes_bid:
@@ -721,16 +804,46 @@ def pnl():
                 # Thin/empty book — fall back to avg cost (no MTM PnL).
                 mark = (abs(cashflow) / contracts) if contracts else 0.0
                 unreal = mark * contracts
+        elif sett is not None:
+            # ── SETTLED: price off the settlement record so realized PnL is
+            # immune to fills aging out. A fills-only realized would credit the
+            # payout against a vanished cost basis (phantom profit) for any
+            # ticker older than the ~2-month fills window. When the fills ARE
+            # complete (bucket inventory matches the settled counts) prefer the
+            # fills cashflow, which also captures pre-settlement round-trips. ──
+            settlement_rev = payout
+            contracts = int(round(held_yes + held_no))
+            side = "yes" if held_yes >= held_no else "no"
+            fills_complete = (
+                (b["yes_buys"] or b["no_buys"])
+                and abs(b["yes_long"] - held_yes) < 1.0
+                and abs(b["no_long"] - held_no) < 1.0
+            )
+            if fills_complete:
+                realized = cashflow + payout - fees
+                cost_basis = abs(cashflow)
+                invested = b["invested"]
+            else:
+                realized = payout - settle_cost - settle_fee
+                cost_basis = settle_cost
+                invested = settle_cost
+                fees = settle_fee
+                cashflow = -settle_cost
+            avg_cost = (cost_basis / contracts) if contracts > 0 else 0.0
+        else:
+            # ── CLOSED via fills only (no settlement record, not open): fully
+            # round-tripped before expiry. Trust the fills cashflow. ──
+            contracts = 0
+            net_yes = b["yes_buys"] - b["yes_sells"]
+            net_no = b["no_buys"] - b["no_sells"]
+            side = ("yes" if abs(net_yes) >= abs(net_no)
+                    else "no") if (net_yes or net_no) else ""
+            realized = cashflow - fees
+            cost_basis = abs(cashflow)
+            invested = b["invested"]
+            avg_cost = 0.0
 
-        realized = cashflow + settlement_rev - fees
         net = realized + unreal
-        # avg_cost is conceptually -cashflow / contracts when net long. We
-        # only display this for open positions; for settled it's misleading.
-        avg_cost = (-cashflow / contracts) if (is_open and contracts > 0) else 0.0
-        # cost_basis = absolute net cash deployed (after auto-conv).
-        # invested = gross dollars paid into the ticker (denominator for ROI).
-        cost_basis = abs(cashflow)
-        invested = b["invested"]
 
         rows.append({
             "ticker": ticker,
@@ -798,6 +911,13 @@ def pnl():
         "totals": totals,
         "fetched_ts": now.isoformat(timespec="seconds"),
         "new_settled_count": len(new_for_ledger),
+        # Store telemetry: how much came from the durable parquet vs. freshly
+        # pulled this load. fills_new/settlements_new should be small after the
+        # first sync — that's the "only scrape recent" win.
+        "store": {
+            "fills_total": len(all_fills), "fills_new": n_new_fills,
+            "settlements_total": len(settlements), "settlements_new": n_new_setts,
+        },
     }
     _PNL_CACHE["data"] = result
     _PNL_CACHE["fetched_at"] = now
@@ -860,6 +980,15 @@ if __name__ == "__main__":
         print("Refusing to start: KALSHI_MAKER_ENABLED is not set to '1'.")
         print("On Windows PowerShell: $env:KALSHI_MAKER_ENABLED='1'")
         sys.exit(1)
+    # Headless store sync — run this on a schedule so fills are captured before
+    # they age out of Kalshi's ~2-month feed, no browser/server needed.
+    if "--sync" in sys.argv:
+        sys.path.insert(0, REPO_ROOT)
+        from kalshi_maker import _authed_request
+        _, _, nf, ns = _sync_pnl_stores(_authed_request)
+        print(f"[pnl sync] +{nf} fills, +{ns} settlements persisted to "
+              f"{os.path.relpath(os.path.dirname(FILLS_STORE_PATH), REPO_ROOT)}/")
+        sys.exit(0)
     print("[maker dashboard] http://127.0.0.1:8051/")
     # Bind to localhost only — never expose to network.
     app.run(host="127.0.0.1", port=8051, debug=False)
