@@ -556,14 +556,7 @@ def main():
 
     # Build all markets
     round_mu = _build_round_matchups(tourney, round_num, repl)
-    # Tournament matchups are a PRE-tournament market — once play has started
-    # (round_num >= 1) the books post live-adjusted lines that no longer match our
-    # pre-event fair, so ignore them mid-event.
-    if round_num >= 1:
-        tourn_mu = []
-        logger.info(f"Skipping tournament matchups mid-event (round_num={round_num})")
-    else:
-        tourn_mu = _build_tournament_matchups(tourney, repl)
+    tourn_mu = _build_tournament_matchups(tourney, repl)
     score_lines = _build_score_lines(tourney, round_num, repl)
     outrights = _build_outrights(tourney, repl)
 

@@ -59,6 +59,7 @@ COURSE_CAT_MULTS = _cfg["course_cat_mults"]
 COURSE_CAT_SKEW  = _cfg["course_cat_skew"]
 TOP_K            = 20  # hardcode — never changes
 _event_id        = _cfg["event_id"]
+_course_id       = _cfg["course_id"]
 # Player adjustments from Sheet (survives sim_inputs overwrites)
 _sheet_manual_boosts = _cfg.get("manual_boosts", {})
 _sheet_archetype_boosts = _cfg.get("archetype_boosts", {})
@@ -100,7 +101,7 @@ try:
     import pandas as _pd_coords
     _coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
     _coords_df = _pd_coords.read_csv(_coords_csv)
-    _coords_row = _coords_df[_coords_df["course_id"] == _event_id]
+    _coords_row = _coords_df[_coords_df["course_id"] == _course_id]
     if not _coords_row.empty:
         _lat = float(_coords_row["lat"].iloc[0])
         _lon = float(_coords_row["lon"].iloc[0])
@@ -125,7 +126,7 @@ try:
         else:
             print("[weather] Could not fetch climo wind — using raw forecast")
     else:
-        print(f"[weather] No coordinates for event_id={_event_id} — skipping climo blend")
+        print(f"[weather] No coordinates for course_id={_course_id} — skipping climo blend")
 except Exception as _e:
     print(f"[weather] Climo blend failed: {_e} — using raw forecast")
 
