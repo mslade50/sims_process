@@ -883,6 +883,146 @@ def append_to_diagnostic(records):
 
 
 # ---------------------------------------------------------------------------
+# 2g-2. backfill_adjusted_actuals
+# ---------------------------------------------------------------------------
+def backfill_adjusted_actuals(event_id=None, year=None):
+    """
+    Upgrade stale rows to field-ADJUSTED actuals once the DB has them.
+
+    The weekly diagnostic runs Monday post-event using whatever actuals exist
+    then. Early-season events get diagnosed BEFORE dg_historical.db has adjusted
+    SG, so they are stored with raw actuals (sg_type='raw') or no label, and the
+    keep="first" dedup in append_to_diagnostic() freezes them. This re-runnable
+    pass re-fetches adjusted SG from the DB and replaces the actuals so those
+    events self-heal.
+
+    ONLY the actuals side changes: actual_sg -> DB adjusted, miss recomputed,
+    miss_centered re-centered per (round, category), sg_type -> 'adjusted'.
+    predicted_sg, archetype, and all *_rolling columns are left untouched.
+
+    event_id=None -> every event not already sg_type=='adjusted'.
+    """
+    if not os.path.exists(DIAGNOSTIC_PATH):
+        print("  No diagnostic parquet to backfill.")
+        return
+
+    df = pd.read_parquet(DIAGNOSTIC_PATH)
+    if df.empty:
+        print("  Diagnostic parquet is empty.")
+        return
+    df["event_id"] = df["event_id"].astype(str).str.lower().str.strip()
+
+    # Determine target events
+    if event_id is not None:
+        targets = [str(event_id).lower().strip()]
+    elif "sg_type" in df.columns:
+        not_adj = df["sg_type"].isna() | (
+            df["sg_type"].astype(str).str.lower() != "adjusted"
+        )
+        targets = sorted(df.loc[not_adj, "event_id"].unique().tolist())
+    else:
+        targets = sorted(df["event_id"].unique().tolist())
+
+    if not targets:
+        print("  Nothing to backfill -- all events already adjusted.")
+        return
+
+    print(f"  Backfill targets ({len(targets)} events): {targets}")
+
+    # Backup before mutating
+    diag_dir = os.path.dirname(DIAGNOSTIC_PATH)
+    backup_dir = os.path.join(
+        os.path.dirname(__file__), "sheet_backups",
+        f"diag_backfill_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+    )
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, "sg_diagnostic_before.parquet")
+    df.to_parquet(backup_path, index=False)
+    print(f"  Backup written: {backup_path}")
+
+    untouched = df[~df["event_id"].isin(targets)].copy()
+    rebuilt = []
+    report = []
+
+    for eid in targets:
+        slice_ = df[df["event_id"] == eid].copy()
+        ename = (
+            str(slice_["event_name"].dropna().iloc[0])
+            if "event_name" in slice_.columns and slice_["event_name"].notna().any()
+            else eid
+        )
+        yr = year
+        if yr is None and "year" in slice_.columns and slice_["year"].notna().any():
+            yr = int(slice_["year"].dropna().iloc[0])
+        yr = yr or datetime.now().year
+
+        actuals, _ = _fetch_actuals_from_db(int(eid), year=int(yr))
+        if actuals.empty:
+            print(f"    {ename} ({eid}): no adjusted SG in DB yet -> left unchanged")
+            rebuilt.append(slice_)
+            continue
+
+        a = actuals[["player_name", "round", "category", "actual_sg"]].copy()
+        a["round"] = a["round"].astype(str).str.strip()
+        a["category"] = a["category"].astype(str).str.lower().str.strip()
+        a["player_name"] = a["player_name"].astype(str).str.lower().str.strip()
+        a = a.rename(columns={"actual_sg": "_actual_adj"})
+
+        s = slice_.copy()
+        s["round"] = s["round"].astype(str).str.strip()
+        s["category"] = s["category"].astype(str).str.lower().str.strip()
+        s["player_name"] = s["player_name"].astype(str).str.lower().str.strip()
+
+        before = s.loc[s["category"] == "total", "miss"].mean()
+
+        merged = s.merge(a, on=["player_name", "round", "category"], how="left")
+        matched = int(merged["_actual_adj"].notna().sum())
+        upd = merged["_actual_adj"].notna()
+        merged.loc[upd, "actual_sg"] = merged.loc[upd, "_actual_adj"]
+        merged["miss"] = merged["actual_sg"] - merged["predicted_sg"]
+        # Re-center within this event per (round, category) -- matches the
+        # dashboard's groupby(["event_id","round","category"]) for one event.
+        merged["miss_centered"] = merged.groupby(["round", "category"])[
+            "miss"
+        ].transform(lambda x: x - x.mean())
+        merged["sg_type"] = "adjusted"
+        merged = merged.drop(columns=["_actual_adj"])
+
+        after = merged.loc[merged["category"] == "total", "miss"].mean()
+        report.append((ename, eid, len(s), matched, before, after))
+        rebuilt.append(merged)
+
+    combined = pd.concat([untouched] + rebuilt, ignore_index=True)
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".parquet", dir=diag_dir)
+    os.close(fd)
+    try:
+        combined.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, DIAGNOSTIC_PATH)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+    print("\n  Backfill complete. Per-event total-miss before -> after:")
+    print("  " + "-" * 60)
+    for ename, eid, n_rows, matched, before, after in report:
+        print(
+            f"    {ename:>12s} ({eid:>3s}): {n_rows:>4d} rows, {matched:>4d} matched"
+            f"   total miss {before:+.3f} -> {after:+.3f}"
+        )
+    if "sg_type" in combined.columns:
+        n_adj = (combined["sg_type"].astype(str).str.lower() == "adjusted").sum()
+        n_evt_adj = combined.loc[
+            combined["sg_type"].astype(str).str.lower() == "adjusted", "event_id"
+        ].nunique()
+        print(
+            f"\n  Now {n_adj} adjusted rows across {n_evt_adj} events "
+            f"({combined['event_id'].nunique()} events total)."
+        )
+
+
+# ---------------------------------------------------------------------------
 # 2h. compute_analysis
 # ---------------------------------------------------------------------------
 def compute_analysis(comparison, archetypes):
@@ -1400,7 +1540,20 @@ def main():
         action="store_true",
         help="Re-run archetype classification on all stored diagnostic data",
     )
+    parser.add_argument(
+        "--backfill-adjusted",
+        action="store_true",
+        help="Re-fetch DB adjusted SG actuals for non-adjusted events and "
+        "replace stale raw/unlabeled actuals (archetypes/predictions untouched)",
+    )
     args = parser.parse_args()
+
+    # --- Backfill mode: upgrade stale raw/unlabeled events to adjusted SG ---
+    if args.backfill_adjusted:
+        print("\n  Backfilling adjusted SG actuals")
+        print("  " + "=" * 40)
+        backfill_adjusted_actuals(event_id=args.event_id, year=args.year)
+        return
 
     # --- Reclassify mode: update archetypes in existing parquet ---
     if args.reclassify:
