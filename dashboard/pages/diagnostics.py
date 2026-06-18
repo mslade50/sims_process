@@ -23,8 +23,33 @@ PLOT_LAYOUT = dict(
 SG_CATEGORIES = ["ott", "app", "arg", "putt"]
 
 
+def _adjusted_only(df):
+    """Restrict to field-adjusted SG events only.
+
+    Raw/unlabeled events compare raw actuals against adjusted predictions, so
+    their absolute miss is a structural artifact, not model error. The page
+    only ever shows sg_type=='adjusted' so every bias number is comparable.
+    Run `python sg_diagnostic.py --backfill-adjusted` to upgrade stale events.
+    """
+    if not df.empty and "sg_type" in df.columns:
+        return df[df["sg_type"].astype(str).str.lower() == "adjusted"].copy()
+    return df
+
+
 layout = dbc.Container([
     html.H4("SG Diagnostics", className="page-header"),
+    dbc.Alert(
+        "Field-adjusted SG events only. Level Bias uses raw miss "
+        "(actual − predicted): − = model overpredicts, + = underpredicts. "
+        "The heatmaps below are field-centered (relative to that week's field), "
+        "so they show archetype tilt, not absolute over/under-prediction.",
+        color="dark", className="small py-2 mb-3",
+    ),
+
+    dbc.Row([
+        dbc.Col(dcc.Graph(id="diag-level-bias"), md=6),
+        dbc.Col(dcc.Graph(id="diag-level-bias-arch"), md=6),
+    ], className="mb-1"),
 
     dbc.Row([
         dbc.Col([
@@ -83,7 +108,7 @@ layout = dbc.Container([
     Input("diag-event-filter", "id"),
 )
 def populate_events(_):
-    df = get_sg_diagnostics()
+    df = _adjusted_only(get_sg_diagnostics())
     if df.empty or "event_id" not in df.columns:
         return []
     events = df["event_id"].dropna().unique().tolist()
@@ -95,6 +120,8 @@ def populate_events(_):
 
 
 @callback(
+    Output("diag-level-bias", "figure"),
+    Output("diag-level-bias-arch", "figure"),
     Output("diag-bias-chart", "figure"),
     Output("diag-directional-heatmap", "figure"),
     Output("diag-archetype-heatmap", "figure"),
@@ -106,10 +133,10 @@ def populate_events(_):
 def update_diagnostics(event_id):
     empty_fig = go.Figure(layout=PLOT_LAYOUT)
 
-    df = get_sg_diagnostics()
+    df = _adjusted_only(get_sg_diagnostics())
     if df.empty:
-        alert = dbc.Alert("No SG diagnostic data. Run sg_diagnostic.py after a ShotLink event.", color="warning")
-        return empty_fig, empty_fig, empty_fig, [], alert, []
+        alert = dbc.Alert("No adjusted SG diagnostic data. Run sg_diagnostic.py (then --backfill-adjusted) after a ShotLink event.", color="warning")
+        return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, [], alert, []
 
     if event_id:
         eids = event_id if isinstance(event_id, list) else [event_id]
@@ -117,7 +144,7 @@ def update_diagnostics(event_id):
 
     if df.empty:
         alert = dbc.Alert("No data for this event.", color="info")
-        return empty_fig, empty_fig, empty_fig, [], alert, []
+        return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, [], alert, []
 
     # Always recompute field-centered miss (stored column may have NaN for older events)
     if "miss" in df.columns:
@@ -130,6 +157,40 @@ def update_diagnostics(event_id):
     player_options = [{"label": p.title(), "value": p} for p in players]
 
     miss_col = "miss_centered" if "miss_centered" in df.columns else ("miss" if "miss" in df.columns else None)
+
+    # ── Absolute level bias (uncentered raw miss; adjusted SG only) ──
+    # negative = model overpredicts, positive = underpredicts. This is the
+    # one view the field-centered charts mathematically cannot show.
+    level_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Level Bias by Category (raw miss)", "height": 350})
+    level_arch_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Level Bias by Archetype (total SG)", "height": 350})
+    if "miss" in df.columns and "category" in df.columns:
+        cats = SG_CATEGORIES + ["total"]
+        cat_means = df[df["category"].isin(cats)].groupby("category")["miss"].mean().reindex(cats).dropna()
+        if not cat_means.empty:
+            cvals = cat_means.values.tolist()
+            level_fig.add_trace(go.Bar(
+                x=[c.upper() for c in cat_means.index],
+                y=cvals,
+                marker_color=["#2e7d32" if v >= 0 else "#b71c1c" for v in cvals],
+                text=[f"{v:+.3f}" for v in cvals], textposition="outside",
+            ))
+            level_fig.add_hline(y=0, line_dash="dot", line_color="#888")
+            level_fig.update_yaxes(title_text="Avg Raw Miss (− over / + under)")
+
+        if "archetype" in df.columns:
+            tot = df[df["category"] == "total"]
+            if not tot.empty:
+                arch_lvl = tot.groupby("archetype")["miss"].mean().sort_values()
+                avals = arch_lvl.values.tolist()
+                level_arch_fig.add_trace(go.Bar(
+                    x=arch_lvl.index.tolist(),
+                    y=avals,
+                    marker_color=["#2e7d32" if v >= 0 else "#b71c1c" for v in avals],
+                    text=[f"{v:+.3f}" for v in avals], textposition="outside",
+                ))
+                level_arch_fig.add_hline(y=0, line_dash="dot", line_color="#888")
+                level_arch_fig.update_xaxes(tickangle=-30)
+                level_arch_fig.update_yaxes(title_text="Avg Raw Miss (total)")
 
     # ── Archetype bias bar chart (field-centered total miss by archetype) ──
     bias_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "Avg Bias by Archetype", "height": 350})
@@ -217,7 +278,7 @@ def update_diagnostics(event_id):
 
     # ── Recurring misses (field-centered) ──
     if miss_col and miss_col in df.columns and "event_id" in df.columns:
-        all_diag = get_sg_diagnostics()  # unfiltered
+        all_diag = _adjusted_only(get_sg_diagnostics())  # unfiltered (adjusted only)
         # Always recompute field-centered miss
         if "miss" in all_diag.columns:
             all_diag["miss_centered"] = all_diag.groupby(["event_id", "round", "category"])["miss"].transform(
@@ -255,7 +316,7 @@ def update_diagnostics(event_id):
     else:
         recurring_content = dbc.Alert("Insufficient data for recurring miss analysis.", color="info")
 
-    return bias_fig, dir_fig, abs_fig, archetype_options, recurring_content, player_options
+    return level_fig, level_arch_fig, bias_fig, dir_fig, abs_fig, archetype_options, recurring_content, player_options
 
 
 @callback(
@@ -264,7 +325,7 @@ def update_diagnostics(event_id):
     Input("diag-event-filter", "value"),
 )
 def update_player_explorer(archetype, event_id):
-    df = get_sg_diagnostics()
+    df = _adjusted_only(get_sg_diagnostics())
     if df.empty:
         return dbc.Alert("No SG diagnostic data.", color="warning")
 
@@ -326,7 +387,7 @@ def update_player_detail(player, event_id):
     if not player:
         return dbc.Alert("Select a player above to see details.", color="secondary")
 
-    df = get_sg_diagnostics()
+    df = _adjusted_only(get_sg_diagnostics())
     if df.empty:
         return dbc.Alert("No data.", color="warning")
 
@@ -340,7 +401,7 @@ def update_player_detail(player, event_id):
         return dbc.Alert(f"No data for {', '.join(players)}.", color="info")
 
     # Always recompute field-centered miss for player detail
-    full_df = get_sg_diagnostics()
+    full_df = _adjusted_only(get_sg_diagnostics())
     if event_id:
         eids = event_id if isinstance(event_id, list) else [event_id]
         full_df = full_df[full_df["event_id"].isin(eids)]
