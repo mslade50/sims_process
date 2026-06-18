@@ -56,7 +56,6 @@ def _resolve_csv(filename):
 from sim_inputs import (
     tourney, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
-    score_adj_r1, score_adj_r2, score_adj_r3, score_adj_r4,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
     # R2 coefficients (3 position-based buckets)
@@ -111,12 +110,10 @@ except Exception as _e:
     _CLIMO_WIND = None
     _ROUND_DATES = None
     print(f"[weather] Climo blend skipped: {_e}")
-SCORE_ADJS = {1: score_adj_r1, 2: score_adj_r2, 3: score_adj_r3, 4: score_adj_r4}
-
 # Multi-course expected scoring adjustments (populated from Google Sheet).
 # Index 0 = first course_x encountered in API data, index 1 = second, etc.
 # For single-course weeks, only index 0 is used.
-COURSE_SCORE_ADJS = None  # Set by _apply_sheet_overrides; None = use SCORE_ADJS
+COURSE_SCORE_ADJS = None  # Set by _apply_sheet_overrides from sheet expected_score_N
 
 # Name-keyed course score map: {api_course_code: expected_score}
 # Built from course_codes + expected_score_1/2/3 in _apply_sheet_overrides().
@@ -894,7 +891,7 @@ def create_next_round_predictions(round_num):
         if unmapped.any():
             unknown = preds.loc[unmapped, course_col].unique()
             print(f"  Warning: Unmapped course codes: {list(unknown)} — using fallback")
-            preds.loc[unmapped, "course_score_adj"] = SCORE_ADJS.get(next_round, 0)
+            preds.loc[unmapped, "course_score_adj"] = 0
 
     # Fallback: no course from API, but live model had one + exactly 2 courses → flip
     elif len(COURSE_SCORE_MAP) == 2:
@@ -915,8 +912,7 @@ def create_next_round_predictions(round_num):
                     preds.loc[mask, "course_score_adj"] = adj
             print(f"  Warning: No next-round course from API — flipped R{round_num} assignments for R{next_round}")
         else:
-            score_adj = SCORE_ADJS.get(next_round, 0)
-            expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
+            expected_scoring = round(-preds[pred_name].mean() + avg_wind, 2)
             print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
 
     # Legacy fallback: positional COURSE_SCORE_ADJS (no COURSE_SCORE_MAP)
@@ -934,8 +930,7 @@ def create_next_round_predictions(round_num):
             preds.loc[preds[course_col] == cid, "course_score_adj"] = adj
 
     else:
-        score_adj = SCORE_ADJS.get(next_round, 0)
-        expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
+        expected_scoring = round(-preds[pred_name].mean() + avg_wind, 2)
         print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
 
     _save_predictions(preds, next_round)
@@ -1019,7 +1014,7 @@ def create_pre_event_predictions():
     avg_skill = preds["my_pred"].mean()
 
     # Expected scoring
-    expected_scoring = round(score_adj_r1 - avg_skill + avg_wind, 2)
+    expected_scoring = round(-avg_skill + avg_wind, 2)
     # dew_adj is SCORE-space like wind_adj (dew_calculation comes from
     # humidity.py's score regression: negative coef -> humid = lower scores
     # = easier), so it must be SUBTRACTED like wind: a player in the more
@@ -1734,7 +1729,7 @@ def _apply_sheet_overrides(config):
     NEXT round. This patches the module-level arrays so the rest of the
     engine uses the sheet values seamlessly.
     """
-    global WIND_ARRAYS, DEW_ARRAYS, SCORE_ADJS, COURSE_SCORE_ADJS, COURSE_SCORE_MAP, dew_calculation, wind_override
+    global WIND_ARRAYS, DEW_ARRAYS, COURSE_SCORE_ADJS, COURSE_SCORE_MAP, dew_calculation, wind_override
 
     round_num = config["round_num"]
     next_round = round_num + 1 if round_num < 4 else 4
@@ -1780,7 +1775,6 @@ def _apply_sheet_overrides(config):
 
     if course_adjs:
         COURSE_SCORE_ADJS = course_adjs
-        SCORE_ADJS[next_round] = course_adjs[0]  # Default/single-course fallback
         if len(course_adjs) > 1:
             print(f"  Multi-course score adjs: {course_adjs}")
         else:
