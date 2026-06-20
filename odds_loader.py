@@ -269,6 +269,7 @@ def load_matchup_odds(
     market: str = "round_matchups",
     api_key: str | None = None,
     force_api: bool = False,
+    round: int | None = None,
 ) -> pd.DataFrame:
     """Load matchup odds — merges scraped odds with DataGolf API.
 
@@ -281,6 +282,12 @@ def load_matchup_odds(
         market: "round_matchups" or "tournament_matchups"
         api_key: DataGolf API key (falls back to DATAGOLF_API_KEY env var)
         force_api: skip scraped files, use DataGolf API for everything
+        round: when set (for round_matchups), only use scraped odds for THIS round.
+            The scraped file is stamped with the round it holds and each row carries
+            a `round`; if the file is for a different round (e.g. R2 lines still up
+            while we're pricing R3, before the scraper has posted/scoped R3), the
+            scraped sharp-book lines are dropped so we don't price this round's fairs
+            against last round's prices. None = no round check (tournament matchups).
 
     Returns:
         DataFrame with columns: Player 1, Player 2, Bookmaker, P1 Odds, P2 Odds,
@@ -304,6 +311,23 @@ def load_matchup_odds(
                 f"— ignoring scraped file, using DataGolf API"
             )
             scraped_data = None
+        # Guard against a stale/wrong-ROUND scraped file: round matchups are stamped
+        # + tagged with their round. If we're pricing R3 but the file still holds R2
+        # (R3 not posted/scoped yet), drop it so we don't grade R3 fairs vs R2 prices.
+        if scraped_data and round is not None and market == "round_matchups":
+            file_round = scraped_data.get("round")
+            if file_round is not None and file_round != round:
+                logger.warning(
+                    f"Scraped round_matchups is for R{file_round}, not target R{round} "
+                    f"— ignoring scraped file (no current-round prices yet)"
+                )
+                scraped_data = None
+            elif scraped_data:
+                # Defensive: keep only this round's rows (handles a multi-round file
+                # from a writer that didn't scope; untagged rows pass through).
+                ml = [m for m in scraped_data.get("match_list", [])
+                      if m.get("round") in (None, 0, round)]
+                scraped_data = {**scraped_data, "match_list": ml}
         if scraped_data:
             try:
                 scraped_df = _parse_datagolf_json(scraped_data)

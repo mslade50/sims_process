@@ -100,7 +100,7 @@ def main():
 
     # ── 2. Fetch fresh round-matchup odds ────────────────────────────────
     from odds_loader import load_matchup_odds
-    matchup_df = load_matchup_odds("round_matchups", api_key=os.getenv("DATAGOLF_API_KEY"))
+    matchup_df = load_matchup_odds("round_matchups", api_key=os.getenv("DATAGOLF_API_KEY"), round=sim_round)
     if matchup_df is None or matchup_df.empty:
         print("  No round-matchup odds available — nothing to price.")
         return 0

@@ -4287,7 +4287,7 @@ def main():
     matchup_book_counts = {b: 0 for b in SHARP_BOOKS}  # sharp-book line counts for email banner
     try:
         from odds_loader import load_matchup_odds
-        matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY)
+        matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY, round=sim_round)
         matchup_df = price_matchups(matchup_df, sim_dict)
         matchup_df = calculate_edges(matchup_df)
         if "Bookmaker" in matchup_df.columns and not matchup_df.empty:
