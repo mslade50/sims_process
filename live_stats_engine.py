@@ -56,7 +56,6 @@ def _resolve_csv(filename):
 from sim_inputs import (
     tourney, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
-    score_adj_r1, score_adj_r2, score_adj_r3, score_adj_r4,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
     # R2 coefficients (3 position-based buckets)
@@ -111,7 +110,10 @@ except Exception as _e:
     _CLIMO_WIND = None
     _ROUND_DATES = None
     print(f"[weather] Climo blend skipped: {_e}")
-SCORE_ADJS = {1: score_adj_r1, 2: score_adj_r2, 3: score_adj_r3, 4: score_adj_r4}
+# Per-round expected scoring baselines. Formerly imported from sim_inputs
+# (score_adj_r1..r4); migrated to the Google Sheet (expected_score_r1..r4) and
+# populated at runtime by _apply_sheet_overrides(). Defaults are placeholders.
+SCORE_ADJS = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
 # Multi-course expected scoring adjustments (populated from Google Sheet).
 # Index 0 = first course_x encountered in API data, index 1 = second, etc.
@@ -1019,7 +1021,7 @@ def create_pre_event_predictions():
     avg_skill = preds["my_pred"].mean()
 
     # Expected scoring
-    expected_scoring = round(score_adj_r1 - avg_skill + avg_wind, 2)
+    expected_scoring = round(SCORE_ADJS[1] - avg_skill + avg_wind, 2)
     # dew_adj is SCORE-space like wind_adj (dew_calculation comes from
     # humidity.py's score regression: negative coef -> humid = lower scores
     # = easier), so it must be SUBTRACTED like wind: a player in the more
@@ -1769,6 +1771,14 @@ def _apply_sheet_overrides(config):
                 _blend_log.append(f"R{rnd}={_w:.0%}")
         if _blend_log:
             print(f"  Wind blended with climo prior ({', '.join(_blend_log)})")
+
+    # Per-round expected scoring baselines from sheet (replaces the former
+    # score_adj_r1..r4 constants in sim_inputs). The per-course expected_score_1/2/3
+    # block below still overrides the live (next) round's value.
+    for rnd in range(1, 5):
+        vals = config.get(f"expected_score_r{rnd}")
+        if vals:
+            SCORE_ADJS[rnd] = vals[0]
 
     # Build per-course scoring adjustments list
     # expected_score_1 = first course_x encountered in API data, etc.
