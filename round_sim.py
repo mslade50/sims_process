@@ -1565,7 +1565,6 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
               f"{taker_pos} taker edge (walked >= {MIN_DEPTH}), {mid_pos} maker edge")
 
     if kalshi_mismatches:
-        print(f"  Warning: {len(kalshi_mismatches)} Kalshi outright players not found in sim")
         df.attrs["name_mismatches"] = kalshi_mismatches
 
     return df
@@ -2391,7 +2390,8 @@ def price_matchups(matchup_df, sim_dict):
     matchup_df["my_odds_p2_tl"] = cols["tl_p2"]
 
     if name_mismatches:
-        print(f"  Warning: {len(name_mismatches)} scraped players not found in sim")
+        # Stash for the single aggregated summary; the per-pricer print was pure
+        # post-cut noise (missed-cut players dominate) so it's dropped.
         matchup_df.attrs["name_mismatches"] = dict(name_mismatches)
 
     return matchup_df
@@ -2746,7 +2746,7 @@ def build_round_score_probs(sim_dict, expected_avg_lookup, cat_mu_lookup=None):
 # Step 3b: Price Score Lines vs FanDuel Market Odds
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_score_lines():
+def load_score_lines(sim_round=None):
     """Load scraped round score O/U lines (FanDuel etc.).
 
     Follows the same GitHub-first pattern as odds_loader._fetch_scraped_json():
@@ -2766,6 +2766,15 @@ def load_score_lines():
     filename = "round_scores_latest.json"
     today_utc = datetime.now(timezone.utc).date()
 
+    def _round_ok(d):
+        """Reject a round_scores file stamped for a different round than we price.
+        The board now stamps `round` on round_scores; an unstamped legacy file passes."""
+        fr = d.get("round")
+        if fr is not None and sim_round is not None and int(fr) != int(sim_round):
+            print(f"  Score lines file is R{fr}, not target R{sim_round} — skipping")
+            return False
+        return True
+
     # 1. Try GitHub API first
     gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
     api_url = f"https://api.github.com/repos/mslade50/golf_scraping/contents/data/{filename}?ref=master"
@@ -2782,7 +2791,7 @@ def load_score_lines():
                 ts = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
                 if ts.date() < today_utc:
                     print(f"  GitHub score lines from {ts.date()} (not today), skipping")
-                else:
+                elif _round_ok(data):
                     lines = data.get("lines", [])
                     if lines:
                         print(f"  Loaded {len(lines)} score lines from GitHub (updated {last_updated})")
@@ -2809,6 +2818,8 @@ def load_score_lines():
                 continue
             with open(path) as f:
                 data = json.load(f)
+            if not _round_ok(data):
+                continue
             lines = data.get("lines", [])
             if lines:
                 print(f"  Loaded {len(lines)} score lines from {path.name}")
@@ -4140,6 +4151,16 @@ def main():
             sheet_config = _cfg  # reuse config loaded at import time
             round_num = sheet_config["round_num"]
             sim_round = round_num + 1 if round_num < 4 else 4
+            # Warning-only DOW divergence check (sheet stays the human-controlled
+            # source so a past round can still be re-priced manually).
+            try:
+                from api_utils import sim_round_from_dow
+                _dow_round = sim_round_from_dow()
+                if _dow_round != sim_round:
+                    print(f"  [warn] Sheet round R{sim_round} != day-of-week round R{_dow_round}; "
+                          f"using SHEET (update round_config if this is wrong)")
+            except Exception:
+                pass
             expected_avg = sheet_config.get("expected_score_1")
             if expected_avg is None:
                 expected_avg = PAR
@@ -4364,7 +4385,7 @@ def main():
     # ── Step 3b: Price score lines vs market ─────────────────────────────
     score_edges = pd.DataFrame()
     try:
-        market_lines = load_score_lines()
+        market_lines = load_score_lines(sim_round)
         if market_lines:
             score_edges = price_score_lines(score_card, market_lines)
     except Exception as e:
@@ -4685,15 +4706,31 @@ def main():
         pass
 
     if _all_mismatches and not args.dry_run:
-        _mm_lines = [f"<b>R{sim_round} Name Mismatches — {tourney.replace('_', ' ').title()}</b>", ""]
-        _mm_lines.append(f"{len(_all_mismatches)} scraped players not found in sim:")
-        for name, books in sorted(_all_mismatches.items()):
-            book_str = ", ".join(sorted(books)) if isinstance(books, set) else str(books)
-            _mm_lines.append(f"  • {name}  ({book_str})")
-        _mm_lines.append("")
-        _mm_lines.append("Fix: add to name_replacements in sim_inputs.py")
-        _send_telegram("\n".join(_mm_lines))
-        print(f"  Sent Telegram alert for {len(_all_mismatches)} name mismatches")
+        # Suppress players who aren't in our live field at all (missed-cut /
+        # wrong-event scraped lines) — those aren't actionable name_replacements
+        # fixes, just post-cut noise. Keep only names we DO model but failed to join.
+        try:
+            _field = set(model_preds["player_name"].astype(str)
+                         .str.lower().str.strip().replace(name_replacements))
+        except Exception:
+            _field = set()
+        _actionable = ({n: b for n, b in _all_mismatches.items() if n in _field}
+                       if _field else dict(_all_mismatches))
+        _suppressed = len(_all_mismatches) - len(_actionable)
+        if _actionable:
+            _mm_lines = [f"<b>R{sim_round} Name Mismatches — {tourney.replace('_', ' ').title()}</b>", ""]
+            _mm_lines.append(f"{len(_actionable)} in-field players not joined (add to name_replacements):")
+            for name, books in sorted(_actionable.items())[:12]:
+                book_str = ", ".join(sorted(books)) if isinstance(books, set) else str(books)
+                _mm_lines.append(f"  • {name}  ({book_str})")
+            if len(_actionable) > 12:
+                _mm_lines.append(f"  …and {len(_actionable) - 12} more")
+            if _suppressed:
+                _mm_lines.append(f"\n({_suppressed} missed-cut/non-field players suppressed)")
+            _send_telegram("\n".join(_mm_lines))
+            print(f"  Name mismatches: {len(_actionable)} actionable, {_suppressed} suppressed (missed-cut)")
+        else:
+            print(f"  Name mismatches: 0 actionable ({_suppressed} missed-cut/non-field suppressed)")
 
     # ── Kalshi ancillary pickup-sanity tripwire ─────────────────────────────
     # raw>0 but matched==0 on a series = the series HAD markets but none matched our

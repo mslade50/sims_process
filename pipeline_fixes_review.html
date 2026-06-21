@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline Fixes — Review &amp; Verification</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171c24; --panel2:#1d242e; --ink:#e6edf3; --mut:#9aa7b4;
+    --line:#2a323d; --acc:#4ea1ff; --good:#3fb950; --warn:#d29922; --bad:#f85149;
+    --code:#0b0f14;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 22px 80px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+  h2{font-size:21px;margin:38px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px;color:var(--acc)}
+  p{margin:10px 0}
+  .sub{color:var(--mut);margin:0 0 18px}
+  a{color:var(--acc)}
+  code,kbd{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86em}
+  code{background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:#cdd9e5}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+    overflow:auto;color:#cdd9e5;font-size:13px;line-height:1.5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td code{white-space:nowrap}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;
+    letter-spacing:.03em;vertical-align:middle}
+  .b-good{background:rgba(63,185,80,.15);color:var(--good);border:1px solid rgba(63,185,80,.35)}
+  .b-warn{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid rgba(210,153,34,.35)}
+  .b-bad{background:rgba(248,81,73,.15);color:var(--bad);border:1px solid rgba(248,81,73,.35)}
+  .b-acc{background:rgba(78,161,255,.15);color:var(--acc);border:1px solid rgba(78,161,255,.35)}
+  .toc{columns:2;column-gap:24px;font-size:14px}
+  .toc a{display:block;padding:3px 0;text-decoration:none;color:var(--ink)}
+  .toc a:hover{color:var(--acc)}
+  ul{margin:8px 0;padding-left:22px}
+  li{margin:5px 0}
+  .why{color:var(--mut);font-style:italic}
+  .flow{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--code);
+    border:1px solid var(--line);border-radius:8px;padding:14px 16px;color:#cdd9e5;overflow:auto;white-space:pre}
+  .tag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:1px 6px;margin-left:6px}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 0}
+  .kpi div{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:12px 16px;flex:1;min-width:150px}
+  .kpi b{display:block;font-size:24px}
+  .kpi span{color:var(--mut);font-size:12px}
+  footer{margin-top:40px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+  .hl{color:#fff;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Golf Pipeline — Fixes, Rationale &amp; Verification</h1>
+  <p class="sub">Two repos: <code>golf_scraping</code> (the scraper/board) and <code>sims_process</code> (the sim, odds screen, pricer). Generated for your review — every change, why it exists, and how it was tested.</p>
+
+  <div class="kpi">
+    <div><b>9</b><span>source files changed</span></div>
+    <div><b>14/14</b><span>tests passing</span></div>
+    <div><b>0</b><span>fixes needed in test loop</span></div>
+    <div><b>GO</b><span>verdict (working w/ caveats)</span></div>
+  </div>
+
+  <div class="panel">
+    <strong>The one-sentence summary:</strong> the scraper used to learn "which round to price" <em>from the sim itself</em>, which created a feedback loop that mispriced live rounds; we replaced that with a dead-simple day-of-week rule, hardened the odds guards on both consumers, fixed a 3-week-silent round-scores blackout, tightened over-loose name matching, wired the live-outrights page to our fair prices, and cut logging noise.
+  </div>
+
+  <h2 id="toc">Contents</h2>
+  <div class="toc panel">
+    <a href="#problem">1 · The problem we hit</a>
+    <a href="#rootcause">2 · Root cause (what the audits found)</a>
+    <a href="#decisions">3 · Your design decisions</a>
+    <a href="#scraper">4 · Changes — golf_scraping</a>
+    <a href="#sims">5 · Changes — sims_process</a>
+    <a href="#tests">6 · How it was tested</a>
+    <a href="#proven">7 · Proven vs. live-only</a>
+    <a href="#verify">8 · How to verify it yourself</a>
+    <a href="#files">9 · Full file list</a>
+  </div>
+
+  <h2 id="problem">1 · The problem we hit</h2>
+  <p>While pricing the <span class="hl">US Open R3</span>, the round simulation ignored the scraped sharp-book odds and fell back to DataGolf only. The scraped <code>round_matchups</code> file was stamped <code>round: 2</code> while we were pricing R3, so the round guard correctly dropped it — but the file <em>should</em> have been R3. There was also a transient corrupt file (<code>round:2, 0 matches, blank timestamp</code>) during the round transition.</p>
+
+  <h2 id="rootcause">2 · Root cause (what the audits found)</h2>
+  <p>Two multi-agent audits across both repos overturned the initial theory and found the real mechanisms:</p>
+
+  <h3>2a · The round was sim-driven — a feedback loop</h3>
+  <p>The live writer of <code>round_matchups_latest.json</code> is <code>golf_scraping/board/build.py</code> (the old <code>sentinel.py</code> is <span class="b-warn badge">deprecated</span>). It read the round <em>verbatim from the sim's own</em> <code>sim_fairs.json["round"]</code>:</p>
+  <div class="flow">round_sim.py  →  publish_sim_fairs.py  →  sim_fairs.json["round"]  →  board/build.py
+        ↑                                                                      │
+        └──────────────  odds_loader (reads the stamped round)  ←─────────────┘</div>
+  <p class="why">So if the sim hadn't advanced to R3 yet, the board stamped R2, filtered out the real R3 book rows, and the sim could never pick them up. A circular dependency that mispriced every round transition.</p>
+
+  <h3>2b · Round scores had been silently blacked out for 3 weeks</h3>
+  <p>FanDuel <span class="hl">stopped posting the total-strokes round-score O/U market after 2026-05-30</span>. The board's "keep-last-on-empty" logic never overwrote the file on an empty scrape, so <code>round_scores_latest.json</code> froze at the May-30 Charles Schwab snapshot — and no alert ever fired. <span class="why">(git-confirmed: last write 2026-05-30 while every other market kept updating.)</span></p>
+
+  <h3>2c · Name matching was over-inclusive</h3>
+  <p><code>names_match</code> used a 2-character <code>startswith</code> prefix, so <code>"si woo kim"</code> matched <code>"simon kim"</code>, and a single initial like <code>"k lee"</code> matched <em>both</em> <code>"kevin lee"</code> and <code>"kyoung-hoon lee"</code> — silently merging distinct players' odds, worst post-cut when the field shrinks. Plus the sim spammed a per-player "not found" Telegram blast dominated by missed-cut players.</p>
+
+  <h2 id="decisions">3 · Your design decisions</h2>
+  <table>
+    <tr><th>Decision</th><th>Choice</th></tr>
+    <tr><td>Round verification</td><td><span class="b-acc badge">Pure day-of-week</span> — Thu→R2, Fri→R3, Sat→R4. No DataGolf, no sim. No override.</td></tr>
+    <tr><td>Round scores</td><td><span class="b-acc badge">Full restore + alert</span> — source from any book (DraftKings fallback), explicit-empty when none, deduped blackout alert.</td></tr>
+    <tr><td>Live-outright fairs</td><td><span class="b-acc badge">Book-aware dead-heat</span> — WIN uses dead-heat for all books; top-5/10/20 use dead-heat for standard books but <em>no-dead-heat</em> for Kalshi &amp; NoVig.</td></tr>
+  </table>
+
+  <h2 id="scraper">4 · Changes — golf_scraping (the scraper / board)</h2>
+
+  <h3>board/build.py — kill the feedback loop</h3>
+  <table>
+    <tr><th>What</th><th>Why</th></tr>
+    <tr><td><code>round_for_now()</code> — ET weekday → round <code>{Thu:2, Fri:3, Sat:4, Sun:4, Mon–Wed:1}</code>; <code>sim_round</code> now comes from this, not <code>sim_fairs.json</code>.</td><td class="why">Breaks the circular dependency. Always a concrete int (never <code>None</code>), so the stamped round can't go missing. Anchored on ET because the Cloudflare cron fires Thursday-night runs on UTC-Friday — UTC anchoring would mis-round them.</td></tr>
+    <tr><td>Warns if the sim's published round disagrees with the DOW round.</td><td class="why">Diagnostic only — DOW always wins now.</td></tr>
+  </table>
+
+  <h3>board/build.py — round scores</h3>
+  <table>
+    <tr><th>What</th><th>Why</th></tr>
+    <tr><td>Source <code>score_lines</code> from every book's collected props (<code>prop_type=='round_score'</code>), event-scoped.</td><td class="why">DraftKings automatically backfills when FanDuel drops the market.</td></tr>
+    <tr><td>Dedicated writer: stamps <code>round</code> + <code>event_name</code>; when a round is live but no lines exist, writes an <span class="hl">explicit empty</span> file (never keep-last-stale).</td><td class="why">A stale cross-event score file can never silently feed the pricer again.</td></tr>
+    <tr><td><code>_round_score_blackout_alerted()</code> → deduped Telegram alert (once per event/round/ET-day).</td><td class="why">You find out immediately next time a book drops the market, without 48 alerts/day from the 30-min loop.</td></tr>
+  </table>
+
+  <h3>Other scraper files</h3>
+  <table>
+    <tr><th>File</th><th>What &amp; why</th></tr>
+    <tr><td><code>scrapers/fanduel.py</code></td><td>Widened the round-score market regex to also catch "Round N … Total … Score" labels. <span class="why">Future-proofs if FanDuel relists under a new name.</span></td></tr>
+    <tr><td><code>utils/names.py</code></td><td><code>names_match</code> tightened: exact full-vs-full, or a <em>single-letter</em> initial vs a full first name only. <span class="why">Kills the <code>si woo kim</code>/<code>simon kim</code> false match.</span></td></tr>
+    <tr><td><code>utils/output.py</code></td><td>Grouping merges only when <em>exactly one</em> existing group matches; ambiguous → new group. <span class="why">A <code>k lee</code> line can no longer overwrite the wrong Lee's odds.</span></td></tr>
+  </table>
+
+  <h2 id="sims">5 · Changes — sims_process (sim / odds screen / pricer)</h2>
+  <table>
+    <tr><th>File</th><th>What &amp; why</th></tr>
+    <tr><td><code>odds_loader.py</code></td><td>New shared <code>guard_scraped_data()</code>: freshness → event_id → file-round → per-row filter. <span class="hl">A missing top-level round on a round file is now treated as suspect and dropped.</span> <code>load_matchup_odds</code> refactored to use it. <span class="why">One guard implementation the sim and odds screen both share, so they can't diverge.</span></td></tr>
+    <tr><td><code>api_utils.py</code></td><td><code>sim_round_from_dow()</code> — the sims mirror of the scraper's DOW map. <span class="why">Keeps both repos on an identical round rule.</span></td></tr>
+    <tr><td><code>push_odds_screen.py</code></td><td>(1) Deleted its un-guarded fetch → routes through <code>guard_scraped_data</code> (freshness/event/round). (2) Round is DOW-derived. (3) Live outrights repointed to <code>top_finish_probs_live</code> with book-aware fairs: <code>fair = nodh_prob if book in {kalshi, novig} else dh_prob</code>. <span class="why">The odds screen now trusts exactly what the sim trusts, and shows our fair prices with the correct dead-heat treatment per book.</span></td></tr>
+    <tr><td><code>round_sim.py</code></td><td>(1) <code>load_score_lines(sim_round)</code> rejects a round-mismatched file. (2) Sheet-vs-DOW divergence <em>warning</em> (sheet still wins, so you can re-price past rounds). (3) Name-mismatch noise removed → one in-field-only summary that suppresses missed-cut players. <span class="why">Less noise, and the spam was dominated by un-actionable missed-cut names.</span></td></tr>
+    <tr><td><code>sheet_config.py</code></td><td>The full config block prints <span class="hl">once per process</span> (a one-liner thereafter). <span class="why">Removed the duplicate config dump.</span></td></tr>
+  </table>
+
+  <h2 id="tests">6 · How it was tested</h2>
+  <p>A test-and-fix loop ran <span class="hl">12 fixture-based tests in parallel</span> (no live odds — synthetic data + monkeypatched network), and would have serially fixed any failure and re-run everything. It converged in <span class="hl">one round, 0 fixes needed</span>. Two code-read-only gaps were then closed directly.</p>
+  <table>
+    <tr><th>Test</th><th>Proves</th><th>Result</th></tr>
+    <tr><td><code>dow-mapping</code></td><td>Both repos' DOW helpers agree for all 7 weekdays; never <code>None</code></td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>guard-matrix</code></td><td>17 cases: stale / wrong-event / wrong-round / missing-round / per-row</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>load-matchup-parity</code></td><td>Refactored loader still merges scraped-wins, drops wrong round</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>names-match</code></td><td>All 8 cases incl. <code>si woo kim</code>≠<code>simon kim</code></td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>grouping-unambiguous</code></td><td>Ambiguous <code>k lee</code> → 3 separate rows, no wrong-merge</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>round-scores-write</code></td><td>Write / explicit-empty / keep-last — all 3 branches</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>blackout-dedup</code></td><td>Alert fires once per event/round/day</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>fanduel-regex</code></td><td>Old + 2 new round-score patterns; non-matches excluded</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>outrights-bookaware</code></td><td>WIN=DH; standard book uses DH, Kalshi uses no-DH (different edges proven)</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>pushodds-guarded-fetch</code></td><td>Guard rejects stale/wrong-round; DOW round wired into main()</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>loadscore-roundguard</code></td><td>Round-mismatched score file → returns [] ; matching → returns lines</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>compile-all</code></td><td>All 9 files <code>py_compile</code>; all new symbols present</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>#8 name summary</code></td><td>In-field filter keeps actionable, suppresses missed-cut, truncates to 12</td><td><span class="b-good badge">PASS</span></td></tr>
+    <tr><td><code>#9 config dedup</code></td><td>Live: full block once, one-liner on 2nd call (hit the real Sheet)</td><td><span class="b-good badge">PASS</span></td></tr>
+  </table>
+
+  <h2 id="proven">7 · Proven vs. live-only</h2>
+  <div class="grid2">
+    <div class="panel">
+      <h3 style="margin-top:0;color:var(--good)">Proven offline</h3>
+      <p class="why" style="margin-top:0">Each test imported the real function and asserted on the change-under-test — not reimplementations.</p>
+      <ul>
+        <li>DOW round contract (both repos)</li>
+        <li>The full guard matrix + missing-round drop</li>
+        <li>Name tightening + ambiguity handling</li>
+        <li>Round-scores 3-way write + blackout dedup</li>
+        <li>Book-aware DH / no-DH edge math</li>
+        <li>Score-line round guard, config dedup</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0;color:var(--warn)">Confirm on first live round</h3>
+      <p class="why" style="margin-top:0">Inherent — fixtures can't fabricate live book data.</p>
+      <ul>
+        <li>The board stamping real <code>round</code>/<code>event_id</code> on the actually-published JSON. <em>Watch the first live run's logs for the guard messages.</em></li>
+        <li>The Kalshi <em>overlay</em> edge path — only runs when live Kalshi markets exist (the no-DH split was proven via the reachable DataGolf branch).</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2 id="verify">8 · How to verify it yourself</h2>
+  <p>Compile every changed file and confirm the new symbols exist:</p>
+  <pre>cd ~/Documents/golf_scraping
+python -m py_compile board/build.py scrapers/fanduel.py utils/names.py utils/output.py
+
+cd ~/Documents/sims_process
+python -m py_compile odds_loader.py api_utils.py push_odds_screen.py round_sim.py sheet_config.py</pre>
+  <p>Spot-check the two cores in a Python shell:</p>
+  <pre># scraper: ET weekday → round, and the tightened name match
+cd ~/Documents/golf_scraping &amp;&amp; python -c "
+from board.build import round_for_now
+from utils.names import names_match
+print('names: si-woo/simon =', names_match('si woo kim','simon kim'))      # False
+print('names: s/scottie    =', names_match('s scheffler','scottie scheffler'))  # True
+"
+
+# sims: the shared guard drops a missing-round file
+cd ~/Documents/sims_process &amp;&amp; python -c "
+from odds_loader import guard_scraped_data
+print('missing round ->', guard_scraped_data({'event_id':'26','match_list':[]}, 'round_matchups', round=3, event_ids={'26'}))  # None
+"</pre>
+  <p>Review the diffs before committing:</p>
+  <pre>cd ~/Documents/sims_process &amp;&amp; git diff -- odds_loader.py api_utils.py push_odds_screen.py round_sim.py sheet_config.py
+cd ~/Documents/golf_scraping &amp;&amp; git diff -- board/build.py scrapers/fanduel.py utils/names.py utils/output.py</pre>
+
+  <h2 id="files">9 · Full file list (uncommitted)</h2>
+  <table>
+    <tr><th>Repo</th><th>File</th><th>Area</th></tr>
+    <tr><td>golf_scraping</td><td><code>board/build.py</code></td><td>DOW round · round-scores write/alert</td></tr>
+    <tr><td>golf_scraping</td><td><code>scrapers/fanduel.py</code></td><td>round-score regex</td></tr>
+    <tr><td>golf_scraping</td><td><code>utils/names.py</code></td><td>name match tightening</td></tr>
+    <tr><td>golf_scraping</td><td><code>utils/output.py</code></td><td>unambiguous grouping</td></tr>
+    <tr><td>sims_process</td><td><code>odds_loader.py</code></td><td>shared guard_scraped_data</td></tr>
+    <tr><td>sims_process</td><td><code>api_utils.py</code></td><td>sim_round_from_dow</td></tr>
+    <tr><td>sims_process</td><td><code>push_odds_screen.py</code></td><td>guards · DOW · live outrights</td></tr>
+    <tr><td>sims_process</td><td><code>round_sim.py</code></td><td>score-line guard · name de-noise · DOW warn</td></tr>
+    <tr><td>sims_process</td><td><code>sheet_config.py</code></td><td>config print dedup</td></tr>
+  </table>
+
+  <footer>
+    Nothing was committed or run against live data while producing these changes. The changes sit uncommitted in both working trees pending your review.
+  </footer>
+
+</div>
+</body>
+</html>

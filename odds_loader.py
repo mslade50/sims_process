@@ -123,6 +123,71 @@ def _fetch_scraped_json(market: str) -> dict | None:
     return None
 
 
+def _scraped_age_hours(data: dict) -> "float | None":
+    """Age in hours from a scraped file's `last_updated` (UTC), or None if the
+    field is missing/unparseable."""
+    last_updated = (data or {}).get("last_updated", "")
+    if not last_updated:
+        return None
+    try:
+        ts = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    except ValueError:
+        return None
+
+
+def guard_scraped_data(data, market, *, round=None, event_ids=None,
+                       max_age_hours=MAX_AGE_HOURS):
+    """Apply the standard scraped-odds guards; return a safe-to-use dict (rows
+    possibly filtered) or None if the file must be rejected. SHARED by
+    load_matchup_odds and push_odds_screen so the sim pricer and the odds screen
+    can never diverge on what they trust.
+
+    Guards, in order:
+      1. Freshness: reject if last_updated is older than max_age_hours. A
+         missing/unparseable timestamp = unknown age = passes (matches the
+         existing GitHub-fetch behaviour; the DataGolf fallback covers it).
+      2. event_id: reject if the top-level event_id is set and not in event_ids.
+      3. file-round (round_matchups / round_scores only): reject if the top-level
+         `round` is set and != target. A MISSING top-level round is SUSPECT and
+         rejected when a target round is supplied — under the day-of-week rule the
+         board always stamps the round, so a missing one signals a stale/foreign
+         writer (closes the old 'round=None silently disables the guard' gap).
+      4. per-row round: keep only rows whose `round` is in (None, 0, round).
+    """
+    if not data:
+        return None
+
+    age = _scraped_age_hours(data)
+    if age is not None and age > max_age_hours:
+        logger.info(f"Scraped {market} stale ({age:.1f}h old) — rejecting")
+        return None
+
+    targets = event_ids if event_ids is not None else _target_event_ids()
+    sid = str((data or {}).get("event_id") or "").strip()
+    if targets and sid and sid not in targets:
+        logger.warning(f"Scraped {market} is for event {sid}, not target {targets} — rejecting")
+        return None
+
+    if market in ("round_matchups", "round_scores") and round is not None:
+        file_round = data.get("round")
+        if file_round is None:
+            logger.warning(f"Scraped {market} has no top-level round but target is R{round} "
+                           f"— rejecting as suspect (writer must stamp round)")
+            return None
+        if file_round != round:
+            logger.warning(f"Scraped {market} is for R{file_round}, not target R{round} — rejecting")
+            return None
+        # Defensive per-row scope (untagged round-0 rows pass through).
+        if "match_list" in data:
+            data = {**data, "match_list": [m for m in data.get("match_list", [])
+                                           if m.get("round") in (None, 0, round)]}
+        if "lines" in data:
+            data = {**data, "lines": [l for l in data.get("lines", [])
+                                      if l.get("round") in (None, 0, round)]}
+    return data
+
+
 def load_betcris_outrights() -> pd.DataFrame:
     """Load scraped Betcris outright odds (winner / top_5 / top_10 / top_20).
 
@@ -300,34 +365,9 @@ def load_matchup_odds(
     # 1. Load scraped odds for our books (GitHub -> local fallback)
     if not force_api:
         scraped_data = _fetch_scraped_json(market)
-        # Guard against a stale/wrong-event scraped file: the matchup JSON is
-        # tagged with the target DataGolf event_id. If it doesn't match this
-        # week's event, ignore it and fall back to the API. (No tag => trust it.)
-        targets = _target_event_ids()
-        sid = str((scraped_data or {}).get("event_id") or "").strip()
-        if scraped_data and targets and sid and sid not in targets:
-            logger.warning(
-                f"Scraped {market} is for event {sid}, not target {targets} "
-                f"— ignoring scraped file, using DataGolf API"
-            )
-            scraped_data = None
-        # Guard against a stale/wrong-ROUND scraped file: round matchups are stamped
-        # + tagged with their round. If we're pricing R3 but the file still holds R2
-        # (R3 not posted/scoped yet), drop it so we don't grade R3 fairs vs R2 prices.
-        if scraped_data and round is not None and market == "round_matchups":
-            file_round = scraped_data.get("round")
-            if file_round is not None and file_round != round:
-                logger.warning(
-                    f"Scraped round_matchups is for R{file_round}, not target R{round} "
-                    f"— ignoring scraped file (no current-round prices yet)"
-                )
-                scraped_data = None
-            elif scraped_data:
-                # Defensive: keep only this round's rows (handles a multi-round file
-                # from a writer that didn't scope; untagged rows pass through).
-                ml = [m for m in scraped_data.get("match_list", [])
-                      if m.get("round") in (None, 0, round)]
-                scraped_data = {**scraped_data, "match_list": ml}
+        # All event/round/freshness guards live in guard_scraped_data() now, shared
+        # with push_odds_screen so the sim and the odds screen trust identical data.
+        scraped_data = guard_scraped_data(scraped_data, market, round=round)
         if scraped_data:
             try:
                 scraped_df = _parse_datagolf_json(scraped_data)

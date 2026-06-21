@@ -433,6 +433,21 @@ def get_round_dates():
     return [thursday + timedelta(days=i) for i in range(4)]
 
 
+def sim_round_from_dow(now_et=None) -> int:
+    """Round being priced, derived PURELY from the America/New_York weekday — the
+    sims mirror of the scraper's board/build.py round_for_now(). Thu->2, Fri->3,
+    Sat->4, Sun->4, Mon-Wed->1. Always 1..4, never None.
+
+    Used as a warning-only divergence check against the Google Sheet round (the
+    sheet stays the single human-controlled source so a past round can still be
+    re-priced manually) and by push_odds_screen to scope the odds screen to the
+    same round the board stamps. Must anchor on ET to match the board exactly."""
+    from zoneinfo import ZoneInfo
+    if now_et is None:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+    return {0: 1, 1: 1, 2: 1, 3: 2, 4: 3, 5: 4, 6: 4}[now_et.weekday()]
+
+
 # --------------------------------------------------------------------------
 # Name Cleaning
 # --------------------------------------------------------------------------

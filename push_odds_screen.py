@@ -66,30 +66,25 @@ def _upload_json(client, key: str, data: dict):
     logger.info(f"Uploaded {key} ({len(body)} bytes)")
 
 
-def _fetch_scraped_json(filename: str) -> dict | None:
-    """Fetch scraped odds JSON from GitHub, falling back to local paths."""
-    gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
-    api_url = (
-        f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
-        f"{GITHUB_DATA_PATH}/{filename}?ref={GITHUB_BRANCH}"
-    )
-    try:
-        headers = {"Accept": "application/vnd.github.raw+json"}
-        if gh_token:
-            headers["Authorization"] = f"Bearer {gh_token}"
-        resp = requests.get(api_url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        logger.info(f"Fetched {filename} from GitHub")
-        return data
-    except Exception as e:
-        logger.warning(f"GitHub fetch failed for {filename}: {e}")
+def _fetch_scraped_guarded(market: str, *, round=None) -> "dict | None":
+    """Fetch a scraped market JSON via odds_loader (GitHub->local) and apply the
+    SAME guards the sim pricer uses: freshness (MAX_AGE_HOURS), event_id scope,
+    file-level round, and per-row round filtering. Returns a safe dict or None.
 
-    local = SCRAPED_LOCAL / filename
-    if local.exists():
-        logger.info(f"Using local {local}")
-        with open(local) as f:
-            return json.load(f)
+    `market` is the bare market name ('round_matchups', 'tournament_matchups',
+    'round_scores') — odds_loader._fetch_scraped_json appends '_latest.json'. This
+    replaces push_odds_screen's old un-guarded fetch so the odds screen can never
+    price a stale / wrong-event / wrong-round file the sim itself would reject."""
+    from odds_loader import _fetch_scraped_json as _ol_fetch, guard_scraped_data
+    data = _ol_fetch(market)
+    return guard_scraped_data(data, market, round=round)
+
+
+def _first_existing(paths):
+    """Return the first existing Path from `paths`, or None."""
+    for p in paths:
+        if Path(p).exists():
+            return Path(p)
     return None
 
 
@@ -133,10 +128,11 @@ def _edge_pct(fair_prob: float, market_odds: float) -> float:
 
 # ─── market builders ────────────────────────────────────────────────────────
 
-def _build_round_matchups(tourney: str, round_num: int, repl: dict) -> list:
-    """Build round matchup records from scraped odds + fair prices."""
-    sim_round = round_num + 1 if round_num < 4 else 4
+def _build_round_matchups(tourney: str, sim_round: int, repl: dict) -> list:
+    """Build round matchup records from scraped odds + fair prices.
 
+    `sim_round` is the DOW-derived round (1-4) passed in by main(), matching the
+    sim pricer's target round exactly."""
     # Load fair prices
     fair_path = PROJECT_ROOT / tourney / f"all_books_fair_matchups_r{sim_round}.csv"
     if not fair_path.exists():
@@ -148,8 +144,8 @@ def _build_round_matchups(tourney: str, round_num: int, repl: dict) -> list:
         fair_df["Player 2"] = fair_df["Player 2"].str.lower().replace(repl)
         logger.info(f"Loaded fair matchups: {fair_path.name} ({len(fair_df)} rows)")
 
-    # Load scraped odds
-    scraped = _fetch_scraped_json("round_matchups_latest.json")
+    # Load scraped odds (guarded: freshness + event_id + round)
+    scraped = _fetch_scraped_guarded("round_matchups", round=sim_round)
     if not scraped:
         # Fall back to fair_df only (it has book odds too)
         if fair_df.empty:
@@ -251,8 +247,8 @@ def _build_tournament_matchups(tourney: str, repl: dict) -> list:
         fair_df["Player 2"] = fair_df["Player 2"].str.lower().replace(repl)
         logger.info(f"Loaded tournament fair matchups: {Path(files[-1]).name} ({len(fair_df)} rows)")
 
-    # Load scraped odds
-    scraped = _fetch_scraped_json("tournament_matchups_latest.json")
+    # Load scraped odds (guarded: freshness + event_id; tournament = no round)
+    scraped = _fetch_scraped_guarded("tournament_matchups")
     if not scraped:
         if fair_df.empty:
             return []
@@ -307,10 +303,10 @@ def _build_tournament_matchups(tourney: str, repl: dict) -> list:
     return sorted(matchups.values(), key=lambda x: x.get("best_edge", 0), reverse=True)
 
 
-def _build_score_lines(tourney: str, round_num: int, repl: dict) -> list:
-    """Build score line records from scraped odds + fair card."""
-    sim_round = round_num + 1 if round_num < 4 else 4
+def _build_score_lines(tourney: str, sim_round: int, repl: dict) -> list:
+    """Build score line records from scraped odds + fair card.
 
+    `sim_round` is the DOW-derived round (1-4) passed in by main()."""
     # Load fair card
     fair_path = PROJECT_ROOT / tourney / f"fair_card_r{sim_round}.csv"
     if not fair_path.exists():
@@ -321,8 +317,8 @@ def _build_score_lines(tourney: str, round_num: int, repl: dict) -> list:
         fair_df["Player"] = fair_df["Player"].str.lower().replace(repl)
         logger.info(f"Loaded fair card: {fair_path.name} ({len(fair_df)} rows)")
 
-    # Load scraped score lines
-    scraped = _fetch_scraped_json("round_scores_latest.json")
+    # Load scraped score lines (guarded: freshness + event_id + round)
+    scraped = _fetch_scraped_guarded("round_scores", round=sim_round)
     scraped_lines = {}
     if scraped:
         for item in scraped.get("lines", []):
@@ -438,25 +434,38 @@ def _fetch_dg_outrights(market_name: str, repl: dict) -> dict:
 
 
 def _build_outrights(tourney: str, repl: dict) -> dict:
-    """Build outright records from DataGolf API + Kalshi scraped + finish equity CSV."""
-    # Load sim probabilities
-    eq_path = PROJECT_ROOT / tourney / f"finish_equity_live_{tourney}.csv"
-    if not eq_path.exists():
-        eq_path = PROJECT_ROOT / f"finish_equity_live_{tourney}.csv"
-    if not eq_path.exists():
-        eq_path = PROJECT_ROOT / tourney / f"finish_equity_{tourney}.csv"
-        if not eq_path.exists():
-            eq_path = PROJECT_ROOT / f"finish_equity_{tourney}.csv"
+    """Build outright records from OUR sim fair prices + DataGolf/Kalshi book odds.
 
+    Fairs come from the full-field, dense top_finish_probs_live_{tourney}.csv (not
+    the edge-filtered finish_equity file, which is sparse post-cut). Book-aware
+    dead-heat handling: the WIN market uses dead-heat-resolved probs for every book;
+    top-5/10/20 use dead-heat fairs (top_N) for standard books but the no-dead-heat
+    columns (top_N_nodh) for Kalshi and NoVig, which do NOT dead-heat their payouts."""
+    sim_path = _first_existing([
+        PROJECT_ROOT / tourney / f"top_finish_probs_live_{tourney}.csv",
+        PROJECT_ROOT / f"top_finish_probs_live_{tourney}.csv",
+        # legacy fallbacks (sparse, but better than nothing)
+        PROJECT_ROOT / tourney / f"finish_equity_live_{tourney}.csv",
+        PROJECT_ROOT / f"finish_equity_live_{tourney}.csv",
+    ])
     sim_df = pd.DataFrame()
-    if eq_path.exists():
-        sim_df = pd.read_csv(eq_path)
+    if sim_path is not None:
+        sim_df = pd.read_csv(sim_path)
         sim_df["player_name"] = sim_df["player_name"].str.lower().replace(repl)
-        logger.info(f"Loaded finish equity: {eq_path.name} ({len(sim_df)} rows)")
+        logger.info(f"Loaded sim fair probs: {sim_path.name} ({len(sim_df)} rows)")
+
+    def _prob(player, col):
+        """Our fair probability for `player` in column `col`, or None."""
+        if sim_df.empty or col not in sim_df.columns:
+            return None
+        mask = sim_df["player_name"] == player
+        if not mask.any():
+            return None
+        v = sim_df[mask].iloc[0][col]
+        return float(v) if pd.notna(v) and v > 0 else None
 
     # Kalshi/NoVig outrights are no longer published as scraped JSON (the sim
-    # fetches them live; the scraper keeps them in its DB archive only). The
-    # odds screen now shows sim fair prices + DataGolf-sourced book odds.
+    # fetches them live); kept here so the dead-heat split still applies if they return.
     kalshi_by_market = {}
 
     # Fetch DataGolf API outrights (pinnacle, betcris, betonline, etc.)
@@ -464,52 +473,55 @@ def _build_outrights(tourney: str, repl: dict) -> dict:
     for dg_market in ["win", "top_5", "top_10", "top_20"]:
         dg_by_market[dg_market] = _fetch_dg_outrights(dg_market, repl)
 
-    # Map DG market names to our market keys
     DG_MARKET_MAP = {"winner": "win", "top_5": "top_5", "top_10": "top_10", "top_20": "top_20"}
+    NODH_BOOKS = {"kalshi", "novig"}   # these don't dead-heat → use the _nodh fair
 
     markets = {}
-    for market_key, sim_col, sim_odds_col in [
-        ("winner", "simulated_win_prob", "simulated_win_prob_a"),
-        ("top_5", "top_5", "top_5_a"),
-        ("top_10", "top_10", "top_10_a"),
-        ("top_20", "top_20", "top_20_a"),
+    # (market_key, dead-heat col, no-dead-heat col). WIN: everyone dead-heats → same col.
+    for market_key, dh_col, nodh_col in [
+        ("winner", "simulated_win_prob", "simulated_win_prob"),
+        ("top_5", "top_5", "top_5_nodh"),
+        ("top_10", "top_10", "top_10_nodh"),
+        ("top_20", "top_20", "top_20_nodh"),
     ]:
         records = []
         dg_market_name = DG_MARKET_MAP.get(market_key, market_key)
         dg_odds = dg_by_market.get(dg_market_name, {})
 
         players = set()
-        if not sim_df.empty and sim_col in sim_df.columns:
+        if not sim_df.empty and dh_col in sim_df.columns:
             players = set(sim_df["player_name"].tolist())
         players |= set(kalshi_by_market.get(market_key, {}).keys())
         players |= set(dg_odds.keys())
 
         for player in players:
             rec = {"player": player, "books": {}, "edge": {}}
+            dh_prob = _prob(player, dh_col)
+            nodh_prob = _prob(player, nodh_col)
 
-            # Sim probability
-            if not sim_df.empty and sim_col in sim_df.columns:
-                mask = sim_df["player_name"] == player
-                if mask.any():
-                    row = sim_df[mask].iloc[0]
-                    prob = row[sim_col]
-                    if pd.notna(prob) and prob > 0:
-                        rec["sim_prob"] = round(float(prob), 4)
-                        rec["fair_odds"] = _prob_to_american(float(prob))
+            # Display fair = dead-heat-resolved (what most books pay).
+            if dh_prob is not None:
+                rec["sim_prob"] = round(dh_prob, 4)
+                rec["fair_odds"] = _prob_to_american(dh_prob)
+                if nodh_col != dh_col and nodh_prob is not None:
+                    rec["sim_prob_nodh"] = round(nodh_prob, 4)
 
-            # DataGolf API odds (sharp + retail books)
+            # DataGolf book odds: standard books dead-heat → dh fair; (none of the
+            # DG books are in NODH_BOOKS today, but the split is applied per-book).
             player_dg = dg_odds.get(player, {})
             for book, american in player_dg.items():
                 rec["books"][book] = {"yes": american}
-                if "sim_prob" in rec:
-                    rec["edge"][book] = _edge_pct(rec["sim_prob"], american)
+                fair = nodh_prob if book in NODH_BOOKS else dh_prob
+                if fair is not None:
+                    rec["edge"][book] = _edge_pct(fair, american)
 
-            # Kalshi odds (overlay, don't overwrite DG books)
+            # Kalshi overlay (no dead-heat → no-DH fair).
             kalshi_odds = kalshi_by_market.get(market_key, {}).get(player)
             if kalshi_odds:
                 rec["books"]["kalshi"] = kalshi_odds
-                if "sim_prob" in rec and kalshi_odds.get("yes"):
-                    rec["edge"]["kalshi"] = _edge_pct(rec["sim_prob"], kalshi_odds["yes"])
+                fair = nodh_prob if nodh_prob is not None else dh_prob
+                if fair is not None and kalshi_odds.get("yes"):
+                    rec["edge"]["kalshi"] = _edge_pct(fair, kalshi_odds["yes"])
 
             if rec.get("sim_prob") or rec.get("books"):
                 if rec["edge"]:
@@ -550,14 +562,22 @@ def main():
 
     repl = _load_name_replacements()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    sim_round = round_num + 1 if round_num < 4 else 4
 
-    logger.info(f"Building odds screen data: {tourney} R{sim_round}")
+    # Round is DOW-derived (always set), consistent with the board + sim pricer.
+    # Sheet round_num is kept only for the log line / fallback.
+    try:
+        from api_utils import sim_round_from_dow
+        sim_round = sim_round_from_dow()
+    except Exception as e:
+        sim_round = round_num + 1 if round_num < 4 else 4
+        logger.warning(f"DOW round helper unavailable ({e}); falling back to sheet round R{sim_round}")
+
+    logger.info(f"Building odds screen data: {tourney} R{sim_round} (sheet round_num={round_num})")
 
     # Build all markets
-    round_mu = _build_round_matchups(tourney, round_num, repl)
+    round_mu = _build_round_matchups(tourney, sim_round, repl)
     tourn_mu = _build_tournament_matchups(tourney, repl)
-    score_lines = _build_score_lines(tourney, round_num, repl)
+    score_lines = _build_score_lines(tourney, sim_round, repl)
     outrights = _build_outrights(tourney, repl)
 
     payloads = {

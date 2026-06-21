@@ -169,7 +169,10 @@ def _parse_multi_numeric(value_str):
         return []
 
 
-def load_config():
+_SUMMARY_PRINTED = False  # full config block prints once per process; one-liner after
+
+
+def load_config(verbose=True):
     """
     Read the round_config tab and return a config dictionary.
 
@@ -370,35 +373,41 @@ def load_config():
         "archetype_boosts": archetype_boosts,
     }
 
-    # --- Print summary ---
-    print(f"  Round:    {round_num} ({'pre-event' if round_num == 0 else f'R{round_num} complete'})")
-    if tourney:
-        print(f"  Tourney:  {tourney} (event_id={event_id}, course_id={course_id})")
-    print(f"  Wind:     {len(wind)} hours -> {wind[:5]}{'...' if len(wind) > 5 else ''}")
-    print(f"  Dew:      {len(dew)} hours -> {dew[:5]}{'...' if len(dew) > 5 else ''}")
-    print(f"  Score adj: {expected_score_1}"
-          + (f" / {expected_score_2}" if expected_score_2 is not None else "")
-          + (f" / {expected_score_3}" if expected_score_3 is not None else ""))
-    if course_codes:
-        print(f"  Courses:  {course_codes} (pars: {course_pars})")
-    if expected_score_r1:
-        print(f"  Exp R1:   {expected_score_r1}")
-    if expected_score_r2:
-        print(f"  Exp R2:   {expected_score_r2}")
-    if expected_score_r3:
-        print(f"  Exp R3:   {expected_score_r3}")
-    if expected_score_r4:
-        print(f"  Exp R4:   {expected_score_r4}")
-    print(f"  Sim:      {simulations} sims, std_dev={std_dev}, cut={cut_line}, wind_coeff={wind_override}")
-    print(f"  Cat mults: " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_mults.items()))
-    if course_cat_skew:
-        print(f"  Cat skew:  " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_skew.items()))
-    if archetype_boosts:
-        print(f"  Arch boost: " + " | ".join(f"{n}: {v:+.2f}" for n, v in archetype_boosts.items()))
-    if manual_boosts:
-        print(f"  Boosts:    " + " | ".join(f"{n}: {v:+.2f}" for n, v in manual_boosts.items()))
-    if dg_override_players:
-        print(f"  DG overrides: {', '.join(dg_override_players)}")
+    # --- Print summary (full block ONCE per process; a one-liner thereafter so
+    # repeated load_config() calls within a run don't re-spam the whole config) ---
+    global _SUMMARY_PRINTED
+    if verbose and not _SUMMARY_PRINTED:
+        _SUMMARY_PRINTED = True
+        print(f"  Round:    {round_num} ({'pre-event' if round_num == 0 else f'R{round_num} complete'})")
+        if tourney:
+            print(f"  Tourney:  {tourney} (event_id={event_id}, course_id={course_id})")
+        print(f"  Wind:     {len(wind)} hours -> {wind[:5]}{'...' if len(wind) > 5 else ''}")
+        print(f"  Dew:      {len(dew)} hours -> {dew[:5]}{'...' if len(dew) > 5 else ''}")
+        print(f"  Score adj: {expected_score_1}"
+              + (f" / {expected_score_2}" if expected_score_2 is not None else "")
+              + (f" / {expected_score_3}" if expected_score_3 is not None else ""))
+        if course_codes:
+            print(f"  Courses:  {course_codes} (pars: {course_pars})")
+        if expected_score_r1:
+            print(f"  Exp R1:   {expected_score_r1}")
+        if expected_score_r2:
+            print(f"  Exp R2:   {expected_score_r2}")
+        if expected_score_r3:
+            print(f"  Exp R3:   {expected_score_r3}")
+        if expected_score_r4:
+            print(f"  Exp R4:   {expected_score_r4}")
+        print(f"  Sim:      {simulations} sims, std_dev={std_dev}, cut={cut_line}, wind_coeff={wind_override}")
+        print(f"  Cat mults: " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_mults.items()))
+        if course_cat_skew:
+            print(f"  Cat skew:  " + " | ".join(f"{k.replace('sg_','').upper()}={v}" for k, v in course_cat_skew.items()))
+        if archetype_boosts:
+            print(f"  Arch boost: " + " | ".join(f"{n}: {v:+.2f}" for n, v in archetype_boosts.items()))
+        if manual_boosts:
+            print(f"  Boosts:    " + " | ".join(f"{n}: {v:+.2f}" for n, v in manual_boosts.items()))
+        if dg_override_players:
+            print(f"  DG overrides: {', '.join(dg_override_players)}")
+    elif verbose:
+        print(f"  Config: {tourney} R{round_num} (event {event_id}) [summary already shown above]")
 
     return config
 
