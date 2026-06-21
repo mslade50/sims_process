@@ -102,6 +102,17 @@ def _norm(name: str, replacements: dict) -> str:
     return replacements.get(name, name)
 
 
+def _first_last(name: str) -> str:
+    """Convert "last, first" -> "first last" (unambiguous; split on first comma).
+    load_betcris_outrights returns names in lowercase "first last", while the
+    outrights loop keys on "last, first" (top_finish_probs / DataGolf) — this
+    bridges the two so the Betcris overlay actually joins."""
+    if "," in name:
+        last, first = [p.strip() for p in name.split(",", 1)]
+        return f"{first} {last}"
+    return name
+
+
 def _american_to_prob(odds: float) -> float:
     """Convert American odds to implied probability."""
     if odds >= 100:
@@ -473,6 +484,25 @@ def _build_outrights(tourney: str, repl: dict) -> dict:
     for dg_market in ["win", "top_5", "top_10", "top_20"]:
         dg_by_market[dg_market] = _fetch_dg_outrights(dg_market, repl)
 
+    # The DataGolf outrights feed FREEZES during live play ("Tournament is live,
+    # baseline model not available") and drops most Betcris quotes, so the screen's
+    # Betcris column goes stale. Overlay the FRESH scraped Betcris outrights
+    # (betcris_outrights_latest.json, refreshed ~every 30 min) on top. Keyed by
+    # market_type (winner/top_5/top_10/top_20), which matches our market_key below.
+    betcris_scraped = {}
+    try:
+        from odds_loader import load_betcris_outrights
+        _bc = load_betcris_outrights()
+        if not _bc.empty:
+            _bc = _bc.copy()
+            _bc["player_name"] = _bc["player_name"].str.lower().replace(repl)
+            for _mt, _grp in _bc.groupby("market_type"):
+                betcris_scraped[_mt] = dict(zip(_grp["player_name"], _grp["american_odds"]))
+            logger.info(f"Loaded fresh scraped Betcris outrights: {len(_bc)} lines "
+                        f"({', '.join(sorted(betcris_scraped))})")
+    except Exception as e:
+        logger.warning(f"scraped Betcris overlay unavailable ({e}); using DataGolf Betcris only")
+
     DG_MARKET_MAP = {"winner": "win", "top_5": "top_5", "top_10": "top_10", "top_20": "top_20"}
     NODH_BOOKS = {"kalshi", "novig"}   # these don't dead-heat → use the _nodh fair
 
@@ -508,7 +538,13 @@ def _build_outrights(tourney: str, repl: dict) -> dict:
 
             # DataGolf book odds: standard books dead-heat → dh fair; (none of the
             # DG books are in NODH_BOOKS today, but the split is applied per-book).
-            player_dg = dg_odds.get(player, {})
+            player_dg = dict(dg_odds.get(player, {}))
+            # Prefer the fresh scraped Betcris over DataGolf's frozen live-play quote
+            # (and add Betcris for players DG dropped entirely during live play).
+            # Betcris scrape is keyed "first last"; our loop key is "last, first".
+            bc_live = betcris_scraped.get(market_key, {}).get(_first_last(player))
+            if bc_live is not None:
+                player_dg["betcris"] = int(bc_live)
             for book, american in player_dg.items():
                 rec["books"][book] = {"yes": american}
                 fair = nodh_prob if book in NODH_BOOKS else dh_prob
