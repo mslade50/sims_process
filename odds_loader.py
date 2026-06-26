@@ -309,8 +309,17 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
     return df
 
 
-def _fetch_datagolf_api(market: str, api_key: str) -> pd.DataFrame:
-    """Fetch odds from DataGolf API."""
+def _fetch_datagolf_api(market: str, api_key: str, target_round: int | None = None) -> pd.DataFrame:
+    """Fetch odds from DataGolf API.
+
+    DataGolf stamps round_matchups responses with a top-level `round_num`. When
+    `target_round` is supplied and DataGolf is serving a DIFFERENT round, the
+    whole response is stale prior/next-round data — we drop it so this round's
+    bets are never priced or stored against another round's DataGolf prices.
+    This is the API-side equivalent of guard_scraped_data()'s file-round check
+    (the scraped guard only protects the scraped feed; DataGolf round_num gates
+    the API feed).
+    """
     params = {
         "tour": "pga",
         "market": market,
@@ -322,6 +331,18 @@ def _fetch_datagolf_api(market: str, api_key: str) -> pd.DataFrame:
         resp = requests.get(DATAGOLF_BASE, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
+        if market == "round_matchups" and target_round is not None:
+            dg_round = data.get("round_num")
+            try:
+                dg_round_int = int(dg_round) if dg_round is not None else None
+            except (TypeError, ValueError):
+                dg_round_int = None
+            if dg_round_int is not None and dg_round_int != int(target_round):
+                logger.warning(
+                    f"DataGolf round_matchups is for R{dg_round_int}, not target "
+                    f"R{target_round} — dropping API lines as stale prior-round odds"
+                )
+                return pd.DataFrame()
         df = _parse_datagolf_json(data)
         logger.info(f"DataGolf API: {len(df)} lines across {df['Bookmaker'].nunique() if not df.empty else 0} books")
         return df
@@ -376,28 +397,27 @@ def load_matchup_odds(
             except Exception as e:
                 logger.warning(f"Failed to parse scraped data: {e}")
 
-    # 2. Always fetch DataGolf API (for non-scraped books + DG model odds)
+    # 2. Always fetch DataGolf API (for non-scraped books + DG model odds).
+    #    Pass the target round so DataGolf's own round_num gates out stale
+    #    prior-round odds before they can be priced/stored.
     if api_key:
-        api_df = _fetch_datagolf_api(market, api_key)
+        api_df = _fetch_datagolf_api(market, api_key, target_round=round)
         if not api_df.empty:
             api_df["source"] = "datagolf_api"
     else:
         logger.info("No DATAGOLF_API_KEY — skipping API fetch")
 
-    # 3. Merge: scraped books win, API fills the rest
+    # 3. Merge: scraped books win, API fills in ONLY the books we don't scrape.
     if not scraped_df.empty and not api_df.empty:
         # Keep scraped lines for books we scrape
         scraped_lines = scraped_df[scraped_df["Bookmaker"].isin(SCRAPED_BOOKS)]
-        # For scraped books missing from scraped data, fall back to API
-        scraped_books_present = set(scraped_lines["Bookmaker"].unique())
-        missing_scraped = SCRAPED_BOOKS - scraped_books_present
-        # Keep API lines for books we DON'T scrape + any scraped books that are missing
-        api_other = api_df[
-            (~api_df["Bookmaker"].isin(SCRAPED_BOOKS)) |
-            (api_df["Bookmaker"].isin(missing_scraped))
-        ]
-        if missing_scraped:
-            logger.info(f"Scraped data missing {missing_scraped} — falling back to API for those")
+        # NEVER backfill a sharp/scraped book (betonline, pinnacle, betcris) from
+        # DataGolf: DG's aggregate carries stale/phantom lines for these books
+        # (e.g. a Pinnacle price for a matchup Pinnacle isn't actually offering,
+        # which scanned and stored as real). If our direct scrape doesn't have a
+        # sharp-book line, the correct answer is "that book isn't offering it",
+        # not "ask DataGolf". So API contributes only books we don't scrape.
+        api_other = api_df[~api_df["Bookmaker"].isin(SCRAPED_BOOKS)]
 
         # Also grab DG model odds from API for matchups the scraper found
         # (our scraped JSON won't have datagolf model odds)
@@ -424,8 +444,10 @@ def load_matchup_odds(
         df = scraped_df
         logger.info(f"Using scraped odds only ({len(df)} lines)")
     elif not api_df.empty:
-        df = api_df
-        logger.info(f"Using DataGolf API only ({len(df)} lines)")
+        # Even with no scraped data at all, don't let DataGolf stand in for our
+        # sharp books — their prices must come from our own scrape or not at all.
+        df = api_df[~api_df["Bookmaker"].isin(SCRAPED_BOOKS)]
+        logger.info(f"Using DataGolf API only, sharp books excluded ({len(df)} lines)")
     else:
         logger.warning("No odds available from any source")
         df = pd.DataFrame()

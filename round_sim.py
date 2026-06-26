@@ -3825,10 +3825,27 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 # Reprice: dedup + store + alert helpers (for --reprice mode)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _canonical_mu_key(p1, p2, book, o1, o2):
+    """Order-insensitive dedup key for a round matchup.
+
+    The two odds sources order players oppositely (our scrape lists a matchup as
+    (Griffin, Aberg) while DataGolf lists it as (Aberg, Griffin)), so an
+    order-SENSITIVE key double-stores the same matchup under flipped orderings.
+    Canonicalize by sorting on player name while keeping each player's odds
+    attached, so both orderings collapse to one key.
+    """
+    a = (str(p1).lower().strip(), str(o1))
+    b = (str(p2).lower().strip(), str(o2))
+    lo, hi = (a, b) if a[0] <= b[0] else (b, a)
+    return (lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1])
+
+
 def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     """Return rows from `combined` that aren't already in the Round Matchups sheet.
 
-    Dedup key: (player_1, player_2, bookmaker, p1_odds, p2_odds) for this event+round.
+    Dedup key: order-insensitive {players}, bookmaker, {odds} for this event+round
+    (see _canonical_mu_key — players are sorted with odds following so scraped vs
+    DataGolf player ordering can't double-store the same matchup).
     """
     if combined is None or combined.empty:
         return combined
@@ -3840,26 +3857,19 @@ def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     existing_keys = set()
     for row in existing:
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
-            key = (
-                str(row.get("player_1", "")).lower().strip(),
-                str(row.get("player_2", "")).lower().strip(),
-                str(row.get("bookmaker", "")).lower().strip(),
-                str(row.get("p1_odds", "")),
-                str(row.get("p2_odds", "")),
-            )
-            existing_keys.add(key)
+            existing_keys.add(_canonical_mu_key(
+                row.get("player_1", ""), row.get("player_2", ""),
+                row.get("bookmaker", ""), row.get("p1_odds", ""), row.get("p2_odds", ""),
+            ))
 
     if not existing_keys:
         return combined
 
     mask = []
     for _, r in combined.iterrows():
-        key = (
-            str(r.get("Player 1", "")).lower().strip(),
-            str(r.get("Player 2", "")).lower().strip(),
-            str(r.get("Bookmaker", "")).lower().strip(),
-            str(r.get("P1 Odds", "")),
-            str(r.get("P2 Odds", "")),
+        key = _canonical_mu_key(
+            r.get("Player 1", ""), r.get("Player 2", ""),
+            r.get("Bookmaker", ""), r.get("P1 Odds", ""), r.get("P2 Odds", ""),
         )
         mask.append(key not in existing_keys)
 
