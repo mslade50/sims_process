@@ -4753,11 +4753,10 @@ def main():
         _pr = None
     if _pr:
         _drift = [r for r in _pr if (r.get("raw") or 0) > 0 and r.get("matched", 0) == 0]
-        _ambig = [r for r in _pr if r.get("ambiguous")]
         _total_matched = sum(r.get("matched", 0) for r in _pr)
         _any_raw = any((r.get("raw") or 0) > 0 for r in _pr)
         _pickup_failed = _any_raw and _total_matched == 0
-        if _drift or _ambig or _pickup_failed:
+        if _drift or _pickup_failed:
             _pl = [f"<b>R{sim_round} Kalshi Pickup Sanity — {tourney.replace('_', ' ').title()}</b>", ""]
             if _pickup_failed:
                 _pl.append("PICKUP FAILURE: 0 markets matched our event across ALL series "
@@ -4765,9 +4764,6 @@ def main():
             for r in _drift:
                 _pl.append(f"TAG DRIFT: {r['series']} fetched {r['raw']} markets, "
                            f"matched 0 for tourney={tourney}")
-            for r in _ambig:
-                _pl.append(f"AMBIGUOUS: {r['series']} target={r.get('target')} "
-                           f"({r.get('reason', '')})")
             _pl += ["", "Verify sim_inputs.tourney / kalshi_event_tags vs Kalshi's live event tags."]
             print("  [ancillary] PICKUP SANITY ALERT:\n    " + "\n    ".join(_pl[2:]))
             if not args.dry_run:

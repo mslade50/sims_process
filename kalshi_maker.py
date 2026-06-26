@@ -276,12 +276,9 @@ def _apply_event_filter(markets, sim_player_set, label):
         ((ec, c) for ec, c in counts.items() if ec != target),
         key=lambda x: -x[1],
     )
-    next_count = runners[0][1] if runners else 0
     filtered = [m for m in markets if _ticker_event_code(m.get("ticker", "")) == target]
     msg = (f"  [{label}] target event={target} ({leader} sim-player matches) — "
            f"filtered {len(markets)} -> {len(filtered)} markets")
-    if next_count and next_count / leader > 0.7:
-        msg += f"  [warn] ambiguous: next event has {next_count} matches"
     print(msg)
     if len(counts) > 1:
         other = ", ".join(f"{ec}={c}" for ec, c in runners[:4])

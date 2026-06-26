@@ -409,7 +409,7 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
 
     rows = []
     mismatches = set()
-    pickup_report = []          # per-series {series, raw, matched, target, reason, ambiguous}
+    pickup_report = []          # per-series {series, raw, matched, target, reason, leader}
     field_set = set(players)
     event_tag = sim_data.get("event_tag")   # optional sim_inputs.kalshi_event_tags override
     completed_round = int(sim_data.get("completed_round", 0))
@@ -422,14 +422,14 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
             if verbose:
                 print(f"  [ancillary] fetch {series} failed: {e!r}")
             pickup_report.append({"series": series, "raw": 0, "matched": 0, "target": None,
-                                  "reason": f"fetch error: {e!r}", "ambiguous": False, "leader": 0})
+                                  "reason": f"fetch error: {e!r}", "leader": 0})
             return []
         filtered, rep = km.match_markets(fetched, field_set, name_replacements,
                                          kind=kind, event_tag=event_tag)
         rep["series"] = series
         pickup_report.append(rep)
         if verbose:
-            extra = (f" [{rep['reason']}]" if rep["reason"] else "") + (" [AMBIGUOUS]" if rep["ambiguous"] else "")
+            extra = (f" [{rep['reason']}]" if rep["reason"] else "")
             print(f"  [ancillary] {series}: raw={rep['raw']} matched={rep['matched']} "
                   f"event={rep['target']}{extra}")
         return filtered
@@ -490,7 +490,7 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
         markets = ([m for m in fetched if km.ticker_event_code(m.get("ticker", "")) == canonical_event]
                    if canonical_event else [])
         pickup_report.append({"series": "KXPGAPLAYOFF", "raw": len(fetched), "matched": len(markets),
-                              "target": canonical_event, "ambiguous": False, "leader": len(markets),
+                              "target": canonical_event, "leader": len(markets),
                               "reason": "" if canonical_event else "no canonical event resolved"})
         for m in markets:
             q_bid, q_ask = _market_quote(m)
@@ -567,7 +567,7 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
                     print(f"  [ancillary] 3-ball {ev}: skipped (legs={len(gms)} "
                           f"expected={expected_size}, in_field={len(in_field)}/{len(members)})")
         pickup_report.append({"series": "KXPGA3BALL", "raw": len(groups), "matched": matched_groups,
-                              "target": "per-group", "ambiguous": False, "leader": matched_groups, "reason": ""})
+                              "target": "per-group", "leader": matched_groups, "reason": ""})
         if verbose:
             print(f"  [ancillary] KXPGA3BALL: {len(groups)} groups, {matched_groups} matched (members in field)")
 

@@ -138,7 +138,7 @@ def match_markets(markets, sim_player_set, name_replacements=None, kind="subtitl
     """Filter `markets` to the single Kalshi event our sim is pricing, by sim-player
     overlap. Returns (filtered, report).
 
-    report = {raw, matched, target, leader, counts, ambiguous, reason}
+    report = {raw, matched, target, leader, counts, reason}
       - raw       : markets fetched for this series
       - matched   : markets kept (belong to the target event)
       - target    : resolved event_code (or None)
@@ -149,7 +149,7 @@ def match_markets(markets, sim_player_set, name_replacements=None, kind="subtitl
     raw = len(markets)
     counts = event_overlap_counts(markets, sim_player_set, name_replacements, kind)
     report = {"raw": raw, "matched": 0, "target": None, "leader": 0,
-              "counts": counts, "ambiguous": False, "reason": ""}
+              "counts": counts, "reason": ""}
     if not counts:
         report["reason"] = "no sim-player overlap on any event"
         return [], report
@@ -165,9 +165,6 @@ def match_markets(markets, sim_player_set, name_replacements=None, kind="subtitl
 
     leader = counts[target]
     report["leader"] = leader
-    runners = sorted((c for ec, c in counts.items() if ec != target), reverse=True)
-    if runners and leader and runners[0] / leader > 0.7:
-        report["ambiguous"] = True
     if leader < min_overlap:
         report["reason"] = f"top event {target} has only {leader} sim-player matches (< {min_overlap})"
 

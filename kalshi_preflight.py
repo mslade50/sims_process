@@ -7,14 +7,14 @@ caught while it's still fixable — not discovered as a silent empty table on Su
 It does three things, all against the LIVE Kalshi API:
   1. RESOLVE — confirm sim_inputs.tourney maps to exactly ONE Kalshi event by
      counting how many of OUR field appear per event (sim-player overlap, via
-     kalshi_match). Flags 0-overlap (wrong slug / name drift) and ambiguous ties.
+     kalshi_match). Flags 0-overlap (wrong slug) and low overlap (name drift).
   2. COVERAGE — for the resolved event, check each per-tournament golf series and
      report which have open markets we DON'T price (the missing-edge signal).
   3. DISCOVERY — list every open KXPGA*/golf series Kalshi offers and flag any not
      in our handled set (catches brand-new / renamed series, incl. major-specific).
 
 Alerts (loud print + Telegram when TELEGRAM_* env set) fire on resolution failure,
-low/ambiguous overlap, or unhandled series with open markets for our event.
+low overlap, or unhandled series with open markets for our event.
 
     python kalshi_preflight.py [tourney]
 """
@@ -173,8 +173,6 @@ def main():
         elif rep["leader"] < 10:
             issues.append(f"LOW OVERLAP: best event {resolved} has only {rep['leader']} of our "
                           f"players — likely name drift; check name_replacements.")
-        elif rep["ambiguous"]:
-            issues.append(f"AMBIGUOUS: {resolved} vs a near-tie event ({rep['counts']}).")
 
     # 2) COVERAGE for the resolved event + 3) DISCOVERY of unhandled series.
     print("\nCOVERAGE (open markets for our event):")
