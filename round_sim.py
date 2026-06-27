@@ -516,8 +516,16 @@ def load_known_rounds(completed_round, course_map, default_par):
     for rnd in range(1, completed_round + 1):
         live_file = f"r{rnd}_live_model.csv"
         if not os.path.exists(live_file):
-            print(f"  Warning: {live_file} not found. Skipping round {rnd}.")
-            continue
+            # Root copy is gitignored and only synced via the post-merge hook;
+            # fall back to the tracked dashboard_data/ copy (same pattern as
+            # model_predictions below) so a fresh pull works without the sync.
+            alt = os.path.join("dashboard_data", live_file)
+            if os.path.exists(alt):
+                print(f"  [resolve] {live_file} not in root, using {alt}")
+                live_file = alt
+            else:
+                print(f"  Warning: {live_file} not found. Skipping round {rnd}.")
+                continue
 
         df = pd.read_csv(live_file)
         df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
