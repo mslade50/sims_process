@@ -650,7 +650,9 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
     rows = sized
     df = pd.DataFrame(rows, columns=cols)
     if not df.empty:
-        df = df.sort_values(["pricing", "edge_pp"], ascending=[True, False]).reset_index(drop=True)
+        # Sort by Kelly size (stake) first — the actionable bet size that weighs
+        # edge by price — with raw edge_pp as the tiebreaker.
+        df = df.sort_values(["stake", "edge_pp"], ascending=[False, False]).reset_index(drop=True)
     df.attrs["name_mismatches"] = mismatches
     df.attrs["pickup_report"] = pickup_report
     return df
