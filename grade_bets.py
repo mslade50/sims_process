@@ -57,6 +57,7 @@ DATAGOLF_BASE = "https://feeds.datagolf.com"
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
+TAB_LIVE = "Live"  # live in-tournament finish positions (bet_type=finish_position_live)
 
 # Tab names - results output
 TAB_RESULTS_SUMMARY = "Bet Results Summary"
@@ -1820,6 +1821,10 @@ def main():
             (TAB_TOURNAMENT_MU, "tournament_matchup", grade_tournament_matchup),
             (TAB_FINISH_POS, "finish_position", grade_finish_position),
             ("Test Sim", "finish_position_v2", grade_finish_position),
+            # Live in-tournament finish positions. Same grader as Finish Positions
+            # (identical headers); deduplicate_bets collapses repriced snapshots to
+            # one bet per (event, player, market, book) and marks the rest duplicate.
+            (TAB_LIVE, "finish_position_live", grade_finish_position),
         ]
 
         for tab_idx, (tab_name, bet_type, grade_fn) in enumerate(tabs_to_process):

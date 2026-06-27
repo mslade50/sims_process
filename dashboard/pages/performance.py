@@ -57,6 +57,10 @@ layout = dbc.Container([
         bet_type_selector("perf"),
         sportsbook_filter("perf", default_all=False),
         edge_slider("perf", default=0),
+        dbc.Col([
+            html.Label("Live Bets", className="form-label small text-muted"),
+            dbc.Switch(id="perf-include-live", value=False, className="mt-1"),
+        ], md=1),
     ], className="mb-2"),
 
     # Filters — Row 2: Round, Day of Bet, Sample & Pred ranges
@@ -315,12 +319,14 @@ def _convert_to_units(df):
     Input("perf-archetype-filter", "value"),
     Input("perf-archetype-against-filter", "value"),
     Input("perf-player-filter", "value"),
+    Input("perf-include-live", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter, dow_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
-                       archetype_filter, archetype_against_filter, player_filter):
+                       archetype_filter, archetype_against_filter, player_filter,
+                       include_live):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
     empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
@@ -342,10 +348,25 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
     if not bet_type and "bet_type" in df.columns:
         df = df[df["bet_type"] != "score_bet"]
 
-    # Hide Kalshi/NoVig results until scraped prices are validated.
-    # Rows stay in the ledger; we just don't render them on this page.
+    # Live in-tournament finish positions (finish_position_live) are excluded from the
+    # whole page by default — KPIs, equity curve, charts, and the detail table — so they
+    # don't mix with realized bets. The "Live Bets" toggle (or explicitly picking
+    # "Finish Position (Live)" in Bet Type) pulls them into everything.
+    _bt_list = (bet_type if isinstance(bet_type, list) else [bet_type]) if bet_type else []
+    show_live = bool(include_live) or ("finish_position_live" in _bt_list)
+    if not show_live and "bet_type" in df.columns:
+        df = df[df["bet_type"].astype(str) != "finish_position_live"]
+
+    # Hide Kalshi/NoVig results until scraped prices are validated. Rows stay in the
+    # ledger; we just don't render them on this page — EXCEPT the live finish positions
+    # the user opted into above (those are exchange books, so they'd be hidden here).
     if "bookmaker" in df.columns:
-        df = df[~df["bookmaker"].astype(str).str.lower().str.contains("kalshi|novig", na=False)]
+        is_exch = df["bookmaker"].astype(str).str.lower().str.contains("kalshi|novig", na=False)
+        if show_live and "bet_type" in df.columns:
+            keep_live = df["bet_type"].astype(str) == "finish_position_live"
+        else:
+            keep_live = pd.Series(False, index=df.index)
+        df = df[~is_exch | keep_live]
 
     # Apply round filter
     if round_filter and "round" in df.columns:
