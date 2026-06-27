@@ -3268,7 +3268,13 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         # Filter to positive pred players
         filtered_out = outrights_sharp[outrights_sharp['my_pred'].fillna(-1) > 0].copy()
         if not filtered_out.empty:
-            filtered_out = filtered_out.sort_values('edge', ascending=False).head(20)
+            # Sort by Kelly edge = (fair - cost)/cost = edge / implied_prob (the
+            # 'edge' term in Kelly's f* = edge/odds), NOT the raw percentage-point
+            # edge. Tilts toward high-ROI cheap contracts.
+            _ip = filtered_out['implied_prob'].where(filtered_out['implied_prob'] > 0)
+            filtered_out = (filtered_out.assign(_kelly_edge=filtered_out['edge'] / _ip)
+                            .sort_values('_kelly_edge', ascending=False, na_position='last')
+                            .drop(columns='_kelly_edge').head(20))
 
             rows_html = ""
             for _, row in filtered_out.iterrows():
