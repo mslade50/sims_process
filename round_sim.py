@@ -3622,11 +3622,20 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 {rows_html}
             </table>"""
 
-    # ── Ancillary Kalshi edges (round leaders/top-N, playoff) ──
+    # ── Ancillary Kalshi edges (round leaders/top-N, playoff) + round H2H ──
+    # Round head-to-head (KXPGAH2H) gets its OWN table; everything else stays in
+    # the general ancillary table.
     ancillary_html = ""
+    h2h_html = ""
+    anc_df = h2h_df = None
     if ancillary_df is not None and not ancillary_df.empty:
+        _mt = ancillary_df["market_type"].astype(str)
+        h2h_df = ancillary_df[_mt == "h2h"]
+        anc_df = ancillary_df[_mt != "h2h"]
+
+    if anc_df is not None and not anc_df.empty:
         anc_rows = ""
-        for _, r in ancillary_df.iterrows():
+        for _, r in anc_df.iterrows():
             fill = "" if pd.isna(r.get("fill")) else int(r["fill"])
             pricing = str(r["pricing"])
             side = str(r["side"]).upper()
@@ -3649,7 +3658,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 "</tr>"
             )
         ancillary_html = f"""
-        <h3 style="margin-bottom:4px;">Ancillary Kalshi Edges ({len(ancillary_df)})</h3>
+        <h3 style="margin-bottom:4px;">Ancillary Kalshi Edges ({len(anc_df)})</h3>
         <p style="color:#666; font-size:11px; margin-top:0;">
             Taker = can fill 300 @ ask + fee and still +edge |
             Maker = post at ask&minus;1&cent; (no fee), yes spread &lt; 4&cent;
@@ -3670,6 +3679,51 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             {anc_rows}
         </table>"""
 
+    if h2h_df is not None and not h2h_df.empty:
+        h2h_rows = ""
+        for _, r in h2h_df.iterrows():
+            fill = "" if pd.isna(r.get("fill")) else int(r["fill"])
+            pricing = str(r["pricing"])
+            side = str(r["side"]).upper()
+            _stake = int(r.get("stake", 0) or 0)
+            stake_cell = f"{_stake:,}c" if _stake else "—"
+            _opp = r.get("opponents")
+            _opp = "" if (_opp is None or (isinstance(_opp, float) and pd.isna(_opp))) else str(_opp)
+            h2h_rows += (
+                "<tr>"
+                f"<td style='padding:4px 10px;'>{str(r['player_name']).title()}</td>"
+                f"<td style='padding:4px 10px;'>{_opp}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{side}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{pricing}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{r['fair_prob']*100:.1f}%</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{r['cost']*100:.1f}&cent;</td>"
+                f"<td style='padding:4px 10px; text-align:center; color:#0a7;'>+{r['edge_pp']:.1f}</td>"
+                f"<td style='padding:4px 10px; text-align:center; font-weight:600;'>{stake_cell}</td>"
+                f"<td style='padding:4px 10px; text-align:center;'>{fill}</td>"
+                "</tr>"
+            )
+        h2h_html = f"""
+        <h3 style="margin-bottom:4px;">Kalshi Round Matchups — R{sim_round} H2H ({len(h2h_df)})</h3>
+        <p style="color:#666; font-size:11px; margin-top:0;">
+            Priced off the single-round score sim (P(beats opponent in R{sim_round}), ties pushed) —
+            not tournament-finish odds. Taker = fill 300 @ ask + fee and still +edge |
+            Maker = post at ask&minus;1&cent; (no fee), yes spread &lt; 4&cent;
+        </p>
+        <table style="border-collapse:collapse; font-size:13px; margin-bottom:20px;">
+            <tr style="background:#f0f0f0;">
+                <th style="padding:6px 10px; text-align:left;">Player</th>
+                <th style="padding:6px 10px; text-align:left;">Opponent</th>
+                <th style="padding:6px 10px;">Side</th>
+                <th style="padding:6px 10px;">Pricing</th>
+                <th style="padding:6px 10px;">Fair</th>
+                <th style="padding:6px 10px;">Cost</th>
+                <th style="padding:6px 10px;">Edge</th>
+                <th style="padding:6px 10px;">Stake</th>
+                <th style="padding:6px 10px;">Fill</th>
+            </tr>
+            {h2h_rows}
+        </table>"""
+
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif; max-width:960px; margin:0 auto; padding:20px;">
@@ -3687,6 +3741,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         {kalshi_mids_html}
 
         {ancillary_html}
+
+        {h2h_html}
 
         {win_pos_html}
 

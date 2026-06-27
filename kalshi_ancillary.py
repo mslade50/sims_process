@@ -571,6 +571,66 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
         if verbose:
             print(f"  [ancillary] KXPGA3BALL: {len(groups)} groups, {matched_groups} matched (members in field)")
 
+    # ---- Round head-to-head (KXPGAH2H): pairwise from the single-round sim ----
+    # KXPGAH2H markets are PER-ROUND ("<p1> beats <p2> in the Nth Round"), so they
+    # must be priced off the single-round score sim (h2h_prob), NOT tournament-
+    # finish probabilities, and scoped to the round we're simulating
+    # (completed_round + 1 == the round sim_dict holds).
+    if sim_dict is not None:
+        target_round = completed_round + 1
+        try:
+            fetched = _get_markets(client, "KXPGAH2H")
+        except Exception as e:
+            if verbose:
+                print(f"  [ancillary] fetch KXPGAH2H failed: {e!r}")
+            fetched = []
+        # This event only, and only this round: the open set can also carry next
+        # week's event and, late in a round, the next round's markets.
+        scoped = _match_tournament(fetched, tourney)
+
+        def _ticker_round(m):
+            mt = re.search(r"R(\d)", m.get("ticker", ""))
+            return int(mt.group(1)) if mt else None
+
+        scoped = [m for m in scoped if _ticker_round(m) == target_round]
+        matched_h2h = 0
+        for m in scoped:
+            sub = m.get("yes_sub_title") or m.get("title") or ""
+            mt = re.match(r"(?:Will\s+)?(.+?)\s+beats?\s+(.+?)\s+in the\b", sub)
+            if not mt:
+                continue
+            p1 = km.norm_name(mt.group(1), name_replacements, field_set)
+            p2 = km.norm_name(mt.group(2), name_replacements, field_set)
+            if p1 not in sim_dict or p2 not in sim_dict:
+                mismatches.update(p for p in (p1, p2) if p and p not in sim_dict)
+                continue
+            fair_yes = float(h2h_prob(sim_dict, p1, p2))
+            if fair_yes <= 0:
+                continue
+            q_bid, q_ask = _market_quote(m)
+            if q_bid <= 0 and q_ask <= 0:
+                continue  # no quote -> too thin to fill; skip the orderbook fetch
+            try:
+                ob = _get_orderbook(client, m["ticker"])
+                time.sleep(0.03)
+            except Exception:
+                continue
+            bid, ask = _best_bid_ask(m, ob)
+            if ask <= 0:
+                continue
+            base = {"market_type": "h2h", "series": "KXPGAH2H",
+                    "ticker": m["ticker"], "player_name": p1,
+                    "my_pred": pred_lookup.get(p1),
+                    "opponents": p2.split(",")[0].strip().title()}
+            rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
+            matched_h2h += 1
+        pickup_report.append({"series": "KXPGAH2H", "raw": len(scoped),
+                              "matched": matched_h2h, "target": f"R{target_round}",
+                              "leader": matched_h2h, "reason": ""})
+        if verbose:
+            print(f"  [ancillary] KXPGAH2H: {len(scoped)} R{target_round} markets, "
+                  f"{matched_h2h} priced")
+
     client.close()
 
     cols = ["market_type", "series", "player_name", "opponents", "side", "pricing",
