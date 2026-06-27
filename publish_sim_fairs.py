@@ -377,6 +377,106 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
     return [pq, mj]
 
 
+DATAGOLF_BASE = "https://feeds.datagolf.com"
+
+
+def _tee_groups(rnd, repl):
+    """R{rnd} tee-time threesomes from DataGolf field-updates, as lists of normalized
+    player names. Groups are split by (course, start_hole, teetime) so a split-tee
+    start doesn't merge two groups. Only size-3 groups (3-balls) are returned —
+    twosomes are round matchups (round_h2h). [] if tee times aren't posted / no key."""
+    import os
+    import requests
+    from collections import defaultdict
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()   # CI sets the env var directly; this is for local runs
+    except Exception:
+        pass
+    key = os.getenv("DATAGOLF_API_KEY")
+    if not key:
+        logger.info("round_3ball: no DATAGOLF_API_KEY; skipping")
+        return []
+    try:
+        r = requests.get(f"{DATAGOLF_BASE}/field-updates",
+                         params={"tour": "pga", "file_format": "json", "key": key}, timeout=20)
+        if r.status_code != 200:
+            return []
+        field = (r.json() or {}).get("field") or []
+    except Exception as e:
+        logger.warning(f"round_3ball tee-time fetch failed: {e!r}")
+        return []
+    groups = defaultdict(list)
+    for p in field:
+        tt = next((t for t in (p.get("teetimes") or []) if t.get("round_num") == rnd), None)
+        if not tt or not tt.get("teetime"):
+            continue
+        groups[(tt.get("course_num"), tt.get("start_hole"), tt.get("teetime"))].append(
+            _norm(p.get("player_name", ""), repl))
+    return [sorted(g) for g in groups.values() if len(g) == 3]
+
+
+def _nball_fairs(arrs):
+    """P(each is the lowest score), ties split evenly, from a list of int sim arrays."""
+    import numpy as np
+    M = np.vstack(arrs)
+    is_min = (M == M.min(axis=0)[None, :])
+    return (is_min / is_min.sum(axis=0)).mean(axis=1)   # one prob per row (player)
+
+
+def _build_round_3balls(tourney: str, rnd, repl: dict):
+    """Exact 3-ball fairs for the ACTUAL R{rnd} tee-time threesomes, from the FULL
+    sim cache (all draws) — only the ~groups that exist, not every triple. Returns
+    (df[player_a,b,c, p_a,b,c], meta) or (None, None)."""
+    if not rnd:
+        return None, None
+    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    if f is None:
+        return None, None
+    groups = _tee_groups(rnd, repl)
+    if not groups:
+        logger.info(f"round_3ball (R{rnd}): no threesomes (2-ball round or tee times unposted)")
+        return None, None
+    import numpy as np
+    cache = pd.read_parquet(f)
+    idx = {_norm(p, repl): p for p in cache.index}
+    rows, skipped = [], 0
+    for g in groups:
+        if not all(n in idx for n in g):
+            skipped += 1
+            continue
+        arrs = [cache.loc[idx[n]].to_numpy().astype(np.int16) for n in g]
+        pr = _nball_fairs(arrs)
+        rows.append({"player_a": g[0], "player_b": g[1], "player_c": g[2],
+                     "p_a": round(float(pr[0]), 5), "p_b": round(float(pr[1]), 5),
+                     "p_c": round(float(pr[2]), 5)})
+    if not rows:
+        return None, None
+    df = pd.DataFrame(rows)
+    meta = {"tourney": tourney, "round": rnd, "num_groups": len(rows),
+            "num_sims": int(cache.shape[1]), "skipped": skipped}
+    logger.info(f"round_3ball (R{rnd}): {len(rows)} threesomes from {cache.shape[1]} sims "
+                f"({skipped} skipped — player not in sim)")
+    return df, meta
+
+
+def write_round_3ball(tourney: str, rnd, repl: dict | None = None) -> list:
+    """Build + write round_3ball_r{N}.parquet (+ _meta.json). Returns the repo-relative
+    file list (empty if no live threesomes / no sim cache for the round)."""
+    repl = repl if repl is not None else _name_replacements()
+    df, meta = _build_round_3balls(tourney, rnd, repl)
+    if df is None:
+        return []
+    meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    pq = f"round_3ball_r{rnd}.parquet"
+    mj = f"round_3ball_r{rnd}_meta.json"
+    df.to_parquet(PROJECT_ROOT / pq, index=False)
+    with open(PROJECT_ROOT / mj, "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    logger.info(f"Wrote {pq} + {mj}")
+    return [pq, mj]
+
+
 def build_payload() -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
@@ -486,6 +586,7 @@ def publish(push: bool = True) -> dict:
         files.append("round_samples.parquet")
         logger.info(f"Wrote {LOCAL_SAMPLES}")
     files.extend(write_round_h2h(payload["tourney"], payload.get("round"), _name_replacements()))
+    files.extend(write_round_3ball(payload["tourney"], payload.get("round"), _name_replacements()))
     if push:
         _git_push(files)
     return payload
