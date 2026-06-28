@@ -812,6 +812,12 @@ def grade_finish_position(row, results_df):
     player = str(row.get("player_name", "")).lower().strip()
     market = str(row.get("market_type", "")).lower().strip().replace(" ", "_")
 
+    # Exchange (Kalshi/NoVig) NO bets are encoded with a "_no" suffix on the
+    # market_type (e.g. "top_20_no" = bet the player finishes OUTSIDE the top 20).
+    # Strip it to recover the base market + side.
+    side = "no" if market.endswith("_no") else "yes"
+    base_market = market[:-3] if side == "no" else market
+
     player_data = results_df[results_df["player_name"] == player]
 
     if player_data.empty:
@@ -832,6 +838,7 @@ def grade_finish_position(row, results_df):
     # Market thresholds
     market_thresholds = {
         "win": 1,
+        "winner": 1,
         "top_5": 5,
         "top_10": 10,
         "top_20": 20,
@@ -840,7 +847,7 @@ def grade_finish_position(row, results_df):
         "top20": 20,
     }
 
-    threshold = market_thresholds.get(market, 1)
+    threshold = market_thresholds.get(base_market, 1)
 
     # Get kelly stake (stored as raw dollars, convert to units: $200 = 1 unit)
     kelly_stake = row.get("kelly_stake", "")
@@ -877,28 +884,41 @@ def grade_finish_position(row, results_df):
         except:
             decimal_odds = 2.0
 
-    # Calculate dead heat factor
-    num_tied, dead_heat_factor = calculate_dead_heat_factor(actual_pos, threshold, results_df)
+    # Settlement. Exchange (Kalshi/NoVig) markets — and every NO-side bet, which
+    # only exists on exchanges — settle with NO dead-heat: a tie at the threshold
+    # counts as finishing INSIDE. YES wins inside the threshold, NO wins outside.
+    # Sportsbook YES bets keep standard dead-heat settlement (unchanged).
+    is_exchange = str(row.get("sportsbook", row.get("bookmaker", ""))).lower().strip() in ("kalshi", "novig")
 
-    if actual_pos > threshold:
-        # Loss - finished outside threshold
-        result = "loss"
-        units_won = -units_wagered
-    elif dead_heat_factor == 1.0:
-        # Full win - no dead heat
-        result = "win"
-        units_won = units_wagered * (decimal_odds - 1)
-    elif dead_heat_factor > 0:
-        # Partial win due to dead heat
-        result = "win_dh"  # Dead heat win
-        # Standard dead-heat settlement: stake splits into a winning fraction
-        # (factor) settled at full odds and a losing fraction (1 - factor) that
-        # is LOST, not pushed. Net P&L = stake * (decimal_odds * factor - 1).
-        units_won = units_wagered * (decimal_odds * dead_heat_factor - 1)
+    if side == "no" or is_exchange:
+        inside = actual_pos <= threshold
+        won = inside if side == "yes" else not inside
+        result = "win" if won else "loss"
+        units_won = units_wagered * (decimal_odds - 1) if won else -units_wagered
+        num_tied, dead_heat_factor = "", 1.0
     else:
-        # Dead heat resulted in effective loss (rare edge case)
-        result = "loss"
-        units_won = -units_wagered
+        # Calculate dead heat factor
+        num_tied, dead_heat_factor = calculate_dead_heat_factor(actual_pos, threshold, results_df)
+
+        if actual_pos > threshold:
+            # Loss - finished outside threshold
+            result = "loss"
+            units_won = -units_wagered
+        elif dead_heat_factor == 1.0:
+            # Full win - no dead heat
+            result = "win"
+            units_won = units_wagered * (decimal_odds - 1)
+        elif dead_heat_factor > 0:
+            # Partial win due to dead heat
+            result = "win_dh"  # Dead heat win
+            # Standard dead-heat settlement: stake splits into a winning fraction
+            # (factor) settled at full odds and a losing fraction (1 - factor) that
+            # is LOST, not pushed. Net P&L = stake * (decimal_odds * factor - 1).
+            units_won = units_wagered * (decimal_odds * dead_heat_factor - 1)
+        else:
+            # Dead heat resulted in effective loss (rare edge case)
+            result = "loss"
+            units_won = -units_wagered
 
     # SG categories: sum bet_on player's categories across all rounds
     sg_fields = {}
