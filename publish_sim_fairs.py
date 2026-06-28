@@ -75,45 +75,45 @@ def _find(*candidates) -> Path | None:
 # ─── builders ─────────────────────────────────────────────────────────────────
 
 def _build_outrights(tourney: str, cut_line: int, repl: dict) -> dict:
-    """winner/top_5/top_10/top_20 from finish_equity (live preferred), make_cut
-    derived from the rank-probability distribution (P(finish rank <= cut))."""
-    out = {"winner": {}, "top_5": {}, "top_10": {}, "top_20": {}, "make_cut": {}}
+    """winner/top_5/top_10/top_20 for the FULL field; make_cut derived from the
+    rank-probability distribution (P(finish rank <= cut)).
 
-    # finish equity: simulated_win_prob + top_5/top_10/top_20 (live preferred)
-    eq = _find(f"{tourney}/finish_equity_live_{tourney}.csv",
-               f"finish_equity_live_{tourney}.csv",
-               f"{tourney}/finish_equity_{tourney}.csv",
-               f"finish_equity_{tourney}.csv")
-    if eq is not None:
-        df = pd.read_csv(eq)
-        col = {"winner": "simulated_win_prob", "top_5": "top_5",
-               "top_10": "top_10", "top_20": "top_20"}
-        for mkt, c in col.items():
-            if c in df.columns:
-                for _, r in df.iterrows():
-                    p = r[c]
-                    if pd.notna(p) and p > 0:
-                        out[mkt][_norm(r["player_name"], repl)] = round(float(p), 5)
-        logger.info(f"outrights from {eq.name}: winner={len(out['winner'])}")
-    else:
-        # fall back to the two split files
-        wp = _find("simulated_probs_live.csv", "simulated_probs.csv")
-        if wp is not None:
-            df = pd.read_csv(wp)
+    Source priority is full-field FIRST. simulated_probs_live.csv is round_sim's raw
+    finish_probs dump (every simmed player x win/top-5/10/20), so it gives the board a
+    fair for EVERY player. finish_equity_live_*.csv is an edge-filtered BETTING file
+    (book columns; as little as 1 row late in an event), so it is read only LAST and
+    can never overwrite a full-field value. (It was once the primary source here, which
+    shipped the board ~1 outright player — the sparse-equity bug.)"""
+    out = {"winner": {}, "top_5": {}, "top_10": {}, "top_20": {}, "make_cut": {}}
+    col = {"winner": "simulated_win_prob", "top_5": "top_5",
+           "top_10": "top_10", "top_20": "top_20"}
+
+    def _ingest(path, colmap):
+        """Fill `out` from a CSV. First writer per (market, player) wins (setdefault),
+        so a higher-priority source is never clobbered by a later, sparser one."""
+        df = pd.read_csv(path)
+        for mkt, c in colmap.items():
+            if c not in df.columns:
+                continue
             for _, r in df.iterrows():
-                p = r["simulated_win_prob"]
+                p = r[c]
                 if pd.notna(p) and p > 0:
-                    out["winner"][_norm(r["player_name"], repl)] = round(float(p), 5)
-        tf = _find(f"top_finish_probs_{tourney}.csv", f"{tourney}/top_finish_probs_{tourney}.csv")
-        if tf is not None:
-            df = pd.read_csv(tf)
-            for mkt in ("top_5", "top_10", "top_20"):
-                if mkt in df.columns:
-                    for _, r in df.iterrows():
-                        p = r[mkt]
-                        if pd.notna(p) and p > 0:
-                            out[mkt][_norm(r["player_name"], repl)] = round(float(p), 5)
-        logger.info(f"outrights from split files: winner={len(out['winner'])}")
+                    out[mkt].setdefault(_norm(r["player_name"], repl), round(float(p), 5))
+
+    # Full-field probabilities first (every player), sparse betting file last.
+    full = _find("simulated_probs_live.csv", "simulated_probs.csv")
+    if full is not None:
+        _ingest(full, col)
+    pre = _find(f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv")
+    if pre is not None:
+        _ingest(pre, col)
+    tf = _find(f"top_finish_probs_{tourney}.csv", f"{tourney}/top_finish_probs_{tourney}.csv")
+    if tf is not None:
+        _ingest(tf, {"top_5": "top_5", "top_10": "top_10", "top_20": "top_20"})
+    live = _find(f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv")
+    if live is not None:
+        _ingest(live, col)
+    logger.info("outrights: " + ", ".join(f"{k}={len(v)}" for k, v in out.items() if k != "make_cut"))
 
     # make_cut: prefer the exact simulated cut prob persisted by new_sim.py
     # (true cut: top-N + ties + 10-shot rule). Fall back to a rank-prob estimate
@@ -163,9 +163,11 @@ def _build_field(tourney: str, repl: dict) -> list:
     """The full simulated roster (every player, NO p>0 filter) so the board can
     drop players that aren't in our sim without relying on probabilistic markets
     (make_cut/top-N) to enumerate the field."""
-    eq = _find(f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv",
+    # Full-field dump first; the edge-filtered finish_equity_live (as little as 1 row)
+    # must NOT define the field or the board drops all but a handful of players.
+    eq = _find("simulated_probs_live.csv", "simulated_probs.csv",
                f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv",
-               "simulated_probs_live.csv", "simulated_probs.csv")
+               f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv")
     if eq is None:
         return []
     df = pd.read_csv(eq)
