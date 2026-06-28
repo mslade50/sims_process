@@ -435,7 +435,6 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
         return filtered
 
     # ---- Player-per-market series (leader, top-N) via sim-player overlap ----
-    event_votes = {}
     for series, (mtype, src, col) in PLAYER_SERIES.items():
         table = fair_tables.get(src)
         if table is None:
@@ -447,9 +446,6 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
         if completed_round >= series_round:
             continue
         markets = _match_single(series, kind="subtitle")
-        rep = pickup_report[-1]
-        if rep.get("target"):
-            event_votes[rep["target"]] = event_votes.get(rep["target"], 0) + (rep.get("leader") or 0)
         for m in markets:
             player = km.norm_name(km.player_from_market(m, "subtitle"), name_replacements, field_set)
             if player not in table.index:
@@ -474,11 +470,12 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
                     "player_name": player, "my_pred": pred_lookup.get(player)}
             rows.extend(_edge_rows(base, fair_yes, bid, ask, ob, edge_threshold))
 
-    # Canonical event_code for this tournament (from player-series overlap). Used to
-    # match event-level series (playoff) that carry no player to overlap on.
-    canonical_event = max(event_votes, key=event_votes.get) if event_votes else None
-
-    # ---- Event markets (playoff): filter by the resolved event_code ----
+    # ---- Event markets (playoff): match by tournament name in title/rules ----
+    # Event-level markets carry no player to overlap on, and Kalshi tags the playoff
+    # series with a DIFFERENT event code than the per-player series (e.g. TRAV26 here
+    # vs TRC26 for H2H/leader), so an event-code match silently drops it. Match on the
+    # tournament name in title/rules instead (same matcher H2H uses) — robust to that
+    # inconsistency and to the player series being skipped late in the event.
     if sim_data.get("final_scores") is not None:
         fair_yes = playoff_prob(sim_data["final_scores"])
         try:
@@ -487,11 +484,9 @@ def price_ancillary_markets(sim_data, tourney, name_replacements=None,
             if verbose:
                 print(f"  [ancillary] fetch KXPGAPLAYOFF failed: {e!r}")
             fetched = []
-        markets = ([m for m in fetched if km.ticker_event_code(m.get("ticker", "")) == canonical_event]
-                   if canonical_event else [])
+        markets = _match_tournament(fetched, tourney)
         pickup_report.append({"series": "KXPGAPLAYOFF", "raw": len(fetched), "matched": len(markets),
-                              "target": canonical_event, "leader": len(markets),
-                              "reason": "" if canonical_event else "no canonical event resolved"})
+                              "target": tourney, "leader": len(markets), "reason": ""})
         for m in markets:
             q_bid, q_ask = _market_quote(m)
             if q_bid <= 0 and q_ask <= 0:
