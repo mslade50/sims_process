@@ -69,6 +69,11 @@ DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
 # are NOT subject to this gate.
 MIN_KELLY_EDGE = 0.05
 
+# Standard finish-position Kelly sizing — mirrors round_sim.BANKROLL/KELLY_FRACTION.
+# Used to size exchange (Kalshi/NoVig) finish bets the same way as sportsbook ones.
+_FINISH_BANKROLL = 10000.0
+_FINISH_KELLY_FRACTION = 0.25
+
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
 
@@ -443,6 +448,53 @@ def _extract_sim_prob(row):
     return None
 
 
+def _size_exchange_finish_rows(df):
+    """Prepare exchange (Kalshi/NoVig) finish rows for storage + grading.
+
+    The exchange pricers emit `side` (yes/no), `sim_prob` and `implied_prob` (the
+    effective cost per $1 contract, incl. fee) but no `decimal_odds`/stake and no
+    side encoding — so they store with NaN sizing and grade as YES. Fill:
+      - decimal_odds = 1 / implied_prob
+      - stake        = BANKROLL * KELLY_FRACTION * f*   (same as sportsbook finish)
+      - market_type += "_no" for NO-side bets
+    Stake goes into whichever column the stake filter reads first ("stake" if
+    present, else "kelly_stake"). Sportsbook rows pass through unchanged.
+    """
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    bcol = next((c for c in ("bookmaker", "book", "sportsbook") if c in out.columns), None)
+    if bcol is None:
+        return out
+    exch = out[bcol].astype(str).str.lower().str.strip().isin(("kalshi", "novig"))
+    if not exch.any():
+        return out
+
+    p = pd.to_numeric(out.get("sim_prob"), errors="coerce")
+    ip = pd.to_numeric(out.get("implied_prob"), errors="coerce")
+    if "decimal_odds" not in out.columns:
+        out["decimal_odds"] = np.nan
+    d = pd.to_numeric(out["decimal_odds"], errors="coerce")
+    fill = exch & d.isna() & ip.gt(0)
+    out.loc[fill, "decimal_odds"] = (1.0 / ip[fill]).round(4)
+
+    d = pd.to_numeric(out["decimal_odds"], errors="coerce")
+    b = d - 1.0
+    fstar = ((b * p - (1.0 - p)) / b).clip(lower=0.0)
+    stake_col = "stake" if "stake" in out.columns else "kelly_stake"
+    if stake_col not in out.columns:
+        out[stake_col] = np.nan
+    ks = pd.to_numeric(out[stake_col], errors="coerce")
+    sized = exch & ks.isna() & p.notna() & b.gt(0)
+    out.loc[sized, stake_col] = (_FINISH_BANKROLL * _FINISH_KELLY_FRACTION * fstar[sized]).round(2)
+
+    if "side" in out.columns and "market_type" in out.columns:
+        mt = out["market_type"].astype(str)
+        no = exch & out["side"].astype(str).str.lower().str.strip().eq("no") & ~mt.str.endswith("_no")
+        out.loc[no, "market_type"] = mt[no] + "_no"
+    return out
+
+
 def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=None, spreadsheet=None, tab_name=None):
     """
     Write finish position bet rows to a Google Sheets tab.
@@ -462,6 +514,11 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     if combined_finish_df is None or combined_finish_df.empty:
         print("  [storage] No finish position bets to store.")
         return
+
+    # Exchange (Kalshi/NoVig) rows arrive without decimal_odds/stake and with no
+    # side encoding — size them like sportsbook finish bets and tag NO bets so they
+    # store + grade correctly. No-op for sportsbook-only frames.
+    combined_finish_df = _size_exchange_finish_rows(combined_finish_df)
 
     # Filter out tiny stakes (< $1) before writing
     stake_col = None
@@ -514,6 +571,11 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     for _, r in combined_finish_df.iterrows():
         player = str(_get(r, "player_name")).lower().strip()
         sim_prob = _extract_sim_prob(r)
+        if sim_prob is None:
+            # Exchange rows carry their probability in an explicit `sim_prob` column
+            # (the market_type-based extraction above doesn't cover them / NO bets).
+            _sp = _get(r, "sim_prob", default=None)
+            sim_prob = _sp if _sp not in (None, "") else None
 
         rows.append([
             ts,                                                 # run_timestamp
