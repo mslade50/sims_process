@@ -73,6 +73,36 @@ def _managed_files():
         return list(_FALLBACK_FILES)
 
 
+def _resync_newer():
+    """Mid-event refresh: copy any dashboard_data/ pred file that is newer than
+    (or missing in) its root counterpart.
+
+    The original event-change-only sync missed the case where a SECOND push of the
+    *same* event lands in dashboard_data/ after the marker already flipped — a
+    consuming machine then keeps reading last-push (or last-event) root files. This
+    closes that gap.
+
+    Freshness is per-file by mtime, and we only copy when dashboard_data/ is strictly
+    newer. That preserves the original "never clobber a generating machine's fresh
+    work" guarantee: on a generating machine the just-written root file is newer than
+    its pushed dashboard_data/ copy, so it is left untouched.
+    """
+    resynced = 0
+    for name in _managed_files():
+        src = os.path.join(DASHBOARD_DATA, name)
+        if not os.path.exists(src):
+            continue
+        root_path = os.path.join(PROJECT_ROOT, name)
+        if os.path.exists(root_path) and os.path.getmtime(root_path) >= os.path.getmtime(src):
+            continue  # root is as-new-or-newer — leave it (don't clobber local work)
+        shutil.copy2(src, root_path)
+        resynced += 1
+    if resynced:
+        print(f"[sync-event] mid-event refresh: resynced {resynced} newer file(s) "
+              f"from dashboard_data/")
+    return resynced
+
+
 def sync():
     current = _current_event()
     if not current:
@@ -89,7 +119,11 @@ def sync():
         return
 
     if previous == current:
-        return  # same event — never touch fresh mid-event files
+        # Same event — never wipe, but DO pull in any newer same-event copies that a
+        # later push deposited in dashboard_data/ (the gap that left R3 reading a
+        # previous event's root files).
+        _resync_newer()
+        return
 
     print(f"[sync-event] event changed: '{previous}' -> '{current}'")
     removed = resynced = 0

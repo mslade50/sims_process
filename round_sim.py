@@ -1079,6 +1079,56 @@ def decimal_to_american(decimal_odds):
         return int(round(-100 / (decimal_odds - 1)))
 
 
+def prob_to_american(p):
+    """Convert a probability to fair American odds (no vig)."""
+    if pd.isna(p) or p <= 0:
+        return None
+    if p >= 1:
+        return -100
+    return int(round(-100 * p / (1 - p))) if p > 0.5 else int(round(100 * (1 - p) / p))
+
+
+def write_full_finish_equity(finish_probs, tourney):
+    """Write COMPLETE finish-position equity for every simmed player across
+    win / top-5 / top-10 / top-20 — no book merge, no edge filter.
+
+    This is the full reference table the sparse finish_equity_live file is not:
+    that one inner-joins to posted book odds and keeps only edges > threshold, so
+    it thins out (especially post-cut). Here we dump straight from finish_probs.
+
+    Two files mirror the per-book dead-heat split that already exists in
+    finish_probs: the 'dh' file uses the dead-heat-adjusted top-N columns; the
+    'nodh' file uses the *_nodh columns (Kalshi / NoVig pay on raw finish, no DH).
+    'win' is dead-heat-agnostic, so it appears in both. Returns paths written.
+    """
+    if finish_probs is None or finish_probs.empty:
+        return []
+
+    variants = [
+        ("dh",   {"win": "simulated_win_prob", "top_5": "top_5",
+                  "top_10": "top_10", "top_20": "top_20"}),
+        ("nodh", {"win": "simulated_win_prob", "top_5": "top_5_nodh",
+                  "top_10": "top_10_nodh", "top_20": "top_20_nodh"}),
+    ]
+    paths = []
+    for tag, colmap in variants:
+        missing = [src for src in colmap.values() if src not in finish_probs.columns]
+        if missing:
+            print(f"    [full-equity] skipping {tag}: missing columns {missing}")
+            continue
+        out = pd.DataFrame({"player_name": finish_probs["player_name"]})
+        for market, src in colmap.items():
+            p = finish_probs[src].astype(float)
+            out[f"{market}_prob"] = p
+            out[f"{market}_american"] = p.apply(prob_to_american)
+        out = out.sort_values("win_prob", ascending=False).reset_index(drop=True)
+        path = f"finish_equity_full_{tag}_{tourney}.csv"
+        out.to_csv(path, index=False)
+        paths.append(path)
+        print(f"    Saved {path} ({len(out)} players)")
+    return paths
+
+
 def format_units(stake_dollars):
     """Format a $ stake as units (1u = $200). Returns '—' for non-positive.
     Sub-0.3u stakes show 2 decimals so 0.05u doesn't render as '0.1u'."""
@@ -3768,7 +3818,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             Pred = model SG prediction | Stake = suggested Kelly stake
         </p>
         <p style="color:#999; font-size:11px;">
-            Attachments: fair score card (CSV), full matchup workbook (XLSX)
+            Attachments: fair score card (CSV), full matchup workbook (XLSX),
+            full finish equity — dead-heat &amp; no-dead-heat (CSV)
         </p>
     </body>
     </html>"""
@@ -3781,6 +3832,7 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          win_edges_csv_path=None, bol_matchups_csv_path=None,
                          all_books_csv_path=None,
                          finish_equity_csv_path=None,
+                         finish_equity_full_paths=None,
                          win_positive_top10=None, win_negative_top10=None,
                          wx_lookup=None, score_edges=None, kalshi_mids=None,
                          ancillary_df=None, ancillary_csv_path=None,
@@ -3879,6 +3931,18 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                     filename=os.path.basename(finish_equity_csv_path),
                 )
                 msg.attach(att)
+
+        # Attach full finish-position equity CSVs (every player, all markets;
+        # dead-heat + no-dead-heat variants)
+        for full_path in (finish_equity_full_paths or []):
+            if full_path and os.path.exists(full_path):
+                with open(full_path, "rb") as f:
+                    att = MIMEApplication(f.read(), _subtype="csv")
+                    att.add_header(
+                        "Content-Disposition", "attachment",
+                        filename=os.path.basename(full_path),
+                    )
+                    msg.attach(att)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, password)
@@ -4480,6 +4544,7 @@ def main():
     finish_probs = pd.DataFrame()
     win_edges_csv_path = None
     finish_equity_csv_path = None
+    finish_equity_full_paths = []
     win_positive_top10 = pd.DataFrame()
     win_negative_top10 = pd.DataFrame()
     ancillary_edges = pd.DataFrame()
@@ -4620,6 +4685,10 @@ def main():
                     print(f"    Outrights: {len(outrights_combined)} edges found, {len(outrights_sharp)} sharp")
                 else:
                     print(f"    No outright edges above threshold")
+
+                # Full finish-position equity (every player, all markets, no edge
+                # filter) — dead-heat and no-dead-heat variants emailed as CSVs.
+                finish_equity_full_paths = write_full_finish_equity(finish_probs, tourney)
 
                 # Price Kalshi outrights (no dead-heat)
                 print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
@@ -4913,6 +4982,7 @@ def main():
                 bol_matchups_csv_path=bol_matchups_csv,
                 all_books_csv_path=all_books_csv,
                 finish_equity_csv_path=finish_equity_csv_path,
+                finish_equity_full_paths=finish_equity_full_paths,
                 win_positive_top10=win_positive_top10,
                 win_negative_top10=win_negative_top10,
                 wx_lookup=_wx_lookup,
@@ -4938,6 +5008,7 @@ def main():
             bol_matchups_csv_path=bol_matchups_csv,
             all_books_csv_path=all_books_csv,
             finish_equity_csv_path=finish_equity_csv_path,
+            finish_equity_full_paths=finish_equity_full_paths,
             win_positive_top10=win_positive_top10,
             win_negative_top10=win_negative_top10,
             wx_lookup=_wx_lookup,

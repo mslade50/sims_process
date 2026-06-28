@@ -364,6 +364,13 @@ def _merge_r3r4(df, round_num):
         teetime_col = f"r{round_num}_teetime"
         cur_cols = ["player_name", f"wind_adj{round_num}", f"dew_adj{round_num}", teetime_col]
         cur_cols = [c for c in cur_cols if c in cur_preds.columns]
+        # df may already carry r{N}_teetime from the live field merge. If the
+        # prediction file also supplies it, drop the existing one first so the
+        # merge doesn't collide into r{N}_teetime_x / _y — that collision left the
+        # bare teetime_col absent, so teetime_numeric was never set and the spline
+        # was silently skipped.
+        if teetime_col in cur_cols and teetime_col in df.columns:
+            df = df.drop(columns=[teetime_col])
         df = df.merge(cur_preds[cur_cols], on="player_name", how="left")
     else:
         print(f"Warning: {pred_file} not found. Weather adjustments will be zero.")
