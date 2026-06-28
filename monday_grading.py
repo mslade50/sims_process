@@ -72,11 +72,13 @@ def _get_event_and_results():
 
 
 def _count_ungraded(spreadsheet, event_id):
-    """Count total ungraded bets across all 3 source tabs for this event."""
+    """Count total ungraded bets across all source tabs for this event."""
     from grade_bets import get_ungraded_bets
     import time
 
-    tabs = ["Tournament Matchups", "Round Matchups", "Finish Positions"]
+    # Include "Live" — exchange/live finish bets land there and must not be
+    # skipped just because the standard tabs are already graded.
+    tabs = ["Tournament Matchups", "Round Matchups", "Finish Positions", "Live"]
     total = 0
 
     for i, tab in enumerate(tabs):
