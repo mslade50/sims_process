@@ -7,10 +7,12 @@ export interface TapeFilterParams {
   max_price?: string | number | null;
   min_size?: string | number | null;
   market?: string | null;
+  event?: string | null;
 }
 
 export function buildTapeWhere(params: TapeFilterParams): { whereSql: string; binds: any[] };
 export function tapeSummarySql(whereSql: string): string;
+export function tapeRawSql(whereSql: string): string;
 export function shapeSummaryRow(r: any): {
   ticker: string;
   market_type: string;

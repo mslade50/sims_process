@@ -15,6 +15,42 @@ async function api(path, opts) {
   return data;
 }
 
+// ── Reference (human-readable names) ─────────────────────────────────────────
+const ref = { players: {}, events: {}, eventsList: [] };
+let currentEvent = ""; // event_code filter for the tape ("" = all)
+
+const MARKET_LABELS = { winner: "Winner", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", h2h: "Matchup" };
+const marketLabel = (t) => MARKET_LABELS[t] || t || "";
+const playerName = (code) => ref.players[code] || code || "";
+const eventName = (code) => ref.events[code] || code || "";
+
+async function loadReference() {
+  try {
+    const d = await api("/api/reference");
+    ref.players = d.players || {};
+    ref.events = d.events || {};
+    ref.eventsList = d.eventsList || [];
+    populateEventSelect();
+    // re-render whatever is showing now that names are available
+    if (allMarkets.length) renderMarketList();
+    if ($("tape").classList.contains("active")) loadTape();
+    if ($("pnl").classList.contains("active")) renderPnL();
+  } catch (e) {
+    /* names are best-effort; UI falls back to codes */
+  }
+}
+
+function populateEventSelect() {
+  const sel = $("eventSelect");
+  if (!sel) return;
+  sel.innerHTML =
+    `<option value="">all events</option>` +
+    ref.eventsList.map((e) => `<option value="${e.code}">${e.name}</option>`).join("");
+  // Default to the busiest active event the first time we learn the list.
+  if (!currentEvent && ref.eventsList.length) currentEvent = ref.eventsList[0].code;
+  sel.value = currentEvent;
+}
+
 // ── Tabs ────────────────────────────────────────────────────────────────────
 function activateTab(name) {
   const btn = document.querySelector(`.tab[data-tab="${name}"]`);
@@ -266,6 +302,7 @@ const tapeState = {
   builtFocus: null, // ticker the charts were built for
   seen: new Set(), // trade_ids already shown (new-print flash)
   primed: false, // suppress flash on the first paint / after a filter change
+  showPrice: false, // raw price line off by default (VWAP/TWAP only)
 };
 
 // cents formatter — handles deci-cent marks (96.0 -> "96", 96.5 -> "96.5")
@@ -290,6 +327,7 @@ function tapeFilterParams() {
   if ($("tMinP").value) p.set("min_price", $("tMinP").value);
   if ($("tMaxP").value) p.set("max_price", $("tMaxP").value);
   if ($("tMinSize").value) p.set("min_size", $("tMinSize").value);
+  if (currentEvent) p.set("event", currentEvent);
   const win = Number($("tWindow").value);
   if (win > 0) p.set("from", String(Math.floor(Date.now() / 1000) - win));
   return p;
@@ -345,7 +383,7 @@ function sparkSvg(ticker) {
 function renderWatchlist() {
   const q = ($("wlSearch").value || "").trim().toLowerCase();
   const rows = tapeState.summary.filter(
-    (r) => !q || (r.player_code + " " + r.ticker + " " + r.market_type).toLowerCase().includes(q)
+    (r) => !q || (playerName(r.player_code) + " " + r.ticker + " " + marketLabel(r.market_type)).toLowerCase().includes(q)
   );
   const el = $("watchlist");
   if (!rows.length) {
@@ -360,8 +398,8 @@ function renderWatchlist() {
       const focused = r.ticker === tapeState.focus;
       return (
         `<div class="wl-row${focused ? " focused" : ""}" data-ticker="${r.ticker}">` +
-        `<div class="wl-main"><div class="wl-name">${r.player_code || r.ticker}</div>` +
-        `<div class="wl-sub muted small">${r.market_type} · vol ${kfmt(r.volume)}</div></div>` +
+        `<div class="wl-main"><div class="wl-name">${playerName(r.player_code)}</div>` +
+        `<div class="wl-sub muted small">${marketLabel(r.market_type)} · vol ${kfmt(r.volume)}</div></div>` +
         sparkSvg(r.ticker) +
         `<div class="wl-px"><div class="wl-last">${c1(r.last)}¢</div>` +
         `<div class="wl-chg ${up ? "up" : "down"}">${up ? "+" : ""}${c1(r.change)}</div></div>` +
@@ -380,9 +418,9 @@ function renderWatchlist() {
 async function focusMarket(ticker) {
   tapeState.focus = ticker;
   const row = tapeState.summary.find((r) => r.ticker === ticker);
-  $("focusName").textContent = row ? row.player_code || ticker : ticker;
+  $("focusName").textContent = row ? `${playerName(row.player_code)} · ${marketLabel(row.market_type)}` : ticker;
   $("focusName").classList.remove("muted");
-  $("focusTicker").textContent = ticker + (row ? ` · ${row.market_type}` : "");
+  $("focusTicker").textContent = ticker + (row && eventName(row.event_code) ? ` · ${eventName(row.event_code)}` : "");
   renderWatchlist();
   if ($("tsFocusOnly").checked) renderTimeSales();
   await refreshFocus();
@@ -471,9 +509,11 @@ function makePriceChart(el, width, data) {
     ],
     series: [
       {},
-      { label: "Price", stroke: "#e6edf3", width: 1.6, paths: stepped, points: { show: false } },
-      { label: "VWAP", stroke: "#388bfd", width: 1.5, points: { show: false } },
-      { label: "TWAP", stroke: "#d29922", width: 1.3, dash: [5, 3], points: { show: false } },
+      // Raw price is hidden by default (stepped print-by-print line is noisy);
+      // VWAP/TWAP tell the story. Toggle via the "price line" checkbox.
+      { label: "Price", stroke: "#e6edf3", width: 1.4, paths: stepped, points: { show: false }, show: !!tapeState.showPrice },
+      { label: "VWAP", stroke: "#388bfd", width: 1.8, points: { show: false } },
+      { label: "TWAP", stroke: "#d29922", width: 1.5, dash: [5, 3], points: { show: false } },
     ],
   };
   return new uPlot(opts, data, el);
@@ -559,8 +599,8 @@ function renderTimeSales() {
           return (
             `<tr class="ts-row ${sideCls}${isBlock ? " block" : ""}${isNew ? " flash" : ""}" data-ticker="${t.ticker}">` +
             `<td class="small mono">${fmtTime(t.ts)}</td>` +
-            `<td class="small">${t.market_type}</td>` +
-            `<td>${t.player_code || t.ticker}</td>` +
+            `<td class="small">${marketLabel(t.market_type)}</td>` +
+            `<td>${playerName(t.player_code)}</td>` +
             `<td><span class="pill ${t.taker_side || ""}">${t.taker_side || "·"}</span></td>` +
             `<td class="num">${c1(t.yes_price)}</td>` +
             `<td class="num bold">${Math.round(t.count).toLocaleString()}${isBlock ? ' <span class="blocktag">BLK</span>' : ""}</td>` +
@@ -654,6 +694,14 @@ function renderPnLTotals() {
   $("pnlMeta").textContent = pnlState.store ? `${pnlState.store.fills} fills · ${pnlState.store.settlements} settlements` : "";
 }
 
+// Resolve a grouped-row key to a human label based on the active group-by.
+function groupLabel(code) {
+  if (pnlState.groupBy === "player_code") return playerName(code);
+  if (pnlState.groupBy === "market_type") return marketLabel(code);
+  if (pnlState.groupBy === "event_code") return eventName(code);
+  return code;
+}
+
 function renderPnL() {
   renderPnLTotals();
   const grouped = pnlState.groupBy !== "none";
@@ -671,7 +719,7 @@ function renderPnL() {
       rows
         .map(
           (r) =>
-            `<tr><td class="bold">${r._group}</td><td class="num muted">${r.n}</td><td class="small">${r.n_open} / ${r.n_settled}</td>` +
+            `<tr><td class="bold">${groupLabel(r._group)}</td><td class="num muted">${r.n}</td><td class="small">${r.n_open} / ${r.n_settled}</td>` +
             `<td class="num">${r.contracts.toLocaleString()}</td><td class="num">${usd(r.exposure)}</td>` +
             dCell(r.realized) + dCell(r.unrealized) + `<td class="num muted">${usd(r.fees)}</td>` + dCell(r.net) + `</tr>`
         )
@@ -685,9 +733,9 @@ function renderPnL() {
           const result = r.market_result ? ` <span class="muted small">(${r.market_result})</span>` : "";
           return (
             `<tr>` +
-            `<td>${r.player_code || r.ticker}</td>` +
-            `<td class="small">${r.market_type || ""}</td>` +
-            `<td class="small">${r.event_code || ""}</td>` +
+            `<td>${playerName(r.player_code) || r.ticker}</td>` +
+            `<td class="small">${marketLabel(r.market_type)}</td>` +
+            `<td class="small">${eventName(r.event_code)}</td>` +
             `<td><span class="pill ${r.side || ""}">${r.side || "·"}</span></td>` +
             `<td class="small ${r.is_open ? "" : "muted"}">${r.is_open ? "open" : "settled"}${result}</td>` +
             `<td class="num">${(r.contracts || 0).toLocaleString()}</td>` +
@@ -730,6 +778,16 @@ $("tWindow").addEventListener("change", applyTape);
 $("wlSearch").addEventListener("input", renderWatchlist);
 $("tsFocusOnly").addEventListener("change", renderTimeSales);
 $("tBlock").addEventListener("input", renderTimeSales);
+$("eventSelect").addEventListener("change", (e) => {
+  currentEvent = e.target.value;
+  tapeState.focus = null;
+  destroyCharts();
+  applyTape();
+});
+$("showPrice").addEventListener("change", (e) => {
+  tapeState.showPrice = e.target.checked;
+  if (tapeState.priceChart) tapeState.priceChart.setSeries(1, { show: tapeState.showPrice });
+});
 $("pnlGroup").addEventListener("change", (e) => { pnlState.groupBy = e.target.value; renderPnL(); });
 $("pnlStatus").addEventListener("change", (e) => { pnlState.status = e.target.value; renderPnL(); });
 $("pnlRefresh").addEventListener("click", () => loadPnL(true));
@@ -757,6 +815,7 @@ setInterval(() => {
 }, 8000);
 
 // Init
+loadReference();
 loadBalance();
 loadMarkets();
 loadPositions();

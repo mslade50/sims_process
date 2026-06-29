@@ -19,11 +19,20 @@ function buildTapeWhere(params) {
   if (minPrice !== null) (where.push("yes_price >= ?"), binds.push(minPrice));
   if (maxPrice !== null) (where.push("yes_price <= ?"), binds.push(maxPrice));
   if (minSize !== null) (where.push("count >= ?"), binds.push(minSize));
+  if (params.event) (where.push("event_code = ?"), binds.push(params.event));
   if (market) {
     if (OUTRIGHT_TYPES.has(market)) (where.push("market_type = ?"), binds.push(market));
     else (where.push("ticker LIKE ?"), binds.push("%" + market + "%"));
   }
   return { whereSql: where.length ? " WHERE " + where.join(" AND ") : "", binds };
+}
+
+/** Raw-print SELECT (time & sales) sharing the same WHERE. `limit` -> binds by caller. */
+function tapeRawSql(whereSql) {
+  return (
+    "SELECT trade_id, ticker, market_type, event_code, player_code, ts, yes_price, no_price, count, taker_side FROM trades" +
+    whereSql + " ORDER BY ts DESC LIMIT ?"
+  );
 }
 
 /** Full per-ticker summary SQL. `limit` is appended to binds by the caller. */
@@ -76,4 +85,4 @@ function shapeSummaryRow(r) {
   };
 }
 
-module.exports = { OUTRIGHT_TYPES, buildTapeWhere, tapeSummarySql, shapeSummaryRow };
+module.exports = { OUTRIGHT_TYPES, buildTapeWhere, tapeSummarySql, tapeRawSql, shapeSummaryRow };

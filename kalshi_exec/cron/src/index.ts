@@ -219,14 +219,21 @@ async function syncPnl(env: Env): Promise<{ fills: number; setts: number }> {
       if (!ticker || !isGolfTicker(ticker) || knownSetts.has(ticker)) continue;
       knownSetts.add(ticker);
       pageNew++;
+      // revenue = dollars actually credited at settlement. Needed for scalar/void
+      // (tie) results where the payout is NOT count*$1 — without it a refunded
+      // matchup looks like a total loss. Prefer the _dollars field; fall back to
+      // the cents field /100.
+      const revenue =
+        dnum(s.revenue_dollars) ??
+        (s.revenue != null ? Number(s.revenue) / 100 : null);
       stmts.push(
         env.DB.prepare(
-          "INSERT OR IGNORE INTO settlements (ticker,market_result,yes_count,no_count,yes_total_cost,no_total_cost,fee_cost,settled_time,ts) VALUES (?,?,?,?,?,?,?,?,?)"
+          "INSERT OR IGNORE INTO settlements (ticker,market_result,yes_count,no_count,yes_total_cost,no_total_cost,fee_cost,revenue,settled_time,ts) VALUES (?,?,?,?,?,?,?,?,?,?)"
         ).bind(
           ticker, s.market_result ?? "", Number(s.yes_count_fp ?? s.yes_count ?? 0) || 0,
           Number(s.no_count_fp ?? s.no_count ?? 0) || 0,
           dnum(s.yes_total_cost_dollars) ?? 0, dnum(s.no_total_cost_dollars) ?? 0,
-          dnum(s.fee_cost) ?? 0, s.settled_time ?? null, fillTs(s)
+          dnum(s.fee_cost) ?? 0, revenue, s.settled_time ?? null, fillTs(s)
         )
       );
     }

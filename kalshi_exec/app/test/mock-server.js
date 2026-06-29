@@ -22,7 +22,7 @@ const { buildTapeWhere, tapeSummarySql, shapeSummaryRow } = require("../shared/t
 const { computePnl } = require("../shared/pnl-calc.js");
 
 // ── ticker classification (mirrors shared/kalshi.ts) ──
-const PREFIX_MT = [["KXPGATOUR", "winner"], ["KXPGATOP5", "top_5"], ["KXPGATOP10", "top_10"], ["KXPGATOP20", "top_20"]];
+const PREFIX_MT = [["KXPGATOUR", "winner"], ["KXPGATOP5", "top_5"], ["KXPGATOP10", "top_10"], ["KXPGATOP20", "top_20"], ["KXPGAH2H", "h2h"]];
 function classify(t) {
   for (const [p, mt] of PREFIX_MT)
     if (t.startsWith(p + "-")) {
@@ -161,6 +161,11 @@ function genPnl() {
   t = tk("KXPGATOP20", "PGCMEM", "MORI");
   buy(t, "no", 300, 0.45, T0 - 3 * 86400 + 80);
   settlements[t] = { market_result: "no", yes_count: 0, no_count: 300, settled_time: "2026-06-22" };
+  // SETTLED scalar/tie matchup (refunded) — must net ~0, not -cost
+  t = "KXPGAH2H-TRC26R3HENGKBRA-HENG";
+  buy(t, "yes", 600, 0.5, T0 - 2 * 86400);
+  settlements[t] = { market_result: "scalar", yes_count: 600, no_count: 0,
+    yes_total_cost: 300, no_total_cost: 0, fee_cost: 0, revenue: 300, settled_time: "2026-06-27" };
 
   return { fills, settlements, positions, marks };
 }
@@ -204,8 +209,28 @@ function paramObj(u) {
     from: u.searchParams.get("from"), to: u.searchParams.get("to"),
     min_price: u.searchParams.get("min_price"), max_price: u.searchParams.get("max_price"),
     min_size: u.searchParams.get("min_size"), market: u.searchParams.get("market"),
+    event: u.searchParams.get("event"),
   };
 }
+
+// human names for the synthetic codes (mirrors what /api/reference returns live)
+const PLAYER_NAMES = {
+  SCHE: "Scottie Scheffler", MCIL: "Rory McIlroy", RAHM: "Jon Rahm", SCHA: "Xander Schauffele",
+  FLEE: "Tommy Fleetwood", HOVL: "Viktor Hovland", FOWL: "Rickie Fowler", THOM: "Justin Thomas",
+  CANT: "Patrick Cantlay", FITZ: "Matt Fitzpatrick", SPIE: "Jordan Spieth", MORI: "Collin Morikawa",
+  HENG: "Harris English",
+};
+const EVENT_NAMES = { PGATRAV: "Travelers Championship", PGCMEM: "Memorial Tournament" };
+
+function genReference() {
+  const counts = {};
+  for (const t of TRADES) counts[t.event_code] = (counts[t.event_code] || 0) + 1;
+  const eventsList = Object.keys(EVENT_NAMES)
+    .map((code) => ({ code, name: EVENT_NAMES[code], markets: counts[code] || 1 }))
+    .sort((a, b) => b.markets - a.markets);
+  return { players: PLAYER_NAMES, events: EVENT_NAMES, eventsList, fetched_ts: new Date().toISOString() };
+}
+const REFERENCE = genReference();
 
 function apiTape(u) {
   const { whereSql, binds } = buildTapeWhere(paramObj(u));
@@ -227,6 +252,7 @@ const server = http.createServer((req, res) => {
 
   // ── API stubs ──
   if (p === "/api/balance") return sendJson(res, { balance: 421536, portfolio_value: 588120 });
+  if (p === "/api/reference") return sendJson(res, REFERENCE);
   if (p === "/api/tape") return sendJson(res, apiTape(u));
   if (p === "/api/tape/summary") return sendJson(res, apiTapeSummary(u));
   if (p === "/api/positions") return sendJson(res, { positions: [] });

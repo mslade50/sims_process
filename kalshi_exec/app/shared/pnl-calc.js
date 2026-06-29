@@ -101,7 +101,7 @@ function computePnl(args) {
     const sett = settlements[ticker] || null;
 
     let marketResult = "", settledTime = null;
-    let heldYes = 0, heldNo = 0, settleCost = 0, settleFee = 0;
+    let heldYes = 0, heldNo = 0, settleCost = 0, settleFee = 0, revenue = null;
     if (sett) {
       marketResult = sett.market_result || "";
       settledTime = sett.settled_time || null;
@@ -109,8 +109,17 @@ function computePnl(args) {
       heldNo = Number(sett.no_count) || 0;
       settleCost = (Number(sett.yes_total_cost) || 0) + (Number(sett.no_total_cost) || 0);
       settleFee = Number(sett.fee_cost) || 0;
+      revenue = sett.revenue != null ? Number(sett.revenue) : null;
     }
-    const payout = marketResult === "yes" ? heldYes : marketResult === "no" ? heldNo : 0;
+    // Binary win pays the winning side count * $1 (exact, and immune to Kalshi's
+    // flaky `revenue` on winners). Any non-yes/no result (scalar / void / tie) is
+    // NOT count*$1 — use the actual dollars credited (`revenue`) so a refunded
+    // matchup nets ~0 instead of looking like a total loss. Falls back to 0 only
+    // if revenue is genuinely missing.
+    let payout;
+    if (marketResult === "yes") payout = heldYes;
+    else if (marketResult === "no") payout = heldNo;
+    else payout = revenue != null ? revenue : 0;
 
     const posFp = positions[ticker];
     const isOpen = posFp != null && Math.abs(Number(posFp)) > 1e-6;

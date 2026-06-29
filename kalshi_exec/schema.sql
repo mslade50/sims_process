@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS settlements (
   yes_total_cost REAL,              -- dollars
   no_total_cost  REAL,              -- dollars
   fee_cost       REAL,              -- dollars
+  revenue        REAL,              -- dollars actually credited at settlement
+                                    -- (used for scalar/void/tie results where the
+                                    --  payout isn't count*$1 — e.g. refunded matchups)
   settled_time   TEXT,
   ts             INTEGER
 );

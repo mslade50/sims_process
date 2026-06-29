@@ -16,6 +16,7 @@ export interface PnlSettlement {
   yes_total_cost?: number;
   no_total_cost?: number;
   fee_cost?: number;
+  revenue?: number | null;
   settled_time?: string | null;
 }
 export interface PnlArgs {

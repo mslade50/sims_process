@@ -47,6 +47,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
       yes_total_cost: Number(r.yes_total_cost) || 0,
       no_total_cost: Number(r.no_total_cost) || 0,
       fee_cost: Number(r.fee_cost) || 0,
+      revenue: r.revenue != null ? Number(r.revenue) : null,
       settled_time: r.settled_time,
     };
   }

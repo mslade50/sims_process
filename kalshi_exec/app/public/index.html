@@ -15,6 +15,10 @@
         <button class="tab" data-tab="tape">Tape</button>
         <button class="tab" data-tab="pnl">PnL</button>
       </nav>
+      <div class="event-bar">
+        <span class="event-label">⛳</span>
+        <select id="eventSelect" class="event-select" title="active golf event"><option value="">all events</option></select>
+      </div>
       <div class="balance" id="balance">—</div>
     </header>
 
@@ -137,6 +141,10 @@
               <div id="focusLast" class="focus-last"></div>
             </div>
             <div id="focusStats" class="statstrip"></div>
+            <div class="chart-controls">
+              <label class="chk small"><input type="checkbox" id="showPrice" /> price line</label>
+              <span class="muted small">VWAP &amp; TWAP shown by default</span>
+            </div>
             <div class="chart-wrap">
               <div id="priceChart" class="chart"></div>
               <div id="flowChart" class="chart flow"></div>

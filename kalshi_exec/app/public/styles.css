@@ -31,7 +31,16 @@ header {
 .brand { font-weight: 700; font-size: 16px; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
-.balance { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+.balance { margin-left: 14px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.event-bar { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+.event-label { font-size: 15px; }
+.event-select {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 10px; font-size: 14px; font-weight: 600; max-width: 280px;
+}
+.event-select:focus { outline: 1px solid var(--accent); }
+.chart-controls { display: flex; align-items: center; gap: 12px; }
+.chart-controls .chk { color: var(--text); }
 .tabs { display: flex; gap: 4px; }
 .tab {
   background: transparent; color: var(--muted); border: 1px solid transparent;

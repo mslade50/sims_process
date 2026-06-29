@@ -22,6 +22,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     min_price: u.get("min_price"),
     max_price: u.get("max_price"),
     min_size: u.get("min_size"),
+    event: u.get("event"),
     market: u.get("market"),
   });
 

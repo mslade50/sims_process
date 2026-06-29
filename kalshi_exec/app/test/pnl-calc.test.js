@@ -112,6 +112,35 @@ const F = (ticker, side, action, count, yes, fee = 0, ts = 0) =>
   eq("rt contracts", row.contracts, 0);
 }
 
+// ── 5b. SCALAR / tie settlement (refunded matchup) — the Harris English bug ──
+// Bought 600 YES @ $0.50 = $300. Matchup tied → result "scalar", refunded $300
+// (revenue=300). realized must be ~0, NOT -300.
+{
+  const r = computePnl({
+    fills: [F("KXPGAH2H-E-HENG", "yes", "buy", 600, 0.5, 0, 5)],
+    settlements: {
+      "KXPGAH2H-E-HENG": { market_result: "scalar", yes_count: 600, no_count: 0,
+        yes_total_cost: 300, no_total_cost: 0, fee_cost: 0, revenue: 300, settled_time: "2026-06-27" },
+    },
+    classify, isGolf,
+  });
+  const row = r.rows[0];
+  eq("scalar realized ~0", row.realized, 0);
+  eq("scalar net ~0", row.net, 0);
+  eq("scalar not open", row.is_open, false);
+  eq("scalar settlement_revenue", row.settlement_revenue, 300);
+}
+// 5c. scalar with revenue missing falls back to 0 payout (best effort, no crash)
+{
+  const r = computePnl({
+    fills: [F("KXPGAH2H-E-X", "yes", "buy", 100, 0.5, 0, 5)],
+    settlements: { "KXPGAH2H-E-X": { market_result: "scalar", yes_count: 100, no_count: 0,
+      yes_total_cost: 50, no_total_cost: 0, fee_cost: 0, revenue: null, settled_time: "2026-06-27" } },
+    classify, isGolf,
+  });
+  eq("scalar no-revenue realized", r.rows[0].realized, -50);
+}
+
 // ── 6. Non-golf flag passes through ──────────────────────────────────────────
 {
   const r = computePnl({
