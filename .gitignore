@@ -266,3 +266,6 @@ sheet_backups/
 
 # Local maker kill switch (operational toggle, never commit)
 permanent_data/MAKER_HALT
+
+# Shadow-run logs (transient)
+permanent_data/shadow_logs/

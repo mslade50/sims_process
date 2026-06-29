@@ -638,6 +638,13 @@ def _resting_count(o):
         return 0
 
 
+def _shadow_mode():
+    """MAKER_SHADOW truthy => HARD no-orders: post_limit and cancel_order become
+    no-ops at the API boundary, so even an accidental --live can't touch the book.
+    The shadow runner sets it; it's belt-and-suspenders to plain dry-run."""
+    return (os.getenv("MAKER_SHADOW") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def cancel_order(order_id, ticker, reason=""):
     """Cancel a single order. ENFORCES golf-scope at the API boundary —
     raises if the ticker isn't a golf series ticker. Every caller passes
@@ -647,6 +654,9 @@ def cancel_order(order_id, ticker, reason=""):
         raise RuntimeError(
             f"REFUSING to cancel non-golf order: ticker={ticker!r} id={order_id}"
         )
+    if _shadow_mode():
+        print(f"  [shadow] WOULD cancel {order_id} {ticker} — NOT sent (MAKER_SHADOW)")
+        return False
     path = f"/trade-api/v2/portfolio/orders/{order_id}"
     r = _authed_request("DELETE", path)
     ok = 200 <= r.status_code < 300
@@ -673,6 +683,10 @@ def post_limit(ticker, side, price_dollars, count, expiration_ts=None):
     if not _is_golf_ticker(ticker):
         print(f"  [skip] {ticker} non-golf ticker — refusing")
         return (False, f"REFUSING to post non-golf ticker: {ticker!r}")
+    if _shadow_mode():
+        print(f"  [shadow] WOULD post {ticker} {side.upper()} @{price_dollars*100:.1f}c "
+              f"x {int(count)} — NOT sent (MAKER_SHADOW)")
+        return (False, "shadow mode — no order placed")
     # Live re-validate — orderbook may have moved since scan
     try:
         ob_path = f"/trade-api/v2/markets/{ticker}/orderbook"
