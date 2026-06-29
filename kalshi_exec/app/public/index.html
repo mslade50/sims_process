@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
     <title>Kalshi Exec — Golf</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -92,8 +93,7 @@
 
       <!-- TAPE TAB -->
       <section id="tape" class="tabpane">
-        <div class="card">
-          <h2>Ticker tape <span class="muted small">golf outrights · trades</span></h2>
+        <div class="card tape-controls">
           <div class="filters">
             <div><label>Market</label>
               <select id="tMarket">
@@ -108,6 +108,7 @@
             <div><label>Price ≥ ¢</label><input id="tMinP" type="number" min="0" max="100" /></div>
             <div><label>Price ≤ ¢</label><input id="tMaxP" type="number" min="0" max="100" /></div>
             <div><label>Size ≥</label><input id="tMinSize" type="number" min="1" value="100" /></div>
+            <div><label>Block ≥</label><input id="tBlock" type="number" min="1" value="1000" title="prints at/above this size are flagged as blocks" /></div>
             <div><label>Last</label>
               <select id="tWindow">
                 <option value="3600">1h</option>
@@ -121,11 +122,51 @@
             <button id="tApply" class="btn">Apply</button>
           </div>
           <div id="tapeStatus" class="muted small"></div>
-          <div id="tape-table" class="tablewrap"></div>
+        </div>
+
+        <div class="tape-grid">
+          <!-- Focused market: stats strip + price chart + order-flow chart -->
+          <div class="card focus">
+            <div class="focus-head">
+              <div class="focus-id">
+                <div id="focusName" class="focus-name muted">— click a market in the watchlist —</div>
+                <div id="focusTicker" class="muted small mono"></div>
+              </div>
+              <div id="focusLast" class="focus-last"></div>
+            </div>
+            <div id="focusStats" class="statstrip"></div>
+            <div class="chart-wrap">
+              <div id="priceChart" class="chart"></div>
+              <div id="flowChart" class="chart flow"></div>
+            </div>
+            <div id="focusEmpty" class="chart-empty muted small">No focused market — pick one on the right to chart price, VWAP, TWAP and order flow.</div>
+          </div>
+
+          <!-- Watchlist: per-market summary, click to focus -->
+          <div class="card watchlist">
+            <div class="wl-head">
+              <h2>Watchlist <span class="muted small">by volume</span></h2>
+              <input id="wlSearch" type="text" placeholder="filter player / ticker…" />
+            </div>
+            <div id="watchlist" class="wl-body"></div>
+          </div>
+        </div>
+
+        <!-- Time &amp; Sales -->
+        <div class="card">
+          <div class="ts-head">
+            <h2>Time &amp; Sales <span class="muted small" id="tsCount"></span></h2>
+            <div class="ts-opts">
+              <label class="chk small"><input type="checkbox" id="tsFocusOnly" /> focused market only</label>
+            </div>
+          </div>
+          <div id="tape-table" class="tablewrap ts"></div>
         </div>
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script src="/tape-analytics.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

@@ -16,15 +16,23 @@ async function api(path, opts) {
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tabpane").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    $(btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "tape") loadTape();
-  });
-});
+function activateTab(name) {
+  const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (!btn) return;
+  document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tabpane").forEach((p) => p.classList.remove("active"));
+  btn.classList.add("active");
+  $(name).classList.add("active");
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (name === "tape") loadTape();
+}
+document.querySelectorAll(".tab").forEach((btn) =>
+  btn.addEventListener("click", () => activateTab(btn.dataset.tab))
+);
+// Deep-link: open the tab named in the URL hash (e.g. .../#tape).
+if (location.hash && document.querySelector(`.tab[data-tab="${location.hash.slice(1)}"]`)) {
+  addEventListener("DOMContentLoaded", () => activateTab(location.hash.slice(1)));
+}
 
 // ── Balance ──────────────────────────────────────────────────────────────────
 async function loadBalance() {
@@ -200,8 +208,38 @@ async function cancelOrder(order_id, ticker) {
   }
 }
 
-// ── Tape ─────────────────────────────────────────────────────────────────────
-async function loadTape() {
+// ── Tape (institutional brokerage view) ──────────────────────────────────────
+const A = window.TapeAnalytics;
+const PRICE_H = 240,
+  FLOW_H = 120;
+
+const tapeState = {
+  trades: [], // raw prints (time & sales), DESC
+  summary: [], // per-ticker summary rows (full window)
+  sparkByTicker: {}, // ticker -> recent price series for sparklines
+  focus: null, // focused ticker
+  focusPrints: [], // focused ticker prints ASC
+  priceChart: null,
+  flowChart: null,
+  builtFocus: null, // ticker the charts were built for
+  seen: new Set(), // trade_ids already shown (new-print flash)
+  primed: false, // suppress flash on the first paint / after a filter change
+};
+
+// cents formatter — handles deci-cent marks (96.0 -> "96", 96.5 -> "96.5")
+function c1(v) {
+  if (v == null) return "—";
+  const r = Math.round(v * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+function kfmt(v) {
+  const a = Math.abs(v);
+  if (a >= 1000) return (v / 1000).toFixed(v % 1000 ? 1 : 0) + "k";
+  return String(Math.round(v));
+}
+
+// Shared filter params (window/price/size/market) used by tape + summary + focus.
+function tapeFilterParams() {
   const p = new URLSearchParams();
   const market = $("tMarket").value;
   const ticker = $("tTicker").value.trim();
@@ -212,23 +250,291 @@ async function loadTape() {
   if ($("tMinSize").value) p.set("min_size", $("tMinSize").value);
   const win = Number($("tWindow").value);
   if (win > 0) p.set("from", String(Math.floor(Date.now() / 1000) - win));
-  p.set("limit", "300");
+  return p;
+}
+
+async function loadTape() {
+  const base = tapeFilterParams();
+  const rawP = new URLSearchParams(base);
+  rawP.set("limit", "500");
+  const sumP = new URLSearchParams(base);
+  sumP.set("limit", "300");
   try {
-    const d = await api("/api/tape?" + p.toString());
-    $("tapeStatus").textContent = `${d.trades.length} trades`;
-    if (!d.trades.length) return ($("tape-table").innerHTML = `<div class="muted small">no trades captured yet for this filter</div>`);
-    $("tape-table").innerHTML =
-      `<table><thead><tr><th>Time</th><th>Type</th><th>Player / Ticker</th><th>Taker</th><th class="num">Yes ¢</th><th class="num">Size</th></tr></thead><tbody>` +
-      d.trades
-        .map(
-          (t) =>
-            `<tr><td class="small">${fmtTime(t.ts)}</td><td>${t.market_type}</td><td>${t.player_code || t.ticker}</td><td><span class="pill ${t.taker_side || ""}">${t.taker_side || "·"}</span></td><td class="num">${t.yes_price}¢</td><td class="num">${Math.round(t.count)}</td></tr>`
-        )
-        .join("") +
-      `</tbody></table>`;
+    const [raw, sum] = await Promise.all([
+      api("/api/tape?" + rawP.toString()),
+      api("/api/tape/summary?" + sumP.toString()).catch(() => ({ rows: [] })),
+    ]);
+    tapeState.trades = raw.trades || [];
+    tapeState.summary = sum.rows || [];
+    // Sparkline series from whatever recent prints we have per ticker.
+    tapeState.sparkByTicker = {};
+    for (const [tk, arr] of A.groupBy(tapeState.trades, (t) => t.ticker)) {
+      tapeState.sparkByTicker[tk] = arr.slice().sort((a, b) => a.ts - b.ts).map((t) => t.yes_price);
+    }
+    const totalVol = tapeState.summary.reduce((s, r) => s + (r.volume || 0), 0);
+    $("tapeStatus").textContent =
+      `${tapeState.trades.length} prints shown · ${tapeState.summary.length} markets · ${totalVol.toLocaleString()} contracts in window`;
+    renderWatchlist();
+    renderTimeSales();
+    // First time the tape loads, surface the most-active market automatically.
+    if (!tapeState.focus && tapeState.summary.length) focusMarket(tapeState.summary[0].ticker);
+    else if (tapeState.focus) refreshFocus();
   } catch (e) {
     $("tape-table").innerHTML = `<div class="msg err">${e.message}</div>`;
   }
+}
+
+// User changed a filter — re-prime so we don't flash a whole new result set.
+function applyTape() {
+  tapeState.primed = false;
+  tapeState.seen.clear();
+  loadTape();
+}
+
+// ── Watchlist ────────────────────────────────────────────────────────────────
+function sparkSvg(ticker) {
+  const vals = tapeState.sparkByTicker[ticker] || [];
+  if (vals.length < 2) return `<svg class="spark" width="64" height="18"></svg>`;
+  const pts = A.sparkPoints(A.downsample(vals, 24), 64, 18, 2);
+  const col = vals[vals.length - 1] >= vals[0] ? "var(--yes)" : "var(--no)";
+  return `<svg class="spark" width="64" height="18" viewBox="0 0 64 18"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.3"/></svg>`;
+}
+
+function renderWatchlist() {
+  const q = ($("wlSearch").value || "").trim().toLowerCase();
+  const rows = tapeState.summary.filter(
+    (r) => !q || (r.player_code + " " + r.ticker + " " + r.market_type).toLowerCase().includes(q)
+  );
+  const el = $("watchlist");
+  if (!rows.length) {
+    el.innerHTML = `<div class="muted small pad">no markets in window</div>`;
+    return;
+  }
+  el.innerHTML = rows
+    .map((r) => {
+      const signed = r.buyVol + r.sellVol;
+      const buyPct = signed > 0 ? Math.round((r.buyVol / signed) * 100) : 50;
+      const up = (r.change || 0) >= 0;
+      const focused = r.ticker === tapeState.focus;
+      return (
+        `<div class="wl-row${focused ? " focused" : ""}" data-ticker="${r.ticker}">` +
+        `<div class="wl-main"><div class="wl-name">${r.player_code || r.ticker}</div>` +
+        `<div class="wl-sub muted small">${r.market_type} · vol ${kfmt(r.volume)}</div></div>` +
+        sparkSvg(r.ticker) +
+        `<div class="wl-px"><div class="wl-last">${c1(r.last)}¢</div>` +
+        `<div class="wl-chg ${up ? "up" : "down"}">${up ? "+" : ""}${c1(r.change)}</div></div>` +
+        `<div class="wl-imb" title="${buyPct}% buy / ${100 - buyPct}% sell">` +
+        `<div class="imb-bar"><span class="buy" style="width:${buyPct}%"></span><span class="sell" style="width:${100 - buyPct}%"></span></div></div>` +
+        `</div>`
+      );
+    })
+    .join("");
+  el.querySelectorAll(".wl-row").forEach((row) =>
+    row.addEventListener("click", () => focusMarket(row.dataset.ticker))
+  );
+}
+
+// ── Focused market ───────────────────────────────────────────────────────────
+async function focusMarket(ticker) {
+  tapeState.focus = ticker;
+  const row = tapeState.summary.find((r) => r.ticker === ticker);
+  $("focusName").textContent = row ? row.player_code || ticker : ticker;
+  $("focusName").classList.remove("muted");
+  $("focusTicker").textContent = ticker + (row ? ` · ${row.market_type}` : "");
+  renderWatchlist();
+  if ($("tsFocusOnly").checked) renderTimeSales();
+  await refreshFocus();
+}
+
+async function refreshFocus() {
+  const ticker = tapeState.focus;
+  if (!ticker) return;
+  const p = tapeFilterParams();
+  p.set("market", ticker); // full ticker → LIKE match; we hard-filter below
+  p.set("limit", "1000");
+  try {
+    const d = await api("/api/tape?" + p.toString());
+    tapeState.focusPrints = (d.trades || [])
+      .filter((t) => t.ticker === ticker)
+      .sort((a, b) => a.ts - b.ts);
+  } catch (e) {
+    /* keep prior prints */
+  }
+  renderFocusStats();
+  renderFocusCharts();
+}
+
+function statCell(label, val, cls) {
+  return `<div class="stat"><div class="sl">${label}</div><div class="sv ${cls || ""}">${val}</div></div>`;
+}
+
+function renderFocusStats() {
+  const prints = tapeState.focusPrints;
+  const s = A.summarize(prints, Math.floor(Date.now() / 1000));
+  if (!s) {
+    $("focusStats").innerHTML = "";
+    $("focusLast").textContent = "";
+    return;
+  }
+  const up = s.change >= 0;
+  $("focusLast").innerHTML =
+    `<span class="fl-px">${c1(s.last)}¢</span> <span class="chg ${up ? "up" : "down"}">${up ? "+" : ""}${c1(s.change)} (${up ? "+" : ""}${s.changePct.toFixed(1)}%)</span>`;
+  const signed = s.buyVol + s.sellVol;
+  const buyPct = signed > 0 ? Math.round((s.buyVol / signed) * 100) : 50;
+  $("focusStats").innerHTML =
+    statCell("VWAP", c1(s.vwap) + "¢") +
+    statCell("TWAP", c1(s.twap) + "¢") +
+    statCell("Open", c1(s.open) + "¢") +
+    statCell("Range", c1(s.low) + "–" + c1(s.high) + "¢") +
+    statCell("Volume", s.volume.toLocaleString()) +
+    statCell("Prints", s.prints.toLocaleString()) +
+    statCell("Flow", `<b class="buy">${buyPct}%</b> / <b class="sell">${100 - buyPct}%</b>`) +
+    statCell("Net Δ", (s.delta >= 0 ? "+" : "") + s.delta.toLocaleString(), s.delta >= 0 ? "up" : "down");
+}
+
+function chooseBucket(win) {
+  const raw = win / 80; // ~80 bars across the window
+  const steps = [30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 43200, 86400];
+  for (const st of steps) if (raw <= st) return st;
+  return 86400;
+}
+
+const axisStroke = "#8b949e";
+const gridStroke = "rgba(110,118,129,.13)";
+function axisX() {
+  return { stroke: axisStroke, grid: { stroke: gridStroke }, ticks: { stroke: gridStroke } };
+}
+
+function destroyCharts() {
+  for (const k of ["priceChart", "flowChart"]) {
+    if (tapeState[k]) {
+      try { tapeState[k].destroy(); } catch (e) {}
+      tapeState[k] = null;
+    }
+  }
+  tapeState.builtFocus = null;
+}
+
+function makePriceChart(el, width, data) {
+  const stepped = uPlot.paths.stepped ? uPlot.paths.stepped({ align: 1 }) : undefined;
+  const opts = {
+    width,
+    height: PRICE_H,
+    cursor: { sync: { key: "tapeSync" }, points: { size: 6 } },
+    legend: { show: true, live: true },
+    scales: { x: { time: true } },
+    axes: [
+      axisX(),
+      { stroke: axisStroke, grid: { stroke: gridStroke }, size: 50, values: (u, vs) => vs.map((v) => v + "¢") },
+    ],
+    series: [
+      {},
+      { label: "Price", stroke: "#e6edf3", width: 1.6, paths: stepped, points: { show: false } },
+      { label: "VWAP", stroke: "#388bfd", width: 1.5, points: { show: false } },
+      { label: "TWAP", stroke: "#d29922", width: 1.3, dash: [5, 3], points: { show: false } },
+    ],
+  };
+  return new uPlot(opts, data, el);
+}
+
+function makeFlowChart(el, width, data) {
+  const bars = uPlot.paths.bars ? uPlot.paths.bars({ size: [0.7, 60] }) : undefined;
+  const opts = {
+    width,
+    height: FLOW_H,
+    cursor: { sync: { key: "tapeSync" } },
+    legend: { show: false },
+    scales: { x: { time: true }, vol: { range: (u, mn, mx) => [0, (mx || 1) * 1.15] }, delta: {} },
+    axes: [
+      axisX(),
+      { scale: "vol", side: 3, stroke: "#6e7681", grid: { show: false }, size: 46, values: (u, vs) => vs.map(kfmt) },
+      { scale: "delta", side: 1, stroke: "#388bfd", grid: { show: false }, size: 46, values: (u, vs) => vs.map(kfmt) },
+    ],
+    series: [
+      {},
+      { label: "Vol", stroke: "#484f58", fill: "rgba(110,118,129,.30)", paths: bars, scale: "vol", points: { show: false } },
+      { label: "Δflow", stroke: "#388bfd", width: 1.4, scale: "delta", points: { show: false } },
+    ],
+  };
+  return new uPlot(opts, data, el);
+}
+
+function renderFocusCharts() {
+  const prints = tapeState.focusPrints;
+  $("focusEmpty").style.display = prints.length ? "none" : "block";
+  if (typeof uPlot === "undefined") return; // chart lib unavailable — stats/tape still work
+  if (!prints.length) {
+    destroyCharts();
+    return;
+  }
+  const series = A.cumulativeSeries(prints);
+  const span = series.ts[series.ts.length - 1] - series.ts[0];
+  const win = Number($("tWindow").value) || span || 3600;
+  const buckets = A.bucketOHLCV(prints, chooseBucket(win));
+  const pdata = [series.ts, series.price, series.vwap, series.twap];
+  const bts = [], vol = [], delta = [];
+  let run = 0;
+  for (const b of buckets) {
+    bts.push(b.ts);
+    vol.push(b.volume);
+    run += b.buyVol - b.sellVol;
+    delta.push(run);
+  }
+  const fdata = [bts, vol, delta];
+  const w = $("priceChart").clientWidth || 600;
+  if (tapeState.builtFocus !== tapeState.focus || !tapeState.priceChart) {
+    destroyCharts();
+    tapeState.priceChart = makePriceChart($("priceChart"), w, pdata);
+    tapeState.flowChart = makeFlowChart($("flowChart"), w, fdata);
+    tapeState.builtFocus = tapeState.focus;
+  } else {
+    tapeState.priceChart.setData(pdata);
+    tapeState.flowChart.setData(fdata);
+    tapeState.priceChart.setSize({ width: w, height: PRICE_H });
+    tapeState.flowChart.setSize({ width: w, height: FLOW_H });
+  }
+}
+
+// ── Time & Sales ─────────────────────────────────────────────────────────────
+function renderTimeSales() {
+  let rows = tapeState.trades;
+  if ($("tsFocusOnly").checked && tapeState.focus) rows = rows.filter((t) => t.ticker === tapeState.focus);
+  $("tsCount").textContent = `${rows.length} prints`;
+  if (!rows.length) {
+    $("tape-table").innerHTML = `<div class="muted small">no trades captured yet for this filter</div>`;
+  } else {
+    const block = Number($("tBlock").value) || 1000;
+    const maxSize = Math.max(...rows.map((t) => t.count), 1);
+    $("tape-table").innerHTML =
+      `<table class="ts-table"><thead><tr><th>Time</th><th>Type</th><th>Player</th><th>Taker</th><th class="num">Yes ¢</th><th class="num">Size</th><th class="flowcol">Flow</th></tr></thead><tbody>` +
+      rows
+        .map((t) => {
+          const isNew = tapeState.primed && !tapeState.seen.has(t.trade_id);
+          const isBlock = t.count >= block;
+          // sqrt scaling keeps ordinary prints visible alongside the occasional block
+          const w = Math.max(4, Math.round(Math.sqrt(t.count / maxSize) * 100));
+          const sideCls = t.taker_side === "yes" ? "buy" : t.taker_side === "no" ? "sell" : "";
+          return (
+            `<tr class="ts-row ${sideCls}${isBlock ? " block" : ""}${isNew ? " flash" : ""}" data-ticker="${t.ticker}">` +
+            `<td class="small mono">${fmtTime(t.ts)}</td>` +
+            `<td class="small">${t.market_type}</td>` +
+            `<td>${t.player_code || t.ticker}</td>` +
+            `<td><span class="pill ${t.taker_side || ""}">${t.taker_side || "·"}</span></td>` +
+            `<td class="num">${c1(t.yes_price)}</td>` +
+            `<td class="num bold">${Math.round(t.count).toLocaleString()}${isBlock ? ' <span class="blocktag">BLK</span>' : ""}</td>` +
+            `<td class="flowcol"><div class="sizebar ${sideCls}" style="width:${w}%"></div></td>` +
+            `</tr>`
+          );
+        })
+        .join("") +
+      `</tbody></table>`;
+    $("tape-table")
+      .querySelectorAll(".ts-row")
+      .forEach((el) => el.addEventListener("click", () => focusMarket(el.dataset.ticker)));
+  }
+  for (const t of tapeState.trades) tapeState.seen.add(t.trade_id);
+  if (tapeState.seen.size > 8000) tapeState.seen = new Set(tapeState.trades.map((t) => t.trade_id));
+  tapeState.primed = true;
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────────
@@ -248,7 +554,24 @@ document.querySelectorAll(".quick .chip").forEach((c) =>
 $("place").addEventListener("click", placeOrder);
 $("refreshPos").addEventListener("click", loadPositions);
 $("refreshOrders").addEventListener("click", loadOrders);
-$("tApply").addEventListener("click", loadTape);
+$("tApply").addEventListener("click", applyTape);
+$("tMarket").addEventListener("change", applyTape);
+$("tWindow").addEventListener("change", applyTape);
+$("wlSearch").addEventListener("input", renderWatchlist);
+$("tsFocusOnly").addEventListener("change", renderTimeSales);
+$("tBlock").addEventListener("input", renderTimeSales);
+
+// Resize the focused charts to the container when the window changes width.
+let _resizeRaf = null;
+window.addEventListener("resize", () => {
+  if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+  _resizeRaf = requestAnimationFrame(() => {
+    if (!tapeState.priceChart || !$("tape").classList.contains("active")) return;
+    const w = $("priceChart").clientWidth || 600;
+    tapeState.priceChart.setSize({ width: w, height: PRICE_H });
+    tapeState.flowChart.setSize({ width: w, height: FLOW_H });
+  });
+});
 
 // Auto-refresh
 setInterval(() => {
