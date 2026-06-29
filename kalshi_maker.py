@@ -1417,12 +1417,14 @@ if __name__ == "__main__":
     # within caps (env-overridable, see maker_guard). Per-(ticker,side) caps
     # count current held + resting, so they also bound inventory. Applies to
     # --live AND dry-run so the shadow shows the real plan. Fail-closed on --live. ──
+    gov_report = None
     if cands:
         try:
             exposure = maker_guard.build_exposure(
                 list_positions(), list_resting_orders(golf_only=True))
             before = len(cands)
             cands, gov = maker_guard.apply_exposure_caps(cands, exposure)
+            gov_report = gov
             caps = gov["caps"]
             print(f"\n[governor] caps: market=${caps['per_market_usd']:.0f} "
                   f"event=${caps['per_event_usd']:.0f} total=${caps['total_usd']:.0f} "
@@ -1451,6 +1453,16 @@ if __name__ == "__main__":
     else:
         print(f"\n[maker] {len(cands)} intents in {time.time()-t0:.1f}s "
               f"— DRY RUN, nothing sent. Re-run with --live to post.")
+        # ── structured shadow summary (pipe-delimited; parsed by shadow_digest.py) ──
+        committed = (gov_report["new_usd"] if gov_report
+                     else sum(float(c.get("post_price", 0)) * int(c.get("contracts", 0)) for c in cands))
+        reason = " ".join(str(trade_reason).split())  # collapse whitespace/newlines
+        print(f"[SHADOW] precond={'TRADE' if trade_ok else 'HALT'} | quotes={len(cands)} "
+              f"| committed={committed:.0f} | reason={reason}")
+        for c in sorted(cands, key=lambda x: x.get("edge_pp", 0), reverse=True)[:12]:
+            print(f"[SHADOW-Q] {c.get('player', '?')} | {c.get('market', '?')} | "
+                  f"{c.get('side', '?')} | {float(c.get('post_price', 0)) * 100:.1f} "
+                  f"| {float(c.get('edge_pp', 0)):+.1f}")
         if not trade_ok:
             print(f"[guard] NOTE: --live precondition NOT met ({trade_reason}); "
                   f"--live would pull quotes and post nothing.")
