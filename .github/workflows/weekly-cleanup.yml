@@ -79,7 +79,7 @@ jobs:
           ! -name "__pycache__" \
           ! -name "permanent_data" ! -name "backups" \
           ! -name "dashboard" ! -name "dashboard_data" ! -name "maker_dashboard" \
-          ! -name "archive" ! -name "rust" \
+          ! -name "archive" ! -name "rust" ! -name "kalshi_exec" \
           ! -name "*${TOURNEY}*"
         echo ""
         
@@ -127,6 +127,7 @@ jobs:
           ! -name "maker_dashboard" \
           ! -name "archive" \
           ! -name "rust" \
+          ! -name "kalshi_exec" \
           ! -name "*${TOURNEY}*" \
           -exec rm -rf {} + 2>/dev/null || true
 
