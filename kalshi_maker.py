@@ -26,6 +26,18 @@ Modes:
     --live           reconcile + auto-cancel stale + POST new intents
     --cancel-all     cancel every resting order owned by our key, then exit
 
+Automation safety layer (maker_guard.py) — applies to --live AND the dry-run:
+    KILL SWITCH (any halts --live; a halt also pulls the bot's own quotes):
+        env  MAKER_KILL=1               hard override (CI / GitHub Actions var)
+        file permanent_data/MAKER_HALT  local panic button
+        sheet round_config 'maker_enabled' = no/0/false  (phone toggle; an
+            absent row or unreadable sheet does NOT halt — env/file are the
+            reliable kill)
+    EXPOSURE GOVERNOR (trims/drops candidates; counts held + resting so the
+    per-(ticker,side) cap also bounds inventory; env-overridable):
+        MAKER_CAP_MARKET_USD=50  MAKER_CAP_EVENT_USD=400  MAKER_CAP_TOTAL_USD=1000
+        MAKER_MAX_NEW_USD_PER_RUN=300  MAKER_MAX_ORDERS_PER_RUN=40
+
 Safety invariants (enforced in code, not just convention):
     1. post_price is clamped to be STRICTLY below the opposite best ask, in
        1¢ ticks (no maker → taker math bug).
@@ -52,6 +64,7 @@ import numpy as np
 import pandas as pd
 
 from sim_inputs import tourney, name_replacements
+import maker_guard
 
 load_dotenv()
 
@@ -571,6 +584,24 @@ def list_resting_orders(golf_only=True):
     return out
 
 
+def list_positions():
+    """All open portfolio positions (paginated). Raw Kalshi market_positions
+    dicts — used by the exposure governor to count held risk."""
+    out, cursor = [], None
+    while True:
+        path = "/trade-api/v2/portfolio/positions?limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        r = _authed_request("GET", path)
+        r.raise_for_status()
+        data = r.json()
+        out.extend(data.get("market_positions", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
 def _resting_key(o):
     """(ticker, side, milli_dollars) — the dedup grain for reconciliation.
 
@@ -1069,6 +1100,19 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(0)
 
+    # ── Kill switch: gates --live posting (env MAKER_KILL / file MAKER_HALT /
+    # phone-toggle sheet 'maker_enabled'). A halt also PULLS the bot's own
+    # resting quotes so live risk comes off; manual orders are left alone. ──
+    trade_ok, trade_reason = maker_guard.should_trade()
+    if args.live and not trade_ok:
+        print(f"\n[HALT] maker disabled: {trade_reason}")
+        print("[HALT] pulling the bot's resting script quotes (manual orders untouched)…")
+        n = maker_guard.pull_script_quotes(
+            lambda: list_resting_orders(golf_only=True), _is_script_order, cancel_order)
+        print(f"[HALT] cancelled {n} script quote(s). Posting nothing. Exiting.")
+        _client.close()
+        sys.exit(0)
+
     cands, prob_lookup = scan()
     if args.limit is not None and cands:
         before = len(cands)
@@ -1182,6 +1226,35 @@ if __name__ == "__main__":
         print(f"[preview] Launch dashboard: python -m maker_dashboard.server")
         _client.close()
         sys.exit(0)
+    # ── Exposure governor: trim/drop candidates so held + resting + new $ stay
+    # within caps (env-overridable, see maker_guard). Per-(ticker,side) caps
+    # count current held + resting, so they also bound inventory. Applies to
+    # --live AND dry-run so the shadow shows the real plan. Fail-closed on --live. ──
+    if cands:
+        try:
+            exposure = maker_guard.build_exposure(
+                list_positions(), list_resting_orders(golf_only=True))
+            before = len(cands)
+            cands, gov = maker_guard.apply_exposure_caps(cands, exposure)
+            caps = gov["caps"]
+            print(f"\n[governor] caps: market=${caps['per_market_usd']:.0f} "
+                  f"event=${caps['per_event_usd']:.0f} total=${caps['total_usd']:.0f} "
+                  f"new/run=${caps['max_new_usd_run']:.0f} orders/run={caps['max_orders_run']}")
+            print(f"[governor] {before} candidate(s) -> {gov['kept']} kept "
+                  f"({gov['trimmed']} trimmed, {gov['dropped']} dropped); "
+                  f"committing ${gov['new_usd']:.0f} new across {gov['orders']} order(s)")
+            for d in gov["dropped_detail"][:8]:
+                print(f"    drop {d['ticker']} {d['side']} @{float(d['post_price'])*100:.1f}c -> {d['why']}")
+            for d in gov["trimmed_detail"][:8]:
+                print(f"    trim {d['ticker']} {d['side']} {d['from']}->{d['to']}")
+        except Exception as e:
+            print(f"\n[governor] FAILED to compute exposure ({e}).")
+            if args.live:
+                print("[governor] fail-closed under --live: posting nothing.")
+                _client.close()
+                sys.exit(1)
+            print("[governor] dry-run: continuing WITHOUT caps applied.")
+
     if args.live:
         if not cands:
             print("\n[live] no candidates — skipping reconcile/post step.")
@@ -1191,4 +1264,7 @@ if __name__ == "__main__":
     else:
         print(f"\n[maker] {len(cands)} intents in {time.time()-t0:.1f}s "
               f"— DRY RUN, nothing sent. Re-run with --live to post.")
+        if not trade_ok:
+            print(f"[guard] NOTE: kill switch is ACTIVE ({trade_reason}); "
+                  f"--live would pull quotes and post nothing.")
     _client.close()

@@ -263,3 +263,6 @@ permanent_data/*.parquet
 
 # Local Sheets backups (betting ledger dumps — never commit)
 sheet_backups/
+
+# Local maker kill switch (operational toggle, never commit)
+permanent_data/MAKER_HALT

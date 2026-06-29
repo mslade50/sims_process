@@ -172,6 +172,23 @@ def _parse_multi_numeric(value_str):
 _SUMMARY_PRINTED = False  # full config block prints once per process; one-liner after
 
 
+def get_param(name, default=None):
+    """Read a single round_config parameter (Column A name -> Column B value).
+
+    Generic accessor for flags like 'maker_enabled' without extending
+    load_config (which only parses the known sim fields). Returns the trimmed
+    string value, or `default` if the row is absent/blank. Raises if the sheet
+    can't be reached — callers needing fail-soft behavior should wrap the call.
+    """
+    ws = _connect_sheet()
+    key = str(name).strip().lower()
+    for row in ws.get("A:B")[1:]:  # skip header
+        if row and row[0].strip().lower() == key:
+            val = row[1].strip() if len(row) > 1 else ""
+            return val if val != "" else default
+    return default
+
+
 def load_config(verbose=True):
     """
     Read the round_config tab and return a config dictionary.
