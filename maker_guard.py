@@ -90,7 +90,9 @@ def sheet_disabled(get_param=None):
 
 
 def should_trade(get_param=None):
-    """(ok: bool, reason: str). ok=False => post nothing and pull bot quotes."""
+    """KILL-SWITCH-ONLY check. (ok, reason). The full precondition set (kill +
+    fairs-fresh + not-live) is assembled by the maker via check_preconditions(),
+    which calls this plus the pure guards below with live I/O."""
     r = env_or_file_kill()
     if r:
         return (False, r)
@@ -98,6 +100,70 @@ def should_trade(get_param=None):
     if r:
         return (False, r)
     return (True, "enabled")
+
+
+# ── Guard #1: sim-fairs freshness (fail-closed) ────────────────────────────────
+def check_fairs_fresh(path, mtime, now_ts, max_age_hours=None):
+    """Pure. (ok, reason). Refuse to quote unless the sim's fair file exists and
+    is recent. The file name is tourney-specific (rank_probs_*_{tourney}), so a
+    present-and-fresh file is implicitly for the current event."""
+    if not path or mtime is None:
+        return (False, "no sim fair file found — run the sim")
+    max_age = _envf("MAKER_FAIRS_MAX_AGE_HRS", 48.0) if max_age_hours is None else max_age_hours
+    age_h = max(0.0, (now_ts - mtime) / 3600.0)
+    if age_h > max_age:
+        return (False, f"sim fairs stale: {age_h:.1f}h old > {max_age:.0f}h cap — re-run the sim")
+    return (True, f"fairs {age_h:.1f}h old")
+
+
+def active_fair_file(tourney):
+    """I/O. (path, mtime) of the freshest tourney fair file, else (None, None).
+    Matches load_sim_probs(): live (post-round) preferred, then pre-event."""
+    for name in (f"rank_probs_live_{tourney}.parquet", f"rank_probs_updated_{tourney}.parquet"):
+        if os.path.exists(name):
+            return (name, os.path.getmtime(name))
+    return (None, None)
+
+
+# ── Guard #2: live-round detection (schedule default + DataGolf override) ───────
+def datagolf_live(last_updated_ts, now_ts):
+    """Pure. live / not-live / unknown from the DataGolf live feed's last_updated.
+      True  : feed fresh (<= MAKER_LIVE_FRESH_MIN) -> a round is actively scoring.
+      False : feed CONFIDENTLY stale (>= MAKER_LIVE_STALE_MIN) -> not live.
+      None  : in-between / unparseable -> unknown (caller falls back to schedule).
+    Asymmetric on purpose: quick to call 'live' (halt), cautious to call 'not
+    live' (resume), so a brief feed hiccup never resumes us mid-round."""
+    if last_updated_ts is None:
+        return None
+    age_min = (now_ts - last_updated_ts) / 60.0
+    if age_min < 0:
+        return True  # clock/timezone skew -> assume live (safe)
+    if age_min <= _envf("MAKER_LIVE_FRESH_MIN", 30.0):
+        return True
+    if age_min >= _envf("MAKER_LIVE_STALE_MIN", 120.0):
+        return False
+    return None
+
+
+def schedule_live(first_tee_ts, last_tee_ts, now_ts, round_hours=None):
+    """Pure. Is the current round live per the tee-time schedule? Live window =
+    [first tee, last tee + round_hours]. None if tee times are unknown."""
+    if first_tee_ts is None or last_tee_ts is None:
+        return None
+    rh = _envf("MAKER_ROUND_HOURS", 6.0) if round_hours is None else round_hours
+    return (now_ts >= first_tee_ts) and (now_ts <= last_tee_ts + rh * 3600.0)
+
+
+def resolve_live(sched, dg):
+    """Pure. (is_live, reason). DataGolf wins on a confident signal; the schedule
+    is the default/fallback; if both are blind, fail closed (assume live)."""
+    if dg is not None:
+        if sched is not None and bool(dg) != bool(sched):
+            return (bool(dg), f"DataGolf override: schedule={sched} datagolf={dg} -> trust DataGolf (fix the Sheet)")
+        return (bool(dg), f"datagolf live={dg}")
+    if sched is not None:
+        return (bool(sched), f"schedule live={sched} (datagolf unavailable)")
+    return (True, "live status unknown (schedule + datagolf both blind) -> fail-closed: assume live")
 
 
 def pull_script_quotes(list_resting, is_script, cancel_order):

@@ -21,9 +21,16 @@ falls below MIN_FILL_PCT (20%). Estimate drops 5pp per 1c the post is
 below the ask, +/-5pp by market lifetime volume tier (<1k / 1k-10k / >10k).
 Surviving rungs absorb the dropped budget via kelly_solver's even split.
 
+Outright quoting (default) = the passive-accumulation engine (quote_engine.py via
+maker_quotes.plan_market): one working order per market on the side the model
+favors, pegged near the touch, capped at fair minus the side's min edge (YES 0.5c
+/ NO 0.3c), never crossing, worked in iceberg slices. Legacy static edge rungs are
+available via --rungs. H2H matchups still use scan_matchups (5pp gate).
+
 Modes:
     (default)        scan + print intents only
     --live           reconcile + auto-cancel stale + POST new intents
+    --rungs          use the legacy edge-rung ladder for outrights (not the engine)
     --cancel-all     cancel every resting order owned by our key, then exit
 
 Automation safety layer (maker_guard.py) — applies to --live AND the dry-run:
@@ -50,6 +57,7 @@ Safety invariants (enforced in code, not just convention):
 from __future__ import annotations
 
 import argparse
+import datetime as _dtmod
 import hashlib
 import math
 import os
@@ -915,6 +923,82 @@ def scan_matchups():
 
 
 # ── Main scan ──────────────────────────────────────────────────────────
+def _engine_outright_candidates(all_mkts, prob_lookup):
+    """Build passive working-quote candidates via maker_quotes.plan_market — the
+    new quoting brain (replaces the static edge-rung ladder). One working order
+    per (market, side) the model favors, pegged near the touch and capped at fair
+    minus the side's min edge. Fetches current positions + our resting script
+    orders so the engine knows held inventory (for hysteresis, target, and to stop
+    accumulating once full)."""
+    import maker_quotes
+    target_usd = maker_guard.caps_from_env()["per_market_usd"]
+
+    held = {}
+    try:
+        for p in list_positions():
+            pf = float(p.get("position_fp") or p.get("position") or 0)
+            if abs(pf) < 1e-9:
+                continue
+            k = (p.get("ticker", ""), "yes" if pf > 0 else "no")
+            held[k] = held.get(k, 0) + abs(int(round(pf)))
+    except Exception as e:
+        print(f"  [engine] positions unavailable ({e}) — assuming flat")
+    resting_q = {}
+    try:
+        for o in list_resting_orders(golf_only=True):
+            if not _is_script_order(o):
+                continue
+            k = (o.get("ticker", ""), o.get("side", ""))
+            _, _, milli = _resting_key(o)
+            entry = {"price": milli / 1000.0, "size": _resting_count(o)}
+            if k not in resting_q or entry["size"] > resting_q[k]["size"]:
+                resting_q[k] = entry
+    except Exception as e:
+        print(f"  [engine] resting orders unavailable ({e})")
+
+    out = []
+    for m in all_mkts:
+        ticker = m.get("ticker", "")
+        title = m.get("title", "")
+        mtype = m.get("_market_type", "")
+        bid = float(m.get("yes_bid_dollars") or 0)
+        ask = float(m.get("yes_ask_dollars") or 0)
+        if bid == 0 and ask == 0:
+            bid = float(m.get("yes_bid", 0) or 0) / 100.0
+            ask = float(m.get("yes_ask", 0) or 0) / 100.0
+        if bid <= 0 or ask <= 0:
+            continue
+        player_raw = _extract_player(title)
+        if not player_raw:
+            continue
+        player = _norm(player_raw)
+        rec = prob_lookup.get(player)
+        if rec is None or mtype not in rec:
+            continue
+        sim_yes = float(rec[mtype])
+        if sim_yes <= 0:
+            continue
+        volume = float(m.get("volume_fp", m.get("volume", 0)) or 0)
+        # Same whole-market illiquid skip as the rung path.
+        if (1.0 - bid) >= 0.95 and (ask - bid) > 0.03 and volume < 10000:
+            continue
+        tick = _tick_at(_parse_price_ranges(m), bid) or 0.01
+        for c in maker_quotes.plan_market(
+                ticker=ticker, market_type=mtype, player=player, title=title,
+                yes_bid=bid, yes_ask=ask, sim_yes=sim_yes, tick=tick,
+                held_yes=held.get((ticker, "yes"), 0), held_no=held.get((ticker, "no"), 0),
+                resting_yes=resting_q.get((ticker, "yes")), resting_no=resting_q.get((ticker, "no")),
+                target_usd=target_usd):
+            c["volume"] = volume
+            assert c["post_price"] < c["best_ask"], (
+                f"SAFETY cross {c['post_price']} >= ask {c['best_ask']}")
+            out.append(c)
+    print(f"  [engine] {len(out)} working quote(s) from {len(all_mkts)} markets "
+          f"(edge YES>={maker_quotes.EDGE_YES*100:.1f}c / NO>={maker_quotes.EDGE_NO*100:.1f}c, "
+          f"target ${target_usd:.0f}/market)")
+    return out
+
+
 def scan():
     print(f"[maker] tourney={tourney}  "
           f"raw_edge: 1.0pp(>{HIGH_PRICE_THRESHOLD}) / 1.5pp({TIER_DEFAULT_LOW}-{HIGH_PRICE_THRESHOLD}) "
@@ -942,7 +1026,14 @@ def scan():
     all_mkts = _apply_event_filter(all_mkts, set(prob_lookup.keys()), label="outrights")
 
     candidates = []
-    for m in all_mkts:
+    # Default: the passive-accumulation engine (maker_quotes.plan_market). The
+    # legacy edge-rung ladder is available via --rungs (sets _use_engine False),
+    # in which case the loop below runs over all markets; otherwise it's skipped.
+    use_engine = globals().get("_use_engine", True)
+    if use_engine:
+        candidates.extend(_engine_outright_candidates(all_mkts, prob_lookup))
+    rung_markets = [] if use_engine else all_mkts
+    for m in rung_markets:
         ticker = m.get("ticker", "")
         title = m.get("title", "")
         mtype = m.get("_market_type", "")
@@ -1060,6 +1151,83 @@ def scan():
     return candidates, prob_lookup
 
 
+# ── Live-trade preconditions (I/O wrappers around maker_guard's pure guards) ──
+def _parse_dt_to_ts(s):
+    """Best-effort parse of a tee-time / last_updated string to a unix ts, or
+    None. NOTE: naive strings are read in the server's local time. The live guard
+    only uses these for (a) a tee-time window and (b) DataGolf-feed freshness — a
+    RELATIVE check — and treats negative age as live, so minor TZ slop is safe
+    (worst case = a missed window, never trading during play, since a live feed
+    going fresh makes DataGolf override to halt regardless)."""
+    if not s or not isinstance(s, str):
+        return None
+    s2 = s.strip().replace("UTC", "").replace("Z", "").strip()
+    for f in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+              "%m/%d/%Y %H:%M", "%Y-%m-%d %I:%M%p", "%I:%M%p"):
+        try:
+            return _dtmod.datetime.strptime(s2, f).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _current_play_round():
+    """Round currently in play / next to play = (round just completed) + 1, 1..4."""
+    try:
+        import sheet_config
+        rc = int(float(sheet_config.get_param("round", "0") or 0))
+    except Exception:
+        rc = 0
+    return max(1, min(4, rc + 1))
+
+
+def _check_fairs_fresh():
+    path, mtime = maker_guard.active_fair_file(tourney)
+    return maker_guard.check_fairs_fresh(path, mtime, time.time())
+
+
+def _check_not_live():
+    """(ok_to_trade, reason). ok = NOT live. Schedule (tee-times) is the default;
+    the DataGolf live feed overrides on a confident signal. Best-effort I/O;
+    fail-closed (assume live) when both are blind."""
+    now = time.time()
+    rnd = _current_play_round()
+    api_key = os.getenv("DATAGOLF_API_KEY", "")
+    sched = dg = None
+    try:  # schedule from this round's tee times
+        from api_utils import fetch_field_updates
+        col = f"r{rnd}_teetime"
+        fu = fetch_field_updates(api_key, teetime_col=col, fill_missing_teetimes=False)
+        tts = [t for t in (_parse_dt_to_ts(str(x)) for x in fu[col].dropna().tolist()) if t]
+        if tts:
+            sched = maker_guard.schedule_live(min(tts), max(tts), now)
+    except Exception as e:
+        print(f"  [live] schedule (tee-times) unavailable: {e}")
+    try:  # DataGolf live feed freshness
+        from api_utils import fetch_live_stats
+        ls = fetch_live_stats(rnd, api_key)
+        lu = None
+        if ls is not None and len(ls) and "last_updated" in ls.columns:
+            lu = _parse_dt_to_ts(str(ls["last_updated"].iloc[0]))
+        dg = maker_guard.datagolf_live(lu, now)
+    except Exception as e:
+        print(f"  [live] datagolf feed unavailable: {e}")
+    is_live, reason = maker_guard.resolve_live(sched, dg)
+    return (not is_live, f"round {rnd}: {reason}")
+
+
+def _check_live_preconditions():
+    """Full --live gate: kill switch -> fairs fresh -> not live-round. Returns
+    (ok, reason); the first failure wins. Each is fail-closed."""
+    ok, reason = maker_guard.should_trade()
+    if not ok:
+        return (ok, reason)
+    ok, reason = _check_fairs_fresh()
+    if not ok:
+        return (ok, reason)
+    return _check_not_live()
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true",
@@ -1080,6 +1248,9 @@ if __name__ == "__main__":
     ap.add_argument("--no-matchups", action="store_true",
                     help="Skip H2H matchup scan entirely. Matchup cash reservation "
                          "is $0, so outright Kelly sizing sees full available balance.")
+    ap.add_argument("--rungs", action="store_true",
+                    help="Use the legacy static edge-rung ladder for OUTRIGHTS instead "
+                         "of the passive-accumulation quote engine (the default).")
     ap.add_argument("--allow-pre-matchup", action="store_true",
                     help="Allow matchup scan to fall back to pre-tournament final_scores.npy "
                          "when no live final_scores file exists. ONLY safe pre-R1 — using stale "
@@ -1089,6 +1260,7 @@ if __name__ == "__main__":
     # frame), so this correctly mutates the module global used by scan_matchups.
     _allow_pre_matchup_fallback = bool(args.allow_pre_matchup)
     _skip_matchups = bool(args.no_matchups)
+    _use_engine = not bool(args.rungs)  # passive-accumulation engine is the default outright path
 
     t0 = time.time()
     if args.list_orders:
@@ -1100,12 +1272,13 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(0)
 
-    # ── Kill switch: gates --live posting (env MAKER_KILL / file MAKER_HALT /
-    # phone-toggle sheet 'maker_enabled'). A halt also PULLS the bot's own
-    # resting quotes so live risk comes off; manual orders are left alone. ──
-    trade_ok, trade_reason = maker_guard.should_trade()
+    # ── Live-trade preconditions: kill switch -> sim fairs fresh -> NOT a live
+    # round (schedule default + DataGolf override). Any failure halts --live and
+    # PULLS the bot's own resting quotes so live risk comes off; manual orders are
+    # left alone. (Computed before scan so a halted --live exits fast.) ──
+    trade_ok, trade_reason = _check_live_preconditions()
     if args.live and not trade_ok:
-        print(f"\n[HALT] maker disabled: {trade_reason}")
+        print(f"\n[HALT] not trading: {trade_reason}")
         print("[HALT] pulling the bot's resting script quotes (manual orders untouched)…")
         n = maker_guard.pull_script_quotes(
             lambda: list_resting_orders(golf_only=True), _is_script_order, cancel_order)
@@ -1265,6 +1438,6 @@ if __name__ == "__main__":
         print(f"\n[maker] {len(cands)} intents in {time.time()-t0:.1f}s "
               f"— DRY RUN, nothing sent. Re-run with --live to post.")
         if not trade_ok:
-            print(f"[guard] NOTE: kill switch is ACTIVE ({trade_reason}); "
+            print(f"[guard] NOTE: --live precondition NOT met ({trade_reason}); "
                   f"--live would pull quotes and post nothing.")
     _client.close()

@@ -122,5 +122,33 @@ two = [
 kept, rep = mg.apply_exposure_caps(two, {"per_key": {}, "per_event": {}, "total": 0}, caps4)
 eq("highest kelly funded first", kept[0]["ticker"], "KXPGATOP20-E-HI")
 
+# ── Guard #1: fairs freshness ──────────────────────────────────────────────────
+NOW = 1_000_000.0
+eq("no fair file -> halt", mg.check_fairs_fresh(None, None, NOW)[0], False)
+eq("fresh fairs ok", mg.check_fairs_fresh("f.parquet", NOW - 3600, NOW, max_age_hours=48)[0], True)
+eq("stale fairs halt", mg.check_fairs_fresh("f.parquet", NOW - 60 * 3600, NOW, max_age_hours=48)[0], False)
+
+# ── Guard #2: datagolf_live (asymmetric) ───────────────────────────────────────
+eq("dg fresh -> live", mg.datagolf_live(NOW - 5 * 60, NOW), True)
+eq("dg ambiguous -> unknown", mg.datagolf_live(NOW - 60 * 60, NOW), None)  # 60m: >30 <120
+eq("dg confidently stale -> not live", mg.datagolf_live(NOW - 180 * 60, NOW), False)
+eq("dg none -> unknown", mg.datagolf_live(None, NOW), None)
+eq("dg future (skew) -> live", mg.datagolf_live(NOW + 600, NOW), True)
+
+# ── Guard #2: schedule_live ────────────────────────────────────────────────────
+ft, lt = NOW + 3600, NOW + 4 * 3600   # first tee +1h, last tee +4h
+eq("before first tee -> not live", mg.schedule_live(ft, lt, NOW, round_hours=6), False)
+eq("during play -> live", mg.schedule_live(ft, lt, ft + 1800, round_hours=6), True)
+eq("after last tee + round_hours -> not live", mg.schedule_live(ft, lt, lt + 7 * 3600, round_hours=6), False)
+eq("tee times unknown -> None", mg.schedule_live(None, None, NOW), None)
+
+# ── Guard #2: resolve_live ─────────────────────────────────────────────────────
+eq("agree not-live -> trade", mg.resolve_live(False, False)[0], False)
+eq("schedule live, dg not-live -> dg wins (resume)", mg.resolve_live(True, False)[0], False)
+eq("schedule clear, dg live -> dg wins (halt)", mg.resolve_live(False, True)[0], True)
+eq("dg unavailable -> schedule", mg.resolve_live(True, None)[0], True)
+eq("both blind -> fail-closed live", mg.resolve_live(None, None)[0], True)
+truthy("override is logged", "override" in mg.resolve_live(False, True)[1].lower())
+
 print(f"\n{_p} passed, {_f} failed")
 raise SystemExit(1 if _f else 0)
