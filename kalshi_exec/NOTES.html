@@ -35,16 +35,38 @@
 <div class="wrap">
 
 <h1>⛳ Kalshi Execution Platform</h1>
-<p class="sub">Build notes &amp; resume plan — last updated 2026-06-28 (evening). Status: <span class="pill ok">Slice 1 + Tape LIVE</span></p>
+<p class="sub">Build notes &amp; resume plan — last updated 2026-06-28 (late). Status: <span class="pill ok">Slices 1–4 + institutional Tape built</span> · <span class="pill warn">new slices not yet deployed</span></p>
 
 <div class="card">
-<h3 style="margin-top:0">Quick resume (read this first tomorrow)</h3>
+<h3 style="margin-top:0">Quick resume (read this first)</h3>
 <ul>
-  <li><b>Live app:</b> <a href="https://kalshi-exec.pages.dev">https://kalshi-exec.pages.dev</a> — login with the password (in your password manager; shown once in chat. It's also the Cloudflare secret <code>APP_PASSWORD</code>, not retrievable).</li>
-  <li><b>Collector status (read-only):</b> <a href="https://kalshi-exec-cron.mckinleyslade.workers.dev">https://kalshi-exec-cron.mckinleyslade.workers.dev</a> — shows last_run, last_purge, trade count, archive_rows.</li>
-  <li><b>Code:</b> <code>C:\Users\mckin\Documents\sims_process\kalshi_exec\</code> (not yet committed to git).</li>
-  <li><b>Next up:</b> see <a href="#next">Next steps</a> — PnL slice or proposals overlay; tune retention threshold after a week of data.</li>
+  <li><b>Live app:</b> <a href="https://kalshi-exec.pages.dev">https://kalshi-exec.pages.dev</a> — login with the password (in your password manager; it's the Cloudflare secret <code>APP_PASSWORD</code>, not retrievable).</li>
+  <li><b>Collector status (read-only):</b> <a href="https://kalshi-exec-cron.mckinleyslade.workers.dev">https://kalshi-exec-cron.mckinleyslade.workers.dev</a> — last_run, last_purge, trade/fills/settlements counts, active config.</li>
+  <li><b>Code:</b> committed to the <code>sims_process</code> repo under <code>kalshi_exec/</code> (branch <code>kalshi-exec-tape</code> at time of writing; merge to main when ready).</li>
+  <li><b>What changed this session:</b> Tape rebuilt into an institutional brokerage view (price chart + VWAP/TWAP overlays + order-flow delta + watchlist + time&amp;sales); <b>Slice 3 PnL</b> and <b>Slice 4 proposals overlay</b> built; retention tunables moved to env; status endpoint optionally token-gated.</li>
+  <li><b>⚠ Deploy pending:</b> the new endpoints/tabs and the cron PnL sync are <b>built + locally verified but NOT deployed</b>. Run the <a href="#deploy">Deploy checklist</a> (create the new D1 tables, set <code>PROPOSALS_TOKEN</code>, redeploy app + cron) before they work in prod.</li>
+  <li><b>Next up:</b> deploy; then optional live-WS tape / email-PIN auth (see <a href="#next">Next steps</a>). The only deliberately-unverified path remains a real test order via <code>/api/send</code>.</li>
 </ul>
+</div>
+
+<div class="card" id="deploy">
+<h3 style="margin-top:0">Deploy checklist for this session's work</h3>
+<pre><code># 1. create the new D1 tables (fills, settlements, proposals) — idempotent
+wrangler d1 execute kalshi-exec --remote --file kalshi_exec/schema.sql --config kalshi_exec/app/wrangler.toml -y
+
+# 2. set the proposals push token (Pages) — pick a long random string
+"&lt;random&gt;" | wrangler pages secret put PROPOSALS_TOKEN --project-name kalshi-exec
+
+# 3. (optional) lock the cron status endpoint
+"&lt;random&gt;" | wrangler secret put STATUS_TOKEN --config kalshi_exec/cron/wrangler.toml
+
+# 4. redeploy app (FROM app dir) and cron
+cd kalshi_exec/app &amp;&amp; node_modules\.bin\wrangler pages deploy --project-name kalshi-exec --branch main --commit-dirty=true
+cd ../cron &amp;&amp; node_modules\.bin\wrangler deploy
+
+# 5. push model edges from the sim machine (after a maker --preview)
+python kalshi_exec/push_proposals.py --push   # needs PROPOSALS_TOKEN env/-token</code></pre>
+<p class="muted">Local verification without deploying: <code>node app/test/mock-server.js</code> → <a href="http://127.0.0.1:8099/">127.0.0.1:8099</a> serves the real UI against synthetic data (no Kalshi/D1/secrets; order &amp; proposals-push paths hard-disabled). Tests: <code>node app/test/{tape-analytics,tape-sql,pnl-calc}.test.js</code>.</p>
 </div>
 
 <h2>1. Goal</h2>
@@ -56,7 +78,7 @@
 <tr><th>Piece</th><th>What</th><th>Notes</th></tr>
 <tr><td><b>app/</b> (Cloudflare Pages)</td><td>Frontend (static) + <code>/api/*</code> Pages Functions</td><td>Project <code>kalshi-exec</code>, prod branch <code>main</code>. Password-gated via <code>functions/_middleware.ts</code>.</td></tr>
 <tr><td><b>cron/</b> (Worker)</td><td>Internal <code>scheduled()</code> Worker</td><td><code>kalshi-exec-cron</code>. Minute job (trade poll + auto-kill) + weekly retention sweep. No user-facing surface (status fetch is read-only).</td></tr>
-<tr><td><b>D1</b></td><td>SQLite <code>kalshi-exec</code></td><td>Binding <code>DB</code>. Tables: <code>pending_kills</code>, <code>trades</code>, <code>collector_state</code>.</td></tr>
+<tr><td><b>D1</b></td><td>SQLite <code>kalshi-exec</code></td><td>Binding <code>DB</code>. Tables: <code>pending_kills</code>, <code>trades</code>, <code>collector_state</code>, <code>fills</code>, <code>settlements</code>, <code>proposals</code>. (Last three NEW this session — create via <code>schema.sql</code>.)</td></tr>
 </table>
 
 <h3>Why this shape</h3>
@@ -74,10 +96,13 @@
 <tr><td>Expiry + auto-kill</td><td><span class="pill ok">live</span></td><td>Order gets Kalshi native <code>expiration_ts</code> AND a row in <code>pending_kills</code>; the cron force-cancels any remainder at <b>kill_ts + 60s</b>.</td></tr>
 <tr><td>Positions</td><td><span class="pill ok">live</span></td><td>Open golf positions, exposure.</td></tr>
 <tr><td>Open orders + cancel</td><td><span class="pill ok">live</span></td><td>Resting golf orders w/ kill-time column + one-click cancel.</td></tr>
-<tr><td>Ticker tape</td><td><span class="pill ok">live</span></td><td>Golf outrights only. Filters: market type / ticker / price / size / time window. Default filter <b>size ≥ 100</b>.</td></tr>
-<tr><td>Trade collector</td><td><span class="pill ok">live</span></td><td>Minute cron polls <code>/markets/trades</code>, filters to golf outrights, floors at 100 contracts, writes to D1.</td></tr>
-<tr><td>Retention sweep</td><td><span class="pill ok">live</span></td><td>Weekly (Mon 09:00 UTC): keep 7d of all ≥100 + all-time ≥5000 forever; delete the rest.</td></tr>
-<tr><td>Order POST path</td><td><span class="pill warn">unverified</span></td><td>Built &amp; uses the same signing as verified GET calls, but no real order has been placed yet — do a small test order via the UI.</td></tr>
+<tr><td>Ticker tape (institutional)</td><td><span class="pill ok">built</span></td><td>Brokerage view: focused-market price chart (uPlot) with running <b>VWAP + TWAP</b> overlays + a volume / cumulative order-flow-delta sub-chart (synced crosshair); stats strip; per-market <b>watchlist</b> (volume-ranked, sparklines, buy/sell imbalance, click-to-focus); <b>time &amp; sales</b> (taker-colored, sqrt size-scaled flow bars, block tagging, new-print flash). Tab deep-linking via URL hash.</td></tr>
+<tr><td>Tape aggregation API</td><td><span class="pill ok">built</span></td><td><code>/api/tape/summary</code> — per-ticker VWAP/volume/OHLC/buy-sell in SQL (window functions) over the full window, not just the raw-print cap. Query lives in <code>shared/tape-sql.js</code> (also run by the SQLite test).</td></tr>
+<tr><td><b>PnL page (Slice 3)</b></td><td><span class="pill ok">built</span></td><td>Durable D1 fills/settlements stores (synced by cron), live positions + marks → <code>/api/pnl</code> → PnL tab (net/realized/unrealized/fees/ROI, per-position table, group-by). Accounting ported to <code>shared/pnl-calc.js</code> (28 unit tests).</td></tr>
+<tr><td><b>Proposals overlay (Slice 4)</b></td><td><span class="pill ok">built</span></td><td>Sim pushes model edges → <code>/api/proposals</code> (token-gated POST) → D1 → order ticket overlays MODEL fair/edge/side per market + edge tags in the market list. Display only; never auto-trades. Pusher: <code>push_proposals.py</code>.</td></tr>
+<tr><td>Trade collector</td><td><span class="pill ok">live</span></td><td>Minute cron polls <code>/markets/trades</code>, filters to golf outrights, floors at <code>MIN_TRADE_SIZE</code>, writes to D1. Now also syncs golf fills/settlements (throttled ~5min) for the PnL page.</td></tr>
+<tr><td>Retention sweep</td><td><span class="pill ok">live</span></td><td>Weekly (Mon 09:00 UTC). Thresholds now <b>env-configurable</b> (wrangler <code>[vars]</code>): keep <code>RETENTION_DAYS</code> of all ≥floor + all-time ≥<code>ARCHIVE_THRESHOLD</code> forever.</td></tr>
+<tr><td>Order POST path</td><td><span class="pill warn">unverified</span></td><td>Built &amp; uses the same signing as verified GET calls, but no real order has been placed yet — do a small test order via the UI. (Deliberately not exercised this session.)</td></tr>
 </table>
 
 <h2>4. API endpoints (Pages Functions)</h2>
@@ -90,7 +115,10 @@
 <tr><td><code>/api/orders</code></td><td>GET</td><td>Resting golf orders + kill annotations</td></tr>
 <tr><td><code>/api/cancel</code></td><td>POST</td><td><code>{order_id, ticker}</code> — golf-guarded cancel</td></tr>
 <tr><td><code>/api/send</code></td><td>POST</td><td><code>{orders:[{ticker,side,price_cents,count,kill_ts?}]}</code> — place limit buys</td></tr>
-<tr><td><code>/api/tape</code></td><td>GET</td><td><code>from,to,min_price,max_price,min_size,market,limit</code> — query the tape</td></tr>
+<tr><td><code>/api/tape</code></td><td>GET</td><td><code>from,to,min_price,max_price,min_size,market,limit</code> — raw prints (time &amp; sales)</td></tr>
+<tr><td><code>/api/tape/summary</code></td><td>GET</td><td>same filters → per-ticker VWAP/volume/OHLC/buy-sell (watchlist)</td></tr>
+<tr><td><code>/api/pnl</code></td><td>GET</td><td>all-time golf PnL from durable fills/settlements + live positions/marks</td></tr>
+<tr><td><code>/api/proposals</code></td><td>GET / POST</td><td>GET = current model edges (session); POST = headless push, gated by <code>X-Proposals-Token</code></td></tr>
 </table>
 
 <h2>5. Kalshi API contract (matched to kalshi_maker.py)</h2>
@@ -109,8 +137,9 @@
 <tr><td>D1 database</td><td><code>kalshi-exec</code>, id <code>74576c35-e310-4db3-8c3d-8e478cb3e2ff</code>, binding <code>DB</code></td></tr>
 <tr><td>Pages project</td><td><code>kalshi-exec</code> → kalshi-exec.pages.dev, prod branch <code>main</code></td></tr>
 <tr><td>Cron Worker</td><td><code>kalshi-exec-cron</code>, crons <code>* * * * *</code> and <code>0 9 * * 1</code></td></tr>
-<tr><td>Secrets (Pages)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code>, <code>APP_PASSWORD</code>, <code>SESSION_SECRET</code></td></tr>
-<tr><td>Secrets (cron)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code></td></tr>
+<tr><td>Secrets (Pages)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code>, <code>APP_PASSWORD</code>, <code>SESSION_SECRET</code>, <b>NEW</b> <code>PROPOSALS_TOKEN</code> (for the proposals push)</td></tr>
+<tr><td>Secrets (cron)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code>, <b>optional</b> <code>STATUS_TOKEN</code> (gate the status endpoint)</td></tr>
+<tr><td>Vars (cron)</td><td><code>MIN_TRADE_SIZE</code>, <code>RETENTION_DAYS</code>, <code>ARCHIVE_THRESHOLD</code> in <code>cron/wrangler.toml [vars]</code></td></tr>
 <tr><td>Kalshi key (local)</td><td>PKCS#8 at <code>C:\Users\mckin\.kalshi\private_pkcs8.pem</code> (converted from PKCS#1 <code>private.pem</code> — Web Crypto needs PKCS#8). Access key id is in <code>.env</code> as <code>KALSHI_ACCESS_KEY</code>.</td></tr>
 </table>
 
@@ -136,45 +165,51 @@ type-value | wrangler secret put NAME --config cron\wrangler.toml             # 
   <li><b>Working tape:</b> all ≥100 kept 7 days.</li>
   <li><b>Permanent archive:</b> ≥<code>ARCHIVE_THRESHOLD = 5000</code> kept forever.</li>
   <li><b>Sweep:</b> weekly cron deletes <code>ts &lt; now-7d AND count &lt; 5000</code>. First real deletions are 7+ days out.</li>
-  <li><b>Tuning:</b> both are consts in <code>cron/src/index.ts</code> → edit + redeploy. <span class="warn">5000 was picked from ~15 min of peak final-round volume (~23k ≥100 trades, max single 188,305). Revisit after a real week of mixed data — likely wants to go higher.</span></li>
+  <li><b>Tuning:</b> now <code>[vars]</code> in <code>cron/wrangler.toml</code> (<code>MIN_TRADE_SIZE</code>/<code>RETENTION_DAYS</code>/<code>ARCHIVE_THRESHOLD</code>) → edit + redeploy, no code change. Active values echoed in the status payload's <code>config</code>. <span class="warn">5000 was picked from ~15 min of peak final-round volume (~23k ≥100 trades, max single 188,305). Revisit after a real week of mixed data — likely wants to go higher.</span></li>
 </ul>
 
 <h2>9. Caveats / gotchas</h2>
 <ul>
   <li><span class="pill warn">shared key</span> The maker bot and this platform use the same Kalshi key. The bot's <code>--cancel-all</code> cancels <b>all</b> resting orders incl. manual ones. (Manual orders use an <code>exm…</code> client_order_id so the bot's normal reconciliation ignores them — but cancel-all doesn't discriminate.)</li>
   <li><span class="pill warn">test order</span> No real order has been placed through <code>/api/send</code> yet. Place a tiny test (1 contract far from market), confirm, then cancel.</li>
-  <li><span class="pill warn">cron status public</span> <code>kalshi-exec-cron.workers.dev</code> is publicly readable (trade counts only, no secrets/positions). Can be locked to internal-only if desired.</li>
+  <li><span class="pill warn">cron status public</span> <code>kalshi-exec-cron.workers.dev</code> is publicly readable (counts only, no secrets/positions). Now lockable: set the <code>STATUS_TOKEN</code> secret to require <code>?token=</code>.</li>
   <li>The collector polls exchange-wide <code>/markets/trades</code> and filters to golf (cap 30 pages/run, logs if capped). Fine at current volume.</li>
 </ul>
 
 <h2 id="next">10. Next steps</h2>
 <table>
 <tr><th>Item</th><th>Priority</th><th>Notes</th></tr>
-<tr><td>Place a real test order via UI</td><td><span class="pill todo">do first</span></td><td>Verifies the only unverified path (POST /api/send).</td></tr>
-<tr><td><b>Slice 3 — PnL page</b></td><td><span class="pill todo">next slice</span></td><td>Port <code>maker_dashboard/server.py</code> PnL logic to D1: durable fills/settlements store (Kalshi /fills ages out ~2mo), hybrid count-based payout. New table(s) + <code>/api/pnl</code> + UI tab.</td></tr>
-<tr><td><b>Slice 4 — Proposals overlay</b></td><td><span class="pill todo">next slice</span></td><td>Sim pushes <code>maker_proposals.parquet</code> → R2 (as JSON) → <code>/api/proposals</code> → edge overlay on the ticket. Sim runs locally (both machines), so add a small push step.</td></tr>
-<tr><td>Tune ARCHIVE_THRESHOLD / RETENTION_DAYS</td><td><span class="pill todo">after ~1 week</span></td><td>Decide from real mixed-volume data (check <code>archive_rows</code>).</td></tr>
-<tr><td>Live WebSocket tape (optional)</td><td><span class="pill todo">optional</span></td><td>Now possible on Paid: a Durable Object holding a Kalshi WS connection for real-time prints instead of 1-min batches.</td></tr>
-<tr><td>Commit <code>kalshi_exec/</code> to git</td><td><span class="pill todo">housekeeping</span></td><td>Currently untracked. NOTE: do NOT commit secrets (none in repo) and keep <code>.dev.vars</code>/node_modules gitignored (already are).</td></tr>
-<tr><td>Optional: upgrade auth to email-PIN</td><td><span class="pill todo">optional</span></td><td>Create a scoped CF API token (Access:Edit) → I can create the Access app + OTP policy via API and swap the middleware.</td></tr>
-<tr><td>Optional: lock down cron status endpoint</td><td><span class="pill todo">optional</span></td><td>Disable workers.dev route or add a token check.</td></tr>
+<tr><td><b>Deploy this session's work</b></td><td><span class="pill todo">do first</span></td><td>Run the <a href="#deploy">Deploy checklist</a> — create D1 tables, set <code>PROPOSALS_TOKEN</code>, redeploy app + cron. Everything below "done" is built but only live after this.</td></tr>
+<tr><td>Place a real test order via UI</td><td><span class="pill todo">do first</span></td><td>Verifies the only unverified path (POST /api/send). Deliberately not done by the agent.</td></tr>
+<tr><td>Slice 3 — PnL page</td><td><span class="pill ok">done</span></td><td>Durable fills/settlements in D1 + <code>/api/pnl</code> + PnL tab + <code>pnl-calc</code> (28 tests). Cron syncs fills/settlements (~5min).</td></tr>
+<tr><td>Slice 4 — Proposals overlay</td><td><span class="pill ok">done</span></td><td>D1 proposals + <code>/api/proposals</code> (token POST) + ticket overlay + <code>push_proposals.py</code>. (Used D1, not R2 — D1 was already bound.)</td></tr>
+<tr><td>Retention env-configurable</td><td><span class="pill ok">done</span></td><td>Moved to <code>[vars]</code>. Still pick final <code>ARCHIVE_THRESHOLD</code> from a real week of <code>archive_rows</code>.</td></tr>
+<tr><td>Lock down cron status endpoint</td><td><span class="pill ok">done</span></td><td>Optional <code>STATUS_TOKEN</code> secret gates it; unset = public as before.</td></tr>
+<tr><td>Live WebSocket tape</td><td><span class="pill todo">optional / deferred</span></td><td>A Durable Object holding a Kalshi WS connection for real-time prints instead of 1-min batches. Deferred: needs a deploy to verify (can't smoke-test a DO locally without the live WS), and the batch tape already drives the brokerage view.</td></tr>
+<tr><td>Upgrade auth to email-PIN</td><td><span class="pill todo">optional</span></td><td>Needs a scoped CF API token (Access:Edit) + dashboard work — out of scope for a no-deploy session.</td></tr>
 </table>
 
 <h2>11. File map</h2>
 <pre><code>kalshi_exec/
   NOTES.html                 &lt;- this file
-  schema.sql                 D1 schema (pending_kills, trades, collector_state)
+  schema.sql                 D1 schema (pending_kills, trades, collector_state, fills, settlements, proposals)
+  push_proposals.py          local sim → /api/proposals pusher (dry-run by default)
   app/                       Cloudflare Pages project (password-gated)
     wrangler.toml  package.json  tsconfig.json
     shared/kalshi.ts         signing + signed fetch + golf ticker classification
-    functions/_middleware.ts password gate (fail-closed, HMAC cookie)
-    functions/api/           balance, markets, orderbook, positions, orders, cancel, send, tape
-    public/                  index.html, app.js, styles.css  (Trade + Tape tabs)
+    shared/tape-sql.js (+.d.ts)  tape-summary SQL builder (shared by endpoint + test)
+    shared/pnl-calc.js (+.d.ts)  all-time PnL accounting (ported from maker_dashboard)
+    functions/_middleware.ts password gate (fail-closed, HMAC cookie) + proposals-push carve-out
+    functions/api/           balance, markets, orderbook, positions, orders, cancel, send,
+                             tape, tape/summary, pnl, proposals
+    public/                  index.html, app.js, styles.css, tape-analytics.js  (Trade + Tape + PnL tabs)
+    test/                    tape-analytics.test.js, tape-sql.test.js, pnl-calc.test.js,
+                             mock-server.js (local no-credentials harness)
   cron/                      internal Worker (scheduled)
-    wrangler.toml  package.json  tsconfig.json
-    src/index.ts             minute: poll+autokill ; weekly: retentionSweep ; fetch: read-only status</code></pre>
+    wrangler.toml  package.json  tsconfig.json   ([vars]: retention tunables)
+    src/index.ts             minute: poll+autokill+pnl-sync ; weekly: retentionSweep ; fetch: status</code></pre>
 
-<p class="muted" style="margin-top:40px">End of notes. Memory checkpoint also saved under the project's .claude memory (<code>kalshi-exec-platform-cloudflare</code>).</p>
+<p class="muted" style="margin-top:40px">End of notes. Memory checkpoint saved under the project's .claude memory (<code>kalshi-exec-platform</code>). Local verification this session used headless Edge screenshots of the mock harness for Trade / Tape / PnL — no orders placed, nothing deployed.</p>
 
 </div>
 </body>
