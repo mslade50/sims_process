@@ -31,13 +31,23 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
       const events: Record<string, string> = {};
       const counts: Record<string, number> = {};
 
-      const ev = await kalshi(ctx.env, "GET", "/events", {
-        query: { series_ticker: series, status: "open", limit: 200 },
-      });
-      if (ev.ok) {
-        for (const e of ev.data.events || []) {
-          const code = String(e.event_ticker || "").split("-").slice(1).join("-");
-          if (code && !events[code]) events[code] = cleanEventName(e.sub_title, e.title);
+      // Event names: OPEN (current) + SETTLED (past). PnL is all-time, so settled
+      // tournaments must resolve too — they aren't in the open list. (Kalshi
+      // /events requires an explicit status; with none it returns nothing.)
+      for (const status of ["open", "settled"]) {
+        let ecursor: string | undefined;
+        for (let i = 0; i < 12; i++) {
+          const ev = await kalshi(ctx.env, "GET", "/events", {
+            query: { series_ticker: series, status, limit: 200, cursor: ecursor },
+          });
+          if (!ev.ok) break;
+          const evs = ev.data.events || [];
+          for (const e of evs) {
+            const code = String(e.event_ticker || "").split("-").slice(1).join("-");
+            if (code && !events[code]) events[code] = cleanEventName(e.sub_title, e.title);
+          }
+          ecursor = ev.data.cursor;
+          if (!ecursor || evs.length < 200) break;
         }
       }
 

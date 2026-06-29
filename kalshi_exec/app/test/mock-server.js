@@ -220,13 +220,16 @@ const PLAYER_NAMES = {
   CANT: "Patrick Cantlay", FITZ: "Matt Fitzpatrick", SPIE: "Jordan Spieth", MORI: "Collin Morikawa",
   HENG: "Harris English",
 };
-const EVENT_NAMES = { PGATRAV: "Travelers Championship", PGCMEM: "Memorial Tournament" };
+// includes a settled tournament (PGCMEM) and a code (TRC26) the H2H matchup
+// code prefix-matches, to exercise name resolution for past/matchup events
+const EVENT_NAMES = { PGATRAV: "Travelers Championship", PGCMEM: "Memorial Tournament", TRC26: "Truist Championship" };
 
 function genReference() {
   const counts = {};
   for (const t of TRADES) counts[t.event_code] = (counts[t.event_code] || 0) + 1;
-  const eventsList = Object.keys(EVENT_NAMES)
-    .map((code) => ({ code, name: EVENT_NAMES[code], markets: counts[code] || 1 }))
+  // dropdown only lists events with live tape activity (not settled ones)
+  const eventsList = Object.keys(counts)
+    .map((code) => ({ code, name: EVENT_NAMES[code] || code, markets: counts[code] }))
     .sort((a, b) => b.markets - a.markets);
   return { players: PLAYER_NAMES, events: EVENT_NAMES, eventsList, fetched_ts: new Date().toISOString() };
 }

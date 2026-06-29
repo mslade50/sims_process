@@ -22,7 +22,19 @@ let currentEvent = ""; // event_code filter for the tape ("" = all)
 const MARKET_LABELS = { winner: "Winner", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", h2h: "Matchup" };
 const marketLabel = (t) => MARKET_LABELS[t] || t || "";
 const playerName = (code) => ref.players[code] || code || "";
-const eventName = (code) => ref.events[code] || code || "";
+
+// Known event codes, longest first — so an H2H matchup code (e.g. TRC26R3HENGKBRA)
+// resolves to its tournament by longest matching prefix.
+let _eventCodesByLen = [];
+function rebuildEventIndex() {
+  _eventCodesByLen = Object.keys(ref.events).sort((a, b) => b.length - a.length);
+}
+function eventName(code) {
+  if (!code) return "";
+  if (ref.events[code]) return ref.events[code];
+  for (const ec of _eventCodesByLen) if (code.startsWith(ec)) return ref.events[ec];
+  return code;
+}
 
 async function loadReference() {
   try {
@@ -30,6 +42,7 @@ async function loadReference() {
     ref.players = d.players || {};
     ref.events = d.events || {};
     ref.eventsList = d.eventsList || [];
+    rebuildEventIndex();
     populateEventSelect();
     // re-render whatever is showing now that names are available
     if (allMarkets.length) renderMarketList();
