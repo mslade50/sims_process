@@ -623,14 +623,18 @@ function renderFocusCharts() {
 function renderTimeSales() {
   let rows = tapeState.trades;
   if ($("tsFocusOnly").checked && tapeState.focus) rows = rows.filter((t) => t.ticker === tapeState.focus);
-  $("tsCount").textContent = `${rows.length} prints`;
+  // cost of a print = its $ value at the shown (yes) price
+  const tradeCost = (t) => (t.yes_price / 100) * t.count;
   if (!rows.length) {
+    $("tsCount").textContent = `${rows.length} prints`;
     $("tape-table").innerHTML = `<div class="muted small">no trades captured yet for this filter</div>`;
   } else {
+    const totalCost = rows.reduce((s, t) => s + tradeCost(t), 0);
+    $("tsCount").textContent = `${rows.length} prints · $${Math.round(totalCost).toLocaleString()} traded`;
     const block = Number($("tBlock").value) || 1000;
     const maxSize = Math.max(...rows.map((t) => t.count), 1);
     $("tape-table").innerHTML =
-      `<table class="ts-table"><thead><tr><th>Time</th><th>Type</th><th>Player</th><th>Taker</th><th class="num">Yes ¢</th><th class="num">Size</th><th class="flowcol">Flow</th></tr></thead><tbody>` +
+      `<table class="ts-table"><thead><tr><th>Time</th><th>Type</th><th>Player</th><th>Taker</th><th class="num">Yes ¢</th><th class="num">Size</th><th class="num">Cost</th><th class="flowcol">Flow</th></tr></thead><tbody>` +
       rows
         .map((t) => {
           const isNew = tapeState.primed && !tapeState.seen.has(t.trade_id);
@@ -646,6 +650,7 @@ function renderTimeSales() {
             `<td><span class="pill ${t.taker_side || ""}">${t.taker_side || "·"}</span></td>` +
             `<td class="num">${c1(t.yes_price)}</td>` +
             `<td class="num bold">${Math.round(t.count).toLocaleString()}${isBlock ? ' <span class="blocktag">BLK</span>' : ""}</td>` +
+            `<td class="num">$${Math.round(tradeCost(t)).toLocaleString()}</td>` +
             `<td class="flowcol"><div class="sizebar ${sideCls}" style="width:${w}%"></div></td>` +
             `</tr>`
           );
