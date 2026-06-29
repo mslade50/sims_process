@@ -1,0 +1,15 @@
+name = "kalshi-exec"
+pages_build_output_dir = "public"
+compatibility_date = "2026-06-01"
+
+# Static assets live in public/. API routes are Pages Functions in functions/api/.
+# Protect this project with Cloudflare Access (One-Time PIN) — that is the email-PIN gate.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kalshi-exec"
+database_id = "74576c35-e310-4db3-8c3d-8e478cb3e2ff"
+
+# Secrets (set with `wrangler pages secret put`, NOT here):
+#   KALSHI_API_KEY      — Kalshi access key ID
+#   KALSHI_PRIVATE_KEY  — PKCS#8 PEM text

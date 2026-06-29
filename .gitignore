@@ -183,6 +183,7 @@ cleanup_backup_*.tar.gz
 !.git/
 !.githooks/
 !dashboard/
+!kalshi_exec/
 !dashboard_data/
 !maker_dashboard/
 

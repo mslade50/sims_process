@@ -1,0 +1,20 @@
+name = "kalshi-exec-cron"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+# Internal Worker — no public route needed. Runs every minute:
+#   1. auto-kill sweep (force-cancel orders past kill_ts + 60s)
+#   2. trade poll (golf outright trades -> D1 tape)
+
+[triggers]
+# minute job (poll + auto-kill) and weekly retention sweep (Mon 09:00 UTC)
+crons = ["* * * * *", "0 9 * * 1"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kalshi-exec"
+database_id = "74576c35-e310-4db3-8c3d-8e478cb3e2ff"
+
+# Secrets (set with `wrangler secret put`):
+#   KALSHI_API_KEY      — Kalshi access key ID
+#   KALSHI_PRIVATE_KEY  — PKCS#8 PEM text

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Kalshi Exec — Golf</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">⛳ Kalshi Exec <span class="muted">golf</span></div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="trade">Trade</button>
+        <button class="tab" data-tab="tape">Tape</button>
+      </nav>
+      <div class="balance" id="balance">—</div>
+    </header>
+
+    <main>
+      <!-- TRADE TAB -->
+      <section id="trade" class="tabpane active">
+        <div class="grid">
+          <!-- Order ticket -->
+          <div class="card ticket">
+            <h2>Order ticket</h2>
+            <div class="row">
+              <label>Market type</label>
+              <select id="series">
+                <option value="winner">Winner</option>
+                <option value="top_5">Top 5</option>
+                <option value="top_10">Top 10</option>
+                <option value="top_20">Top 20</option>
+              </select>
+              <button id="loadMarkets" class="btn">Load</button>
+            </div>
+            <div class="row">
+              <input id="marketSearch" type="text" placeholder="filter players / ticker…" autocomplete="off" />
+            </div>
+            <div class="row">
+              <select id="market" size="6" class="marketlist"></select>
+            </div>
+
+            <div id="ticketBody" class="ticket-body" hidden>
+              <div class="selected" id="selectedMarket"></div>
+              <div class="sidetoggle">
+                <button class="side yes active" data-side="yes">YES</button>
+                <button class="side no" data-side="no">NO</button>
+              </div>
+              <div class="row two">
+                <div><label>Price ¢</label><input id="price" type="number" step="0.5" min="0.5" max="99.5" /></div>
+                <div><label>Qty</label><input id="qty" type="number" step="1" min="1" value="1" /></div>
+              </div>
+              <div class="row killrow">
+                <label class="chk"><input type="checkbox" id="killOn" /> Auto-kill at</label>
+                <input id="killTime" type="datetime-local" disabled />
+              </div>
+              <div class="row quick">
+                <button class="chip" data-min="5">+5m</button>
+                <button class="chip" data-min="15">+15m</button>
+                <button class="chip" data-min="60">+1h</button>
+                <span class="muted small">native expiry + cron force-cancel at +60s</span>
+              </div>
+              <div class="row">
+                <button id="place" class="btn primary big">Place order</button>
+              </div>
+              <div id="ticketMsg" class="msg"></div>
+            </div>
+          </div>
+
+          <!-- Orderbook -->
+          <div class="card book">
+            <h2>Orderbook <span id="bookTicker" class="muted small"></span></h2>
+            <div class="bookcols">
+              <div><div class="bh yes">YES</div><div id="yesBook" class="levels"></div></div>
+              <div><div class="bh no">NO</div><div id="noBook" class="levels"></div></div>
+            </div>
+          </div>
+
+          <!-- Positions -->
+          <div class="card">
+            <h2>Positions <button id="refreshPos" class="btn tiny">↻</button></h2>
+            <div id="positions" class="tablewrap"></div>
+          </div>
+
+          <!-- Open orders -->
+          <div class="card">
+            <h2>Open orders <button id="refreshOrders" class="btn tiny">↻</button></h2>
+            <div id="orders" class="tablewrap"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAPE TAB -->
+      <section id="tape" class="tabpane">
+        <div class="card">
+          <h2>Ticker tape <span class="muted small">golf outrights · trades</span></h2>
+          <div class="filters">
+            <div><label>Market</label>
+              <select id="tMarket">
+                <option value="">all</option>
+                <option value="winner">Winner</option>
+                <option value="top_5">Top 5</option>
+                <option value="top_10">Top 10</option>
+                <option value="top_20">Top 20</option>
+              </select>
+            </div>
+            <div><label>Ticker contains</label><input id="tTicker" type="text" placeholder="e.g. SCHE" /></div>
+            <div><label>Price ≥ ¢</label><input id="tMinP" type="number" min="0" max="100" /></div>
+            <div><label>Price ≤ ¢</label><input id="tMaxP" type="number" min="0" max="100" /></div>
+            <div><label>Size ≥</label><input id="tMinSize" type="number" min="1" value="100" /></div>
+            <div><label>Last</label>
+              <select id="tWindow">
+                <option value="3600">1h</option>
+                <option value="21600">6h</option>
+                <option value="86400" selected>24h</option>
+                <option value="604800">7d</option>
+                <option value="0">all</option>
+              </select>
+            </div>
+            <div class="autoref"><label class="chk"><input type="checkbox" id="tAuto" checked /> auto</label></div>
+            <button id="tApply" class="btn">Apply</button>
+          </div>
+          <div id="tapeStatus" class="muted small"></div>
+          <div id="tape-table" class="tablewrap"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

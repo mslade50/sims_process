@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kalshi Exec Platform — Build Notes</title>
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--border:#2a323d;--text:#e6edf3;--muted:#8b949e;--accent:#388bfd;--green:#2ea043;--amber:#d29922;--red:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:20px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+  h3{font-size:16px;margin:20px 0 8px;color:#cdd9e5}
+  .sub{color:var(--muted);margin:0 0 8px}
+  code{background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow-x:auto}
+  pre code{background:none;border:0;padding:0}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin:12px 0}
+  .pill{display:inline-block;padding:1px 9px;border-radius:11px;font-size:12px;font-weight:600}
+  .ok{background:rgba(46,160,67,.18);color:var(--green)}
+  .todo{background:rgba(56,139,253,.18);color:var(--accent)}
+  .warn{background:rgba(210,153,34,.18);color:var(--amber)}
+  a{color:var(--accent)}
+  ul{margin:6px 0 6px 0;padding-left:22px}
+  li{margin:3px 0}
+  .muted{color:var(--muted)}
+  .big{font-size:17px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>⛳ Kalshi Execution Platform</h1>
+<p class="sub">Build notes &amp; resume plan — last updated 2026-06-28 (evening). Status: <span class="pill ok">Slice 1 + Tape LIVE</span></p>
+
+<div class="card">
+<h3 style="margin-top:0">Quick resume (read this first tomorrow)</h3>
+<ul>
+  <li><b>Live app:</b> <a href="https://kalshi-exec.pages.dev">https://kalshi-exec.pages.dev</a> — login with the password (in your password manager; shown once in chat. It's also the Cloudflare secret <code>APP_PASSWORD</code>, not retrievable).</li>
+  <li><b>Collector status (read-only):</b> <a href="https://kalshi-exec-cron.mckinleyslade.workers.dev">https://kalshi-exec-cron.mckinleyslade.workers.dev</a> — shows last_run, last_purge, trade count, archive_rows.</li>
+  <li><b>Code:</b> <code>C:\Users\mckin\Documents\sims_process\kalshi_exec\</code> (not yet committed to git).</li>
+  <li><b>Next up:</b> see <a href="#next">Next steps</a> — PnL slice or proposals overlay; tune retention threshold after a week of data.</li>
+</ul>
+</div>
+
+<h2>1. Goal</h2>
+<p>Replace Kalshi's web UI with a private, always-on execution platform for <b>golf outright markets</b> — enter orders from anywhere, with an order-expiry/auto-kill workflow, plus a "ticker tape" of large trades. Hosted serverless on Cloudflare (no home-PC dependency), gated by a password.</p>
+
+<h2>2. Architecture</h2>
+<p class="sub">Two deployables sharing one D1 database. Cron Triggers don't run on Pages, and the password gate only needs to protect the user-facing app — hence the split.</p>
+<table>
+<tr><th>Piece</th><th>What</th><th>Notes</th></tr>
+<tr><td><b>app/</b> (Cloudflare Pages)</td><td>Frontend (static) + <code>/api/*</code> Pages Functions</td><td>Project <code>kalshi-exec</code>, prod branch <code>main</code>. Password-gated via <code>functions/_middleware.ts</code>.</td></tr>
+<tr><td><b>cron/</b> (Worker)</td><td>Internal <code>scheduled()</code> Worker</td><td><code>kalshi-exec-cron</code>. Minute job (trade poll + auto-kill) + weekly retention sweep. No user-facing surface (status fetch is read-only).</td></tr>
+<tr><td><b>D1</b></td><td>SQLite <code>kalshi-exec</code></td><td>Binding <code>DB</code>. Tables: <code>pending_kills</code>, <code>trades</code>, <code>collector_state</code>.</td></tr>
+</table>
+
+<h3>Why this shape</h3>
+<ul>
+  <li><b>Serverless beats the tunnel</b> for this: no machine to keep awake, $0 hosting, and the Kalshi key lives as an encrypted secret (stronger than a .pem on a PC).</li>
+  <li>Validated up front with a throwaway smoke Worker: Kalshi <b>does not geo-block Cloudflare egress</b> (ran from US PoP "BOS"), and RSA-PSS signing ports cleanly to Web Crypto. Smoke Worker since deleted.</li>
+  <li>Auth is a <b>self-hosted password gate</b>, not Cloudflare Access email-PIN: the wrangler OAuth token lacks Zero Trust scopes, and creating Access requires dashboard work. Email-PIN remains a possible upgrade via a scoped CF API token.</li>
+</ul>
+
+<h2>3. What's built &amp; live</h2>
+<table>
+<tr><th>Feature</th><th>Status</th><th>Detail</th></tr>
+<tr><td>Password gate</td><td><span class="pill ok">live</span></td><td>Fail-closed. Login form → HMAC-signed HttpOnly/Secure/SameSite cookie (30-day). <code>/api/*</code> → 401 unauth; pages → redirect to <code>/__login</code>. <code>/__logout</code> clears.</td></tr>
+<tr><td>Order ticket (golf only)</td><td><span class="pill ok">live</span></td><td>Pick Win/Top5/Top10/Top20 → search players → live orderbook (click a level to fill) → YES/NO, price ¢, qty → place. Non-golf tickers refused at the API.</td></tr>
+<tr><td>Expiry + auto-kill</td><td><span class="pill ok">live</span></td><td>Order gets Kalshi native <code>expiration_ts</code> AND a row in <code>pending_kills</code>; the cron force-cancels any remainder at <b>kill_ts + 60s</b>.</td></tr>
+<tr><td>Positions</td><td><span class="pill ok">live</span></td><td>Open golf positions, exposure.</td></tr>
+<tr><td>Open orders + cancel</td><td><span class="pill ok">live</span></td><td>Resting golf orders w/ kill-time column + one-click cancel.</td></tr>
+<tr><td>Ticker tape</td><td><span class="pill ok">live</span></td><td>Golf outrights only. Filters: market type / ticker / price / size / time window. Default filter <b>size ≥ 100</b>.</td></tr>
+<tr><td>Trade collector</td><td><span class="pill ok">live</span></td><td>Minute cron polls <code>/markets/trades</code>, filters to golf outrights, floors at 100 contracts, writes to D1.</td></tr>
+<tr><td>Retention sweep</td><td><span class="pill ok">live</span></td><td>Weekly (Mon 09:00 UTC): keep 7d of all ≥100 + all-time ≥5000 forever; delete the rest.</td></tr>
+<tr><td>Order POST path</td><td><span class="pill warn">unverified</span></td><td>Built &amp; uses the same signing as verified GET calls, but no real order has been placed yet — do a small test order via the UI.</td></tr>
+</table>
+
+<h2>4. API endpoints (Pages Functions)</h2>
+<table>
+<tr><th>Route</th><th>Method</th><th>Purpose</th></tr>
+<tr><td><code>/api/balance</code></td><td>GET</td><td>Account balance + portfolio value</td></tr>
+<tr><td><code>/api/markets?type=winner|top_5|top_10|top_20</code></td><td>GET</td><td>Open golf markets for a series</td></tr>
+<tr><td><code>/api/orderbook?ticker=…</code></td><td>GET</td><td>Normalized YES/NO levels (cents)</td></tr>
+<tr><td><code>/api/positions</code></td><td>GET</td><td>Open golf positions</td></tr>
+<tr><td><code>/api/orders</code></td><td>GET</td><td>Resting golf orders + kill annotations</td></tr>
+<tr><td><code>/api/cancel</code></td><td>POST</td><td><code>{order_id, ticker}</code> — golf-guarded cancel</td></tr>
+<tr><td><code>/api/send</code></td><td>POST</td><td><code>{orders:[{ticker,side,price_cents,count,kill_ts?}]}</code> — place limit buys</td></tr>
+<tr><td><code>/api/tape</code></td><td>GET</td><td><code>from,to,min_price,max_price,min_size,market,limit</code> — query the tape</td></tr>
+</table>
+
+<h2>5. Kalshi API contract (matched to kalshi_maker.py)</h2>
+<ul>
+  <li><b>Base:</b> <code>https://api.elections.kalshi.com/trade-api/v2</code></li>
+  <li><b>Signing:</b> message = <code>timestampMs + METHOD + signPath</code>; signPath <b>includes</b> <code>/trade-api/v2</code>, <b>excludes</b> the query string. RSA-PSS, SHA-256, saltLength 32. Headers <code>KALSHI-ACCESS-KEY/TIMESTAMP/SIGNATURE</code>.</li>
+  <li><b>Order body:</b> <code>{ticker, client_order_id:"exm"+uuid, type:"limit", action:"buy", side, count, &lt;side&gt;_price_dollars:"0.NNNN"}</code>; for a kill, add <code>time_in_force:"good_till_canceled"</code> + <code>expiration_ts</code> (unix sec). Price uses the decimal-dollar field (handles deci-cent markets).</li>
+  <li><b>Trades feed fields (gotcha):</b> <code>count_fp</code>, <code>yes_price_dollars</code>, <code>no_price_dollars</code> (decimal-dollar strings), <code>created_time</code>, <code>taker_side</code>, <code>ticker</code>, <code>trade_id</code> — NOT <code>count</code>/<code>yes_price</code>. Getting this wrong stored null/0 (fixed).</li>
+</ul>
+
+<h2>6. Config, accounts, secrets</h2>
+<table>
+<tr><th>Item</th><th>Value</th></tr>
+<tr><td>Cloudflare account id</td><td><code>ba4875f01f2bc46dd48e1e26d2ec9080</code></td></tr>
+<tr><td>Plan</td><td>Workers <b>Paid</b> ($5/mo) — upgraded 2026-06-28 (needed for cron headroom; also unlocks live WS tape)</td></tr>
+<tr><td>D1 database</td><td><code>kalshi-exec</code>, id <code>74576c35-e310-4db3-8c3d-8e478cb3e2ff</code>, binding <code>DB</code></td></tr>
+<tr><td>Pages project</td><td><code>kalshi-exec</code> → kalshi-exec.pages.dev, prod branch <code>main</code></td></tr>
+<tr><td>Cron Worker</td><td><code>kalshi-exec-cron</code>, crons <code>* * * * *</code> and <code>0 9 * * 1</code></td></tr>
+<tr><td>Secrets (Pages)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code>, <code>APP_PASSWORD</code>, <code>SESSION_SECRET</code></td></tr>
+<tr><td>Secrets (cron)</td><td><code>KALSHI_API_KEY</code>, <code>KALSHI_PRIVATE_KEY</code></td></tr>
+<tr><td>Kalshi key (local)</td><td>PKCS#8 at <code>C:\Users\mckin\.kalshi\private_pkcs8.pem</code> (converted from PKCS#1 <code>private.pem</code> — Web Crypto needs PKCS#8). Access key id is in <code>.env</code> as <code>KALSHI_ACCESS_KEY</code>.</td></tr>
+</table>
+
+<h2>7. Operating it</h2>
+<h3>Deploy</h3>
+<pre><code># Pages app (must run FROM the app dir — Pages ignores --config path)
+cd C:\Users\mckin\Documents\sims_process\kalshi_exec\app
+node_modules\.bin\wrangler pages deploy --project-name kalshi-exec --branch main --commit-dirty=true
+
+# Cron Worker (supports --config)
+node_modules\.bin\wrangler deploy --config ..\cron\wrangler.toml   # from cron dir, just: wrangler deploy</code></pre>
+<h3>Type-check before deploy</h3>
+<pre><code>node_modules\.bin\tsc -p tsconfig.json   # in app/ and cron/</code></pre>
+<h3>D1 queries</h3>
+<pre><code>wrangler d1 execute kalshi-exec --remote --command "SELECT COUNT(*) FROM trades;" --config app\wrangler.toml -y</code></pre>
+<h3>Set a secret</h3>
+<pre><code>Get-Content file | wrangler pages secret put NAME --project-name kalshi-exec   # Pages
+type-value | wrangler secret put NAME --config cron\wrangler.toml             # Worker</code></pre>
+
+<h2>8. Retention &amp; storage policy</h2>
+<ul>
+  <li><b>Collector floor:</b> <code>MIN_TRADE_SIZE = 100</code> — sub-100 trades never written.</li>
+  <li><b>Working tape:</b> all ≥100 kept 7 days.</li>
+  <li><b>Permanent archive:</b> ≥<code>ARCHIVE_THRESHOLD = 5000</code> kept forever.</li>
+  <li><b>Sweep:</b> weekly cron deletes <code>ts &lt; now-7d AND count &lt; 5000</code>. First real deletions are 7+ days out.</li>
+  <li><b>Tuning:</b> both are consts in <code>cron/src/index.ts</code> → edit + redeploy. <span class="warn">5000 was picked from ~15 min of peak final-round volume (~23k ≥100 trades, max single 188,305). Revisit after a real week of mixed data — likely wants to go higher.</span></li>
+</ul>
+
+<h2>9. Caveats / gotchas</h2>
+<ul>
+  <li><span class="pill warn">shared key</span> The maker bot and this platform use the same Kalshi key. The bot's <code>--cancel-all</code> cancels <b>all</b> resting orders incl. manual ones. (Manual orders use an <code>exm…</code> client_order_id so the bot's normal reconciliation ignores them — but cancel-all doesn't discriminate.)</li>
+  <li><span class="pill warn">test order</span> No real order has been placed through <code>/api/send</code> yet. Place a tiny test (1 contract far from market), confirm, then cancel.</li>
+  <li><span class="pill warn">cron status public</span> <code>kalshi-exec-cron.workers.dev</code> is publicly readable (trade counts only, no secrets/positions). Can be locked to internal-only if desired.</li>
+  <li>The collector polls exchange-wide <code>/markets/trades</code> and filters to golf (cap 30 pages/run, logs if capped). Fine at current volume.</li>
+</ul>
+
+<h2 id="next">10. Next steps</h2>
+<table>
+<tr><th>Item</th><th>Priority</th><th>Notes</th></tr>
+<tr><td>Place a real test order via UI</td><td><span class="pill todo">do first</span></td><td>Verifies the only unverified path (POST /api/send).</td></tr>
+<tr><td><b>Slice 3 — PnL page</b></td><td><span class="pill todo">next slice</span></td><td>Port <code>maker_dashboard/server.py</code> PnL logic to D1: durable fills/settlements store (Kalshi /fills ages out ~2mo), hybrid count-based payout. New table(s) + <code>/api/pnl</code> + UI tab.</td></tr>
+<tr><td><b>Slice 4 — Proposals overlay</b></td><td><span class="pill todo">next slice</span></td><td>Sim pushes <code>maker_proposals.parquet</code> → R2 (as JSON) → <code>/api/proposals</code> → edge overlay on the ticket. Sim runs locally (both machines), so add a small push step.</td></tr>
+<tr><td>Tune ARCHIVE_THRESHOLD / RETENTION_DAYS</td><td><span class="pill todo">after ~1 week</span></td><td>Decide from real mixed-volume data (check <code>archive_rows</code>).</td></tr>
+<tr><td>Live WebSocket tape (optional)</td><td><span class="pill todo">optional</span></td><td>Now possible on Paid: a Durable Object holding a Kalshi WS connection for real-time prints instead of 1-min batches.</td></tr>
+<tr><td>Commit <code>kalshi_exec/</code> to git</td><td><span class="pill todo">housekeeping</span></td><td>Currently untracked. NOTE: do NOT commit secrets (none in repo) and keep <code>.dev.vars</code>/node_modules gitignored (already are).</td></tr>
+<tr><td>Optional: upgrade auth to email-PIN</td><td><span class="pill todo">optional</span></td><td>Create a scoped CF API token (Access:Edit) → I can create the Access app + OTP policy via API and swap the middleware.</td></tr>
+<tr><td>Optional: lock down cron status endpoint</td><td><span class="pill todo">optional</span></td><td>Disable workers.dev route or add a token check.</td></tr>
+</table>
+
+<h2>11. File map</h2>
+<pre><code>kalshi_exec/
+  NOTES.html                 &lt;- this file
+  schema.sql                 D1 schema (pending_kills, trades, collector_state)
+  app/                       Cloudflare Pages project (password-gated)
+    wrangler.toml  package.json  tsconfig.json
+    shared/kalshi.ts         signing + signed fetch + golf ticker classification
+    functions/_middleware.ts password gate (fail-closed, HMAC cookie)
+    functions/api/           balance, markets, orderbook, positions, orders, cancel, send, tape
+    public/                  index.html, app.js, styles.css  (Trade + Tape tabs)
+  cron/                      internal Worker (scheduled)
+    wrangler.toml  package.json  tsconfig.json
+    src/index.ts             minute: poll+autokill ; weekly: retentionSweep ; fetch: read-only status</code></pre>
+
+<p class="muted" style="margin-top:40px">End of notes. Memory checkpoint also saved under the project's .claude memory (<code>kalshi-exec-platform-cloudflare</code>).</p>
+
+</div>
+</body>
+</html>
