@@ -62,9 +62,12 @@
                 <input id="killTime" type="datetime-local" disabled />
               </div>
               <div class="row quick">
-                <button class="chip" data-min="5">+5m</button>
-                <button class="chip" data-min="15">+15m</button>
                 <button class="chip" data-min="60">+1h</button>
+                <button class="chip" data-min="480">+8h</button>
+                <button class="chip" data-min="600">+10h</button>
+                <button class="chip" data-min="720">+12h</button>
+                <button class="chip" data-min="840">+14h</button>
+                <button class="chip" data-min="960">+16h</button>
                 <span class="muted small">native expiry + cron force-cancel at +60s</span>
               </div>
               <div class="row">
@@ -77,6 +80,7 @@
           <!-- Orderbook -->
           <div class="card book">
             <h2>Orderbook <span id="bookTicker" class="muted small"></span></h2>
+            <div id="topOfBook" class="tob"></div>
             <div class="bookcols">
               <div><div class="bh yes">YES</div><div id="yesBook" class="levels"></div></div>
               <div><div class="bh no">NO</div><div id="noBook" class="levels"></div></div>

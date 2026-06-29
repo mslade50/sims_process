@@ -33,6 +33,8 @@ async function loadReference() {
     populateEventSelect();
     // re-render whatever is showing now that names are available
     if (allMarkets.length) renderMarketList();
+    if (positionsData.length) renderPositions();
+    if (selected) loadOrderbook(selected.ticker);
     if ($("tape").classList.contains("active")) loadTape();
     if ($("pnl").classList.contains("active")) renderPnL();
   } catch (e) {
@@ -165,19 +167,46 @@ function prefillPrice() {
   if (v != null) $("price").value = v;
 }
 
+// Top-of-book for a binary market: best YES bid = highest YES bid; best YES ask
+// = 100 - highest NO bid (a NO buyer at P is a YES seller at 100-P). NO mirrors.
+function renderTopOfBook(ob) {
+  const yes = ob.yes || [];
+  const no = ob.no || [];
+  const c1d = (v) => Math.round(v * 10) / 10;
+  const yesBid = yes[0] || null;
+  const yesAsk = no[0] ? { price: c1d(100 - no[0].price), qty: no[0].qty } : null;
+  const noBid = no[0] || null;
+  const noAsk = yes[0] ? { price: c1d(100 - yes[0].price), qty: yes[0].qty } : null;
+  const cell = (label, lvl, side) =>
+    lvl
+      ? `<span class="tob-fill" data-side="${side}" data-price="${lvl.price}"><span class="tl">${label}</span><b>${lvl.price}¢</b><span class="tq">×${Math.round(lvl.qty).toLocaleString()}</span></span>`
+      : `<span class="tob-none"><span class="tl">${label}</span>—</span>`;
+  const spread = yesBid && yesAsk ? `<span class="tob-spread">${(yesAsk.price - yesBid.price).toFixed(1)}¢ wide</span>` : "";
+  $("topOfBook").innerHTML =
+    `<div class="tob-row"><span class="tob-side yes">YES</span>${cell("bid", yesBid, "yes")}${cell("ask", yesAsk, "yes")}${spread}</div>` +
+    `<div class="tob-row"><span class="tob-side no">NO</span>${cell("bid", noBid, "no")}${cell("ask", noAsk, "no")}</div>`;
+}
+
 async function loadOrderbook(ticker) {
-  $("bookTicker").textContent = ticker;
+  let name = ticker;
+  if (selected && selected.ticker === ticker) {
+    const lbl = marketLabel(selected.marketType);
+    name = (selected.subtitle || ticker) + (lbl ? ` · ${lbl}` : "");
+  }
+  $("bookTicker").textContent = name;
   $("yesBook").innerHTML = $("noBook").innerHTML = "…";
+  $("topOfBook").innerHTML = "";
   try {
     const ob = await api(`/api/orderbook?ticker=${encodeURIComponent(ticker)}`);
+    renderTopOfBook(ob);
     const render = (levels, s) =>
       (levels || [])
         .slice(0, 10)
-        .map((l) => `<div class="lvl" data-side="${s}" data-price="${l.price}"><span class="p">${l.price}¢</span><span class="q">${l.qty}</span></div>`)
+        .map((l) => `<div class="lvl" data-side="${s}" data-price="${l.price}"><span class="p">${l.price}¢</span><span class="q">${Math.round(l.qty).toLocaleString()}</span></div>`)
         .join("") || `<div class="muted small">empty</div>`;
     $("yesBook").innerHTML = render(ob.yes, "yes");
     $("noBook").innerHTML = render(ob.no, "no");
-    document.querySelectorAll(".lvl").forEach((el) =>
+    document.querySelectorAll(".lvl, .tob-fill").forEach((el) =>
       el.addEventListener("click", () => {
         setSide(el.dataset.side);
         $("price").value = el.dataset.price;
@@ -236,22 +265,35 @@ async function placeOrder() {
 }
 
 // ── Positions & orders ───────────────────────────────────────────────────────
+let positionsData = [];
 async function loadPositions() {
   try {
     const d = await api("/api/positions");
-    if (!d.positions.length) return ($("positions").innerHTML = `<div class="muted small">no open golf positions</div>`);
-    $("positions").innerHTML =
-      `<table><thead><tr><th>Market</th><th>Ticker</th><th class="num">Pos</th><th class="num">Exposure</th></tr></thead><tbody>` +
-      d.positions
-        .map(
-          (p) =>
-            `<tr><td>${p.market_type}</td><td>${p.ticker}</td><td class="num">${p.position}</td><td class="num">${fmtUSD(p.market_exposure)}</td></tr>`
-        )
-        .join("") +
-      `</tbody></table>`;
+    positionsData = d.positions || [];
+    renderPositions();
   } catch (e) {
     $("positions").innerHTML = `<div class="msg err">${e.message}</div>`;
   }
+}
+
+function renderPositions() {
+  if (!positionsData.length) {
+    $("positions").innerHTML = `<div class="muted small">no open golf positions</div>`;
+    return;
+  }
+  $("positions").innerHTML =
+    `<table><thead><tr><th>Player</th><th>Market</th><th>Side</th><th class="num">Pos</th><th class="num">Avg</th><th class="num">Exposure</th></tr></thead><tbody>` +
+    positionsData
+      .map(
+        (p) =>
+          `<tr><td>${playerName(p.player_code)}</td><td class="small">${marketLabel(p.market_type)}</td>` +
+          `<td><span class="pill ${p.side || ""}">${(p.side || "·").toUpperCase()}</span></td>` +
+          `<td class="num">${(p.contracts || 0).toLocaleString()}</td>` +
+          `<td class="num">${p.avg_cost ? (p.avg_cost * 100).toFixed(1) + "¢" : "—"}</td>` +
+          `<td class="num">${usd(p.exposure)}</td></tr>`
+      )
+      .join("") +
+    `</tbody></table>`;
 }
 
 async function loadOrders() {

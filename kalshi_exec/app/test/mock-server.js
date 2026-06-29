@@ -232,6 +232,26 @@ function genReference() {
 }
 const REFERENCE = genReference();
 
+// synthetic open positions (new /api/positions shape)
+function genPositions() {
+  const mk = (ticker, signed, exposure) => {
+    const cls = classify(ticker);
+    const contracts = Math.abs(signed);
+    return {
+      ticker, position: signed, side: signed > 0 ? "yes" : "no", contracts, exposure,
+      avg_cost: contracts ? exposure / contracts : 0, realized_pnl: 0, fees_paid: 0,
+      resting_orders_count: 0, market_type: cls.marketType, player_code: cls.playerCode, event_code: cls.eventCode,
+    };
+  };
+  return [
+    mk("KXPGATOUR-PGATRAV-SCHE", 500, 90),
+    mk("KXPGATOP5-PGATRAV-MCIL", 300, 120),
+    mk("KXPGATOP20-PGATRAV-FLEE", -400, 120),
+    mk("KXPGATOUR-PGATRAV-FOWL", 250, 62.5),
+  ].sort((a, b) => b.exposure - a.exposure);
+}
+const POSITIONS = genPositions();
+
 function apiTape(u) {
   const { whereSql, binds } = buildTapeWhere(paramObj(u));
   const limit = Math.min(parseInt(u.searchParams.get("limit") || "200", 10), 1000);
@@ -255,7 +275,7 @@ const server = http.createServer((req, res) => {
   if (p === "/api/reference") return sendJson(res, REFERENCE);
   if (p === "/api/tape") return sendJson(res, apiTape(u));
   if (p === "/api/tape/summary") return sendJson(res, apiTapeSummary(u));
-  if (p === "/api/positions") return sendJson(res, { positions: [] });
+  if (p === "/api/positions") return sendJson(res, { positions: POSITIONS });
   if (p === "/api/orders") return sendJson(res, { orders: [] });
   if (p === "/api/orderbook") {
     const ticker = u.searchParams.get("ticker") || "";
@@ -264,8 +284,9 @@ const server = http.createServer((req, res) => {
     const mid = pr ? Math.round((pr.best_bid + pr.best_ask) * 50) : 12; // cents
     const yes = [], no = [];
     for (let i = 0; i < 8; i++) {
-      yes.push({ price: Math.max(1, mid - i), qty: 100 + Math.floor(rnd() * 1200) });
-      no.push({ price: Math.max(1, 100 - mid - i), qty: 100 + Math.floor(rnd() * 1200) });
+      // yes bid tops at mid-1, no bid tops at 99-mid -> YES ask = mid+1 (2c spread)
+      yes.push({ price: Math.max(1, mid - 1 - i), qty: 100 + Math.floor(rnd() * 1200) });
+      no.push({ price: Math.max(1, 100 - mid - 1 - i), qty: 100 + Math.floor(rnd() * 1200) });
     }
     return sendJson(res, { ticker, yes, no, market_type: cls.marketType });
   }
@@ -282,10 +303,11 @@ const server = http.createServer((req, res) => {
     const type = u.searchParams.get("type") || "winner";
     const prefix = SERIES.find(([, mt]) => mt === type)?.[0] || "KXPGATOUR";
     return sendJson(res, {
-      markets: PLAYERS.map(([code]) => ({
-        ticker: `${prefix}-${EVENT}-${code}`, subtitle: code, title: code,
-        yes_bid: 10, yes_ask: 12, no_bid: 88, no_ask: 90,
-      })),
+      markets: PLAYERS.map(([code]) => {
+        const ticker = `${prefix}-${EVENT}-${code}`;
+        const name = PLAYER_NAMES[code] || code;
+        return { ticker, subtitle: name, title: name, yes_bid: 10, yes_ask: 12, no_bid: 88, no_ask: 90, ...classify(ticker) };
+      }),
     });
   }
   // order paths are hard-disabled in the harness
