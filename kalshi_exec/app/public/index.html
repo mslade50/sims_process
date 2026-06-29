@@ -13,6 +13,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="trade">Trade</button>
         <button class="tab" data-tab="tape">Tape</button>
+        <button class="tab" data-tab="pnl">PnL</button>
       </nav>
       <div class="balance" id="balance">—</div>
     </header>
@@ -161,6 +162,36 @@
             </div>
           </div>
           <div id="tape-table" class="tablewrap ts"></div>
+        </div>
+      </section>
+
+      <!-- PNL TAB -->
+      <section id="pnl" class="tabpane">
+        <div class="card">
+          <div class="ts-head">
+            <h2>PnL <span class="muted small" id="pnlMeta"></span></h2>
+            <div class="ts-opts">
+              <label class="select-label small">group
+                <select id="pnlGroup">
+                  <option value="none">none</option>
+                  <option value="player_code">golfer</option>
+                  <option value="market_type">market</option>
+                  <option value="event_code">tournament</option>
+                  <option value="is_open">status</option>
+                </select>
+              </label>
+              <label class="select-label small">show
+                <select id="pnlStatus">
+                  <option value="all">all</option>
+                  <option value="open">open</option>
+                  <option value="settled">settled</option>
+                </select>
+              </label>
+              <button class="btn tiny" id="pnlRefresh" title="refetch">↻</button>
+            </div>
+          </div>
+          <div id="pnlTotals" class="statstrip"></div>
+          <div id="pnl-table" class="tablewrap"></div>
         </div>
       </section>
     </main>

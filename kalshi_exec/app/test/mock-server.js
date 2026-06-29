@@ -19,6 +19,19 @@ const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { buildTapeWhere, tapeSummarySql, shapeSummaryRow } = require("../shared/tape-sql.js");
+const { computePnl } = require("../shared/pnl-calc.js");
+
+// ── ticker classification (mirrors shared/kalshi.ts) ──
+const PREFIX_MT = [["KXPGATOUR", "winner"], ["KXPGATOP5", "top_5"], ["KXPGATOP10", "top_10"], ["KXPGATOP20", "top_20"]];
+function classify(t) {
+  for (const [p, mt] of PREFIX_MT)
+    if (t.startsWith(p + "-")) {
+      const seg = t.slice(p.length + 1).split("-");
+      return { marketType: mt, eventCode: seg[0] || "", playerCode: seg.slice(1).join("-") };
+    }
+  return { marketType: "", eventCode: "", playerCode: "" };
+}
+const isGolf = (t) => PREFIX_MT.some(([p]) => t.startsWith(p + "-"));
 
 const PUBLIC = path.join(__dirname, "..", "public");
 const PORT = Number(process.env.MOCK_PORT || 8099);
@@ -110,6 +123,49 @@ for (const t of TRADES) {
 }
 console.log(`[mock] seeded ${TRADES.length} synthetic trades across ${PLAYERS.length * SERIES.length} markets`);
 
+// ── synthetic PnL book (open + settled, wins + losses) ────────────────────────
+function genPnl() {
+  const fills = [], settlements = {}, positions = {}, marks = {};
+  const tk = (prefix, ev, code) => `${prefix}-${ev}-${code}`;
+  const buy = (ticker, side, count, px, ts, fee = 0.5) =>
+    fills.push({
+      ticker, side, action: "buy", count,
+      yes_price: side === "yes" ? px : 1 - px,
+      no_price: side === "yes" ? 1 - px : px,
+      fee_cost: fee, ts,
+    });
+  const T0 = Math.floor(Date.now() / 1000) - 5 * 86400;
+
+  // OPEN — YES winner, in the money (mark above cost)
+  let t = tk("KXPGATOUR", "PGATRAV", "SCHE");
+  buy(t, "yes", 500, 0.18, T0); positions[t] = 500; marks[t] = { yes_bid: 0.21, yes_ask: 0.23 };
+  // OPEN — YES top_5, underwater
+  t = tk("KXPGATOP5", "PGATRAV", "MCIL");
+  buy(t, "yes", 300, 0.4, T0 + 100); positions[t] = 300; marks[t] = { yes_bid: 0.35, yes_ask: 0.37 };
+  // OPEN — NO top_20 (fade), slightly up
+  t = tk("KXPGATOP20", "PGATRAV", "FLEE");
+  buy(t, "no", 400, 0.3, T0 + 200); positions[t] = -400; marks[t] = { yes_bid: 0.66, yes_ask: 0.68 };
+  // OPEN — YES winner, flat
+  t = tk("KXPGATOUR", "PGATRAV", "FOWL");
+  buy(t, "yes", 250, 0.25, T0 + 300); positions[t] = 250; marks[t] = { yes_bid: 0.24, yes_ask: 0.26 };
+
+  // SETTLED win (held to settlement)
+  t = tk("KXPGATOUR", "PGCMEM", "RAHM");
+  buy(t, "yes", 200, 0.12, T0 - 3 * 86400);
+  settlements[t] = { market_result: "yes", yes_count: 200, no_count: 0, settled_time: "2026-06-22" };
+  // SETTLED loss
+  t = tk("KXPGATOP10", "PGCMEM", "SCHA");
+  buy(t, "yes", 150, 0.55, T0 - 3 * 86400 + 50);
+  settlements[t] = { market_result: "no", yes_count: 150, no_count: 0, settled_time: "2026-06-22" };
+  // SETTLED win on the NO side (player missed the cut → NO top_20 paid)
+  t = tk("KXPGATOP20", "PGCMEM", "MORI");
+  buy(t, "no", 300, 0.45, T0 - 3 * 86400 + 80);
+  settlements[t] = { market_result: "no", yes_count: 0, no_count: 300, settled_time: "2026-06-22" };
+
+  return { fills, settlements, positions, marks };
+}
+const PNL = genPnl();
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
 function sendJson(res, obj, status = 200) {
@@ -148,6 +204,11 @@ const server = http.createServer((req, res) => {
   if (p === "/api/tape/summary") return sendJson(res, apiTapeSummary(u));
   if (p === "/api/positions") return sendJson(res, { positions: [] });
   if (p === "/api/orders") return sendJson(res, { orders: [] });
+  if (p === "/api/pnl") {
+    const { rows, totals } = computePnl({ ...PNL, classify, isGolf });
+    return sendJson(res, { rows, totals, fetched_ts: new Date().toISOString(),
+      store: { fills: PNL.fills.length, settlements: Object.keys(PNL.settlements).length } });
+  }
   if (p === "/api/markets") {
     const type = u.searchParams.get("type") || "winner";
     const prefix = SERIES.find(([, mt]) => mt === type)?.[0] || "KXPGATOUR";

@@ -125,6 +125,101 @@ async function pollTrades(env: Env): Promise<{ pages: number; scanned: number; i
   return { pages, scanned, inserted, capped };
 }
 
+// ── PnL store sync ───────────────────────────────────────────────────────────
+// Mirror maker_dashboard/server.py's durable approach: Kalshi /portfolio/fills
+// only retains ~2 months, so persist every golf fill ever seen. Settlements are
+// authoritative for held-to-settlement cost basis and never age out.
+const PNL_MAX_PAGES = 20; // per-run pagination cap (first sync catches up over runs)
+const PNL_SYNC_INTERVAL = 270; // seconds between syncs (~ every 5 minutes)
+
+function fillTs(f: any): number {
+  if (typeof f.ts === "number") return f.ts;
+  const p = Date.parse(f.created_time);
+  return Number.isFinite(p) ? Math.floor(p / 1000) : nowSec();
+}
+function dnum(v: any): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function syncPnl(env: Env): Promise<{ fills: number; setts: number }> {
+  // fills — incremental, golf only, stop when a page adds nothing new
+  const knownFills = new Set<string>();
+  for (const r of ((await env.DB.prepare("SELECT fill_id FROM fills").all()).results || []) as any[])
+    knownFills.add(r.fill_id);
+
+  let cursor: string | undefined;
+  let pages = 0;
+  let newFills = 0;
+  while (pages < PNL_MAX_PAGES) {
+    const r = await kalshi(env, "GET", "/portfolio/fills", { query: { limit: 200, cursor } });
+    if (!r.ok) break;
+    const fills: any[] = r.data.fills || [];
+    const stmts: D1PreparedStatement[] = [];
+    let pageNew = 0;
+    for (const f of fills) {
+      const ticker = f.ticker || f.market_ticker || "";
+      const id = f.fill_id;
+      if (!id || !isGolfTicker(ticker) || knownFills.has(id)) continue;
+      knownFills.add(id);
+      pageNew++;
+      stmts.push(
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO fills (fill_id,order_id,ticker,side,action,count,yes_price,no_price,is_taker,fee_cost,ts,created_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+        ).bind(
+          id, f.order_id ?? null, ticker, f.side ?? null, f.action ?? null,
+          Number(f.count_fp ?? f.count ?? 0) || 0,
+          dnum(f.yes_price_dollars), dnum(f.no_price_dollars),
+          f.is_taker ? 1 : 0, dnum(f.fee_cost) ?? 0, fillTs(f), f.created_time ?? null
+        )
+      );
+    }
+    if (stmts.length) { await env.DB.batch(stmts); newFills += stmts.length; }
+    cursor = r.data.cursor;
+    pages++;
+    if (!cursor || pageNew === 0) break;
+  }
+
+  // settlements — keyed by ticker, golf only
+  const knownSetts = new Set<string>();
+  for (const r of ((await env.DB.prepare("SELECT ticker FROM settlements").all()).results || []) as any[])
+    knownSetts.add(r.ticker);
+
+  let scursor: string | undefined;
+  let spages = 0;
+  let newSetts = 0;
+  while (spages < PNL_MAX_PAGES) {
+    const r = await kalshi(env, "GET", "/portfolio/settlements", { query: { limit: 200, cursor: scursor } });
+    if (!r.ok) break;
+    const setts: any[] = r.data.settlements || [];
+    const stmts: D1PreparedStatement[] = [];
+    let pageNew = 0;
+    for (const s of setts) {
+      const ticker = s.ticker || "";
+      if (!ticker || !isGolfTicker(ticker) || knownSetts.has(ticker)) continue;
+      knownSetts.add(ticker);
+      pageNew++;
+      stmts.push(
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO settlements (ticker,market_result,yes_count,no_count,yes_total_cost,no_total_cost,fee_cost,settled_time,ts) VALUES (?,?,?,?,?,?,?,?,?)"
+        ).bind(
+          ticker, s.market_result ?? "", Number(s.yes_count_fp ?? s.yes_count ?? 0) || 0,
+          Number(s.no_count_fp ?? s.no_count ?? 0) || 0,
+          dnum(s.yes_total_cost_dollars) ?? 0, dnum(s.no_total_cost_dollars) ?? 0,
+          dnum(s.fee_cost) ?? 0, s.settled_time ?? null, fillTs(s)
+        )
+      );
+    }
+    if (stmts.length) { await env.DB.batch(stmts); newSetts += stmts.length; }
+    scursor = r.data.cursor;
+    spages++;
+    if (!scursor || pageNew === 0) break;
+  }
+
+  return { fills: newFills, setts: newSetts };
+}
+
 // Weekly retention: drop everything older than RETENTION_DAYS EXCEPT all-time
 // large/unusual trades (>= ARCHIVE_THRESHOLD), which are kept forever.
 async function retentionSweep(env: Env): Promise<number> {
@@ -150,7 +245,16 @@ export default {
     }
     const kill = await autoKill(env).catch((e) => ({ due: -1, killed: -1, error: String(e) }));
     const poll = await pollTrades(env).catch((e) => ({ pages: -1, scanned: -1, inserted: -1, capped: false, error: String(e) }));
-    const run = { ts: nowSec(), kill, poll };
+    // PnL store sync, throttled to ~5 min so we don't re-read the fills table every minute.
+    let pnl: any = { skipped: true };
+    const lastSyncRow = (await env.DB.prepare("SELECT value FROM collector_state WHERE key='last_pnl_sync'").first()) as any;
+    const lastSync = lastSyncRow ? parseInt(lastSyncRow.value, 10) : 0;
+    if (nowSec() - lastSync >= PNL_SYNC_INTERVAL) {
+      pnl = await syncPnl(env).catch((e) => ({ fills: -1, setts: -1, error: String(e) }));
+      await env.DB.prepare("INSERT OR REPLACE INTO collector_state (key,value) VALUES ('last_pnl_sync',?)")
+        .bind(String(nowSec())).run().catch(() => {});
+    }
+    const run = { ts: nowSec(), kill, poll, pnl };
     await env.DB.prepare("INSERT OR REPLACE INTO collector_state (key,value) VALUES ('last_run',?)")
       .bind(JSON.stringify(run))
       .run()
@@ -166,6 +270,8 @@ export default {
     const tc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM trades").first()) as any;
     const arch = (await env.DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE count >= ?").bind(ARCHIVE_THRESHOLD).first()) as any;
     const pk = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM pending_kills GROUP BY status").all();
+    const fc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM fills").first().catch(() => null)) as any;
+    const sc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM settlements").first().catch(() => null)) as any;
     return json({
       worker: "kalshi-exec-cron",
       last_ts: lastTs?.value ?? null,
@@ -173,6 +279,8 @@ export default {
       last_purge: lastPurge?.value ? JSON.parse(lastPurge.value) : null,
       trades: tc?.n ?? 0,
       archive_rows: arch?.n ?? 0,
+      fills: fc?.n ?? 0,
+      settlements: sc?.n ?? 0,
       pending_kills: pk.results || [],
     });
   },

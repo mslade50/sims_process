@@ -37,3 +37,37 @@ CREATE TABLE IF NOT EXISTS collector_state (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Durable fills store for the PnL page. Kalshi /portfolio/fills only retains
+-- ~2 months, so we persist every golf fill ever seen — otherwise historical
+-- cost basis vanishes as fills age out. Money columns are in DOLLARS (the
+-- pnl-calc convention); the trades tape table above is unrelated and in cents.
+CREATE TABLE IF NOT EXISTS fills (
+  fill_id      TEXT PRIMARY KEY,
+  order_id     TEXT,
+  ticker       TEXT NOT NULL,
+  side         TEXT,                -- yes | no
+  action       TEXT,                -- buy | sell
+  count        REAL NOT NULL,       -- contracts (count_fp)
+  yes_price    REAL,                -- dollars
+  no_price     REAL,                -- dollars
+  is_taker     INTEGER,
+  fee_cost     REAL,                -- dollars
+  ts           INTEGER,             -- unix seconds
+  created_time TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fills_ticker ON fills (ticker);
+
+-- Durable settlements store — authoritative for held-to-settlement cost basis
+-- (never ages out, unlike fills). Keyed by ticker (a market settles once).
+CREATE TABLE IF NOT EXISTS settlements (
+  ticker         TEXT PRIMARY KEY,
+  market_result  TEXT,              -- yes | no | (void)
+  yes_count      REAL,
+  no_count       REAL,
+  yes_total_cost REAL,              -- dollars
+  no_total_cost  REAL,              -- dollars
+  fee_cost       REAL,              -- dollars
+  settled_time   TEXT,
+  ts             INTEGER
+);

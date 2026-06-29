@@ -25,6 +25,7 @@ function activateTab(name) {
   $(name).classList.add("active");
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "tape") loadTape();
+  if (name === "pnl") loadPnL();
 }
 document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => activateTab(btn.dataset.tab))
@@ -537,6 +538,134 @@ function renderTimeSales() {
   tapeState.primed = true;
 }
 
+// ── PnL ──────────────────────────────────────────────────────────────────────
+const pnlState = { rows: [], totals: {}, groupBy: "none", status: "all", fetchedTs: null, store: null };
+
+function usd(v) {
+  const n = Number(v) || 0;
+  return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function signColor(v) {
+  return (Number(v) || 0) > 0 ? "up" : (Number(v) || 0) < 0 ? "down" : "muted";
+}
+
+async function loadPnL(refresh = false) {
+  try {
+    const d = await api("/api/pnl");
+    pnlState.rows = d.rows || [];
+    pnlState.totals = d.totals || {};
+    pnlState.fetchedTs = d.fetched_ts || null;
+    pnlState.store = d.store || null;
+    renderPnL();
+  } catch (e) {
+    $("pnl-table").innerHTML = `<div class="msg err">${e.message}</div>`;
+  }
+}
+
+function visiblePnL() {
+  let rows = pnlState.rows;
+  if (pnlState.status === "open") rows = rows.filter((r) => r.is_open);
+  else if (pnlState.status === "settled") rows = rows.filter((r) => !r.is_open);
+  return rows;
+}
+
+function pnlGroupedRows() {
+  const gb = pnlState.groupBy;
+  const rows = visiblePnL();
+  if (!gb || gb === "none") return rows;
+  const key = (r) => (gb === "is_open" ? (r.is_open ? "open" : "settled") : r[gb] || "(blank)");
+  const buckets = new Map();
+  for (const r of rows) {
+    const k = key(r);
+    if (!buckets.has(k))
+      buckets.set(k, { _group: k, n: 0, contracts: 0, realized: 0, unrealized: 0, fees: 0, net: 0, exposure: 0, invested: 0, n_open: 0, n_settled: 0 });
+    const b = buckets.get(k);
+    b.n += 1;
+    b.contracts += Number(r.contracts) || 0;
+    b.realized += Number(r.realized) || 0;
+    b.unrealized += Number(r.unrealized) || 0;
+    b.fees += Number(r.fees) || 0;
+    b.net += Number(r.net) || 0;
+    b.exposure += Number(r.exposure) || 0;
+    b.invested += Number(r.invested) || 0;
+    if (r.is_open) b.n_open += 1; else b.n_settled += 1;
+  }
+  return Array.from(buckets.values()).sort((a, b) => b.net - a.net);
+}
+
+function renderPnLTotals() {
+  const rows = visiblePnL();
+  const sum = (f) => rows.reduce((s, r) => s + (Number(r[f]) || 0), 0);
+  const net = sum("net"), realized = sum("realized"), unreal = sum("unrealized"),
+    fees = sum("fees"), invested = sum("invested");
+  const roi = invested > 0 ? (net / invested) * 100 : 0;
+  const nOpen = rows.filter((r) => r.is_open).length;
+  const nSettled = rows.length - nOpen;
+  const cell = (label, val, cls) => `<div class="stat"><div class="sl">${label}</div><div class="sv ${cls || ""}">${val}</div></div>`;
+  $("pnlTotals").innerHTML =
+    cell("Net PnL", usd(net), signColor(net)) +
+    cell("Realized", usd(realized), signColor(realized)) +
+    cell("Unrealized", usd(unreal), signColor(unreal)) +
+    cell("Fees", usd(fees), "muted") +
+    cell("Invested", usd(invested)) +
+    cell("ROI", roi.toFixed(1) + "%", signColor(roi)) +
+    cell("Positions", `${nOpen} open / ${nSettled} settled`);
+  $("pnlMeta").textContent = pnlState.store ? `${pnlState.store.fills} fills · ${pnlState.store.settlements} settlements` : "";
+}
+
+function renderPnL() {
+  renderPnLTotals();
+  const grouped = pnlState.groupBy !== "none";
+  const rows = pnlGroupedRows();
+  if (!rows.length) {
+    $("pnl-table").innerHTML = `<div class="muted small">no positions — the cron sync seeds fills/settlements into D1 (first sync may take a few minutes)</div>`;
+    return;
+  }
+  const dCell = (v) => `<td class="num ${signColor(v)}">${usd(v)}</td>`;
+  let html;
+  if (grouped) {
+    const gh = { player_code: "golfer", market_type: "market", event_code: "tournament", is_open: "status" }[pnlState.groupBy] || "group";
+    html =
+      `<table><thead><tr><th>${gh}</th><th class="num">#</th><th>open/settled</th><th class="num">contracts</th><th class="num">exposure</th><th class="num">realized</th><th class="num">unrealized</th><th class="num">fees</th><th class="num">net</th></tr></thead><tbody>` +
+      rows
+        .map(
+          (r) =>
+            `<tr><td class="bold">${r._group}</td><td class="num muted">${r.n}</td><td class="small">${r.n_open} / ${r.n_settled}</td>` +
+            `<td class="num">${r.contracts.toLocaleString()}</td><td class="num">${usd(r.exposure)}</td>` +
+            dCell(r.realized) + dCell(r.unrealized) + `<td class="num muted">${usd(r.fees)}</td>` + dCell(r.net) + `</tr>`
+        )
+        .join("") +
+      `</tbody></table>`;
+  } else {
+    html =
+      `<table><thead><tr><th>Golfer</th><th>Mkt</th><th>Event</th><th>Side</th><th>Status</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Mark</th><th class="num">Realized</th><th class="num">Unreal</th><th class="num">Fees</th><th class="num">Net</th><th class="num">Ret%</th></tr></thead><tbody>` +
+      rows
+        .map((r) => {
+          const result = r.market_result ? ` <span class="muted small">(${r.market_result})</span>` : "";
+          return (
+            `<tr>` +
+            `<td>${r.player_code || r.ticker}</td>` +
+            `<td class="small">${r.market_type || ""}</td>` +
+            `<td class="small">${r.event_code || ""}</td>` +
+            `<td><span class="pill ${r.side || ""}">${r.side || "·"}</span></td>` +
+            `<td class="small ${r.is_open ? "" : "muted"}">${r.is_open ? "open" : "settled"}${result}</td>` +
+            `<td class="num">${(r.contracts || 0).toLocaleString()}</td>` +
+            `<td class="num">${r.avg_cost ? (r.avg_cost * 100).toFixed(1) + "¢" : "—"}</td>` +
+            `<td class="num muted">${r.mark != null ? (r.mark * 100).toFixed(1) + "¢" : "—"}</td>` +
+            dCell(r.realized) +
+            `<td class="num ${signColor(r.unrealized)}">${r.is_open ? usd(r.unrealized) : "—"}</td>` +
+            `<td class="num muted">${usd(r.fees)}</td>` +
+            dCell(r.net) +
+            `<td class="num ${signColor(r.return_pct)}">${r.return_pct != null ? r.return_pct.toFixed(1) + "%" : "—"}</td>` +
+            `</tr>`
+          );
+        })
+        .join("") +
+      `</tbody></table>`;
+  }
+  $("pnl-table").innerHTML = html;
+}
+
 // ── Wiring ───────────────────────────────────────────────────────────────────
 $("loadMarkets").addEventListener("click", loadMarkets);
 $("marketSearch").addEventListener("input", renderMarketList);
@@ -560,6 +689,9 @@ $("tWindow").addEventListener("change", applyTape);
 $("wlSearch").addEventListener("input", renderWatchlist);
 $("tsFocusOnly").addEventListener("change", renderTimeSales);
 $("tBlock").addEventListener("input", renderTimeSales);
+$("pnlGroup").addEventListener("change", (e) => { pnlState.groupBy = e.target.value; renderPnL(); });
+$("pnlStatus").addEventListener("change", (e) => { pnlState.status = e.target.value; renderPnL(); });
+$("pnlRefresh").addEventListener("click", () => loadPnL(true));
 
 // Resize the focused charts to the container when the window changes width.
 let _resizeRaf = null;
