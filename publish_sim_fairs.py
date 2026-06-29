@@ -2,8 +2,11 @@
 golf_scraping odds board can grade book prices against the sim.
 
 What it ships (per current event):
-  - outrights: winner / top_5 / top_10 / top_20 / make_cut  -> {player: prob}
-  - matchups : tournament head-to-head  -> [player_a, player_b, P(a beats b)]
+  - outrights:      winner / top_5 / top_10 / top_20 / make_cut  -> {player: prob}
+                    (dead-heat-adjusted top-N — traditional sportsbooks)
+  - outrights_nodh: top_5 / top_10 / top_20  -> {player: prob}
+                    (no-dead-heat top-N — Kalshi / NoVig settle top-N as a binary)
+  - matchups :      tournament head-to-head  -> [player_a, player_b, P(a beats b)]
 
 Transport: this commits sim_fairs.json to THIS repo and pushes. The board
 (golf_scraping) fetches it from GitHub with the SIMS_PROCESS_PAT it already has.
@@ -74,23 +77,36 @@ def _find(*candidates) -> Path | None:
 
 # ─── builders ─────────────────────────────────────────────────────────────────
 
-def _build_outrights(tourney: str, cut_line: int, repl: dict) -> dict:
+def _build_outrights(tourney: str, cut_line: int, repl: dict) -> tuple[dict, dict]:
     """winner/top_5/top_10/top_20 for the FULL field; make_cut derived from the
     rank-probability distribution (P(finish rank <= cut)).
 
+    Returns (outrights, outrights_nodh). `outrights` carries the dead-heat-adjusted
+    top-N probs (traditional sportsbooks reduce a top-N payout when players tie on
+    the cut line). `outrights_nodh` carries the no-dead-heat top-N probs from the
+    sim's `*_nodh` columns — the raw P(finish position <= N), ties counted as inside.
+    Books that settle a top-N as a clean binary (Kalshi, NoVig) pay on the no-dead-heat
+    outcome, so the board grades THEM against this dict. winner/make_cut are
+    dead-heat-agnostic and live only in `outrights`.
+
     Source priority is full-field FIRST. simulated_probs_live.csv is round_sim's raw
-    finish_probs dump (every simmed player x win/top-5/10/20), so it gives the board a
-    fair for EVERY player. finish_equity_live_*.csv is an edge-filtered BETTING file
-    (book columns; as little as 1 row late in an event), so it is read only LAST and
-    can never overwrite a full-field value. (It was once the primary source here, which
-    shipped the board ~1 outright player — the sparse-equity bug.)"""
+    finish_probs dump (every simmed player x win/top-5/10/20, dead-heat AND _nodh), so
+    it gives the board a fair for EVERY player. finish_equity_live_*.csv is an
+    edge-filtered BETTING file (book columns; as little as 1 row late in an event), so
+    it is read only LAST and can never overwrite a full-field value. (It was once the
+    primary source here, which shipped the board ~1 outright player — the sparse-equity
+    bug.)"""
     out = {"winner": {}, "top_5": {}, "top_10": {}, "top_20": {}, "make_cut": {}}
+    out_nodh = {"top_5": {}, "top_10": {}, "top_20": {}}
     col = {"winner": "simulated_win_prob", "top_5": "top_5",
            "top_10": "top_10", "top_20": "top_20"}
+    col_nodh = {"top_5": "top_5_nodh", "top_10": "top_10_nodh", "top_20": "top_20_nodh"}
 
-    def _ingest(path, colmap):
-        """Fill `out` from a CSV. First writer per (market, player) wins (setdefault),
-        so a higher-priority source is never clobbered by a later, sparser one."""
+    def _ingest(path, colmap, target):
+        """Fill `target` from a CSV. First writer per (market, player) wins (setdefault),
+        so a higher-priority source is never clobbered by a later, sparser one. A file
+        without the _nodh columns simply contributes nothing to the nodh dict (the
+        board falls back to the dead-heat fair per-player when a _nodh prob is absent)."""
         df = pd.read_csv(path)
         for mkt, c in colmap.items():
             if c not in df.columns:
@@ -98,22 +114,28 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict) -> dict:
             for _, r in df.iterrows():
                 p = r[c]
                 if pd.notna(p) and p > 0:
-                    out[mkt].setdefault(_norm(r["player_name"], repl), round(float(p), 5))
+                    target[mkt].setdefault(_norm(r["player_name"], repl), round(float(p), 5))
 
-    # Full-field probabilities first (every player), sparse betting file last.
+    # Full-field probabilities first (every player), sparse betting file last. Each
+    # source is ingested into both the dead-heat (out) and no-dead-heat (out_nodh) dicts.
     full = _find("simulated_probs_live.csv", "simulated_probs.csv")
     if full is not None:
-        _ingest(full, col)
+        _ingest(full, col, out)
+        _ingest(full, col_nodh, out_nodh)
     pre = _find(f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv")
     if pre is not None:
-        _ingest(pre, col)
+        _ingest(pre, col, out)
+        _ingest(pre, col_nodh, out_nodh)
     tf = _find(f"top_finish_probs_{tourney}.csv", f"{tourney}/top_finish_probs_{tourney}.csv")
     if tf is not None:
-        _ingest(tf, {"top_5": "top_5", "top_10": "top_10", "top_20": "top_20"})
+        _ingest(tf, {"top_5": "top_5", "top_10": "top_10", "top_20": "top_20"}, out)
+        _ingest(tf, col_nodh, out_nodh)
     live = _find(f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv")
     if live is not None:
-        _ingest(live, col)
+        _ingest(live, col, out)
+        _ingest(live, col_nodh, out_nodh)
     logger.info("outrights: " + ", ".join(f"{k}={len(v)}" for k, v in out.items() if k != "make_cut"))
+    logger.info("outrights_nodh: " + ", ".join(f"{k}={len(v)}" for k, v in out_nodh.items()))
 
     # make_cut: prefer the exact simulated cut prob persisted by new_sim.py
     # (true cut: top-N + ties + 10-shot rule). Fall back to a rank-prob estimate
@@ -140,7 +162,8 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict) -> dict:
                         out["make_cut"][_norm(nm, repl)] = round(float(min(p, 1.0)), 5)
                 logger.info(f"make_cut from {rk.name} [{col}] (cut<={cut_line}): {len(out['make_cut'])}")
 
-    return {k: v for k, v in out.items() if v}
+    return ({k: v for k, v in out.items() if v},
+            {k: v for k, v in out_nodh.items() if v})
 
 
 def _build_matchups(tourney: str, repl: dict) -> list:
@@ -492,6 +515,7 @@ def build_payload() -> dict:
 
     rnd = _latest_round(tourney)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl)
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),
@@ -499,7 +523,11 @@ def build_payload() -> dict:
         "generated_at": now,
         "round": rnd,                       # live round these round_* markets price
         "field": _build_field(tourney, repl),
-        "outrights": _build_outrights(tourney, cut_line, repl),
+        "outrights": outrights,
+        # no-dead-heat top-N fairs for books that settle a top-N as a clean binary
+        # (Kalshi, NoVig). The board grades those books against these instead of the
+        # dead-heat `outrights` above. Older boards ignore this key (degrade to DH).
+        "outrights_nodh": outrights_nodh,
         "matchups": _build_matchups(tourney, repl),
         "round_scores": _build_round_scores(tourney, rnd, repl),
     }
@@ -620,9 +648,12 @@ def main():
 
     payload = build_payload()
     o = payload["outrights"]
+    ondh = payload.get("outrights_nodh") or {}
     logger.info(f"event {payload['event_id']} ({payload['tourney']}) @ {payload['generated_at']}")
     logger.info(f"  round: {payload.get('round')} | outright markets: "
                 f"{{{', '.join(f'{k}:{len(v)}' for k, v in o.items())}}}")
+    logger.info(f"  outrights_nodh (Kalshi/NoVig): "
+                f"{{{', '.join(f'{k}:{len(v)}' for k, v in ondh.items())}}}")
     logger.info(f"  matchup pairs: {len(payload['matchups'])} | round_scores players: "
                 f"{len(payload.get('round_scores') or {})}")
 
