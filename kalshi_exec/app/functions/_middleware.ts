@@ -116,6 +116,10 @@ export const onRequest: PagesFunction<MEnv> = async (ctx) => {
     });
   }
 
+  // Headless proposals push: let the POST reach its handler, which enforces its
+  // own PROPOSALS_TOKEN header. (No session cookie — the local sim is headless.)
+  if (url.pathname === "/api/proposals" && ctx.request.method === "POST") return ctx.next();
+
   // Gate everything else
   const tok = getCookie(ctx.request, COOKIE);
   if (tok && (await validToken(tok, SESSION_SECRET))) return ctx.next();

@@ -166,6 +166,33 @@ function genPnl() {
 }
 const PNL = genPnl();
 
+// ── synthetic model-edge proposals (overlay on the order ticket) ──────────────
+function genProposals() {
+  const rows = [];
+  const scan_ts = new Date().toISOString();
+  for (const [code, baseWin] of PLAYERS) {
+    for (const [prefix, mt] of [["KXPGATOUR", "winner"], ["KXPGATOP5", "top_5"]]) {
+      const mult = mt === "winner" ? 1 : 2.4;
+      const simProb = Math.min(0.95, Math.max(0.02, baseWin * mult));
+      const midC = Math.round(simProb * 100) + Math.round((rnd() - 0.5) * 8); // market ¢
+      const edgePp = simProb * 100 - midC;
+      rows.push({
+        ticker: `${prefix}-${EVENT}-${code}`,
+        market_type: mt, player_code: code, event_code: EVENT,
+        side: edgePp >= 0 ? "yes" : "no",
+        sim_prob: simProb,
+        edge_pp: Math.round(edgePp * 10) / 10,
+        best_bid: (midC - 1) / 100, best_ask: (midC + 1) / 100,
+        post_price: Math.round(simProb * 100) / 100,
+        kelly_f: Math.max(0, edgePp) / 100,
+        scan_ts,
+      });
+    }
+  }
+  return { rows, scan_ts };
+}
+const PROPOSALS = genProposals();
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
 function sendJson(res, obj, status = 200) {
@@ -204,6 +231,22 @@ const server = http.createServer((req, res) => {
   if (p === "/api/tape/summary") return sendJson(res, apiTapeSummary(u));
   if (p === "/api/positions") return sendJson(res, { positions: [] });
   if (p === "/api/orders") return sendJson(res, { orders: [] });
+  if (p === "/api/orderbook") {
+    const ticker = u.searchParams.get("ticker") || "";
+    const cls = classify(ticker);
+    const pr = PROPOSALS.rows.find((r) => r.ticker === ticker);
+    const mid = pr ? Math.round((pr.best_bid + pr.best_ask) * 50) : 12; // cents
+    const yes = [], no = [];
+    for (let i = 0; i < 8; i++) {
+      yes.push({ price: Math.max(1, mid - i), qty: 100 + Math.floor(rnd() * 1200) });
+      no.push({ price: Math.max(1, 100 - mid - i), qty: 100 + Math.floor(rnd() * 1200) });
+    }
+    return sendJson(res, { ticker, yes, no, market_type: cls.marketType });
+  }
+  if (p === "/api/proposals") {
+    if (req.method === "POST") return sendJson(res, { error: "mock harness: proposals push disabled" }, 403);
+    return sendJson(res, { rows: PROPOSALS.rows, scan_ts: PROPOSALS.scan_ts, count: PROPOSALS.rows.length });
+  }
   if (p === "/api/pnl") {
     const { rows, totals } = computePnl({ ...PNL, classify, isGolf });
     return sendJson(res, { rows, totals, fetched_ts: new Date().toISOString(),

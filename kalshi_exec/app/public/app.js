@@ -49,6 +49,43 @@ async function loadBalance() {
 let allMarkets = [];
 let selected = null;
 let side = "yes";
+let proposalsByTicker = {}; // model-edge overlay keyed by ticker
+
+// Pull model-edge proposals (pushed from the local sim). Optional — the ticket
+// works fine without them; this just overlays model fair / edge per market.
+async function loadProposals() {
+  try {
+    const d = await api("/api/proposals");
+    proposalsByTicker = {};
+    for (const r of d.rows || []) proposalsByTicker[r.ticker] = r;
+    if (allMarkets.length) renderMarketList();
+    if (selected) renderModelEdge(selected.ticker);
+  } catch (e) {
+    /* proposals are optional */
+  }
+}
+
+function edgeTag(ticker) {
+  const pr = proposalsByTicker[ticker];
+  if (!pr || pr.edge_pp == null) return "";
+  return `  [${pr.edge_pp >= 0 ? "+" : ""}${Number(pr.edge_pp).toFixed(1)}pp]`;
+}
+
+function renderModelEdge(ticker) {
+  const el = $("modelEdge");
+  if (!el) return;
+  const pr = proposalsByTicker[ticker];
+  if (!pr) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "block";
+  const fair = pr.sim_prob != null ? (pr.sim_prob * 100).toFixed(1) + "¢" : "—";
+  const edge = pr.edge_pp != null ? (pr.edge_pp >= 0 ? "+" : "") + Number(pr.edge_pp).toFixed(1) + "pp" : "—";
+  const post = pr.post_price != null ? (pr.post_price * 100).toFixed(1) + "¢" : null;
+  const cls = (pr.edge_pp || 0) >= 0 ? "up" : "down";
+  el.innerHTML =
+    `<span class="me-label">MODEL</span> fair <b>${fair}</b> · edge <b class="${cls}">${edge}</b>` +
+    (pr.side ? ` <span class="pill ${pr.side}">${String(pr.side).toUpperCase()}</span>` : "") +
+    (post ? ` <span class="muted small">suggest ${post}</span>` : "");
+}
 
 async function loadMarkets() {
   const type = $("series").value;
@@ -57,6 +94,9 @@ async function loadMarkets() {
     const d = await api(`/api/markets?type=${type}`);
     allMarkets = d.markets || [];
     renderMarketList();
+    // Default-select the first (most-liquid) market so the book + model edge
+    // are visible immediately, without forcing a click.
+    if (!selected && allMarkets.length) selectMarket(allMarkets[0].ticker);
   } catch (e) {
     $("market").innerHTML = `<option>error: ${e.message}</option>`;
   }
@@ -69,7 +109,7 @@ function renderMarketList() {
     .filter((m) => !q || (m.subtitle + " " + m.ticker + " " + (m.title || "")).toLowerCase().includes(q))
     .slice(0, 300);
   sel.innerHTML = items
-    .map((m) => `<option value="${m.ticker}">${m.subtitle || m.ticker} — ${m.yes_bid ?? "·"}/${m.yes_ask ?? "·"}¢</option>`)
+    .map((m) => `<option value="${m.ticker}">${m.subtitle || m.ticker} — ${m.yes_bid ?? "·"}/${m.yes_ask ?? "·"}¢${edgeTag(m.ticker)}</option>`)
     .join("");
 }
 
@@ -78,6 +118,7 @@ function selectMarket(ticker) {
   if (!selected) return;
   $("ticketBody").hidden = false;
   $("selectedMarket").innerHTML = `<b>${selected.subtitle || selected.ticker}</b><br><span class="muted small">${selected.ticker}</span>`;
+  renderModelEdge(ticker);
   prefillPrice();
   loadOrderbook(ticker);
 }
@@ -720,3 +761,4 @@ loadBalance();
 loadMarkets();
 loadPositions();
 loadOrders();
+loadProposals();

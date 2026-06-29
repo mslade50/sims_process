@@ -71,3 +71,22 @@ CREATE TABLE IF NOT EXISTS settlements (
   settled_time   TEXT,
   ts             INTEGER
 );
+
+-- Model-edge proposals pushed from the local sim (push_proposals.py). The order
+-- ticket overlays these (model fair / edge) per market — display only, never
+-- auto-traded. Whole table is replaced on each push.
+CREATE TABLE IF NOT EXISTS proposals (
+  ticker       TEXT PRIMARY KEY,
+  market_type  TEXT,
+  player_code  TEXT,
+  event_code   TEXT,
+  side         TEXT,                -- recommended side (yes|no)
+  sim_prob     REAL,                -- model YES probability (0..1)
+  edge_pp      REAL,                -- model edge in percentage points
+  best_bid     REAL,                -- market yes bid at scan (dollars)
+  best_ask     REAL,                -- market yes ask at scan (dollars)
+  post_price   REAL,                -- suggested limit price (dollars)
+  kelly_f      REAL,
+  scan_ts      TEXT,
+  updated_ts   INTEGER
+);

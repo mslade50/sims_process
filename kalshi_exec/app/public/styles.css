@@ -79,6 +79,14 @@ input:focus, select:focus { outline: 1px solid var(--accent); }
 .chk { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
 .killrow input[type=datetime-local] { flex: 1; }
 .selected { padding: 8px; background: var(--panel2); border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
+.model-edge {
+  padding: 7px 9px; margin-bottom: 8px; border-radius: 6px; font-size: 13px;
+  background: rgba(56,139,253,.10); border: 1px solid rgba(56,139,253,.35);
+  font-variant-numeric: tabular-nums;
+}
+.model-edge .me-label { font-size: 10px; font-weight: 700; letter-spacing: .05em; color: var(--accent); margin-right: 4px; }
+.model-edge .up { color: var(--yes); }
+.model-edge .down { color: var(--no); }
 .msg { font-size: 13px; min-height: 18px; white-space: pre-wrap; }
 .msg.ok { color: var(--yes); }
 .msg.err { color: var(--danger); }
