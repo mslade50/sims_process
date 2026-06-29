@@ -179,6 +179,15 @@ function computePnl(args) {
     }
 
     const net = realized + unreal;
+
+    // Skip "ghost" rows: a settled market with no fills, nothing held, and zero
+    // cost — Kalshi keeps a settlement record for markets you touched but didn't
+    // hold to expiry. They carry no position, no money and no PnL, so showing a
+    // row per one is pure noise (e.g. several H2H matchups).
+    if (!isOpen && contracts === 0 && Math.abs(invested) < 0.005 && Math.abs(realized) < 0.005) {
+      continue;
+    }
+
     rows.push({
       ticker,
       title: titles[ticker] || "",

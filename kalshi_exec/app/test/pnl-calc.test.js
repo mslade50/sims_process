@@ -141,6 +141,28 @@ const F = (ticker, side, action, count, yes, fee = 0, ts = 0) =>
   eq("scalar no-revenue realized", r.rows[0].realized, -50);
 }
 
+// ── 5d. ghost settlement (no fills, held 0, cost 0) is dropped ───────────────
+{
+  const r = computePnl({
+    settlements: {
+      "KXPGAH2H-USO26R4ABHARMCI-RMCI": { market_result: "no", yes_count: 0, no_count: 0,
+        yes_total_cost: 0, no_total_cost: 0, fee_cost: 0, revenue: null, settled_time: "2026-06-20" },
+    },
+    classify, isGolf,
+  });
+  eq("ghost dropped", r.rows.length, 0);
+  eq("ghost settled_count", r.totals.settled_count, 0);
+}
+// 5e. a real held-to-settlement row is NOT dropped (guards over-filtering)
+{
+  const r = computePnl({
+    settlements: { "KXPGATOUR-E-Z": { market_result: "yes", yes_count: 50, no_count: 0,
+      yes_total_cost: 20, no_total_cost: 0, fee_cost: 0.5, settled_time: "x" } },
+    classify, isGolf,
+  });
+  eq("real settled kept", r.rows.length, 1);
+}
+
 // ── 6. Non-golf flag passes through ──────────────────────────────────────────
 {
   const r = computePnl({
