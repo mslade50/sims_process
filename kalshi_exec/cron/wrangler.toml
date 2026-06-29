@@ -18,3 +18,13 @@ database_id = "74576c35-e310-4db3-8c3d-8e478cb3e2ff"
 # Secrets (set with `wrangler secret put`):
 #   KALSHI_API_KEY      — Kalshi access key ID
 #   KALSHI_PRIVATE_KEY  — PKCS#8 PEM text
+#   STATUS_TOKEN        — OPTIONAL; if set, the status endpoint requires
+#                         ?token=<value> (or X-Status-Token header)
+
+# Retention/collector tunables — override here and redeploy (no code change).
+# Defaults baked into src/index.ts if these are absent. See NOTES §8; revisit
+# ARCHIVE_THRESHOLD after a real week of mixed-volume data.
+[vars]
+MIN_TRADE_SIZE = "100"     # collector floor — sub-floor golf trades never stored
+RETENTION_DAYS = "7"       # weekly sweep keeps this many days of the full tape
+ARCHIVE_THRESHOLD = "5000" # trades >= this are kept FOREVER (unusual-block archive)

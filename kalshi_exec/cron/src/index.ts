@@ -11,10 +11,28 @@
 import { Env, kalshi, classifyTicker, OUTRIGHT_TYPES, isGolfTicker, json } from "../../app/shared/kalshi";
 
 const MAX_PAGES = 30; // safety cap on /markets/trades pagination per run
-const MIN_TRADE_SIZE = 100; // collector floor — don't store golf-outright trades smaller than this
-const RETENTION_DAYS = 7; // weekly sweep keeps this many days of the full >=100 tape
-const ARCHIVE_THRESHOLD = 5000; // trades >= this are kept FOREVER (the unusual-block archive)
 const WEEKLY_CRON = "0 9 * * 1"; // Monday 09:00 UTC — retention sweep
+
+// Retention/collector tunables. Defaults below; override per-deploy via wrangler
+// [vars] (MIN_TRADE_SIZE / RETENTION_DAYS / ARCHIVE_THRESHOLD) without touching
+// code. See NOTES §8 — ARCHIVE_THRESHOLD especially wants revisiting once a real
+// week of mixed-volume data has accumulated.
+const DEFAULTS = { MIN_TRADE_SIZE: 100, RETENTION_DAYS: 7, ARCHIVE_THRESHOLD: 5000 };
+
+// Cron-specific env (the shared Env covers Kalshi keys + DB). Wrangler vars and
+// secrets arrive as strings. STATUS_TOKEN, when set, gates the status endpoint.
+interface CronEnv extends Env {
+  MIN_TRADE_SIZE?: string;
+  RETENTION_DAYS?: string;
+  ARCHIVE_THRESHOLD?: string;
+  STATUS_TOKEN?: string;
+}
+
+function cfg(env: Env, key: keyof typeof DEFAULTS): number {
+  const raw = (env as CronEnv)[key];
+  const n = raw != null ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) ? n : DEFAULTS[key];
+}
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -73,6 +91,7 @@ async function pollTrades(env: Env): Promise<{ pages: number; scanned: number; i
   let inserted = 0;
   let maxTs = lastTs;
   let capped = false;
+  const minSize = cfg(env, "MIN_TRADE_SIZE"); // collector floor — sub-floor trades never hit D1
 
   while (pages < MAX_PAGES) {
     const r = await kalshi(env, "GET", "/markets/trades", { query: { min_ts: lastTs, limit: 1000, cursor } });
@@ -87,7 +106,7 @@ async function pollTrades(env: Env): Promise<{ pages: number; scanned: number; i
       const cls = classifyTicker(t.ticker || "");
       if (!OUTRIGHT_TYPES.has(cls.marketType)) continue;
       const cnt = Number(t.count_fp ?? t.count ?? 0) || 0;
-      if (cnt < MIN_TRADE_SIZE) continue; // collector-side floor — small trades never hit D1
+      if (cnt < minSize) continue; // collector-side floor — small trades never hit D1
       const yesC = t.yes_price_dollars != null ? priceCents(t.yes_price_dollars) : t.yes_price ?? null;
       const noC = t.no_price_dollars != null ? priceCents(t.no_price_dollars) : t.no_price ?? null;
       stmts.push(
@@ -223,13 +242,15 @@ async function syncPnl(env: Env): Promise<{ fills: number; setts: number }> {
 // Weekly retention: drop everything older than RETENTION_DAYS EXCEPT all-time
 // large/unusual trades (>= ARCHIVE_THRESHOLD), which are kept forever.
 async function retentionSweep(env: Env): Promise<number> {
-  const cutoff = nowSec() - RETENTION_DAYS * 86400;
+  const days = cfg(env, "RETENTION_DAYS");
+  const archive = cfg(env, "ARCHIVE_THRESHOLD");
+  const cutoff = nowSec() - days * 86400;
   const res = await env.DB.prepare("DELETE FROM trades WHERE ts < ? AND count < ?")
-    .bind(cutoff, ARCHIVE_THRESHOLD)
+    .bind(cutoff, archive)
     .run();
   const deleted = (res.meta as any)?.changes ?? -1;
   await env.DB.prepare("INSERT OR REPLACE INTO collector_state (key,value) VALUES ('last_purge',?)")
-    .bind(JSON.stringify({ ts: nowSec(), deleted, cutoff, archive_threshold: ARCHIVE_THRESHOLD }))
+    .bind(JSON.stringify({ ts: nowSec(), deleted, cutoff, retention_days: days, archive_threshold: archive }))
     .run()
     .catch(() => {});
   return deleted;
@@ -262,13 +283,21 @@ export default {
     if ((poll as any).capped) console.log("[cron] trade poll hit MAX_PAGES — possible dropped trades", run);
   },
 
-  // Read-only status (no secrets) for eyeballing the collector.
-  async fetch(_req: Request, env: Env): Promise<Response> {
+  // Read-only status (no secrets) for eyeballing the collector. Optionally
+  // gated: set the STATUS_TOKEN secret to require ?token= (or X-Status-Token).
+  async fetch(req: Request, env: Env): Promise<Response> {
+    const statusToken = (env as CronEnv).STATUS_TOKEN;
+    if (statusToken) {
+      const u = new URL(req.url);
+      const provided = u.searchParams.get("token") || req.headers.get("X-Status-Token") || "";
+      if (provided !== statusToken) return new Response("unauthorized", { status: 401 });
+    }
+    const archive = cfg(env, "ARCHIVE_THRESHOLD");
     const lastTs = (await env.DB.prepare("SELECT value FROM collector_state WHERE key='last_ts'").first()) as any;
     const lastRun = (await env.DB.prepare("SELECT value FROM collector_state WHERE key='last_run'").first()) as any;
     const lastPurge = (await env.DB.prepare("SELECT value FROM collector_state WHERE key='last_purge'").first()) as any;
     const tc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM trades").first()) as any;
-    const arch = (await env.DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE count >= ?").bind(ARCHIVE_THRESHOLD).first()) as any;
+    const arch = (await env.DB.prepare("SELECT COUNT(*) AS n FROM trades WHERE count >= ?").bind(archive).first()) as any;
     const pk = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM pending_kills GROUP BY status").all();
     const fc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM fills").first().catch(() => null)) as any;
     const sc = (await env.DB.prepare("SELECT COUNT(*) AS n FROM settlements").first().catch(() => null)) as any;
@@ -281,6 +310,11 @@ export default {
       archive_rows: arch?.n ?? 0,
       fills: fc?.n ?? 0,
       settlements: sc?.n ?? 0,
+      config: {
+        min_trade_size: cfg(env, "MIN_TRADE_SIZE"),
+        retention_days: cfg(env, "RETENTION_DAYS"),
+        archive_threshold: archive,
+      },
       pending_kills: pk.results || [],
     });
   },
