@@ -35,7 +35,17 @@
 <div class="wrap">
 
 <h1>⛳ Kalshi Execution Platform</h1>
-<p class="sub">Build notes &amp; resume plan — last updated 2026-06-28 (late). Status: <span class="pill ok">Slices 1–4 + institutional Tape built</span> · <span class="pill warn">new slices not yet deployed</span></p>
+<p class="sub">Build notes &amp; resume plan — last updated 2026-06-29. Status: <span class="pill ok">v1.1 LIVE</span> — Slices 1–4 + institutional Tape + human-readable names, deployed &amp; verified in prod.</p>
+
+<div class="card">
+<h3 style="margin-top:0">v1.1 (2026-06-29) — deployed</h3>
+<ul>
+  <li><b>Human-readable everywhere:</b> full player names + tournament names + market labels (Winner/Top 5/Top 10/Top 20/Matchup) across Tape, PnL and the ticket — via the new <code>/api/reference</code> (player code→name from market <code>yes_sub_title</code>, event code→name from <code>/events</code>; ~10 min cache).</li>
+  <li><b>Tournament header + dropdown</b> (busiest active event default); selecting scopes the tape by <code>event_code</code> (new <code>event</code> filter).</li>
+  <li><b>Tape chart:</b> raw price line hidden by default (too noisy) — VWAP + TWAP only, with a "price line" toggle.</li>
+  <li><b>PnL scalar/tie fix:</b> settlements now store <code>revenue</code>; PnL uses it as the payout for non-yes/no results (scalar/void/tie) so a refunded matchup nets ~0 not -cost. Fixed the Harris English R3 matchup (-$300 → $0). <span class="warn">Migration done: <code>ALTER TABLE settlements ADD COLUMN revenue</code> + a 4-row backfill of the existing scalar settlements; new settlements capture revenue automatically.</span></li>
+</ul>
+</div>
 
 <div class="card">
 <h3 style="margin-top:0">Quick resume (read this first)</h3>
@@ -119,6 +129,7 @@ python kalshi_exec/push_proposals.py --push   # needs PROPOSALS_TOKEN env/-token
 <tr><td><code>/api/tape/summary</code></td><td>GET</td><td>same filters → per-ticker VWAP/volume/OHLC/buy-sell (watchlist)</td></tr>
 <tr><td><code>/api/pnl</code></td><td>GET</td><td>all-time golf PnL from durable fills/settlements + live positions/marks</td></tr>
 <tr><td><code>/api/proposals</code></td><td>GET / POST</td><td>GET = current model edges (session); POST = headless push, gated by <code>X-Proposals-Token</code></td></tr>
+<tr><td><code>/api/reference</code></td><td>GET</td><td>player_code→name, event_code→tournament, active events list (~10min cache)</td></tr>
 </table>
 
 <h2>5. Kalshi API contract (matched to kalshi_maker.py)</h2>
@@ -127,6 +138,8 @@ python kalshi_exec/push_proposals.py --push   # needs PROPOSALS_TOKEN env/-token
   <li><b>Signing:</b> message = <code>timestampMs + METHOD + signPath</code>; signPath <b>includes</b> <code>/trade-api/v2</code>, <b>excludes</b> the query string. RSA-PSS, SHA-256, saltLength 32. Headers <code>KALSHI-ACCESS-KEY/TIMESTAMP/SIGNATURE</code>.</li>
   <li><b>Order body:</b> <code>{ticker, client_order_id:"exm"+uuid, type:"limit", action:"buy", side, count, &lt;side&gt;_price_dollars:"0.NNNN"}</code>; for a kill, add <code>time_in_force:"good_till_canceled"</code> + <code>expiration_ts</code> (unix sec). Price uses the decimal-dollar field (handles deci-cent markets).</li>
   <li><b>Trades feed fields (gotcha):</b> <code>count_fp</code>, <code>yes_price_dollars</code>, <code>no_price_dollars</code> (decimal-dollar strings), <code>created_time</code>, <code>taker_side</code>, <code>ticker</code>, <code>trade_id</code> — NOT <code>count</code>/<code>yes_price</code>. Getting this wrong stored null/0 (fixed).</li>
+  <li><b>Scalar/tie settlements (gotcha):</b> a tied matchup settles with <code>market_result:"scalar"</code>, a <code>value</code> (cents/contract, e.g. 50 = $0.50) and <code>revenue</code> (cents — NO <code>_dollars</code> variant; divide by 100). The payout is NOT count×$1, so PnL must use <code>revenue</code> for any non-yes/no result or it books a full loss on a refund.</li>
+  <li><b>Names:</b> full player name = market <code>yes_sub_title</code>; tournament name = <code>/events</code> <code>sub_title</code> ("2026 Travelers Championship") or <code>title</code> ("… Winner"). Event code = the middle ticker segment (e.g. <code>TRAV26</code>), consistent across series.</li>
 </ul>
 
 <h2>6. Config, accounts, secrets</h2>
