@@ -470,8 +470,16 @@ def _size_exchange_finish_rows(df):
     if not exch.any():
         return out
 
-    p = pd.to_numeric(out.get("sim_prob"), errors="coerce")
-    ip = pd.to_numeric(out.get("implied_prob"), errors="coerce")
+    # NB: out.get(col) returns None for a missing column, and pd.to_numeric(None)
+    # yields a scalar NaN (not a Series) — calling .gt()/.isna() on it crashes.
+    # Coerce to a NaN-filled Series aligned to the index so missing columns no-op.
+    def _num_col(name):
+        if name in out.columns:
+            return pd.to_numeric(out[name], errors="coerce")
+        return pd.Series(np.nan, index=out.index)
+
+    p = _num_col("sim_prob")
+    ip = _num_col("implied_prob")
     if "decimal_odds" not in out.columns:
         out["decimal_odds"] = np.nan
     d = pd.to_numeric(out["decimal_odds"], errors="coerce")
