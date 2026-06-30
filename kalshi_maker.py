@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dtmod
 import hashlib
+import json as _json
 import math
 import os
 import re
@@ -1443,6 +1444,36 @@ if __name__ == "__main__":
                 _client.close()
                 sys.exit(1)
             print("[governor] dry-run: continuing WITHOUT caps applied.")
+
+    # ── Write the cockpit snapshot (permanent_data/maker_state.json) for the
+    # dashboard Maker tab. push_maker_state.py POSTs it to /api/maker. Written in
+    # every mode (shadow / dry / live) so the cockpit always reflects the last run. ──
+    _committed = (gov_report["new_usd"] if gov_report
+                  else sum(float(c.get("post_price", 0)) * int(c.get("contracts", 0)) for c in cands))
+    _state = {
+        "ts": _dtmod.datetime.now().isoformat(timespec="seconds"),
+        "mode": "shadow" if _shadow_mode() else ("live" if args.live else "dry"),
+        "status": "TRADE" if trade_ok else "HALT",
+        "reason": " ".join(str(trade_reason).split()),
+        "tourney": tourney,
+        "quotes": [{
+            "ticker": c.get("ticker"), "player": c.get("player"), "market": c.get("market"),
+            "side": c.get("side"), "price": float(c.get("post_price", 0)),
+            "size": int(c.get("contracts", 0)), "edge_pp": float(c.get("edge_pp", 0)),
+            "fair": float(c.get("sim_prob", 0)), "best_bid": float(c.get("best_bid", 0)),
+            "best_ask": float(c.get("best_ask", 0)), "action": c.get("engine_action", ""),
+        } for c in sorted(cands, key=lambda x: x.get("edge_pp", 0), reverse=True)],
+        "totals": {"quotes": len(cands), "committed": round(_committed, 2),
+                   "caps": (gov_report["caps"] if gov_report else None)},
+    }
+    try:
+        os.makedirs("permanent_data", exist_ok=True)
+        with open(os.path.join("permanent_data", "maker_state.json"), "w", encoding="utf-8") as _f:
+            _json.dump(_state, _f, indent=2)
+        print(f"  [maker-state] wrote permanent_data/maker_state.json "
+              f"({_state['status']}, {len(cands)} quote(s))")
+    except Exception as _e:
+        print(f"  [maker-state] write failed: {_e}")
 
     if args.live:
         if not cands:

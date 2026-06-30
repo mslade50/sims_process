@@ -56,6 +56,16 @@ def main():
         f.write(footer)
 
     print(f"[shadow] log: {logfile}")
+
+    # Auto-push the cockpit snapshot to the dashboard Maker tab, if a token is set.
+    if os.getenv("MAKER_STATE_TOKEN") or os.getenv("PROPOSALS_TOKEN"):
+        try:
+            subprocess.run([sys.executable, str(HERE / "push_maker_state.py")],
+                           cwd=str(HERE), env=env, timeout=30)
+        except Exception as e:
+            print(f"[shadow] maker-state push skipped: {e}")
+    else:
+        print("[shadow] (set MAKER_STATE_TOKEN to auto-push state to the Maker tab)")
     return proc.returncode
 
 
