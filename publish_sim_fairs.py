@@ -75,9 +75,48 @@ def _find(*candidates) -> Path | None:
     return None
 
 
+def _live_dump_is_current(tourney: str, rnd, repl: dict) -> bool:
+    """Whether the generic-named simulated_probs_live.csv belongs to THIS event.
+
+    simulated_probs_live.csv (round_sim's full-field live dump) carries no tourney
+    slug, so a leftover from a PRIOR event lingers locally — the GitHub cleanup only
+    prunes the runner, not your machine — and, being the highest-priority source in
+    _build_outrights/_build_field, silently poisons the board's field + outright fairs
+    with last week's data (e.g. Travelers' 72-player field shipping for Deere).
+
+    Trust it only when (a) we're in a live round AND (b) its player set matches this
+    week's field (pre_course_fit_{tourney}.csv). Pre-event builds (rnd falsy) always
+    ignore it and fall back to this week's simulated_probs.csv.
+    """
+    live = PROJECT_ROOT / "simulated_probs_live.csv"
+    if not live.exists():
+        return False
+    if not rnd:
+        logger.info("live dump: pre-event build (no live round) -> ignoring "
+                    "simulated_probs_live.csv (using simulated_probs.csv)")
+        return False
+    pcf = _find(f"pre_course_fit_{tourney}.csv", f"{tourney}/pre_course_fit_{tourney}.csv")
+    if pcf is None:
+        return True  # no field to validate against; trust it mid-event
+    try:
+        cur = {_norm(n, repl) for n in pd.read_csv(pcf)["player_name"].dropna()}
+        live_names = {_norm(n, repl) for n in pd.read_csv(live)["player_name"].dropna()}
+    except Exception:
+        return True
+    if not cur or not live_names:
+        return True
+    overlap = len(cur & live_names) / len(live_names)
+    if overlap < 0.5:
+        logger.warning(f"live dump: only {overlap:.0%} of simulated_probs_live.csv players "
+                       f"are in this week's field -> treating as STALE, ignoring "
+                       f"(using simulated_probs.csv)")
+        return False
+    return True
+
+
 # ─── builders ─────────────────────────────────────────────────────────────────
 
-def _build_outrights(tourney: str, cut_line: int, repl: dict) -> tuple[dict, dict]:
+def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = True) -> tuple[dict, dict]:
     """winner/top_5/top_10/top_20 for the FULL field; make_cut derived from the
     rank-probability distribution (P(finish rank <= cut)).
 
@@ -118,7 +157,11 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict) -> tuple[dict, dic
 
     # Full-field probabilities first (every player), sparse betting file last. Each
     # source is ingested into both the dead-heat (out) and no-dead-heat (out_nodh) dicts.
-    full = _find("simulated_probs_live.csv", "simulated_probs.csv")
+    # When use_live is False (pre-event, or a stale live dump from a prior event), skip
+    # the generic-named simulated_probs_live.csv so it can't outrank this week's
+    # simulated_probs.csv. See _live_dump_is_current().
+    full = (_find("simulated_probs_live.csv", "simulated_probs.csv")
+            if use_live else _find("simulated_probs.csv"))
     if full is not None:
         _ingest(full, col, out)
         _ingest(full, col_nodh, out_nodh)
@@ -182,15 +225,19 @@ def _build_matchups(tourney: str, repl: dict) -> list:
     return rows
 
 
-def _build_field(tourney: str, repl: dict) -> list:
+def _build_field(tourney: str, repl: dict, use_live: bool = True) -> list:
     """The full simulated roster (every player, NO p>0 filter) so the board can
     drop players that aren't in our sim without relying on probabilistic markets
     (make_cut/top-N) to enumerate the field."""
     # Full-field dump first; the edge-filtered finish_equity_live (as little as 1 row)
     # must NOT define the field or the board drops all but a handful of players.
-    eq = _find("simulated_probs_live.csv", "simulated_probs.csv",
-               f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv",
-               f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv")
+    # When use_live is False, the generic simulated_probs_live.csv is skipped so a
+    # leftover from a prior event can't define this week's field (cross-event bleed).
+    candidates = (["simulated_probs_live.csv"] if use_live else []) + [
+        "simulated_probs.csv",
+        f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv",
+        f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv"]
+    eq = _find(*candidates)
     if eq is None:
         return []
     df = pd.read_csv(eq)
@@ -514,15 +561,18 @@ def build_payload() -> dict:
         raise RuntimeError("sim_inputs.tourney is not set")
 
     rnd = _latest_round(tourney)
+    # Guard against a stale, generic-named live dump from a PRIOR event defining this
+    # week's field/outrights (cross-event bleed). Pre-event builds ignore it entirely.
+    use_live = _live_dump_is_current(tourney, rnd, repl)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl)
+    outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl, use_live=use_live)
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),
         "tourney": tourney,
         "generated_at": now,
         "round": rnd,                       # live round these round_* markets price
-        "field": _build_field(tourney, repl),
+        "field": _build_field(tourney, repl, use_live=use_live),
         "outrights": outrights,
         # no-dead-heat top-N fairs for books that settle a top-N as a clean binary
         # (Kalshi, NoVig). The board grades those books against these instead of the
