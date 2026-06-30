@@ -31,6 +31,20 @@ def _load_key():
         )
     if not os.path.exists(path):
         raise FileNotFoundError(f"Kalshi private key not found at {path}")
+    # If the path points at a directory (a common misconfig — e.g. ~/.kalshi
+    # instead of the .pem inside it), pick private.pem (the working key), else
+    # the single .pem present.
+    if os.path.isdir(path):
+        cand = os.path.join(path, "private.pem")
+        if not os.path.exists(cand):
+            pems = [f for f in os.listdir(path) if f.endswith(".pem")]
+            if len(pems) != 1:
+                raise FileNotFoundError(
+                    f"KALSHI_PRIVATE_KEY_PATH is a directory ({path}) with "
+                    f"{'no' if not pems else 'multiple'} .pem files — point the env var "
+                    "at the .pem key file itself.")
+            cand = os.path.join(path, pems[0])
+        path = cand
     with open(path, "rb") as f:
         _PRIVATE_KEY = serialization.load_pem_private_key(f.read(), password=None)
     return _PRIVATE_KEY

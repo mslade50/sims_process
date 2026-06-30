@@ -125,6 +125,38 @@ def active_fair_file(tourney):
     return (None, None)
 
 
+def parse_fairs_ts(s):
+    """Parse a sim_fairs 'generated_at' ('YYYY-MM-DD HH:MM:SS UTC') to epoch, or None."""
+    import datetime as _dt
+    if not s:
+        return None
+    try:
+        dt = _dt.datetime.strptime(str(s).strip(), "%Y-%m-%d %H:%M:%S UTC")
+        return dt.replace(tzinfo=_dt.timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def check_fairs_fresh_payload(payload, now_ts, tourney=None, max_age_hours=None):
+    """Pure. (ok, reason) for a PUBLISHED sim_fairs.json payload: it must exist, be
+    for the current tourney, and be recent (generated_at within max_age). Replaces
+    the local-file mtime check now that the maker reads the published fairs (so it
+    works on any machine without a local sim run)."""
+    if not payload:
+        return (False, "no sim_fairs.json (GitHub or local) — publish the sim")
+    pj = str(payload.get("tourney") or "").strip().lower()
+    if tourney and pj and pj != str(tourney).strip().lower():
+        return (False, f"sim_fairs is for '{pj}', not current '{tourney}' — publish the sim")
+    ts = parse_fairs_ts(payload.get("generated_at"))
+    if ts is None:
+        return (True, "fairs present (no generated_at)")
+    max_age = _envf("MAKER_FAIRS_MAX_AGE_HRS", 48.0) if max_age_hours is None else max_age_hours
+    age_h = max(0.0, (now_ts - ts) / 3600.0)
+    if age_h > max_age:
+        return (False, f"sim fairs stale: {age_h:.1f}h old > {max_age:.0f}h cap — re-publish the sim")
+    return (True, f"fairs {age_h:.1f}h old")
+
+
 # ── Guard #2: live-round detection (schedule default + DataGolf override) ───────
 def datagolf_live(last_updated_ts, now_ts):
     """Pure. live / not-live / unknown from the DataGolf live feed's last_updated.

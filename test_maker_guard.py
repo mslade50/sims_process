@@ -171,5 +171,15 @@ eq("h2h not an outright", mg.block_yes_outright("yes", "h2h", now=D(1, 10)), Fal
 eq("yes after cutoff allowed", mg.block_yes_outright("yes", "winner", now=D(3, 10)), False)
 eq("rule disabled -> allowed", mg.block_yes_outright("yes", "winner", now=D(1, 10), rule_enabled=False), False)
 
+# ── Published sim_fairs.json freshness ─────────────────────────────────────────
+_gen = "2026-06-30 02:05:04 UTC"
+_ts = mg.parse_fairs_ts(_gen)
+eq("parse generated_at", _ts is not None, True)
+eq("fresh fairs ok", mg.check_fairs_fresh_payload({"tourney": "deere", "generated_at": _gen}, _ts + 3600, tourney="deere")[0], True)
+eq("stale fairs blocked", mg.check_fairs_fresh_payload({"tourney": "deere", "generated_at": _gen}, _ts + 100 * 3600, tourney="deere")[0], False)
+eq("wrong tourney blocked", mg.check_fairs_fresh_payload({"tourney": "us_open", "generated_at": _gen}, _ts + 3600, tourney="deere")[0], False)
+eq("no payload blocked", mg.check_fairs_fresh_payload(None, _ts, tourney="deere")[0], False)
+eq("missing generated_at -> present ok", mg.check_fairs_fresh_payload({"tourney": "deere"}, _ts, tourney="deere")[0], True)
+
 print(f"\n{_p} passed, {_f} failed")
 raise SystemExit(1 if _f else 0)

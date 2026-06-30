@@ -309,65 +309,91 @@ def _apply_event_filter(markets, sim_player_set, label):
 
 
 # ── Sim probability load ───────────────────────────────────────────────
+_SIM_FAIRS_CACHE = None
+
+
+def _fetch_sim_fairs(force=False):
+    """Fetch the PUBLISHED sim fairs (sim_fairs.json): GitHub repo first (so any
+    machine gets the latest CI/locally-published fairs), local file fallback —
+    mirrors odds_loader._fetch_scraped_json for golf_scraping. Cached per run.
+    Returns the payload dict or None.
+
+    The sim publishes sim_fairs.json (publish_sim_fairs.py commits + pushes it); the
+    maker just reads it, so NO local new_sim run is needed. Set SIMS_PROCESS_PAT (or
+    GH_TOKEN) to read the private repo from a machine without the repo cloned."""
+    global _SIM_FAIRS_CACHE
+    if _SIM_FAIRS_CACHE is not None and not force:
+        return _SIM_FAIRS_CACHE
+    repo = os.getenv("SIMS_PROCESS_REPO", "mslade50/sims_process")
+    branch = os.getenv("SIMS_PROCESS_BRANCH", "main")
+    token = os.getenv("SIMS_PROCESS_PAT") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    payload = None
+    try:
+        import requests
+        headers = {"Accept": "application/vnd.github.raw+json", "User-Agent": _BROWSER_UA}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        url = f"https://api.github.com/repos/{repo}/contents/sim_fairs.json?ref={branch}"
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        payload = r.json()
+        print(f"  [probs] sim_fairs.json from GitHub ({repo}@{branch}: "
+              f"tourney={payload.get('tourney')}, generated_at={payload.get('generated_at')})")
+    except Exception as e:
+        print(f"  [probs] GitHub sim_fairs fetch failed ({e}); trying local")
+        local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_fairs.json")
+        try:
+            with open(local, encoding="utf-8") as f:
+                payload = _json.load(f)
+            print(f"  [probs] sim_fairs.json local fallback "
+                  f"(tourney={payload.get('tourney')}, generated_at={payload.get('generated_at')})")
+        except Exception as e2:
+            print(f"  [probs] local sim_fairs.json unavailable ({e2})")
+            payload = None
+    _SIM_FAIRS_CACHE = payload
+    return payload
+
+
+def _prob_lookup_from_fairs(payload):
+    """Transpose a sim_fairs payload into {player: {market_type: yes_prob}}. Uses
+    outrights_nodh for top-N (Kalshi settles a clean binary, no dead-heat) and
+    outrights for winner. Player keys are already canonical ('last, first' lower)."""
+    outr = payload.get("outrights") or {}
+    nodh = payload.get("outrights_nodh") or {}
+    sources = (
+        ("winner", outr.get("winner")),
+        ("top_5", nodh.get("top_5") or outr.get("top_5")),
+        ("top_10", nodh.get("top_10") or outr.get("top_10")),
+        ("top_20", nodh.get("top_20") or outr.get("top_20")),
+    )
+    lookup = {}
+    for market, src in sources:
+        if not isinstance(src, dict):
+            continue
+        for player, prob in src.items():
+            try:
+                lookup.setdefault(player, {})[market] = float(prob)
+            except (TypeError, ValueError):
+                continue
+    return lookup
+
+
 def load_sim_probs():
-    # Prefer the live (post-round) rank probs from round_sim.py when present.
-    # Fall back to the full-tournament sim from new_sim.py.
-    live_path = f"rank_probs_live_{tourney}.parquet"
-    pre_path = f"rank_probs_updated_{tourney}.parquet"
-    if os.path.exists(live_path):
-        rp_path = live_path
-        source = "live"
-    elif os.path.exists(pre_path):
-        rp_path = pre_path
-        source = "pre"
-    else:
+    """{player: {market_type: yes_prob}} from the PUBLISHED sim fairs (sim_fairs.json
+    — GitHub repo then local). Kalshi no-dead-heat top-N (outrights_nodh) + dead-heat
+    winner. No local sim run needed: whoever runs the sim publishes the fairs; the
+    maker reads them. Raises FileNotFoundError if absent / wrong event."""
+    payload = _fetch_sim_fairs()
+    if payload is None:
+        raise FileNotFoundError("no sim_fairs.json (GitHub or local) — run + publish the sim")
+    pj = str(payload.get("tourney") or "").strip().lower()
+    if pj and tourney and pj != str(tourney).strip().lower():
         raise FileNotFoundError(
-            f"Missing both {live_path} and {pre_path}. "
-            "Run round_sim.py (mid-event) or new_sim.py (pre-event) first."
-        )
-    print(f"  [probs] loading outright probs from {rp_path} (source={source})")
-    rp = pd.read_parquet(rp_path)
-    # Column-name reconciliation between the two writers:
-    #   new_sim.py        writes BOTH `prob_u` (dead-heat) and `prob_ndh` (no-dead-heat).
-    #   round_sim.py      writes only `prob_u`, but its `prob_u` is actually
-    #                     computed with rank(method='min') — i.e. ties share the
-    #                     min rank, no fractional credit. Semantically that's
-    #                     the no-dead-heat number that Kalshi top-N markets
-    #                     settle on (ties all count as inside). So when only
-    #                     `prob_u` is present we use it in place of `prob_ndh`.
-    if "prob_ndh" in rp.columns:
-        prob_col = "prob_ndh"
-    elif "prob_u" in rp.columns:
-        prob_col = "prob_u"
-        print(f"  [probs] note: {rp_path} has no prob_ndh column — using prob_u "
-              f"(round_sim.py's prob_u is computed with rank='min', semantically "
-              f"the no-dead-heat number Kalshi resolves on).")
-    else:
-        raise KeyError(f"{rp_path} has neither prob_ndh nor prob_u: cols={list(rp.columns)}")
-    probs = rp.groupby("player_name").apply(
-        lambda g: pd.Series({
-            "top_5": g.loc[g["rank"] <= 5, prob_col].sum(),
-            "top_10": g.loc[g["rank"] <= 10, prob_col].sum(),
-            "top_20": g.loc[g["rank"] <= 20, prob_col].sum(),
-            "winner": g.loc[g["rank"] == 1, prob_col].sum(),
-        }),
-        include_groups=False,
-    ).reset_index()
-    # winner: new_sim/round_sim use simulated_win_prob (DH-resolved) — load if present.
-    # Prefer live finish_equity when we loaded live rank probs.
-    fe_path = (f"finish_equity_live_{tourney}.csv" if source == "live"
-               else f"finish_equity_{tourney}.csv")
-    if not os.path.exists(fe_path):
-        fe_path = f"finish_equity_{tourney}.csv"
-    if os.path.exists(fe_path):
-        fe = pd.read_csv(fe_path)
-        if "simulated_win_prob" in fe.columns:
-            probs = probs.merge(
-                fe[["player_name", "simulated_win_prob"]], on="player_name", how="left"
-            )
-            probs["winner"] = probs["simulated_win_prob"].fillna(probs["winner"])
-            probs = probs.drop(columns=["simulated_win_prob"])
-    return probs
+            f"sim_fairs.json is for '{pj}', not current '{tourney}' — publish the sim for {tourney}")
+    lookup = _prob_lookup_from_fairs(payload)
+    print(f"  [probs] {len(lookup)} players from sim_fairs.json "
+          f"(tourney={pj or '?'}, generated_at={payload.get('generated_at')})")
+    return lookup
 
 
 def load_matchup_sim_data(allow_pre_fallback=False):
@@ -1040,10 +1066,8 @@ def scan():
           f"ev/$>={MIN_KELLY_EV_LOW_PRICE*100:.0f}%(price<{LOW_PRICE_THRESHOLD})  "
           f"fill_pct>={MIN_FILL_PCT:.0f}%  "
           f"per-tick laddering")
-    probs = load_sim_probs()
-    prob_lookup = probs.set_index("player_name").to_dict("index")
-    print(f"  Loaded sim probs for {len(prob_lookup)} players from "
-          f"rank_probs_updated_{tourney}.parquet")
+    prob_lookup = load_sim_probs()
+    print(f"  Loaded sim probs for {len(prob_lookup)} players from sim_fairs.json")
 
     all_mkts = []
     for series, mtype in OUTRIGHT_SERIES.items():
@@ -1215,8 +1239,8 @@ def _current_play_round():
 
 
 def _check_fairs_fresh():
-    path, mtime = maker_guard.active_fair_file(tourney)
-    return maker_guard.check_fairs_fresh(path, mtime, time.time())
+    payload = _fetch_sim_fairs()
+    return maker_guard.check_fairs_fresh_payload(payload, time.time(), tourney=tourney)
 
 
 def _check_not_live():
