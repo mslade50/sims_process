@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS settlements (
   ts             INTEGER
 );
 
+-- Maker-bot cockpit state, pushed from the local maker shadow/live run
+-- (push_maker_state.py). One row holding the latest JSON snapshot: status
+-- (TRADE/HALT + reason), mode (shadow/live), and the working quotes it would
+-- post. Display only — for watching what the bot wants to do.
+CREATE TABLE IF NOT EXISTS maker_state (
+  id          INTEGER PRIMARY KEY,   -- always 1 (single-row latest snapshot)
+  payload     TEXT,                  -- JSON blob written by the maker
+  updated_ts  INTEGER
+);
+
 -- Model-edge proposals pushed from the local sim (push_proposals.py). The order
 -- ticket overlays these (model fair / edge) per market — display only, never
 -- auto-traded. Whole table is replaced on each push.

@@ -231,6 +231,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 @keyframes tapeflash { from { background: rgba(56,139,253,.35); } to { background: transparent; } }
 .ts-row.flash { animation: tapeflash 1.1s ease-out; }
 
+/* Maker cockpit */
+.maker-status { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.ms-badge { font-weight: 800; font-size: 13px; letter-spacing: .05em; padding: 4px 12px; border-radius: 6px; }
+.ms-badge.trade { background: rgba(46,160,67,.18); color: var(--yes); border: 1px solid var(--yes); }
+.ms-badge.halt { background: rgba(218,54,51,.16); color: var(--danger); border: 1px solid var(--danger); }
+.ms-reason { color: var(--muted); font-size: 13px; }
+.ms-stale { color: var(--no); font-size: 12px; margin-left: auto; }
+
 /* uPlot dark-theme overrides (axes are canvas-drawn via opts; legend is HTML) */
 .u-legend { color: var(--muted); font-size: 11px; }
 .u-legend .u-marker { width: 9px; height: 9px; }

@@ -77,6 +77,7 @@ function activateTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (name === "tape") loadTape();
   if (name === "pnl") loadPnL();
+  if (name === "maker") loadMaker();
 }
 document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => activateTab(btn.dataset.tab))
@@ -815,6 +816,69 @@ function renderPnL() {
   $("pnl-table").innerHTML = html;
 }
 
+// ── Maker bot cockpit ─────────────────────────────────────────────────────────
+const makerState = { state: null, updatedTs: null };
+
+async function loadMaker() {
+  try {
+    const d = await api("/api/maker");
+    makerState.state = d.state || null;
+    makerState.updatedTs = d.updated_ts || null;
+    renderMaker();
+  } catch (e) {
+    $("maker-table").innerHTML = `<div class="msg err">${e.message}</div>`;
+  }
+}
+
+function renderMaker() {
+  const s = makerState.state;
+  if (!s) {
+    $("makerStatus").innerHTML = "";
+    $("makerTotals").innerHTML = "";
+    $("makerMeta").textContent = "";
+    $("maker-table").innerHTML =
+      `<div class="muted small">no maker state pushed yet — run <code>python maker_shadow.py</code> then <code>python push_maker_state.py</code>.</div>`;
+    return;
+  }
+  const trading = String(s.status || "").toUpperCase() === "TRADE";
+  const ageMin = makerState.updatedTs ? Math.round((Date.now() / 1000 - makerState.updatedTs) / 60) : null;
+  const stale = ageMin != null && ageMin > 10;
+  $("makerMeta").textContent =
+    (s.mode ? String(s.mode).toUpperCase() : "") + (s.tourney ? " · " + s.tourney : "") +
+    (ageMin != null ? ` · ${ageMin}m ago` : "");
+  $("makerStatus").innerHTML =
+    `<span class="ms-badge ${trading ? "trade" : "halt"}">${trading ? "TRADING" : "HALTED"}</span>` +
+    `<span class="ms-reason">${s.reason || ""}</span>` +
+    (stale ? `<span class="ms-stale">⚠ ${ageMin}m old — is the run scheduled?</span>` : "");
+
+  const t = s.totals || {};
+  const cell = (label, val, cls) => `<div class="stat"><div class="sl">${label}</div><div class="sv ${cls || ""}">${val}</div></div>`;
+  const nQ = t.quotes != null ? t.quotes : (s.quotes || []).length;
+  $("makerTotals").innerHTML =
+    cell("Quotes", nQ) +
+    cell("Committed", "$" + Number(t.committed || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })) +
+    (t.caps ? cell("Caps", `mkt $${t.caps.per_market_usd} · evt $${t.caps.per_event_usd} · tot $${t.caps.total_usd}`) : "");
+
+  const quotes = (s.quotes || []).slice().sort((a, b) => (b.edge_pp || 0) - (a.edge_pp || 0));
+  if (!quotes.length) {
+    $("maker-table").innerHTML = `<div class="muted small">${trading ? "no working quotes this cycle." : "halted — no quotes."}</div>`;
+    return;
+  }
+  $("maker-table").innerHTML =
+    `<table><thead><tr><th>Player</th><th>Market</th><th>Side</th><th class="num">Quote</th><th class="num">Edge</th><th class="num">Size</th><th class="num">Bid/Ask</th><th>Action</th></tr></thead><tbody>` +
+    quotes.map((q) =>
+      `<tr><td>${q.player || q.ticker || ""}</td>` +
+      `<td class="small">${marketLabel(q.market)}</td>` +
+      `<td><span class="pill ${q.side || ""}">${String(q.side || "").toUpperCase()}</span></td>` +
+      `<td class="num bold">${c1((q.price || 0) * 100)}c</td>` +
+      `<td class="num ${(q.edge_pp || 0) >= 0 ? "up" : "down"}">${(q.edge_pp || 0) >= 0 ? "+" : ""}${Number(q.edge_pp || 0).toFixed(1)}c</td>` +
+      `<td class="num">${q.size || 0}</td>` +
+      `<td class="num small muted">${c1((q.best_bid || 0) * 100)}/${c1((q.best_ask || 0) * 100)}</td>` +
+      `<td class="small">${q.action || ""}</td></tr>`
+    ).join("") +
+    `</tbody></table>`;
+}
+
 // ── Wiring ───────────────────────────────────────────────────────────────────
 $("loadMarkets").addEventListener("click", loadMarkets);
 $("marketSearch").addEventListener("input", renderMarketList);
@@ -851,6 +915,7 @@ $("showPrice").addEventListener("change", (e) => {
 $("pnlGroup").addEventListener("change", (e) => { pnlState.groupBy = e.target.value; renderPnL(); });
 $("pnlStatus").addEventListener("change", (e) => { pnlState.status = e.target.value; renderPnL(); });
 $("pnlRefresh").addEventListener("click", () => loadPnL(true));
+$("makerRefresh").addEventListener("click", () => loadMaker());
 
 // Resize the focused charts to the container when the window changes width.
 let _resizeRaf = null;

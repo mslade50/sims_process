@@ -14,6 +14,7 @@
         <button class="tab active" data-tab="trade">Trade</button>
         <button class="tab" data-tab="tape">Tape</button>
         <button class="tab" data-tab="pnl">PnL</button>
+        <button class="tab" data-tab="maker">Maker</button>
       </nav>
       <div class="event-bar">
         <span class="event-label">⛳</span>
@@ -205,6 +206,22 @@
           </div>
           <div id="pnlTotals" class="statstrip"></div>
           <div id="pnl-table" class="tablewrap"></div>
+        </div>
+      </section>
+
+      <!-- MAKER TAB -->
+      <section id="maker" class="tabpane">
+        <div class="card">
+          <div class="ts-head">
+            <h2>Maker bot <span class="muted small" id="makerMeta"></span></h2>
+            <button class="btn tiny" id="makerRefresh" title="refetch">↻</button>
+          </div>
+          <p class="muted small" style="margin:0 0 10px 0;">
+            What the maker would post right now (pushed from the local shadow/live run). Display only.
+          </p>
+          <div id="makerStatus" class="maker-status"></div>
+          <div id="makerTotals" class="statstrip"></div>
+          <div id="maker-table" class="tablewrap"></div>
         </div>
       </section>
     </main>

@@ -235,6 +235,18 @@ function genReference() {
 }
 const REFERENCE = genReference();
 
+// synthetic maker cockpit state (what the bot would post this cycle)
+const MAKER_STATE = {
+  ts: new Date().toISOString(), mode: "shadow", status: "TRADE", reason: "enabled", tourney: "travelers",
+  quotes: [
+    { ticker: "KXPGATOP10-PGATRAV-RAHM", player: "Jon Rahm", market: "top_10", side: "yes", price: 0.19, size: 40, edge_pp: 11.0, fair: 0.30, best_bid: 0.18, best_ask: 0.22, action: "keep" },
+    { ticker: "KXPGATOUR-PGATRAV-SCHE", player: "Scottie Scheffler", market: "winner", side: "yes", price: 0.25, size: 40, edge_pp: 9.0, fair: 0.34, best_bid: 0.24, best_ask: 0.28, action: "replace" },
+    { ticker: "KXPGATOP20-PGATRAV-FLEE", player: "Tommy Fleetwood", market: "top_20", side: "no", price: 0.41, size: 40, edge_pp: 9.0, fair: 0.50, best_bid: 0.40, best_ask: 0.45, action: "replace" },
+    { ticker: "KXPGATOP5-PGATRAV-MCIL", player: "Rory McIlroy", market: "top_5", side: "no", price: 0.57, size: 40, edge_pp: 7.0, fair: 0.64, best_bid: 0.56, best_ask: 0.60, action: "replace" },
+  ],
+  totals: { quotes: 4, committed: 57, caps: { per_market_usd: 50, per_event_usd: 400, total_usd: 1000 } },
+};
+
 // synthetic open positions (new /api/positions shape)
 function genPositions() {
   const mk = (ticker, signed, exposure) => {
@@ -296,6 +308,10 @@ const server = http.createServer((req, res) => {
   if (p === "/api/proposals") {
     if (req.method === "POST") return sendJson(res, { error: "mock harness: proposals push disabled" }, 403);
     return sendJson(res, { rows: PROPOSALS.rows, scan_ts: PROPOSALS.scan_ts, count: PROPOSALS.rows.length });
+  }
+  if (p === "/api/maker") {
+    if (req.method === "POST") return sendJson(res, { error: "mock harness: maker push disabled" }, 403);
+    return sendJson(res, { state: MAKER_STATE, updated_ts: Math.floor(Date.now() / 1000) - 120 });
   }
   if (p === "/api/pnl") {
     const { rows, totals } = computePnl({ ...PNL, classify, isGolf });
