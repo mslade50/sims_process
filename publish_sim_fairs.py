@@ -177,6 +177,28 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
     if live is not None:
         _ingest(live, col, out)
         _ingest(live, col_nodh, out_nodh)
+
+    # No-dead-heat top-N fallback. Pre-event the tournament-sim CSVs above carry no
+    # *_nodh columns, so out_nodh is empty and exchange books (Kalshi/NoVig) — which
+    # settle a top-N as a clean binary — would be graded on dead-heat fairs. Derive the
+    # no-dead-heat top-N from the rank-prob distribution (prob_ndh = raw min-rank, ties
+    # counted inside = no dead heat), the same source/column rule make_cut uses below.
+    # setdefault so a real *_nodh from a live CSV (round_sim) is never overwritten.
+    if any(not out_nodh[m] for m in ("top_5", "top_10", "top_20")):
+        rk_ndh = _find(f"rank_probs_live_{tourney}.parquet", f"{tourney}/rank_probs_live_{tourney}.parquet",
+                       f"rank_probs_updated_{tourney}.parquet", f"{tourney}/rank_probs_updated_{tourney}.parquet")
+        if rk_ndh is not None:
+            rp_ndh = pd.read_parquet(rk_ndh)
+            ndh_col = "prob_ndh" if "prob_ndh" in rp_ndh.columns else (
+                "prob_u" if "prob_u" in rp_ndh.columns else None)
+            if ndh_col and {"player_name", "rank"} <= set(rp_ndh.columns):
+                for _n, _mkt in ((5, "top_5"), (10, "top_10"), (20, "top_20")):
+                    s = rp_ndh[rp_ndh["rank"] <= _n].groupby("player_name")[ndh_col].sum()
+                    for nm, p in s.items():
+                        if p > 0:
+                            out_nodh[_mkt].setdefault(_norm(nm, repl), round(float(min(p, 1.0)), 5))
+                logger.info(f"outrights_nodh top-N derived from {rk_ndh.name} [{ndh_col}]")
+
     logger.info("outrights: " + ", ".join(f"{k}={len(v)}" for k, v in out.items() if k != "make_cut"))
     logger.info("outrights_nodh: " + ", ".join(f"{k}={len(v)}" for k, v in out_nodh.items()))
 
