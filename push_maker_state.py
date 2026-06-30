@@ -21,6 +21,10 @@ from pathlib import Path
 
 DEFAULT_URL = "https://kalshi-exec.pages.dev"
 STATE_PATH = Path(__file__).resolve().parent / "permanent_data" / "maker_state.json"
+# Cloudflare's edge bot-protection blocks the default Python urllib client
+# signature (returns CF error 1010); a browser User-Agent passes through.
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
 
 def main() -> int:
@@ -52,7 +56,8 @@ def main() -> int:
 
     req = urllib.request.Request(
         f"{args.url}/api/maker", data=payload.encode(),
-        headers={"Content-Type": "application/json", "X-Maker-Token": args.token}, method="POST")
+        headers={"Content-Type": "application/json", "X-Maker-Token": args.token, "User-Agent": UA},
+        method="POST")
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             print("response:", r.status, r.read().decode()[:200])

@@ -100,10 +100,17 @@ def main() -> int:
         print("\nrefusing to push: no token (set PROPOSALS_TOKEN or pass --token)", file=sys.stderr)
         return 2
 
+    # Browser UA: Cloudflare's edge bot-protection blocks the default Python
+    # urllib client signature (CF error 1010).
     req = urllib.request.Request(
         f"{args.url}/api/proposals",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "X-Proposals-Token": args.token},
+        headers={
+            "Content-Type": "application/json",
+            "X-Proposals-Token": args.token,
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
+        },
         method="POST",
     )
     try:

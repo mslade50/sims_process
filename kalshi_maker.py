@@ -1301,7 +1301,13 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(0)
 
-    cands, prob_lookup = scan()
+    try:
+        cands, prob_lookup = scan()
+    except FileNotFoundError as _se:
+        # No current sim fairs (e.g. between events). The fairs guard already
+        # flags this; don't crash the (shadow) run — just quote nothing.
+        print(f"\n[maker] no sim fairs to scan ({_se}). Nothing to quote this run.")
+        cands, prob_lookup = [], {}
     if args.limit is not None and cands:
         before = len(cands)
         cands = sorted(cands, key=lambda c: c["kelly_f"], reverse=True)[:args.limit]

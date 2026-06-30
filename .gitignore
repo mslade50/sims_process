@@ -269,3 +269,4 @@ permanent_data/MAKER_HALT
 
 # Shadow-run logs (transient)
 permanent_data/shadow_logs/
+permanent_data/maker_state.json
