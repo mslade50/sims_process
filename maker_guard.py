@@ -258,21 +258,70 @@ def _price_to_dollars(raw):
     return px / 100.0 if px > 1 else px
 
 
+# Mutually-exclusive outright markets: Kalshi nets collateral across players in
+# the same event+market because at most N can "win" (winner=1, top_5=5, top_10=10,
+# top_20=20). A basket of NO positions there can lose on AT MOST N of them, so its
+# worst-case loss is the sum of the N largest — not the gross sum. We charge that
+# worst-case (an upper bound) to the per-event / total caps so winner-NO baskets
+# (n=1) count as ~their single largest position, while top-N still scales with N.
+MUTEX_PREFIX = {"KXPGATOUR": "winner", "KXPGATOP5": "top_5",
+                "KXPGATOP10": "top_10", "KXPGATOP20": "top_20"}
+MUTEX_NWIN = {"winner": 1, "top_5": 5, "top_10": 10, "top_20": 20}
+
+
+def market_type_of(ticker):
+    """Outright market_type from a Kalshi ticker prefix (KXPGATOUR-... -> winner), else None."""
+    return MUTEX_PREFIX.get(str(ticker).split("-", 1)[0])
+
+
+def _topn_sum(notionals, n):
+    """Worst-case loss of a mutually-exclusive NO basket = the n largest notionals
+    (at most n can lose). n=None -> not mutually exclusive, sum all."""
+    if n is None:
+        return float(sum(notionals))
+    return float(sum(sorted(notionals, reverse=True)[:max(1, int(n))]))
+
+
+def _netted_event(flat_ev, groups_ev):
+    """Event $: flat (non-mutex) exposure + worst-case loss of each mutex NO group."""
+    total = float(flat_ev)
+    for mt, by_ticker in groups_ev.items():
+        total += _topn_sum(list(by_ticker.values()), MUTEX_NWIN.get(mt))
+    return total
+
+
+def _per_event_total(flat_event, groups):
+    events = set(flat_event) | {ev for (ev, _mt) in groups}
+    per_event = {}
+    for ev in events:
+        groups_ev = {mt: by for (e, mt), by in groups.items() if e == ev}
+        per_event[ev] = _netted_event(flat_event.get(ev, 0.0), groups_ev)
+    return per_event, float(sum(per_event.values()))
+
+
 def build_exposure(positions, resting):
-    """Committed $ by (ticker, side), by event_code, and total — from live
-    positions (held) + resting orders (working). Pure given the raw API lists.
+    """Committed $ by (ticker, side), netted by event, and netted total — from live
+    positions (held, using Kalshi's reported per-market exposure) + resting orders.
+    Mutually-exclusive NO outright baskets are netted per (event, market_type) so a
+    winner-NO basket counts as ~its largest single position, not the gross sum.
+    Pure given the raw API lists.
 
     positions: Kalshi /portfolio/positions `market_positions` dicts.
     resting:   Kalshi resting order dicts.
     """
-    per_key, per_event, total = {}, {}, 0.0
+    per_key = {}
+    flat_event = {}   # event -> $ for everything except mutex-NO (yes, matchups, …)
+    groups = {}       # (event, market_type) -> {ticker: notional} for NO outrights
 
     def add(ticker, side, usd):
-        nonlocal total
         per_key[(ticker, side)] = per_key.get((ticker, side), 0.0) + usd
         ev = event_of(ticker)
-        per_event[ev] = per_event.get(ev, 0.0) + usd
-        total += usd
+        mt = market_type_of(ticker)
+        if side == "no" and mt in MUTEX_NWIN:
+            groups.setdefault((ev, mt), {})
+            groups[(ev, mt)][ticker] = groups[(ev, mt)].get(ticker, 0.0) + usd
+        else:
+            flat_event[ev] = flat_event.get(ev, 0.0) + usd
 
     for p in positions or []:
         tk = p.get("ticker", "")
@@ -298,7 +347,9 @@ def build_exposure(positions, resting):
         px = _price_to_dollars(o.get(f"{side}_price_dollars") or o.get(f"{side}_price") or 0)
         add(tk, side, rem * px)
 
-    return {"per_key": per_key, "per_event": per_event, "total": total}
+    per_event, total = _per_event_total(flat_event, groups)
+    return {"per_key": per_key, "per_event": per_event, "total": total,
+            "_flat_event": flat_event, "_groups": groups}
 
 
 def _brief(c):
@@ -316,9 +367,17 @@ def apply_exposure_caps(candidates, exposure, caps=None):
     if caps is None:
         caps = caps_from_env()
     per_key = dict(exposure.get("per_key", {}))
-    per_event = dict(exposure.get("per_event", {}))
-    total = float(exposure.get("total", 0.0))
+    flat_event = dict(exposure.get("_flat_event") or {})
+    groups = {k: dict(v) for k, v in (exposure.get("_groups") or {}).items()}
     new_usd, n_orders = 0.0, 0
+
+    def netted_event(ev):
+        groups_ev = {mt: by for (e, mt), by in groups.items() if e == ev}
+        return _netted_event(flat_event.get(ev, 0.0), groups_ev)
+
+    def netted_total():
+        evs = set(flat_event) | {e for (e, _mt) in groups}
+        return float(sum(netted_event(e) for e in evs))
 
     ranked = sorted(candidates, key=lambda c: c.get("kelly_f", 0) or 0, reverse=True)
     kept, dropped, trimmed = [], [], []
@@ -334,10 +393,14 @@ def apply_exposure_caps(candidates, exposure, caps=None):
             dropped.append({**_brief(c), "why": "max orders/run"})
             continue
         key, ev = (tk, side), event_of(tk)
+        mt = market_type_of(tk)
+        is_mutex_no = (side == "no" and mt in MUTEX_NWIN)
+        # per-market cap is naive (per player); per-event/total use NETTED exposure
+        # (mutually-exclusive NO baskets count as worst-case loss, not gross sum).
         room = min(
             caps["per_market_usd"] - per_key.get(key, 0.0),
-            caps["per_event_usd"] - per_event.get(ev, 0.0),
-            caps["total_usd"] - total,
+            caps["per_event_usd"] - netted_event(ev),
+            caps["total_usd"] - netted_total(),
             caps["max_new_usd_run"] - new_usd,
         )
         if room <= 0:
@@ -348,10 +411,16 @@ def apply_exposure_caps(candidates, exposure, caps=None):
             dropped.append({**_brief(c), "why": "no room for 1 contract"})
             continue
         spend = allowed * px
+        before = netted_total()
         per_key[key] = per_key.get(key, 0.0) + spend
-        per_event[ev] = per_event.get(ev, 0.0) + spend
-        total += spend
-        new_usd += spend
+        if is_mutex_no:
+            groups.setdefault((ev, mt), {})
+            groups[(ev, mt)][tk] = groups[(ev, mt)].get(tk, 0.0) + spend
+        else:
+            flat_event[ev] = flat_event.get(ev, 0.0) + spend
+        # Charge the run/total budget the NETTED marginal (≈0 for a mutex-NO once
+        # its basket is established, since only the largest can lose).
+        new_usd += max(0.0, netted_total() - before)
         n_orders += 1
         cc = dict(c)
         cc["contracts"] = allowed

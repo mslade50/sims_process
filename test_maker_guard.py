@@ -122,6 +122,22 @@ two = [
 kept, rep = mg.apply_exposure_caps(two, {"per_key": {}, "per_event": {}, "total": 0}, caps4)
 eq("highest kelly funded first", kept[0]["ticker"], "KXPGATOP20-E-HI")
 
+# ── mutual-exclusivity netting (Kalshi collateralizes outrights against each other) ──
+eq("market_type_of winner", mg.market_type_of("KXPGATOUR-DEERE-P0"), "winner")
+eq("market_type_of top_20", mg.market_type_of("KXPGATOP20-DEERE-P0"), "top_20")
+eq("market_type_of non-outright", mg.market_type_of("KXPGAMU-DEERE-AB"), None)
+mx = dict(CAPS, per_event_usd=100.0, max_new_usd_run=1000.0)
+# 8 winner-NOs (only ONE player wins): netted worst-case is the largest single, so
+# all survive a $100 event cap that the naive $20-each sum ($160) would blow.
+wnos = [{"ticker": f"KXPGATOUR-DEERE-P{i}", "side": "no", "post_price": 0.40, "contracts": 50, "kelly_f": 0.9 - i * 0.001} for i in range(8)]
+kept, rep = mg.apply_exposure_caps(wnos, {"per_key": {}, "per_event": {}, "total": 0}, mx)
+eq("winner-NO basket survives (netted n=1)", rep["kept"], 8)
+truthy("winner-NO new_usd stays ~one position", rep["new_usd"] <= 25.0)
+# control: 8 YES outrights are NOT mutually exclusive -> naive event sum binds
+ynos = [{"ticker": f"KXPGATOP20-DEERE-P{i}", "side": "yes", "post_price": 0.40, "contracts": 50, "kelly_f": 0.9 - i * 0.001} for i in range(8)]
+kept2, rep2 = mg.apply_exposure_caps(ynos, {"per_key": {}, "per_event": {}, "total": 0}, mx)
+truthy("YES basket still capped by naive event sum", rep2["kept"] < 8)
+
 # ── Guard #1: fairs freshness ──────────────────────────────────────────────────
 NOW = 1_000_000.0
 eq("no fair file -> halt", mg.check_fairs_fresh(None, None, NOW)[0], False)
