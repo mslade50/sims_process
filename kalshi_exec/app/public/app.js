@@ -817,9 +817,10 @@ function renderPnL() {
 }
 
 // ── Maker bot cockpit ─────────────────────────────────────────────────────────
-const makerState = { state: null, updatedTs: null };
+const makerState = { state: null, updatedTs: null, config: null };
 
 async function loadMaker() {
+  loadMakerConfig();
   try {
     const d = await api("/api/maker");
     makerState.state = d.state || null;
@@ -830,7 +831,53 @@ async function loadMaker() {
   }
 }
 
+async function loadMakerConfig() {
+  try {
+    const d = await api("/api/maker-config");
+    makerState.config = d.config || {};
+  } catch (e) {
+    makerState.config = null;
+  }
+  renderMakerRules();
+}
+
+async function toggleRule(next) {
+  try {
+    const d = await api("/api/maker-config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ block_yes_outrights_pre_wed: next }),
+    });
+    makerState.config = d.config || makerState.config;
+    renderMakerRules();
+  } catch (e) {
+    alert("toggle failed: " + e.message);
+  }
+}
+
+function renderMakerRules() {
+  const el = $("makerRules");
+  if (!el) return;
+  const cfg = makerState.config;
+  const on = cfg ? cfg.block_yes_outrights_pre_wed !== false : true; // default ON
+  const rs = makerState.state && makerState.state.rules && makerState.state.rules.block_yes_pre_wed;
+  const bits = [];
+  if (rs) {
+    if (rs.active_now) bits.push("active now (before Wed 4pm ET)");
+    if (rs.blocked) bits.push(`blocked ${rs.blocked} YES outright(s) last run`);
+  }
+  el.innerHTML =
+    `<div class="rule-row">` +
+    `<span class="rule-label">🛡 Block YES outrights before Wed 4pm ET</span>` +
+    `<button class="rule-toggle ${on ? "on" : "off"}" id="ruleToggle">${on ? "ON" : "OFF"}</button>` +
+    (bits.length ? `<span class="rule-note">${bits.join(" · ")}</span>` : "") +
+    `</div>` +
+    `<div class="muted small">Players can withdraw before the field locks — YES outrights pre-Wednesday carry WD risk; NO is unaffected.</div>`;
+  const btn = $("ruleToggle");
+  if (btn) btn.addEventListener("click", () => toggleRule(!on));
+}
+
 function renderMaker() {
+  renderMakerRules();
   const s = makerState.state;
   if (!s) {
     $("makerStatus").innerHTML = "";

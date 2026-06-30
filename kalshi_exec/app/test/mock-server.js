@@ -245,7 +245,9 @@ const MAKER_STATE = {
     { ticker: "KXPGATOP5-PGATRAV-MCIL", player: "Rory McIlroy", market: "top_5", side: "no", price: 0.57, size: 40, edge_pp: 7.0, fair: 0.64, best_bid: 0.56, best_ask: 0.60, action: "replace" },
   ],
   totals: { quotes: 4, committed: 57, caps: { per_market_usd: 50, per_event_usd: 400, total_usd: 1000 } },
+  rules: { block_yes_pre_wed: { enabled: true, active_now: true, blocked: 2 } },
 };
+let MAKER_CONFIG = { block_yes_outrights_pre_wed: true };
 
 // synthetic open positions (new /api/positions shape)
 function genPositions() {
@@ -312,6 +314,21 @@ const server = http.createServer((req, res) => {
   if (p === "/api/maker") {
     if (req.method === "POST") return sendJson(res, { error: "mock harness: maker push disabled" }, 403);
     return sendJson(res, { state: MAKER_STATE, updated_ts: Math.floor(Date.now() / 1000) - 120 });
+  }
+  if (p === "/api/maker-config") {
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        try {
+          const b = JSON.parse(body || "{}");
+          if (typeof b.block_yes_outrights_pre_wed === "boolean") MAKER_CONFIG.block_yes_outrights_pre_wed = b.block_yes_outrights_pre_wed;
+        } catch (e) {}
+        sendJson(res, { ok: true, config: MAKER_CONFIG });
+      });
+      return;
+    }
+    return sendJson(res, { config: MAKER_CONFIG });
   }
   if (p === "/api/pnl") {
     const { rows, totals } = computePnl({ ...PNL, classify, isGolf });

@@ -122,6 +122,11 @@ export const onRequest: PagesFunction<MEnv> = async (ctx) => {
       (url.pathname === "/api/proposals" || url.pathname === "/api/maker")) {
     return ctx.next();
   }
+  // Public read of the maker toggle config (non-sensitive booleans) so the
+  // headless maker can read it without a session. POST stays session-gated.
+  if (ctx.request.method === "GET" && url.pathname === "/api/maker-config") {
+    return ctx.next();
+  }
 
   // Gate everything else
   const tok = getCookie(ctx.request, COOKIE);

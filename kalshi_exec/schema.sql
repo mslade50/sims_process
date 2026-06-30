@@ -85,6 +85,15 @@ CREATE TABLE IF NOT EXISTS maker_state (
   updated_ts  INTEGER
 );
 
+-- Maker toggles set from the dashboard (button) and read by the local maker.
+-- One row of JSON flags, e.g. {"block_yes_outrights_pre_wed": true}. GET is public
+-- (the headless maker reads it); POST is session-gated (the dashboard button).
+CREATE TABLE IF NOT EXISTS maker_config (
+  id          INTEGER PRIMARY KEY,   -- always 1
+  config      TEXT,                  -- JSON toggle flags
+  updated_ts  INTEGER
+);
+
 -- Model-edge proposals pushed from the local sim (push_proposals.py). The order
 -- ticket overlays these (model fair / edge) per market — display only, never
 -- auto-traded. Whole table is replaced on each push.

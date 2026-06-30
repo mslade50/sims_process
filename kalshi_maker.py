@@ -947,6 +947,11 @@ def _engine_outright_candidates(all_mkts, prob_lookup):
     accumulating once full)."""
     import maker_quotes
     target_usd = maker_guard.caps_from_env()["per_market_usd"]
+    # Pre-Wednesday rule (toggle from the dashboard; fail-safe ON): skip YES
+    # outright quotes before this week's Wed 4pm ET (withdrawal risk).
+    cfg = _fetch_maker_config()
+    rule_on = bool(cfg.get("block_yes_outrights_pre_wed", True))
+    blocked_yes = 0
 
     held = {}
     try:
@@ -1004,10 +1009,23 @@ def _engine_outright_candidates(all_mkts, prob_lookup):
                 held_yes=held.get((ticker, "yes"), 0), held_no=held.get((ticker, "no"), 0),
                 resting_yes=resting_q.get((ticker, "yes")), resting_no=resting_q.get((ticker, "no")),
                 target_usd=target_usd):
+            if maker_guard.block_yes_outright(c["side"], c["market"], rule_enabled=rule_on):
+                blocked_yes += 1
+                continue
             c["volume"] = volume
             assert c["post_price"] < c["best_ask"], (
                 f"SAFETY cross {c['post_price']} >= ask {c['best_ask']}")
             out.append(c)
+    globals()["_rule_status"] = {
+        "block_yes_pre_wed": {
+            "enabled": rule_on,
+            "active_now": bool(maker_guard.before_wed_cutoff()),
+            "blocked": blocked_yes,
+        }
+    }
+    if blocked_yes:
+        print(f"  [rule] pre-Wed: blocked {blocked_yes} YES outright quote(s) "
+              f"(no YES outrights before Wed 4pm ET)")
     print(f"  [engine] {len(out)} working quote(s) from {len(all_mkts)} markets "
           f"(edge YES>={maker_quotes.EDGE_YES*100:.1f}c / NO>={maker_quotes.EDGE_NO*100:.1f}c, "
           f"target ${target_usd:.0f}/market)")
@@ -1229,6 +1247,27 @@ def _check_not_live():
         print(f"  [live] datagolf feed unavailable: {e}")
     is_live, reason = maker_guard.resolve_live(sched, dg)
     return (not is_live, f"round {rnd}: {reason}")
+
+
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+
+def _fetch_maker_config():
+    """Read the maker toggle config from the dashboard (/api/maker-config, public
+    GET). Fail-safe: the pre-Wednesday rule defaults ON if unreachable (it's a
+    safety rule). Returns a dict of toggles."""
+    default = {"block_yes_outrights_pre_wed": True}
+    url = os.getenv("KALSHI_EXEC_URL", "https://kalshi-exec.pages.dev") + "/api/maker-config"
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": _BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = _json.loads(r.read().decode())
+        return {**default, **(data.get("config") or {})}
+    except Exception as e:
+        print(f"  [config] maker-config unreachable ({e}) — defaulting rule ON")
+        return default
 
 
 def _check_live_preconditions():
@@ -1471,6 +1510,10 @@ if __name__ == "__main__":
         } for c in sorted(cands, key=lambda x: x.get("edge_pp", 0), reverse=True)],
         "totals": {"quotes": len(cands), "committed": round(_committed, 2),
                    "caps": (gov_report["caps"] if gov_report else None)},
+        "rules": globals().get("_rule_status") or {
+            "block_yes_pre_wed": {"enabled": True,
+                                  "active_now": bool(maker_guard.before_wed_cutoff()),
+                                  "blocked": 0}},
     }
     try:
         os.makedirs("permanent_data", exist_ok=True)

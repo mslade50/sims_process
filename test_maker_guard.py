@@ -150,5 +150,26 @@ eq("dg unavailable -> schedule", mg.resolve_live(True, None)[0], True)
 eq("both blind -> fail-closed live", mg.resolve_live(None, None)[0], True)
 truthy("override is logged", "override" in mg.resolve_live(False, True)[1].lower())
 
+# ── Pre-Wednesday rule ─────────────────────────────────────────────────────────
+import datetime as _dt
+def D(weekday, hour):  # a datetime with a given weekday (0=Mon) and hour
+    base = _dt.datetime(2026, 6, 29)  # Monday
+    return (base + _dt.timedelta(days=weekday)).replace(hour=hour)
+
+eq("Mon -> before cutoff", mg.before_wed_cutoff(now=D(0, 10)), True)
+eq("Tue -> before cutoff", mg.before_wed_cutoff(now=D(1, 23)), True)
+eq("Wed 3pm -> before cutoff", mg.before_wed_cutoff(now=D(2, 15)), True)
+eq("Wed 5pm -> after cutoff", mg.before_wed_cutoff(now=D(2, 17)), False)
+eq("Thu -> after cutoff", mg.before_wed_cutoff(now=D(3, 9)), False)
+eq("Sun -> after cutoff", mg.before_wed_cutoff(now=D(6, 12)), False)
+
+# block_yes_outright: only YES outrights, only before cutoff, only when enabled
+eq("block yes winner pre-wed", mg.block_yes_outright("yes", "winner", now=D(1, 10)), True)
+eq("block yes top_10 pre-wed", mg.block_yes_outright("yes", "top_10", now=D(0, 9)), True)
+eq("NO never blocked", mg.block_yes_outright("no", "winner", now=D(1, 10)), False)
+eq("h2h not an outright", mg.block_yes_outright("yes", "h2h", now=D(1, 10)), False)
+eq("yes after cutoff allowed", mg.block_yes_outright("yes", "winner", now=D(3, 10)), False)
+eq("rule disabled -> allowed", mg.block_yes_outright("yes", "winner", now=D(1, 10), rule_enabled=False), False)
+
 print(f"\n{_p} passed, {_f} failed")
 raise SystemExit(1 if _f else 0)

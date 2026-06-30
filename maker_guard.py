@@ -154,6 +154,37 @@ def schedule_live(first_tee_ts, last_tee_ts, now_ts, round_hours=None):
     return (now_ts >= first_tee_ts) and (now_ts <= last_tee_ts + rh * 3600.0)
 
 
+# ── Pre-Wednesday rule: no YES outrights before field lock (withdrawal risk) ───
+OUTRIGHT_MARKETS = {"winner", "top_5", "top_10", "top_20"}
+
+
+def before_wed_cutoff(now=None, cutoff_hour=16):
+    """True if it's before THIS week's Wednesday at cutoff_hour ET. A player can
+    withdraw before the field locks, so a YES outright bought pre-Wednesday carries
+    WD risk; NO doesn't (a WD only helps NO). `now` may be passed for tests."""
+    import datetime as _dt
+    if now is None:
+        try:
+            from zoneinfo import ZoneInfo
+            now = _dt.datetime.now(ZoneInfo("America/New_York"))
+        except Exception:
+            now = _dt.datetime.now()  # fall back to local time if no tz database
+    days_to_wed = 2 - now.weekday()  # Mon=0 .. Sun=6, Wed=2
+    wed = (now + _dt.timedelta(days=days_to_wed)).replace(
+        hour=int(cutoff_hour), minute=0, second=0, microsecond=0)
+    return now < wed
+
+
+def block_yes_outright(side, market_type, now=None, rule_enabled=True, cutoff_hour=16):
+    """Should this candidate be skipped by the pre-Wednesday rule? True only for a
+    YES OUTRIGHT quote, while the rule is enabled and it's before Wed cutoff."""
+    if not rule_enabled:
+        return False
+    if side != "yes" or market_type not in OUTRIGHT_MARKETS:
+        return False
+    return before_wed_cutoff(now=now, cutoff_hour=cutoff_hour)
+
+
 def resolve_live(sched, dg):
     """Pure. (is_live, reason). DataGolf wins on a confident signal; the schedule
     is the default/fallback; if both are blind, fail closed (assume live)."""
