@@ -889,14 +889,19 @@ function renderMaker() {
   }
   const trading = String(s.status || "").toUpperCase() === "TRADE";
   const ageMin = makerState.updatedTs ? Math.round((Date.now() / 1000 - makerState.updatedTs) / 60) : null;
-  const stale = ageMin != null && ageMin > 10;
+  const stale = ageMin != null && ageMin > 20; // 15-min cadence + slack
+  const fairs = s.fairs || {};
+  const fairsOld = fairs.age_hours != null && fairs.age_hours > 30; // should refresh nightly
   $("makerMeta").textContent =
     (s.mode ? String(s.mode).toUpperCase() : "") + (s.tourney ? " · " + s.tourney : "") +
     (ageMin != null ? ` · ${ageMin}m ago` : "");
   $("makerStatus").innerHTML =
     `<span class="ms-badge ${trading ? "trade" : "halt"}">${trading ? "TRADING" : "HALTED"}</span>` +
     `<span class="ms-reason">${s.reason || ""}</span>` +
-    (stale ? `<span class="ms-stale">⚠ ${ageMin}m old — is the run scheduled?</span>` : "");
+    (fairs.age_hours != null
+      ? `<span class="ms-fairs ${fairsOld ? "warn" : ""}" title="model fairs generated ${fairs.generated_at || "?"}">fairs ${fairs.age_hours}h · ${fairs.source || "?"}</span>`
+      : "") +
+    (stale ? `<span class="ms-stale">⚠ ${ageMin}m old — last run may have failed</span>` : "");
 
   const t = s.totals || {};
   const cell = (label, val, cls) => `<div class="stat"><div class="sl">${label}</div><div class="sv ${cls || ""}">${val}</div></div>`;

@@ -246,6 +246,7 @@ const MAKER_STATE = {
   ],
   totals: { quotes: 4, committed: 57, caps: { per_market_usd: 50, per_event_usd: 400, total_usd: 1000 } },
   rules: { block_yes_pre_wed: { enabled: true, active_now: true, blocked: 2 } },
+  fairs: { generated_at: "2026-06-30 02:05:04 UTC", source: "github", age_hours: 7.6 },
 };
 let MAKER_CONFIG = { block_yes_outrights_pre_wed: true };
 

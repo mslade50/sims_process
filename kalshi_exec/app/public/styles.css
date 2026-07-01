@@ -237,6 +237,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .ms-badge.trade { background: rgba(46,160,67,.18); color: var(--yes); border: 1px solid var(--yes); }
 .ms-badge.halt { background: rgba(218,54,51,.16); color: var(--danger); border: 1px solid var(--danger); }
 .ms-reason { color: var(--muted); font-size: 13px; }
+.ms-fairs { color: var(--muted); font-size: 12px; border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; }
+.ms-fairs.warn { color: var(--no); border-color: var(--no); }
 .ms-stale { color: var(--no); font-size: 12px; margin-left: auto; }
 .maker-rules { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
 .rule-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

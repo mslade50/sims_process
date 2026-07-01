@@ -270,3 +270,7 @@ permanent_data/MAKER_HALT
 # Shadow-run logs (transient)
 permanent_data/shadow_logs/
 permanent_data/maker_state.json
+
+# Local Task Scheduler wrapper (machine-specific python path)
+run_maker_shadow.cmd
+permanent_data/maker_scheduler.log

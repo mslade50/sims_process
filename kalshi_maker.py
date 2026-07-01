@@ -310,24 +310,13 @@ def _apply_event_filter(markets, sim_player_set, label):
 
 # ── Sim probability load ───────────────────────────────────────────────
 _SIM_FAIRS_CACHE = None
+_SIM_FAIRS_META = {}
 
 
-def _fetch_sim_fairs(force=False):
-    """Fetch the PUBLISHED sim fairs (sim_fairs.json): GitHub repo first (so any
-    machine gets the latest CI/locally-published fairs), local file fallback —
-    mirrors odds_loader._fetch_scraped_json for golf_scraping. Cached per run.
-    Returns the payload dict or None.
-
-    The sim publishes sim_fairs.json (publish_sim_fairs.py commits + pushes it); the
-    maker just reads it, so NO local new_sim run is needed. Set SIMS_PROCESS_PAT (or
-    GH_TOKEN) to read the private repo from a machine without the repo cloned."""
-    global _SIM_FAIRS_CACHE
-    if _SIM_FAIRS_CACHE is not None and not force:
-        return _SIM_FAIRS_CACHE
+def _fetch_sim_fairs_github():
     repo = os.getenv("SIMS_PROCESS_REPO", "mslade50/sims_process")
     branch = os.getenv("SIMS_PROCESS_BRANCH", "main")
     token = os.getenv("SIMS_PROCESS_PAT") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
-    payload = None
     try:
         import requests
         headers = {"Accept": "application/vnd.github.raw+json", "User-Agent": _BROWSER_UA}
@@ -336,21 +325,47 @@ def _fetch_sim_fairs(force=False):
         url = f"https://api.github.com/repos/{repo}/contents/sim_fairs.json?ref={branch}"
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
-        payload = r.json()
-        print(f"  [probs] sim_fairs.json from GitHub ({repo}@{branch}: "
-              f"tourney={payload.get('tourney')}, generated_at={payload.get('generated_at')})")
+        return r.json()
     except Exception as e:
-        print(f"  [probs] GitHub sim_fairs fetch failed ({e}); trying local")
-        local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_fairs.json")
-        try:
-            with open(local, encoding="utf-8") as f:
-                payload = _json.load(f)
-            print(f"  [probs] sim_fairs.json local fallback "
-                  f"(tourney={payload.get('tourney')}, generated_at={payload.get('generated_at')})")
-        except Exception as e2:
-            print(f"  [probs] local sim_fairs.json unavailable ({e2})")
-            payload = None
+        print(f"  [probs] GitHub sim_fairs fetch failed ({e})")
+        return None
+
+
+def _read_sim_fairs_local():
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_fairs.json")
+    try:
+        with open(local, encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+
+def _fetch_sim_fairs(force=False):
+    """Published sim fairs (sim_fairs.json). Reads BOTH GitHub (origin) and the local
+    working-tree copy and uses whichever has the newer generated_at — so a failed
+    publish-push (fresh local, stale origin) can't strand the maker on stale fairs,
+    and a machine without the repo still gets origin. Cached per run.
+
+    The sim publishes sim_fairs.json (publish_sim_fairs.py commits + pushes it); the
+    maker just reads it, so NO local new_sim run is needed. Set SIMS_PROCESS_PAT (or
+    GH_TOKEN) to read the repo from a machine without it cloned."""
+    global _SIM_FAIRS_CACHE, _SIM_FAIRS_META
+    if _SIM_FAIRS_CACHE is not None and not force:
+        return _SIM_FAIRS_CACHE
+    options = [(p, src) for p, src in ((_fetch_sim_fairs_github(), "github"),
+                                       (_read_sim_fairs_local(), "local")) if p]
+    if not options:
+        print("  [probs] sim_fairs.json unavailable (GitHub + local both failed)")
+        payload, source = None, None
+    else:
+        payload, source = max(
+            options, key=lambda ps: maker_guard.parse_fairs_ts(ps[0].get("generated_at")) or 0.0)
+        print(f"  [probs] sim_fairs.json via {source} (freshest of "
+              f"{[s for _, s in options]}): tourney={payload.get('tourney')}, "
+              f"generated_at={payload.get('generated_at')}")
     _SIM_FAIRS_CACHE = payload
+    _SIM_FAIRS_META = {"source": source, "generated_at": (payload or {}).get("generated_at"),
+                       "tourney": (payload or {}).get("tourney")}
     return payload
 
 
@@ -1490,9 +1505,16 @@ if __name__ == "__main__":
     gov_report = None
     if cands:
         try:
+            # GOLF ONLY: filter positions to golf tickers so unrelated markets
+            # (e.g. Bitcoin) don't consume the maker's caps.
+            golf_positions = [p for p in list_positions()
+                              if _is_golf_ticker(p.get("ticker", ""))]
             exposure = maker_guard.build_exposure(
-                list_positions(), list_resting_orders(golf_only=True))
+                golf_positions, list_resting_orders(golf_only=True))
             before = len(cands)
+            _pe = sorted(exposure["per_event"].items(), key=lambda x: -x[1])[:4]
+            print(f"\n[governor] held+resting golf exposure (netted): total ${exposure['total']:.0f}"
+                  + (" | " + ", ".join(f"{e}=${v:.0f}" for e, v in _pe) if _pe else ""))
             cands, gov = maker_guard.apply_exposure_caps(cands, exposure)
             gov_report = gov
             caps = gov["caps"]
@@ -1538,6 +1560,13 @@ if __name__ == "__main__":
             "block_yes_pre_wed": {"enabled": True,
                                   "active_now": bool(maker_guard.before_wed_cutoff()),
                                   "blocked": 0}},
+        "fairs": {
+            "generated_at": _SIM_FAIRS_META.get("generated_at"),
+            "source": _SIM_FAIRS_META.get("source"),
+            "age_hours": (round((time.time() - _ft) / 3600.0, 1)
+                          if (_ft := maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("generated_at")))
+                          else None),
+        },
     }
     try:
         os.makedirs("permanent_data", exist_ok=True)
