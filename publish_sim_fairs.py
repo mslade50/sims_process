@@ -48,7 +48,11 @@ ROUND_SAMPLE_N = 2000  # downsampled sims kept for board-side 3-ball/round-match
 # and fetched by the board from GitHub, exactly like round_samples.parquet — same
 # git transport, no per-machine Cloudflare creds needed.
 LOCAL_TOURN_SAMPLES = PROJECT_ROOT / "tournament_samples.parquet"
-TOURN_SAMPLE_N = 3000
+# Draws kept in the finish tape. High on purpose (the tape is the exact-joint accuracy
+# path); the full 100k sim can't ride git / a browser optimizer, but the correlation
+# and the sample-average optimum converge well below it, and displayed marginals come
+# from the full run via sim_fairs. ~20k -> ~14MB parquet.
+TOURN_SAMPLE_N = 20000
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
