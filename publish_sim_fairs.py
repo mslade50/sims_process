@@ -48,7 +48,14 @@ ROUND_SAMPLE_N = 2000  # downsampled sims kept for board-side 3-ball/round-match
 # and fetched by the board from GitHub, exactly like round_samples.parquet — same
 # git transport, no per-machine Cloudflare creds needed.
 LOCAL_TOURN_SAMPLES = PROJECT_ROOT / "tournament_samples.parquet"
-TOURN_SAMPLE_N = 3000
+# Draws in the GIT tape (fallback + client book-re-solve source). The FULL tape (all
+# draws) is uploaded as a GitHub RELEASE ASSET (not git history, not R2) for build.py's
+# server-side full-resolution solve — no repo bloat, no R2/cross-account, and it uses
+# the GH_TOKEN this repo already has (board downloads with its SIMS_PROCESS_PAT).
+TOURN_SAMPLE_N = 20000
+GH_REPO = "mslade50/sims_process"
+FULL_TAPE_TAG = "sim-data"
+FULL_TAPE_ASSET = "tournament_samples_full.parquet"
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -366,7 +373,7 @@ def _build_round_samples(tourney: str, rnd, repl: dict):
     return df
 
 
-def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
+def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, max_draws=TOURN_SAMPLE_N):
     """Downsampled per-draw 72-hole FINISH tape (players x TOURN_SAMPLE_N) from the
     tournament sim's `final_scores` — the exact joint the board's portfolio optimizer
     uses for correlated Kelly on outrights + tournament matchups. Values are int16
@@ -391,8 +398,8 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
                        f"mismatch — skipping")
         return None
     n = scores.shape[1]
-    if n > TOURN_SAMPLE_N:                                # fixed-stride downsample keeps the joint
-        idx = np.linspace(0, n - 1, TOURN_SAMPLE_N).round().astype(int)
+    if max_draws and n > max_draws:                      # fixed-stride downsample keeps the joint
+        idx = np.linspace(0, n - 1, max_draws).round().astype(int)
         scores = scores[:, idx]
     scores = scores.astype("int16")
     df = pd.DataFrame(scores, index=[_norm(nm, repl) for nm in names],
@@ -408,6 +415,54 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
     logger.info(f"tournament_samples: {df.shape[0]} players x {df.shape[1]} draws "
                 f"(event {event_id})")
     return tbl
+
+
+def _upload_full_tape_release(tourney, event_id, generated_at, repl) -> bool:
+    """Build the FULL-resolution finish tape (ALL sim draws, no downsample) and upload
+    it as a GitHub RELEASE ASSET on this repo (tag `sim-data`), using GH_TOKEN. The
+    board downloads it with its SIMS_PROCESS_PAT for the server-side full-resolution
+    solve — no R2, no cross-account creds, no per-machine setup, no git-history bloat
+    (release assets are stored separately). No-op (warns) if GH_TOKEN / requests /
+    final_scores are missing."""
+    import os
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        logger.warning("full tape: GH_TOKEN not set — skipping release upload (board uses git tape)")
+        return False
+    tbl = _build_tournament_samples(tourney, event_id, generated_at, repl, max_draws=None)
+    if tbl is None:
+        return False
+    try:
+        import io
+        import requests
+        import pyarrow.parquet as pq
+        buf = io.BytesIO()
+        pq.write_table(tbl, buf)
+        data = buf.getvalue()
+        api = "https://api.github.com"
+        H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+             "X-GitHub-Api-Version": "2022-11-28"}
+        # find (or create) the sim-data release
+        r = requests.get(f"{api}/repos/{GH_REPO}/releases/tags/{FULL_TAPE_TAG}", headers=H, timeout=30)
+        if r.status_code == 404:
+            r = requests.post(f"{api}/repos/{GH_REPO}/releases", headers=H, timeout=30, json={
+                "tag_name": FULL_TAPE_TAG, "name": "Sim data (board tapes)", "prerelease": True,
+                "body": "Full-resolution tournament finish tape for the odds-board portfolio solve."})
+        r.raise_for_status()
+        rel = r.json()
+        # asset names must be unique — delete the previous one first
+        for a in rel.get("assets", []):
+            if a.get("name") == FULL_TAPE_ASSET:
+                requests.delete(f"{api}/repos/{GH_REPO}/releases/assets/{a['id']}", headers=H, timeout=30)
+        up = f"https://uploads.github.com/repos/{GH_REPO}/releases/{rel['id']}/assets?name={FULL_TAPE_ASSET}"
+        ur = requests.post(up, headers={**H, "Content-Type": "application/octet-stream"}, data=data, timeout=600)
+        ur.raise_for_status()
+        logger.info(f"full tape: uploaded {tbl.num_rows} players x {tbl.num_columns - 1} draws "
+                    f"-> release {FULL_TAPE_TAG}/{FULL_TAPE_ASSET} ({len(data) // 1_000_000}MB)")
+        return True
+    except Exception as e:
+        logger.warning(f"full tape: release upload failed ({e})")
+        return False
 
 
 def _cache_meta(tourney: str, rnd) -> dict:
@@ -756,6 +811,15 @@ def publish(push: bool = True) -> dict:
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
     except Exception as e:
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
+
+    # FULL-resolution tape -> GitHub Release asset (build.py fetches it for the 100k
+    # server-side solve). Uses GH_TOKEN; no R2 / no per-machine creds.
+    try:
+        if push:
+            _upload_full_tape_release(payload["tourney"], payload.get("event_id"),
+                                      payload.get("generated_at"), _name_replacements())
+    except Exception as e:
+        logger.warning(f"full tape release upload failed (non-fatal): {e}")
 
     if push:
         _git_push(files)
