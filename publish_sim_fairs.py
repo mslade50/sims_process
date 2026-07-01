@@ -44,14 +44,11 @@ ROUND_SAMPLE_N = 2000  # downsampled sims kept for board-side 3-ball/round-match
 
 # Per-draw tournament FINISH tape (final_scores downsample) for the board's
 # correlated-Kelly portfolio optimizer — the EXACT tournament joint (winner/top-N/
-# H2H), replacing the board's Gaussian-copula approximation. Pushed to the BOARD's
-# R2 bucket (a different CF account than this sim's own golf-odds-data), so it needs
-# the board account's creds in BOARD_R2_ACCOUNT_ID / BOARD_R2_ACCESS_KEY_ID /
-# BOARD_R2_SECRET_ACCESS_KEY. Absent creds -> local write only (board keeps the copula).
+# H2H), replacing the board's Gaussian-copula approximation. Committed to this repo
+# and fetched by the board from GitHub, exactly like round_samples.parquet — same
+# git transport, no per-machine Cloudflare creds needed.
 LOCAL_TOURN_SAMPLES = PROJECT_ROOT / "tournament_samples.parquet"
 TOURN_SAMPLE_N = 3000
-BOARD_R2_BUCKET = "golf-odds-board"
-BOARD_R2_KEY = "board/tournament_samples.parquet"
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -413,36 +410,6 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
     return tbl
 
 
-def _push_board_r2(local_path: Path, key: str) -> bool:
-    """Upload a file to the BOARD's Cloudflare R2 bucket (S3 API). The board lives in
-    a different CF account than this sim's own R2, so this uses a DEDICATED cred set:
-    BOARD_R2_ACCOUNT_ID / BOARD_R2_ACCESS_KEY_ID / BOARD_R2_SECRET_ACCESS_KEY. No-ops
-    (warns) if boto3 or the creds are missing, so a sim run never fails on this."""
-    import os
-    acct = os.environ.get("BOARD_R2_ACCOUNT_ID")
-    ak = os.environ.get("BOARD_R2_ACCESS_KEY_ID")
-    sk = os.environ.get("BOARD_R2_SECRET_ACCESS_KEY")
-    if not (acct and ak and sk):
-        logger.warning("tournament_samples: BOARD_R2_* creds not set — wrote local file only "
-                       "(set BOARD_R2_ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY to push to the board)")
-        return False
-    try:
-        import boto3
-    except ImportError:
-        logger.warning("tournament_samples: boto3 not installed — skipping R2 push")
-        return False
-    try:
-        client = boto3.client("s3", endpoint_url=f"https://{acct}.r2.cloudflarestorage.com",
-                              aws_access_key_id=ak, aws_secret_access_key=sk, region_name="auto")
-        client.put_object(Bucket=BOARD_R2_BUCKET, Key=key,
-                          Body=local_path.read_bytes(), ContentType="application/octet-stream")
-        logger.info(f"tournament_samples: pushed -> r2://{BOARD_R2_BUCKET}/{key}")
-        return True
-    except Exception as e:
-        logger.warning(f"tournament_samples: R2 push failed ({e}); local file kept")
-        return False
-
-
 def _cache_meta(tourney: str, rnd) -> dict:
     """Read the sim_cache meta sidecar (carries pred_lookup + wx_lookup)."""
     if not rnd:
@@ -775,18 +742,18 @@ def publish(push: bool = True) -> dict:
     files.extend(write_round_h2h(payload["tourney"], payload.get("round"), _name_replacements()))
     files.extend(write_round_3ball(payload["tourney"], payload.get("round"), _name_replacements()))
 
-    # Tournament finish tape -> the board's R2 (NOT committed to this repo: it changes
-    # every run and belongs in object storage). Gives the board the exact tournament
-    # joint for correlated-Kelly staking. Best-effort — never breaks a sim/publish run.
+    # Tournament finish tape -> committed to this repo (git transport, exactly like
+    # round_samples.parquet) so the board fetches it from GitHub. Gives the board the
+    # exact tournament joint for correlated-Kelly staking. Best-effort — never breaks
+    # a sim/publish run; if final_scores isn't cached the board keeps the copula.
     try:
         import pyarrow.parquet as pq
         tape = _build_tournament_samples(payload["tourney"], payload.get("event_id"),
                                          payload.get("generated_at"), _name_replacements())
         if tape is not None:
             pq.write_table(tape, LOCAL_TOURN_SAMPLES)
+            files.append("tournament_samples.parquet")
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
-            if push:
-                _push_board_r2(LOCAL_TOURN_SAMPLES, BOARD_R2_KEY)
     except Exception as e:
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
 
