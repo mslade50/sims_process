@@ -48,11 +48,12 @@ ROUND_SAMPLE_N = 2000  # downsampled sims kept for board-side 3-ball/round-match
 # and fetched by the board from GitHub, exactly like round_samples.parquet — same
 # git transport, no per-machine Cloudflare creds needed.
 LOCAL_TOURN_SAMPLES = PROJECT_ROOT / "tournament_samples.parquet"
-# Draws kept in the finish tape. High on purpose (the tape is the exact-joint accuracy
-# path); the full 100k sim can't ride git / a browser optimizer, but the correlation
-# and the sample-average optimum converge well below it, and displayed marginals come
-# from the full run via sim_fairs. ~20k -> ~14MB parquet.
+# Draws in the GIT tape (fallback + client book-re-solve source). The FULL tape (all
+# draws) goes to R2 for build.py's server-side full-resolution solve — git can't hold
+# ~30MB/run, R2 can.
 TOURN_SAMPLE_N = 20000
+SIM_R2_BUCKET = "golf-odds-data"           # this sim's OWN R2 account (existing creds)
+SIM_R2_FULL_KEY = "board/tournament_samples_full.parquet"
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -370,7 +371,7 @@ def _build_round_samples(tourney: str, rnd, repl: dict):
     return df
 
 
-def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
+def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, max_draws=TOURN_SAMPLE_N):
     """Downsampled per-draw 72-hole FINISH tape (players x TOURN_SAMPLE_N) from the
     tournament sim's `final_scores` — the exact joint the board's portfolio optimizer
     uses for correlated Kelly on outrights + tournament matchups. Values are int16
@@ -395,8 +396,8 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
                        f"mismatch — skipping")
         return None
     n = scores.shape[1]
-    if n > TOURN_SAMPLE_N:                                # fixed-stride downsample keeps the joint
-        idx = np.linspace(0, n - 1, TOURN_SAMPLE_N).round().astype(int)
+    if max_draws and n > max_draws:                      # fixed-stride downsample keeps the joint
+        idx = np.linspace(0, n - 1, max_draws).round().astype(int)
         scores = scores[:, idx]
     scores = scores.astype("int16")
     df = pd.DataFrame(scores, index=[_norm(nm, repl) for nm in names],
@@ -412,6 +413,39 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict):
     logger.info(f"tournament_samples: {df.shape[0]} players x {df.shape[1]} draws "
                 f"(event {event_id})")
     return tbl
+
+
+def _push_full_tape_r2(tourney, event_id, generated_at, repl) -> bool:
+    """Build the FULL-resolution finish tape (ALL sim draws, no downsample) and push it
+    to this sim's own R2 bucket (golf-odds-data) with its existing creds. build.py
+    fetches it for the server-side full-resolution correlated-Kelly solve. Git can't
+    hold ~30MB/run; R2 can. No-ops (warns) if creds/boto3 are missing."""
+    import os
+    acct = os.environ.get("CF_ACCOUNT_ID")
+    ak = os.environ.get("R2_ACCESS_KEY_ID")
+    sk = os.environ.get("R2_SECRET_ACCESS_KEY")
+    if not (acct and ak and sk):
+        logger.warning("full tape: R2 creds not set — skipping full-tape push (board uses git tape)")
+        return False
+    tbl = _build_tournament_samples(tourney, event_id, generated_at, repl, max_draws=None)
+    if tbl is None:
+        return False
+    try:
+        import io
+        import boto3
+        import pyarrow.parquet as pq
+        buf = io.BytesIO()
+        pq.write_table(tbl, buf)
+        client = boto3.client("s3", endpoint_url=f"https://{acct}.r2.cloudflarestorage.com",
+                              aws_access_key_id=ak, aws_secret_access_key=sk, region_name="auto")
+        client.put_object(Bucket=SIM_R2_BUCKET, Key=SIM_R2_FULL_KEY, Body=buf.getvalue(),
+                          ContentType="application/octet-stream")
+        logger.info(f"full tape: pushed {tbl.num_rows} players x {tbl.num_columns - 1} draws "
+                    f"-> r2://{SIM_R2_BUCKET}/{SIM_R2_FULL_KEY} ({len(buf.getvalue()) // 1_000_000}MB)")
+        return True
+    except Exception as e:
+        logger.warning(f"full tape: R2 push failed ({e})")
+        return False
 
 
 def _cache_meta(tourney: str, rnd) -> dict:
@@ -760,6 +794,14 @@ def publish(push: bool = True) -> dict:
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
     except Exception as e:
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
+
+    # FULL-resolution tape -> R2 (build.py fetches it for the 100k server-side solve).
+    try:
+        if push:
+            _push_full_tape_r2(payload["tourney"], payload.get("event_id"),
+                               payload.get("generated_at"), _name_replacements())
+    except Exception as e:
+        logger.warning(f"full tape R2 push failed (non-fatal): {e}")
 
     if push:
         _git_push(files)
