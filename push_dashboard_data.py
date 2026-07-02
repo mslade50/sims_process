@@ -245,7 +245,19 @@ def git_push(dry_run=False):
     # Commit ONLY our pathspec — any other staged change is left untouched, never pushed.
     _run(["git", "commit", "-m", "Update dashboard data for Render deploy", "--", *paths])
 
-    # Push with up to 3 retries (pull+rebase on rejection)
+    # Push with up to 3 retries (pull+rebase on rejection). Failures alert:
+    # this commit carries the cross-machine skill-update state
+    # (model_predictions_r{N} / r{N}_live_model) — if it silently doesn't land,
+    # another machine or nightly CI runs the next round on stale predictions.
+    def _fail(msg):
+        print(f"  ERROR: {msg}")
+        try:
+            from maker_alerts import send_telegram
+            send_telegram(f"[push_dashboard_data] {msg} — dashboard_data on origin "
+                          f"is STALE; next-round sims elsewhere will use old state")
+        except Exception as e:
+            print(f"  (telegram alert failed: {e})")
+
     for attempt in range(3):
         result = _run(["git", "push"])
         if result.returncode == 0:
@@ -256,13 +268,13 @@ def git_push(dry_run=False):
             # abort the rebase; the stash is reapplied after.
             rebase = _run(["git", "pull", "--rebase", "--autostash"])
             if rebase.returncode != 0:
-                print(f"  ERROR: pull --rebase failed: {rebase.stderr.strip()}")
+                _fail(f"pull --rebase failed: {rebase.stderr.strip()[:160]}")
                 break
         else:
-            print(f"  ERROR: git push failed: {result.stderr.strip()}")
+            _fail(f"git push failed: {result.stderr.strip()[:160]}")
             break
     else:
-        print("  ERROR: push failed after 3 attempts.")
+        _fail("push failed after 3 attempts")
 
 
 def main():

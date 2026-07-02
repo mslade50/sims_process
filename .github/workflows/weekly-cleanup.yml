@@ -47,7 +47,9 @@ jobs:
         KEEP=(
           ! -name "*${TOURNEY}*"
           ! -name "round_h2h_r*.parquet"
+          ! -name "round_3ball_r*.parquet"
           ! -name "round_samples.parquet"
+          ! -name "tournament_samples.parquet"
           ! -name "sg_dist_player.csv"
           ! -name "this_week_dists_v2.csv"
         )
