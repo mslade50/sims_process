@@ -187,15 +187,119 @@ eq("h2h not an outright", mg.block_yes_outright("yes", "h2h", now=D(1, 10)), Fal
 eq("yes after cutoff allowed", mg.block_yes_outright("yes", "winner", now=D(3, 10)), False)
 eq("rule disabled -> allowed", mg.block_yes_outright("yes", "winner", now=D(1, 10), rule_enabled=False), False)
 
-# ── Published sim_fairs.json freshness ─────────────────────────────────────────
-_gen = "2026-06-30 02:05:04 UTC"
-_ts = mg.parse_fairs_ts(_gen)
-eq("parse generated_at", _ts is not None, True)
-eq("fresh fairs ok", mg.check_fairs_fresh_payload({"tourney": "deere", "generated_at": _gen}, _ts + 3600, tourney="deere")[0], True)
-eq("stale fairs blocked", mg.check_fairs_fresh_payload({"tourney": "deere", "generated_at": _gen}, _ts + 100 * 3600, tourney="deere")[0], False)
-eq("wrong tourney blocked", mg.check_fairs_fresh_payload({"tourney": "us_open", "generated_at": _gen}, _ts + 3600, tourney="deere")[0], False)
+# ── Published sim_fairs.json freshness (fail-closed on sim_run_at) ─────────────
+_run = "2026-06-30 02:05:04 UTC"
+_ts = mg.parse_fairs_ts(_run)
+eq("parse sim stamp", _ts is not None, True)
+eq("parse ISO stamp", mg.parse_fairs_ts("2026-06-30T02:05:04Z"), _ts)
+_pl = {"tourney": "deere", "sim_run_at": _run, "generated_at": _run}
+eq("fresh fairs ok", mg.check_fairs_fresh_payload(_pl, _ts + 3600, tourney="deere")[0], True)
+eq("stale fairs blocked", mg.check_fairs_fresh_payload(_pl, _ts + 100 * 3600, tourney="deere")[0], False)
+eq("wrong tourney blocked", mg.check_fairs_fresh_payload({**_pl, "tourney": "us_open"}, _ts + 3600, tourney="deere")[0], False)
 eq("no payload blocked", mg.check_fairs_fresh_payload(None, _ts, tourney="deere")[0], False)
-eq("missing generated_at -> present ok", mg.check_fairs_fresh_payload({"tourney": "deere"}, _ts, tourney="deere")[0], True)
+eq("missing sim_run_at blocked (generated_at untrusted)",
+   mg.check_fairs_fresh_payload({"tourney": "deere", "generated_at": _run}, _ts + 3600, tourney="deere")[0], False)
+eq("unparseable sim_run_at blocked",
+   mg.check_fairs_fresh_payload({**_pl, "sim_run_at": "yesterday-ish"}, _ts + 3600, tourney="deere")[0], False)
+
+# round-consistency gate + tighter intra-event cap (default 8h live vs 48h pre)
+_pl_r2 = {**_pl, "round": 2}
+eq("round match ok", mg.check_fairs_fresh_payload(_pl_r2, _ts + 3600, tourney="deere", current_round=2)[0], True)
+eq("round mismatch blocked", mg.check_fairs_fresh_payload(_pl_r2, _ts + 3600, tourney="deere", current_round=3)[0], False)
+eq("pre-cut fairs blocked post-cut", mg.check_fairs_fresh_payload(_pl, _ts + 3600, tourney="deere", current_round=3)[0], False)
+eq("R1 skips round gate", mg.check_fairs_fresh_payload(_pl, _ts + 3600, tourney="deere", current_round=1)[0], True)
+eq("intra-event 8h cap binds", mg.check_fairs_fresh_payload(_pl_r2, _ts + 10 * 3600, tourney="deere", current_round=2)[0], False)
+eq("same age fine pre-event (48h cap)", mg.check_fairs_fresh_payload(_pl, _ts + 10 * 3600, tourney="deere", current_round=1)[0], True)
+
+# ── own-resting netting (no double-count / no cancel-repost oscillator) ────────
+# Resting script quote 250 @ 20c = $50 == the per-market cap. Re-quoting the SAME
+# price replaces it in reconcile, so it must survive the governor; without the
+# netting it was charged twice (drop -> reconcile cancels -> next run re-posts).
+exp_own = mg.build_exposure([], [{"ticker": "KXPGATOP20-DEERE-AAA", "side": "yes",
+                                  "remaining_count_fp": "250", "yes_price_dollars": "0.20"}])
+c_same = [{"ticker": "KXPGATOP20-DEERE-AAA", "side": "yes", "post_price": 0.20,
+           "contracts": 250, "kelly_f": 0.5}]
+own = {("KXPGATOP20-DEERE-AAA", "yes", 200): 50.0}
+kept, rep = mg.apply_exposure_caps(c_same, exp_own, CAPS, own_resting=own)
+eq("same-price requote survives cap", len(kept), 1)
+eq("requote keeps full size", kept[0]["contracts"] if kept else 0, 250)
+truthy("requote charges ~0 new $/run", rep["new_usd"] <= 1e-6)
+kept2, _rep2 = mg.apply_exposure_caps(c_same, exp_own, CAPS)
+eq("no netting -> dropped (documents the old oscillator)", len(kept2), 0)
+# a candidate at a DIFFERENT price does not net the resting quote (it still rests)
+c_diff = [{"ticker": "KXPGATOP20-DEERE-AAA", "side": "yes", "post_price": 0.25,
+           "contracts": 250, "kelly_f": 0.5}]
+kept3, _ = mg.apply_exposure_caps(c_diff, exp_own, CAPS, own_resting=own)
+eq("different price not netted", len(kept3), 0)
+# upsized requote charges only the increment to the run budget
+c_up = [{"ticker": "KXPGATOP20-DEERE-AAA", "side": "yes", "post_price": 0.20,
+         "contracts": 400, "kelly_f": 0.5}]
+caps_up = dict(CAPS, per_market_usd=100.0)
+kept4, rep4 = mg.apply_exposure_caps(c_up, exp_own, caps_up, own_resting=dict(own))
+eq("upsized requote kept", kept4[0]["contracts"] if kept4 else 0, 400)
+eq("upsize charges increment only", round(rep4["new_usd"], 2), 30.0)  # $80 - $50
+
+# ── daily realized-loss circuit breaker ────────────────────────────────────────
+import datetime as _dt2
+_now = _dt2.datetime(2026, 7, 1, 18, 0, tzinfo=_dt2.timezone.utc).timestamp()  # 14:00 ET Jul 1
+_setts = [
+    {"ticker": "KXPGATOUR-DEERE-A", "settled_time": "2026-07-01T15:00:00Z",
+     "revenue": 0, "yes_total_cost": 12000, "no_total_cost": 0},          # -$120 today
+    {"ticker": "KXPGATOUR-DEERE-B", "settled_time": "2026-07-01T16:00:00Z",
+     "revenue_dollars": "50.00", "yes_total_cost_dollars": "30.00"},      # +$20 today
+    {"ticker": "KXPGATOUR-DEERE-C", "settled_time": "2026-06-28T15:00:00Z",
+     "revenue": 0, "yes_total_cost": 99900},                              # old — ignored
+]
+eq("pnl today (ET day, $ + cents fields)", round(mg.realized_pnl_today(_setts, _now), 2), -100.0)
+eq("loss under cap ok", mg.check_daily_loss(_setts, _now, max_loss_usd=150.0)[0], True)
+eq("loss breach halts", mg.check_daily_loss(_setts, _now, max_loss_usd=100.0)[0], False)
+eq("breaker disabled ok", mg.check_daily_loss(_setts, _now, max_loss_usd=0)[0], True)
+eq("no settlements ok", mg.check_daily_loss([], _now, max_loss_usd=100.0)[0], True)
+
+# ── balance-vs-caps sanity ─────────────────────────────────────────────────────
+os.environ.pop("MAKER_ALLOW_CAPS_OVER_BALANCE", None)
+eq("balance covers per-run need", mg.check_balance_caps(500.0, 0.0, CAPS)[0], True)
+eq("balance short halts", mg.check_balance_caps(100.0, 0.0, CAPS)[0], False)
+eq("exposure shrinks the need", mg.check_balance_caps(100.0, 950.0, CAPS)[0], True)  # room $50
+eq("unreadable balance halts", mg.check_balance_caps(None, 0.0, CAPS)[0], False)
+os.environ["MAKER_ALLOW_CAPS_OVER_BALANCE"] = "1"
+eq("override allows small balance", mg.check_balance_caps(1.0, 0.0, CAPS)[0], True)
+os.environ.pop("MAKER_ALLOW_CAPS_OVER_BALANCE", None)
+
+# ── maker_alerts.diff_alerts (pure decision core) ──────────────────────────────
+import maker_alerts as ma
+
+al, st = ma.diff_alerts({}, "HALT", "kill switch", postfail_streak_n=3)
+eq("first run: no transition alert", len(al), 0)
+al, st = ma.diff_alerts(st, "TRADE", "enabled", postfail_streak_n=3)
+eq("HALT->TRADE alerts", len(al), 1)
+al, st = ma.diff_alerts(st, "TRADE", "enabled", postfail_streak_n=3)
+eq("steady TRADE silent", len(al), 0)
+al, st = ma.diff_alerts(st, "HALT", "fairs stale", postfail_streak_n=3)
+eq("TRADE->HALT alerts with reason", ("fairs stale" in (al[0] if al else "")), True)
+al, st = ma.diff_alerts(st, "HALT", "fairs stale",
+                        post_report={"failed": 1, "posted": 0, "rearmed": 0}, postfail_streak_n=2)
+eq("post-fail streak 1 silent", len(al), 0)
+al, st = ma.diff_alerts(st, "HALT", "fairs stale",
+                        post_report={"failed": 2, "posted": 1, "rearmed": 0}, postfail_streak_n=2)
+eq("post-fail streak hits threshold", len(al), 1)
+al, st = ma.diff_alerts(st, "HALT", "fairs stale",
+                        post_report={"failed": 0, "posted": 3, "rearmed": 1}, postfail_streak_n=2)
+eq("clean run resets streak", st["postfail_streak"], 0)
+
+_f1 = {"ticker": "KXPGATOUR-DEERE-A", "side": "yes", "count": 10,
+       "yes_price": 15, "created_time": "2026-07-01T15:00:00Z"}
+_f2 = {"ticker": "KXPGATOUR-DEERE-B", "side": "no", "count": 5,
+       "no_price_dollars": "0.40", "created_time": "2026-07-01T16:00:00Z"}
+al, st = ma.diff_alerts({}, "TRADE", "ok", fills=None, postfail_streak_n=9)
+eq("fills None leaves watermark unset", "last_fill_ts" in st, False)
+al, st = ma.diff_alerts(st, "TRADE", "ok", fills=[_f1], postfail_streak_n=9)
+eq("first fill data baselines silently", len(al), 0)
+al, st = ma.diff_alerts(st, "TRADE", "ok", fills=[_f1, _f2], postfail_streak_n=9)
+eq("new fill alerts", len(al), 1)
+eq("fill line format", "KXPGATOUR-DEERE-B" in al[0], True)
+al, st = ma.diff_alerts(st, "TRADE", "ok", fills=[_f1, _f2], postfail_streak_n=9)
+eq("no re-alert on same fills", len(al), 0)
 
 print(f"\n{_p} passed, {_f} failed")
 raise SystemExit(1 if _f else 0)

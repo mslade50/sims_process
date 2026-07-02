@@ -186,6 +186,7 @@ cleanup_backup_*.tar.gz
 !kalshi_exec/
 !dashboard_data/
 !maker_dashboard/
+!deploy/
 
 # Rust sim-kernel crate (PyO3 extension); rust/.gitignore handles target/, *.pyd/.so, oracle .npy
 !rust/
@@ -270,6 +271,7 @@ permanent_data/MAKER_HALT
 # Shadow-run logs (transient)
 permanent_data/shadow_logs/
 permanent_data/maker_state.json
+permanent_data/maker_alert_state.json
 
 # Local Task Scheduler wrapper (machine-specific python path)
 run_maker_shadow.cmd

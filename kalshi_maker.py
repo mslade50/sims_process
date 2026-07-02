@@ -309,23 +309,68 @@ def _detect_target_event_code(markets, sim_player_set):
     return target, dict(counts)
 
 
+# Fail-closed thresholds for event auto-detection (env-overridable). Quoting the
+# wrong event (e.g. Sunday night with unrotated sim_inputs: last week's markets
+# gone, next week's open, and last week's sim players overlapping next week's
+# field) is strictly worse than quoting nothing.
+def _env_float(name, default):
+    try:
+        v = os.getenv(name)
+        return float(v) if v not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+EVENT_MIN_MATCHES = _env_int("MAKER_EVENT_MIN_MATCHES", 5)
+EVENT_MIN_MATCH_FRAC = _env_float("MAKER_EVENT_MIN_MATCH_FRAC", 0.70)
+EVENT_AMBIGUITY_RATIO = _env_float("MAKER_EVENT_AMBIGUITY_RATIO", 0.80)
+
+
 def _apply_event_filter(markets, sim_player_set, label):
-    """Detect the target Kalshi event from sim-player overlap and filter
-    markets to that event. Prints a one-line summary or warning. Used by
-    both scan() (outrights) and scan_matchups()."""
+    """Detect the target Kalshi event from sim-player overlap and filter markets
+    to that event. Used by both scan() (outrights) and scan_matchups().
+
+    FAIL-CLOSED: returns [] (quote nothing; --live then runs a cancel-only
+    reconcile) instead of guessing when
+      * no event has any sim-player overlap,
+      * the best event has too few matches (< EVENT_MIN_MATCHES),
+      * the best event's markets match the sim too weakly (< EVENT_MIN_MATCH_FRAC
+        of its markets — the true event's field ≈ the sim's field, so a weak
+        fraction means the sim is for a DIFFERENT event), or
+      * a runner-up event is close enough to be ambiguous (>= EVENT_AMBIGUITY_RATIO
+        of the leader's matches).
+    """
     target, counts = _detect_target_event_code(markets, sim_player_set)
     if target is None:
-        print(f"  [{label}] no sim-player overlap on any event — keeping all "
-              f"{len(markets)} markets")
-        return markets
+        print(f"  [{label}] FAIL-CLOSED: no sim-player overlap on any event "
+              f"({len(markets)} markets) — quoting nothing. Rotate sim_inputs?")
+        return []
+    totals = Counter(_ticker_event_code(m.get("ticker", "")) for m in markets)
     leader = counts[target]
+    frac = leader / max(1, totals.get(target, 0))
     runners = sorted(
         ((ec, c) for ec, c in counts.items() if ec != target),
         key=lambda x: -x[1],
     )
+    if leader < EVENT_MIN_MATCHES:
+        print(f"  [{label}] FAIL-CLOSED: best event {target} has only {leader} "
+              f"sim-player match(es) (< {EVENT_MIN_MATCHES}) — quoting nothing")
+        return []
+    if frac < EVENT_MIN_MATCH_FRAC:
+        print(f"  [{label}] FAIL-CLOSED: best event {target} matches only "
+              f"{leader}/{totals.get(target, 0)} of its markets ({frac:.0%} < "
+              f"{EVENT_MIN_MATCH_FRAC:.0%}) — the sim is likely for a different "
+              f"event (unrotated sim_inputs?). Quoting nothing")
+        return []
+    if runners and runners[0][1] >= EVENT_AMBIGUITY_RATIO * leader:
+        print(f"  [{label}] FAIL-CLOSED: ambiguous event detection — "
+              f"{target}={leader} vs {runners[0][0]}={runners[0][1]} matches. "
+              f"Quoting nothing")
+        return []
     filtered = [m for m in markets if _ticker_event_code(m.get("ticker", "")) == target]
-    msg = (f"  [{label}] target event={target} ({leader} sim-player matches) — "
-           f"filtered {len(markets)} -> {len(filtered)} markets")
+    msg = (f"  [{label}] target event={target} ({leader}/{totals.get(target, 0)} "
+           f"sim-player matches, {frac:.0%}) — filtered {len(markets)} -> "
+           f"{len(filtered)} markets")
     print(msg)
     if len(counts) > 1:
         other = ", ".join(f"{ec}={c}" for ec, c in runners[:4])
@@ -383,13 +428,22 @@ def _fetch_sim_fairs(force=False):
         print("  [probs] sim_fairs.json unavailable (GitHub + local both failed)")
         payload, source = None, None
     else:
-        payload, source = max(
-            options, key=lambda ps: maker_guard.parse_fairs_ts(ps[0].get("generated_at")) or 0.0)
+        # Prefer-fresher ranks on sim_run_at (when the SIM ran — publish_sim_fairs
+        # stamps it from source-file mtimes). generated_at is publish wall-clock and
+        # only breaks ties among legacy payloads; a payload with neither ranks last.
+        def _fairs_rank(p):
+            return (maker_guard.parse_fairs_ts(p.get("sim_run_at"))
+                    or maker_guard.parse_fairs_ts(p.get("generated_at"))
+                    or 0.0)
+        payload, source = max(options, key=lambda ps: _fairs_rank(ps[0]))
         print(f"  [probs] sim_fairs.json via {source} (freshest of "
               f"{[s for _, s in options]}): tourney={payload.get('tourney')}, "
+              f"sim_run_at={payload.get('sim_run_at')}, "
               f"generated_at={payload.get('generated_at')}")
     _SIM_FAIRS_CACHE = payload
     _SIM_FAIRS_META = {"source": source, "generated_at": (payload or {}).get("generated_at"),
+                       "sim_run_at": (payload or {}).get("sim_run_at"),
+                       "round": (payload or {}).get("round"),
                        "tourney": (payload or {}).get("tourney")}
     return payload
 
@@ -689,6 +743,53 @@ def list_positions():
     return out
 
 
+def list_settlements(max_pages=3):
+    """Recent settlements (newest first, paginated). A few pages is plenty for the
+    daily realized-loss window."""
+    out, cursor = [], None
+    for _ in range(max_pages):
+        path = "/trade-api/v2/portfolio/settlements?limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        r = _authed_request("GET", path)
+        r.raise_for_status()
+        data = r.json()
+        out.extend(data.get("settlements", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
+def get_balance_usd():
+    """Available cash balance in dollars (Kalshi reports integer cents)."""
+    r = _authed_request("GET", "/trade-api/v2/portfolio/balance")
+    r.raise_for_status()
+    data = r.json()
+    raw = data.get("balance_dollars")
+    if raw not in (None, ""):
+        return float(raw)
+    return float(data.get("balance") or 0) / 100.0
+
+
+def list_fills(max_pages=2):
+    """Recent fills (newest first, paginated). Used by maker_alerts to notify on
+    new inventory."""
+    out, cursor = [], None
+    for _ in range(max_pages):
+        path = "/trade-api/v2/portfolio/fills?limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        r = _authed_request("GET", path)
+        r.raise_for_status()
+        data = r.json()
+        out.extend(data.get("fills", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
 def _resting_key(o):
     """(ticker, side, milli_dollars) — the dedup grain for reconciliation.
 
@@ -962,6 +1063,8 @@ def reconcile_and_post(candidates):
         n_fail += int(not ok)
     print(f"\n[live] posted={n_ok}  failed={n_fail}  re-armed={len(rearm_post)}  "
           f"kept={kept}  cancelled_stale={len(stale)}")
+    return {"posted": n_ok, "failed": n_fail, "rearmed": len(rearm_post),
+            "kept": kept, "cancelled_stale": len(stale)}
 
 
 def cancel_all():
@@ -1366,7 +1469,37 @@ def _current_play_round():
 
 def _check_fairs_fresh():
     payload = _fetch_sim_fairs()
-    return maker_guard.check_fairs_fresh_payload(payload, time.time(), tourney=tourney)
+    return maker_guard.check_fairs_fresh_payload(
+        payload, time.time(), tourney=tourney, current_round=_current_play_round())
+
+
+def _check_risk_limits():
+    """Realized-loss circuit breaker + balance-vs-caps sanity. (ok, reason).
+    FAIL-CLOSED: if the portfolio endpoints are unreadable we refuse to trade
+    rather than guess — losses freeing cap room is exactly the state we must
+    never trade blind through."""
+    try:
+        caps = maker_guard.caps_from_env()
+        now = time.time()
+        if maker_guard._envf("MAKER_MAX_DAILY_LOSS_USD", 200.0) > 0:
+            setts = [s for s in list_settlements()
+                     if _is_golf_ticker(s.get("ticker", ""))]
+            ok, reason = maker_guard.check_daily_loss(setts, now)
+            if not ok:
+                return (ok, reason)
+        else:
+            reason = "daily-loss breaker disabled"
+        golf_positions = [p for p in list_positions()
+                          if _is_golf_ticker(p.get("ticker", ""))]
+        exposure = maker_guard.build_exposure(
+            golf_positions, list_resting_orders(golf_only=True))
+        ok2, reason2 = maker_guard.check_balance_caps(
+            get_balance_usd(), exposure["total"], caps)
+        if not ok2:
+            return (ok2, reason2)
+        return (True, f"{reason}; {reason2}")
+    except Exception as e:
+        return (False, f"risk limits unreadable ({e}) — fail-closed")
 
 
 def _check_not_live():
@@ -1421,12 +1554,16 @@ def _fetch_maker_config():
 
 
 def _check_live_preconditions():
-    """Full --live gate: kill switch -> fairs fresh -> not live-round. Returns
+    """Full --live gate: kill switch -> fairs fresh (round-aware) -> risk limits
+    (daily realized-loss breaker + balance-vs-caps) -> not live-round. Returns
     (ok, reason); the first failure wins. Each is fail-closed."""
     ok, reason = maker_guard.should_trade()
     if not ok:
         return (ok, reason)
     ok, reason = _check_fairs_fresh()
+    if not ok:
+        return (ok, reason)
+    ok, reason = _check_risk_limits()
     if not ok:
         return (ok, reason)
     return _check_not_live()
@@ -1487,6 +1624,13 @@ if __name__ == "__main__":
         n = maker_guard.pull_script_quotes(
             lambda: list_resting_orders(golf_only=True), _is_script_order, cancel_order)
         print(f"[HALT] cancelled {n} script quote(s). Posting nothing. Exiting.")
+        try:
+            import maker_alerts
+            maker_alerts.process_run(status="HALT",
+                                     reason=" ".join(str(trade_reason).split()),
+                                     post_report=None, fills=None, enabled=True)
+        except Exception as _ae:
+            print(f"  [alerts] alerting failed ({_ae}) — never blocks the run")
         _client.close()
         sys.exit(0)
 
@@ -1620,13 +1764,23 @@ if __name__ == "__main__":
             # (e.g. Bitcoin) don't consume the maker's caps.
             golf_positions = [p for p in list_positions()
                               if _is_golf_ticker(p.get("ticker", ""))]
-            exposure = maker_guard.build_exposure(
-                golf_positions, list_resting_orders(golf_only=True))
+            golf_resting = list_resting_orders(golf_only=True)
+            exposure = maker_guard.build_exposure(golf_positions, golf_resting)
+            # The bot's own resting quotes, keyed at exact price: a candidate at
+            # the same price replaces (keeps/re-arms) its twin in reconcile, so
+            # the governor nets it out instead of double-charging it.
+            own_resting = {}
+            for o in golf_resting:
+                if not _is_script_order(o):
+                    continue
+                k = _resting_key(o)
+                own_resting[k] = own_resting.get(k, 0.0) + _resting_count(o) * (k[2] / 1000.0)
             before = len(cands)
             _pe = sorted(exposure["per_event"].items(), key=lambda x: -x[1])[:4]
             print(f"\n[governor] held+resting golf exposure (netted): total ${exposure['total']:.0f}"
                   + (" | " + ", ".join(f"{e}=${v:.0f}" for e, v in _pe) if _pe else ""))
-            cands, gov = maker_guard.apply_exposure_caps(cands, exposure)
+            cands, gov = maker_guard.apply_exposure_caps(cands, exposure,
+                                                         own_resting=own_resting)
             gov_report = gov
             caps = gov["caps"]
             print(f"\n[governor] caps: market=${caps['per_market_usd']:.0f} "
@@ -1673,9 +1827,14 @@ if __name__ == "__main__":
                                   "blocked": 0}},
         "fairs": {
             "generated_at": _SIM_FAIRS_META.get("generated_at"),
+            "sim_run_at": _SIM_FAIRS_META.get("sim_run_at"),
+            "round": _SIM_FAIRS_META.get("round"),
             "source": _SIM_FAIRS_META.get("source"),
+            # age is measured from sim_run_at (when the sim ran) — the stamp the
+            # freshness gate trusts; falls back to generated_at for legacy payloads.
             "age_hours": (round((time.time() - _ft) / 3600.0, 1)
-                          if (_ft := maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("generated_at")))
+                          if (_ft := (maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("sim_run_at"))
+                                      or maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("generated_at"))))
                           else None),
         },
     }
@@ -1688,11 +1847,15 @@ if __name__ == "__main__":
     except Exception as _e:
         print(f"  [maker-state] write failed: {_e}")
 
+    _post_report = None
     if args.live:
         if not cands:
-            print("\n[live] no candidates — skipping reconcile/post step.")
-        else:
-            reconcile_and_post(cands)
+            # Cancel-only reconcile: with an empty candidate set every resting
+            # script quote is stale (fairs gone / between events / all gated out)
+            # and must be pulled NOW, not left at stale prices until its TTL.
+            print("\n[live] no candidates — cancel-only reconcile "
+                  "(pulling any resting script quotes).")
+        _post_report = reconcile_and_post(cands)
         print(f"\n[maker] done in {time.time()-t0:.1f}s")
     else:
         print(f"\n[maker] {len(cands)} intents in {time.time()-t0:.1f}s "
@@ -1710,4 +1873,23 @@ if __name__ == "__main__":
         if not trade_ok:
             print(f"[guard] NOTE: --live precondition NOT met ({trade_reason}); "
                   f"--live would pull quotes and post nothing.")
+
+    # ── Dead-man alerting (Telegram): HALT<->TRADE transitions, post-fail streaks,
+    # new fills. Best-effort — can never break a maker run. Active under --live
+    # (or MAKER_ALERTS=1 to force in dry/shadow). ──
+    try:
+        import maker_alerts
+        _alerts_on = args.live or maker_alerts.alerts_forced()
+        _new_fills = None  # None = not fetched (keeps the fill watermark intact)
+        if _alerts_on:
+            try:
+                _new_fills = [f for f in list_fills()
+                              if _is_golf_ticker(f.get("ticker", ""))]
+            except Exception as _fe:
+                print(f"  [alerts] fills fetch failed ({_fe})")
+        maker_alerts.process_run(status=_state["status"], reason=_state["reason"],
+                                 post_report=_post_report, fills=_new_fills,
+                                 enabled=_alerts_on)
+    except Exception as _ae:
+        print(f"  [alerts] alerting failed ({_ae}) — never blocks the run")
     _client.close()

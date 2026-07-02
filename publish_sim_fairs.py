@@ -90,6 +90,38 @@ def _find(*candidates) -> Path | None:
     return None
 
 
+def _utc_stamp(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _sim_run_at(tourney: str, rnd) -> str | None:
+    """When the SIM actually ran — the max mtime of the source files build_payload
+    reads — NOT the publish wall-clock. `generated_at` is stamped at publish time,
+    so ANY machine that re-publishes old artifacts looks 'fresh' on it, defeating
+    the maker's 48h cap, prefer-fresher, and the board banner at once. Consumers
+    (maker_guard.check_fairs_fresh_payload) gate on THIS stamp and fail closed
+    when it's missing. None if no source file exists (caller must refuse to
+    publish rather than stamp fiction)."""
+    cands = [
+        "simulated_probs_live.csv", "simulated_probs.csv",
+        f"{tourney}/finish_equity_{tourney}.csv", f"finish_equity_{tourney}.csv",
+        f"top_finish_probs_{tourney}.csv", f"{tourney}/top_finish_probs_{tourney}.csv",
+        f"{tourney}/finish_equity_live_{tourney}.csv", f"finish_equity_live_{tourney}.csv",
+        f"rank_probs_live_{tourney}.parquet", f"{tourney}/rank_probs_live_{tourney}.parquet",
+        f"rank_probs_updated_{tourney}.parquet", f"{tourney}/rank_probs_updated_{tourney}.parquet",
+        f"make_cut_probs_{tourney}.csv", f"{tourney}/make_cut_probs_{tourney}.csv",
+        f"h2h_matrix_{tourney}.parquet", f"{tourney}/h2h_matrix_{tourney}.parquet",
+        f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy",
+    ]
+    if rnd:
+        cands += [
+            f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet",
+            f"{tourney}/round_score_probs_r{rnd}.parquet", f"round_score_probs_r{rnd}.parquet",
+        ]
+    mts = [(PROJECT_ROOT / c).stat().st_mtime for c in cands if (PROJECT_ROOT / c).exists()]
+    return _utc_stamp(max(mts)) if mts else None
+
+
 def _live_dump_is_current(tourney: str, rnd, repl: dict) -> bool:
     """Whether the generic-named simulated_probs_live.csv belongs to THIS event.
 
@@ -409,6 +441,7 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, 
     meta = {**(tbl.schema.metadata or {}),
             b"event_id": str(event_id).encode(),
             b"generated_at": str(generated_at).encode(),
+            b"sim_run_at": _utc_stamp(fs.stat().st_mtime).encode(),
             b"tourney": str(tourney).encode(),
             b"source": b"final_scores"}
     tbl = tbl.replace_schema_metadata(meta)
@@ -569,6 +602,9 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
         logger.info("round_h2h: no sim cache; skipping")
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    cache_f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    if cache_f is not None:
+        meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
     pq = f"round_h2h_r{rnd}.parquet"
     mj = f"round_h2h_r{rnd}_meta.json"
     df.to_parquet(PROJECT_ROOT / pq, index=False)
@@ -669,6 +705,9 @@ def write_round_3ball(tourney: str, rnd, repl: dict | None = None) -> list:
     if df is None:
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    cache_f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    if cache_f is not None:
+        meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
     pq = f"round_3ball_r{rnd}.parquet"
     mj = f"round_3ball_r{rnd}_meta.json"
     df.to_parquet(PROJECT_ROOT / pq, index=False)
@@ -694,12 +733,20 @@ def build_payload() -> dict:
     # week's field/outrights (cross-event bleed). Pre-event builds ignore it entirely.
     use_live = _live_dump_is_current(tourney, rnd, repl)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    sim_run_at = _sim_run_at(tourney, rnd)
+    if sim_run_at is None:
+        # Publishing without a sim-time stamp would ship fairs consumers must
+        # (and now do) reject — and with no source file there is nothing real
+        # to publish anyway.
+        raise RuntimeError(f"no sim source files found for '{tourney}' — cannot stamp "
+                           f"sim_run_at; run the sim before publishing")
     outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl, use_live=use_live)
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),
         "tourney": tourney,
-        "generated_at": now,
+        "generated_at": now,                # publish wall-clock (display only)
+        "sim_run_at": sim_run_at,           # when the SIM ran — consumers gate on this
         "round": rnd,                       # live round these round_* markets price
         "field": _build_field(tourney, repl, use_live=use_live),
         "outrights": outrights,

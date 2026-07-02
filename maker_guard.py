@@ -126,35 +126,147 @@ def active_fair_file(tourney):
 
 
 def parse_fairs_ts(s):
-    """Parse a sim_fairs 'generated_at' ('YYYY-MM-DD HH:MM:SS UTC') to epoch, or None."""
+    """Parse a sim_fairs timestamp ('YYYY-MM-DD HH:MM:SS UTC' or ISO-8601, assumed
+    UTC when naive) to epoch, or None."""
     import datetime as _dt
     if not s:
         return None
+    raw = str(s).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S UTC", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = _dt.datetime.strptime(raw, fmt)
+            return dt.replace(tzinfo=_dt.timezone.utc).timestamp()
+        except ValueError:
+            continue
     try:
-        dt = _dt.datetime.strptime(str(s).strip(), "%Y-%m-%d %H:%M:%S UTC")
-        return dt.replace(tzinfo=_dt.timezone.utc).timestamp()
-    except Exception:
+        dt = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt.timezone.utc)
+        return dt.timestamp()
+    except (ValueError, TypeError):
         return None
 
 
-def check_fairs_fresh_payload(payload, now_ts, tourney=None, max_age_hours=None):
-    """Pure. (ok, reason) for a PUBLISHED sim_fairs.json payload: it must exist, be
-    for the current tourney, and be recent (generated_at within max_age). Replaces
-    the local-file mtime check now that the maker reads the published fairs (so it
-    works on any machine without a local sim run)."""
+def check_fairs_fresh_payload(payload, now_ts, tourney=None, max_age_hours=None,
+                              current_round=None):
+    """Pure. (ok, reason) for a PUBLISHED sim_fairs.json payload. FAIL-CLOSED on
+    every hole: the payload must exist, be for the current tourney, carry a
+    parseable `sim_run_at` (stamped by publish_sim_fairs from the sim's source-file
+    mtimes — `generated_at` is publish wall-clock, which any machine re-stamps
+    'fresh', so it is NOT trusted), be recent, and — once a round has completed —
+    be built from the round currently in play (pre-cut fairs must never price
+    post-cut markets).
+
+    `current_round` is the round in play / next to play (1..4), or None to skip
+    the round gate. Intra-event (current_round >= 2) the freshness cap tightens to
+    MAKER_FAIRS_MAX_AGE_LIVE_HRS (default 8h): fairs must postdate the previous
+    round, not just the week."""
     if not payload:
         return (False, "no sim_fairs.json (GitHub or local) — publish the sim")
     pj = str(payload.get("tourney") or "").strip().lower()
     if tourney and pj and pj != str(tourney).strip().lower():
         return (False, f"sim_fairs is for '{pj}', not current '{tourney}' — publish the sim")
-    ts = parse_fairs_ts(payload.get("generated_at"))
+    ts = parse_fairs_ts(payload.get("sim_run_at"))
     if ts is None:
-        return (True, "fairs present (no generated_at)")
-    max_age = _envf("MAKER_FAIRS_MAX_AGE_HRS", 48.0) if max_age_hours is None else max_age_hours
+        return (False, "sim_fairs has no parseable sim_run_at (generated_at is publish "
+                       "wall-clock, not sim time — untrusted) — re-publish the sim")
+    intra_event = current_round is not None and int(current_round) >= 2
+    if intra_event:
+        prnd = payload.get("round")
+        if prnd is None or int(prnd) != int(current_round):
+            return (False, f"sim_fairs round={prnd} but round {int(current_round)} is in "
+                           f"play — re-run round_sim + publish")
+    if max_age_hours is None:
+        max_age = (_envf("MAKER_FAIRS_MAX_AGE_LIVE_HRS", 8.0) if intra_event
+                   else _envf("MAKER_FAIRS_MAX_AGE_HRS", 48.0))
+    else:
+        max_age = max_age_hours
     age_h = max(0.0, (now_ts - ts) / 3600.0)
     if age_h > max_age:
-        return (False, f"sim fairs stale: {age_h:.1f}h old > {max_age:.0f}h cap — re-publish the sim")
-    return (True, f"fairs {age_h:.1f}h old")
+        return (False, f"sim fairs stale: sim ran {age_h:.1f}h ago > {max_age:.0f}h cap — "
+                       f"re-run + publish the sim")
+    return (True, f"fairs {age_h:.1f}h old (sim_run_at)")
+
+
+# ── Guard #3: realized-loss circuit breaker + balance-vs-caps sanity ───────────
+def _money(rec, key):
+    """Dollars from a Kalshi record: prefer the `{key}_dollars` decimal-string
+    field, fall back to the integer-cents `{key}` field."""
+    v = rec.get(f"{key}_dollars")
+    if v not in (None, ""):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(rec.get(key) or 0) / 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _et_date(ts):
+    """ET calendar date of an epoch ts (trading-day boundary)."""
+    import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        return _dt.datetime.fromtimestamp(ts, ZoneInfo("America/New_York")).date()
+    except Exception:
+        return _dt.datetime.fromtimestamp(ts, _dt.timezone(_dt.timedelta(hours=-4))).date()
+
+
+def realized_pnl_today(settlements, now_ts):
+    """Pure. Realized $ PnL of settlements dated today (ET). Each Kalshi
+    settlement record's PnL = revenue - (yes_total_cost + no_total_cost)."""
+    import datetime as _dt
+    today = _et_date(now_ts)
+    pnl = 0.0
+    for s in settlements or []:
+        raw = s.get("settled_time") or s.get("settled_ts")
+        if isinstance(raw, (int, float)):
+            ts = float(raw)
+        else:
+            try:
+                ts = _dt.datetime.fromisoformat(
+                    str(raw).replace("Z", "+00:00")).timestamp()
+            except (TypeError, ValueError):
+                continue  # undated settlement — can't attribute to a day
+        if _et_date(ts) != today:
+            continue
+        pnl += _money(s, "revenue") - _money(s, "yes_total_cost") - _money(s, "no_total_cost")
+    return pnl
+
+
+def check_daily_loss(settlements, now_ts, max_loss_usd=None):
+    """Pure. (ok, reason). Halt for the rest of the ET day once realized losses
+    breach the cap. Without this, settled losses free up open-exposure cap room
+    and the maker can re-lose the same dollars daily forever."""
+    max_loss = _envf("MAKER_MAX_DAILY_LOSS_USD", 200.0) if max_loss_usd is None else max_loss_usd
+    if max_loss <= 0:
+        return (True, "daily-loss breaker disabled (MAKER_MAX_DAILY_LOSS_USD<=0)")
+    pnl = realized_pnl_today(settlements, now_ts)
+    if pnl <= -max_loss:
+        return (False, f"daily realized PnL ${pnl:+.0f} breaches -${max_loss:.0f} cap — "
+                       f"halted for the day (resets at ET midnight)")
+    return (True, f"daily realized PnL ${pnl:+.0f} (cap -${max_loss:.0f})")
+
+
+def check_balance_caps(balance_usd, exposure_total_usd, caps=None):
+    """Pure. (ok, reason). Startup sanity: the caps must be fundable. If available
+    cash can't cover what the caps still allow this run, the caps are fiction —
+    lower them to bankroll (or set MAKER_ALLOW_CAPS_OVER_BALANCE=1 consciously)."""
+    if caps is None:
+        caps = caps_from_env()
+    if balance_usd is None:
+        return (False, "Kalshi balance unreadable — cannot verify caps vs bankroll")
+    if (os.getenv("MAKER_ALLOW_CAPS_OVER_BALANCE") or "").strip().lower() in _TRUTHY:
+        return (True, f"balance ${balance_usd:.0f} (caps-over-balance override on)")
+    room = max(0.0, caps["total_usd"] - float(exposure_total_usd or 0.0))
+    need = min(room, caps["max_new_usd_run"])
+    if balance_usd + 1e-9 < need:
+        return (False, f"balance ${balance_usd:.0f} < ${need:.0f} the caps allow this run "
+                       f"(total room ${room:.0f}, per-run ${caps['max_new_usd_run']:.0f}) — "
+                       f"lower MAKER_CAP_* to bankroll or set MAKER_ALLOW_CAPS_OVER_BALANCE=1")
+    return (True, f"balance ${balance_usd:.0f} covers ${need:.0f} allowable this run")
 
 
 # ── Guard #2: live-round detection (schedule default + DataGolf override) ───────
@@ -357,9 +469,18 @@ def _brief(c):
             "post_price": c.get("post_price"), "contracts": c.get("contracts")}
 
 
-def apply_exposure_caps(candidates, exposure, caps=None):
+def apply_exposure_caps(candidates, exposure, caps=None, own_resting=None):
     """Trim/drop candidates so held + resting + new exposure stays within caps.
     Highest-Kelly candidates get the budget first. Pure.
+
+    `own_resting` maps (ticker, side, milli_dollars) -> resting $ for the BOT'S OWN
+    script quotes. A candidate at the same exact price REPLACES (or keeps) that
+    resting quote in reconcile rather than stacking on it, so its resting $ is
+    netted out before the cap math. Without this the steady-state quote is charged
+    twice (once in `exposure`, again as candidate spend), which halves cap room and
+    — worse — makes the governor drop the re-quote, reconcile cancel the resting
+    order as stale, and the next run re-post it: a cancel/repost oscillator that
+    burns queue priority.
 
     Returns (kept, report). Each kept candidate is a shallow copy whose
     'contracts' may be reduced. report carries counts + dropped/trimmed detail.
@@ -369,6 +490,7 @@ def apply_exposure_caps(candidates, exposure, caps=None):
     per_key = dict(exposure.get("per_key", {}))
     flat_event = dict(exposure.get("_flat_event") or {})
     groups = {k: dict(v) for k, v in (exposure.get("_groups") or {}).items()}
+    own = dict(own_resting or {})
     new_usd, n_orders = 0.0, 0
 
     def netted_event(ev):
@@ -395,6 +517,20 @@ def apply_exposure_caps(candidates, exposure, caps=None):
         key, ev = (tk, side), event_of(tk)
         mt = market_type_of(tk)
         is_mutex_no = (side == "no" and mt in MUTEX_NWIN)
+        # Net out our own resting quote at this exact price — the candidate
+        # replaces it (reconcile keeps/re-arms it), it doesn't stack on it.
+        # `before` is captured FIRST so new_usd charges only dollars beyond what
+        # this quote already had committed. pop() so the credit applies once.
+        before = netted_total()
+        offset = own.pop((tk, side, int(round(px * 1000))), 0.0)
+        if offset > 0.0:
+            per_key[key] = max(0.0, per_key.get(key, 0.0) - offset)
+            if is_mutex_no:
+                by = groups.get((ev, mt))
+                if by and tk in by:
+                    by[tk] = max(0.0, by[tk] - offset)
+            else:
+                flat_event[ev] = max(0.0, flat_event.get(ev, 0.0) - offset)
         # per-market cap is naive (per player); per-event/total use NETTED exposure
         # (mutually-exclusive NO baskets count as worst-case loss, not gross sum).
         room = min(
@@ -411,7 +547,6 @@ def apply_exposure_caps(candidates, exposure, caps=None):
             dropped.append({**_brief(c), "why": "no room for 1 contract"})
             continue
         spend = allowed * px
-        before = netted_total()
         per_key[key] = per_key.get(key, 0.0) + spend
         if is_mutex_no:
             groups.setdefault((ev, mt), {})

@@ -18,9 +18,31 @@ the Python quoting brain.
 
 ---
 
+## 0. Provider go/no-go — US region + auth smoke (do this FIRST)
+
+Kalshi is a US-regulated exchange: trade from a **US-region** VPS. Before any
+further setup, verify the box qualifies — a provider that fails any check here
+is a no-go, pick another region/provider before investing in steps 1–4.
+
+```bash
+# 1. The box's egress IP must be US:
+curl -s ipinfo.io/country          # must print: US
+# 2. Kalshi API reachable from this network (no block/challenge):
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://api.elections.kalshi.com/trade-api/v2/exchange/status   # must be 200
+# 3. Authenticated smoke test — pure GET, no orders touched (after steps 1-2
+#    below put the key + env on the box):
+python kalshi_maker.py --list-orders
+```
+
+`--list-orders` lists resting orders with a golf vs non-golf breakdown and
+exits — no DELETE, no POST. If it returns your account's orders, auth + region
++ network are all proven and the provider is a GO.
+
 ## 1. Box + one-time setup
 
-Any small Linux VPS (1 vCPU / 1 GB is plenty — this is I/O bound, not compute).
+A small **US-region** Linux VPS (1 vCPU / 1 GB is plenty — this is I/O bound,
+not compute). Region matters (step 0); size doesn't.
 
 ```bash
 sudo apt update && sudo apt install -y python3-venv git
@@ -66,30 +88,35 @@ MAKER_CAP_EVENT_USD=400
 MAKER_CAP_TOTAL_USD=1000
 MAKER_MAX_NEW_USD_PER_RUN=300
 MAKER_MAX_ORDERS_PER_RUN=40
+# ── Risk limits (defaults shown; every check fail-closes) ────────
+# Daily realized-loss circuit breaker (golf settlements, ET day; 0 disables):
+MAKER_MAX_DAILY_LOSS_USD=200
+# Balance-vs-caps sanity: halts when cash can't fund what the caps allow this
+# run. Lower the caps to bankroll rather than setting the override:
+# MAKER_ALLOW_CAPS_OVER_BALANCE=1
+# Fairs freshness: pre-event cap / intra-event (post-R1) cap in hours:
+MAKER_FAIRS_MAX_AGE_HRS=48
+MAKER_FAIRS_MAX_AGE_LIVE_HRS=8
+# ── Alerting (dead-man + Telegram; strongly recommended for --live) ─
+# healthchecks.io check URL — run_maker.sh pings it after every run:
+HEALTHCHECKS_URL=<https://hc-ping.com/...>
+# Telegram on HALT<->TRADE transitions, post-fail streaks, new fills:
+TELEGRAM_BOT_TOKEN=<bot token>
+TELEGRAM_CHAT_ID=<chat id>
 ```
 
 ```bash
 sudo chown root:maker /etc/kalshi-maker.env && sudo chmod 640 /etc/kalshi-maker.env
 ```
 
-## 3. Run wrapper — `/opt/sims_process/deploy/run_maker.sh`
+## 3. Run wrapper — `deploy/run_maker.sh` (in the repo)
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-cd /opt/sims_process
-# Fast-forward only: pull fresh sim_fairs.json + code, never clobber local state.
-git pull --ff-only origin main || echo "git pull failed — using existing tree"
-# shellcheck disable=SC1091
-source .venv/bin/activate
-set -a; source /etc/kalshi-maker.env; set +a
-# START with --no-matchups: outrights price off sim_fairs.json (pulled above);
-# matchups may need live inputs this box doesn't have yet. Drop the flag once
-# you've confirmed matchup inputs are present on the VPS.
-python kalshi_maker.py --live --no-matchups
-# Mirror the cockpit snapshot to the dashboard Maker tab (never posts orders).
-python push_maker_state.py || true
-```
+The wrapper is committed at `deploy/run_maker.sh` — the `git clone` in step 1
+already put it on the box. It: pulls `--ff-only` (fresh code + sim_fairs.json),
+sources the venv + `/etc/kalshi-maker.env`, runs
+`python kalshi_maker.py --live --no-matchups`, mirrors the cockpit snapshot via
+`push_maker_state.py`, then pings `HEALTHCHECKS_URL` (or `…/fail` when the run
+errored) as the dead-man heartbeat.
 
 ```bash
 sudo chmod 755 /opt/sims_process/deploy/run_maker.sh
@@ -111,7 +138,11 @@ User=maker
 Group=maker
 WorkingDirectory=/opt/sims_process
 ExecStart=/opt/sims_process/deploy/run_maker.sh
-TimeoutStartSec=100          # a run must finish well under the 2-min cadence
+TimeoutStartSec=100          # PLACEHOLDER — set from shadow-run p95 before go-live:
+                             # take the `done in Xs` lines from a day of shadow runs
+                             # and set this ~2x the p95 (SIGTERM mid-reconcile every
+                             # cycle is worse than a rare long run). Must stay under
+                             # the 2-min cadence.
 Nice=5
 ```
 
@@ -162,6 +193,15 @@ systemctl list-timers kalshi-maker.timer       # next/last fire
 The dashboard **Maker tab** populates once `push_maker_state.py` runs with
 `MAKER_STATE_TOKEN` set (step 2). The Cloudflare cron status endpoint continues
 to show the tape/PnL/auto-kill collector independently.
+
+**Push alerting** (set up in step 2's env; see `maker_alerts.py`):
+
+- **healthchecks.io** — create a check with a ~5 min grace period and put its
+  ping URL in `HEALTHCHECKS_URL`. Silence = the box/timer/loop is dead; the TTL
+  has already pulled the quotes, this tells you to go fix it.
+- **Telegram** — `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (same bot as the
+  reprice alerts) gets: HALT↔TRADE transitions with the guard reason, ≥3
+  consecutive runs with failed POSTs, and every new fill.
 
 ---
 
