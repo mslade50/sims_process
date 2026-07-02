@@ -619,7 +619,7 @@ if not args.price_only:
             _r3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg']]
             _mu = np.stack([m for (m, s) in player_params_v2])
             _std = np.stack([s for (m, s) in player_params_v2])
-            _fs, _win, _cm1, _cm2, _cm3, _cm4 = _sk.run_pretournament(
+            _ret = _sk.run_pretournament(
                 _A(_mu), _A(_std), _A(effective_skew), _A(L_corr),
                 _A(my_pred_base), _A(r2_mu), _A(r3_mu), _A(r4_mu),
                 _A(weather_delta_r1), _A(weather_delta_r2),
@@ -629,6 +629,12 @@ if not args.price_only:
                 _r3(coefficients_r3), _r3(coefficients_r3_mid), _r3(coefficients_r3_high),
                 int(CUT_LINE), bool(USE_10_SHOT_RULE), int(SIMULATIONS), 456,
             )
+            if len(_ret) >= 7:
+                _fs, _win, _cm1, _cm2, _cm3, _cm4, _mc = _ret[:7]
+                made_cut_mask = np.ascontiguousarray(_mc).astype(bool)
+            else:  # pre-mask wheel: no cut mask (board's make_cut stays on the copula)
+                _fs, _win, _cm1, _cm2, _cm3, _cm4 = _ret
+                made_cut_mask = None
             final_scores = np.ascontiguousarray(_fs).astype(np.int32)
             _rust_cat_means = (_cm1, _cm2, _cm3, _cm4)
             np.save(f"final_scores_{tourney}.npy", final_scores)
@@ -1228,7 +1234,13 @@ if not args.price_only:
     np.save(os.path.join(_cache_dir, "final_scores.npy"), final_scores)
     with open(os.path.join(_cache_dir, "player_names.json"), "w") as _f:
         _sim_json.dump(list(player_names), _f)
-    print(f"[sim-cache] Saved final_scores + player_names to {_cache_dir}")
+    # Made-cut mask on the SAME draw axis as final_scores — published so the board
+    # prices make_cut off the tournament joint instead of an independent copula
+    # draw. None only on a pre-mask Rust wheel.
+    if made_cut_mask is not None:
+        np.save(os.path.join(_cache_dir, "made_cut.npy"), made_cut_mask)
+    print(f"[sim-cache] Saved final_scores + player_names"
+          f"{' + made_cut' if made_cut_mask is not None else ''} to {_cache_dir}")
 else:
     # ─── Load cached sim outputs (--price-only / --reprice) ─────
     import json as _sim_json

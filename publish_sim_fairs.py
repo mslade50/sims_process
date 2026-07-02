@@ -58,6 +58,7 @@ FULL_TAPE_TAG = "sim-data"
 FULL_TAPE_ASSET = "tournament_samples_full.parquet"
 MATCHUP_TAPE_ASSET = "matchup_scores_live.parquet"
 MATCHUP_TAPE_DRAWS = 25000  # H2H prob SE ~0.3pp at 25k draws vs the maker's 5pp gate
+MADE_CUT_ASSET = "tournament_made_cut_full.parquet"
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -466,6 +467,49 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, 
     tbl = tbl.replace_schema_metadata(meta)
     logger.info(f"tournament_samples: {df.shape[0]} players x {df.shape[1]} draws "
                 f"(event {event_id})")
+    return tbl
+
+
+def _build_made_cut_mask(tourney: str, event_id, repl: dict, max_draws=TOURN_SAMPLE_N):
+    """Made-cut mask on the SAME draw axis as the tournament finish tape — same
+    players (index), same fixed-stride downsample — so the board can price
+    make_cut off the joint instead of an independent copula draw (same-golfer
+    win+topN+cut stacks were treated as independent = over-staked exactly where
+    stacking is heaviest). None when new_sim hasn't written made_cut.npy (old
+    Rust wheel, or pre-mask sim run) or when its shape disagrees with
+    final_scores (never pair a mask with a tape from a different run)."""
+    import numpy as np
+    import pyarrow as pa
+
+    mc = _find(f"{tourney}/made_cut.npy", f"made_cut_{tourney}.npy")
+    fs = _find(f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy")
+    pn = _find(f"{tourney}/player_names.json", f"player_names_{tourney}.json")
+    if mc is None or fs is None or pn is None:
+        logger.info("made_cut mask: made_cut.npy/final_scores/player_names not all present "
+                    "— skipping (board keeps the copula for make_cut)")
+        return None
+    mask = np.load(mc)
+    names = json.loads(Path(pn).read_text())
+    fs_shape = np.load(fs, mmap_mode="r").shape
+    if mask.ndim != 2 or mask.shape != fs_shape or mask.shape[0] != len(names):
+        logger.warning(f"made_cut mask: shape {mask.shape} disagrees with final_scores "
+                       f"{fs_shape} / {len(names)} names — skipping")
+        return None
+    n = mask.shape[1]
+    if max_draws and n > max_draws:
+        idx = np.linspace(0, n - 1, max_draws).round().astype(int)  # SAME stride as the tape
+        mask = mask[:, idx]
+    df = pd.DataFrame(mask.astype("int8"), index=[_norm(nm, repl) for nm in names],
+                      columns=[str(i) for i in range(mask.shape[1])])
+    df = df[~df.index.duplicated(keep="first")]
+    tbl = pa.Table.from_pandas(df, preserve_index=True)
+    meta = {**(tbl.schema.metadata or {}),
+            b"event_id": str(event_id).encode(),
+            b"sim_run_at": _utc_stamp(fs.stat().st_mtime).encode(),
+            b"tourney": str(tourney).encode(),
+            b"source": b"made_cut"}
+    tbl = tbl.replace_schema_metadata(meta)
+    logger.info(f"made_cut mask: {df.shape[0]} players x {df.shape[1]} draws (event {event_id})")
     return tbl
 
 
@@ -1004,6 +1048,14 @@ def publish(push: bool = True) -> dict:
             pq.write_table(tape, LOCAL_TOURN_SAMPLES)
             files.append("tournament_samples.parquet")
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
+        # Made-cut mask on the same draw axis (git downsample; board prices make_cut
+        # off the joint). Full-res copy rides the release with the full tape below.
+        mask = _build_made_cut_mask(payload["tourney"], payload.get("event_id"),
+                                    _name_replacements())
+        if mask is not None:
+            pq.write_table(mask, PROJECT_ROOT / "tournament_made_cut.parquet")
+            files.append("tournament_made_cut.parquet")
+            logger.info("Wrote tournament_made_cut.parquet")
     except Exception as e:
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
 
@@ -1013,6 +1065,17 @@ def publish(push: bool = True) -> dict:
         if push:
             _upload_full_tape_release(payload["tourney"], payload.get("event_id"),
                                       payload.get("generated_at"), _name_replacements())
+            # full-res made-cut mask pairs with the full tape (same draw axis)
+            import os as _os
+            _tok = _os.environ.get("GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
+            full_mask = _build_made_cut_mask(payload["tourney"], payload.get("event_id"),
+                                             _name_replacements(), max_draws=None) if _tok else None
+            if full_mask is not None:
+                import io
+                buf = io.BytesIO()
+                pq.write_table(full_mask, buf)
+                _upload_release_asset(MADE_CUT_ASSET, buf.getvalue(), _tok)
+                logger.info(f"made_cut mask: uploaded -> release {FULL_TAPE_TAG}/{MADE_CUT_ASSET}")
     except Exception as e:
         logger.warning(f"full tape release upload failed (non-fatal): {e}")
 

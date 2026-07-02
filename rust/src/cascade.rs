@@ -104,6 +104,11 @@ pub struct Output {
     pub cat_means_r2: Vec<f64>,
     pub cat_means_r3: Vec<f64>,
     pub cat_means_r4: Vec<f64>,
+    /// (n*sims) row-major made-the-cut mask, pairing with final_scores draw-for-draw.
+    /// The +200 missed-cut penalty rows are exactly `!made_cut`. Published so the
+    /// board's portfolio can price make_cut off the SAME joint as winner/top-N
+    /// instead of an independent copula draw.
+    pub made_cut: Vec<bool>,
 }
 
 #[inline]
@@ -500,6 +505,7 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
         cat_means_r2,
         cat_means_r3,
         cat_means_r4,
+        made_cut,
     }
 }
 

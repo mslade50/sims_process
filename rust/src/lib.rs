@@ -144,7 +144,8 @@ fn rows4(a: &numpy::ndarray::ArrayView2<f64>) -> Vec<[f64; 4]> {
 ///   r3_*: [sg_ott_avg, sg_putt_avg, sg_app_avg, sg_arg_avg]
 /// Returns (final_scores (n,sims) i64, win_prob (n,) f64,
 ///          cat_means_r1, cat_means_r2, cat_means_r3, cat_means_r4 — each (n,4) f64,
-///          per-player per-category SG means over sims; feed avg_expected_cat_sg).
+///          per-player per-category SG means over sims; feed avg_expected_cat_sg,
+///          made_cut (n,sims) bool — pairs with final_scores draw-for-draw).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn run_pretournament<'py>(
@@ -173,6 +174,7 @@ fn run_pretournament<'py>(
     Bound<'py, PyArray2<f64>>,
     Bound<'py, PyArray2<f64>>,
     Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray2<bool>>,
 ) {
     use cascade::{CoeffR1, CoeffR2, CoeffR3, Inputs};
     let mu_v = mu.as_array();
@@ -219,6 +221,7 @@ fn run_pretournament<'py>(
     let cm2 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r2).unwrap();
     let cm3 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r3).unwrap();
     let cm4 = numpy::ndarray::Array2::from_shape_vec((no, 4), out.cat_means_r4).unwrap();
+    let mc = numpy::ndarray::Array2::from_shape_vec((no, out.sims), out.made_cut).unwrap();
     (
         fs.into_pyarray_bound(py),
         out.win_prob.into_pyarray_bound(py),
@@ -226,6 +229,7 @@ fn run_pretournament<'py>(
         cm2.into_pyarray_bound(py),
         cm3.into_pyarray_bound(py),
         cm4.into_pyarray_bound(py),
+        mc.into_pyarray_bound(py),
     )
 }
 

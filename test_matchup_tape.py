@@ -89,6 +89,31 @@ np.save(tmp / "final_scores_live_testtourney.npy", scores + 0.25)
 ftbl = psf._build_live_matchup_tape("testtourney", 99, repl, max_draws=None)
 eq("non-integral stays float32", str(ftbl.to_pandas().dtypes.iloc[0]), "float32")
 
+# ── made-cut mask builder (pairs with the pre-event tape) ──
+tdir = tmp / "testtourney"
+tdir.mkdir()
+fs_pre = rng.integers(260, 290, size=(3, 40))
+mask = rng.integers(0, 2, size=(3, 40)).astype(bool)
+np.save(tdir / "final_scores.npy", fs_pre)
+np.save(tdir / "made_cut.npy", mask)
+(tdir / "player_names.json").write_text(json.dumps(names))
+mtbl = psf._build_made_cut_mask("testtourney", 99, repl, max_draws=None)
+eq("mask rows/draws", (mtbl.num_rows, mtbl.num_columns - 1), (3, 40))
+mdf = mtbl.to_pandas()
+eq("mask values round-trip", mdf.iloc[0].tolist(), mask[0].astype("int8").tolist())
+mmd = {k.decode(): v.decode() for k, v in mtbl.schema.metadata.items()
+       if isinstance(k, bytes) and k in (b"tourney", b"source")}
+eq("mask meta", (mmd.get("tourney"), mmd.get("source")), ("testtourney", "made_cut"))
+# downsample stride matches the tape's (same linspace)
+m10 = psf._build_made_cut_mask("testtourney", 99, repl, max_draws=10).to_pandas()
+sidx = np.linspace(0, 39, 10).round().astype(int)
+eq("mask downsample stride matches tape", m10.iloc[0].tolist(),
+   mask[0, sidx].astype("int8").tolist())
+# shape mismatch vs final_scores -> refused
+np.save(tdir / "made_cut.npy", mask[:, :30])
+eq("mask/tape shape mismatch -> None",
+   psf._build_made_cut_mask("testtourney", 99, repl), None)
+
 print(f"\n{_p} passed, {_f} failed")
 shutil.rmtree(tmp, ignore_errors=True)
 raise SystemExit(1 if _f else 0)
