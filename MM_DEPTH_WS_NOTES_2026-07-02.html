@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Depth Capture &amp; the WebSocket Path — 2026-07-02</title>
+<style>
+  body { background:#1a1d21; color:#d8dce1; font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; max-width:980px; margin:2rem auto; padding:0 1.25rem; }
+  h1 { font-size:1.5rem; border-bottom:2px solid #3a3f45; padding-bottom:.4rem; }
+  h2 { font-size:1.15rem; margin-top:2rem; color:#e8b34b; }
+  h3 { font-size:1rem; margin-top:1.4rem; color:#9fd0ff; }
+  code { background:#2a2e33; padding:.1rem .35rem; border-radius:3px; font-size:.88em; color:#9fd0ff; }
+  table { border-collapse:collapse; width:100%; margin:.75rem 0; font-size:.92em; }
+  th, td { border:1px solid #3a3f45; padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#24282d; }
+  .note { background:#24282d; border-left:4px solid #e8b34b; padding:.6rem .9rem; margin:.9rem 0; }
+  .good { background:#22291f; border-left:4px solid #6fc276; padding:.6rem .9rem; margin:.9rem 0; }
+  .p0 { color:#e06c60; font-weight:600; }
+  li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+<h1>Kalshi Depth Capture &amp; the WebSocket Path</h1>
+<p>Closes the last 2026-07-01 audit item (board portfolio #4: depth/lot-size unmodeled).
+Implemented in <code>golf_scraping</code> commit <code>f3c9f47</code>. This doc records what was
+built, the semantics worth remembering, and the deliberately-deferred WebSocket path with its
+decision gates.</p>
+
+<h2>1 · What's live now (Tiers 0–1, REST snapshots)</h2>
+<table>
+<tr><th>Tier</th><th>What</th><th>API cost</th></tr>
+<tr><td><strong>0</strong></td>
+    <td>The Kalshi scraper keeps <code>ticker</code> + <code>liquidity</code> ($ of resting
+    orders, whole book) from the <code>/markets</code> snapshot it was already downloading and
+    discarding. Rides <code>OutrightLine</code> → <code>*_latest.json</code> → board rows
+    (<code>kalshi_ticker</code> / <code>kalshi_liquidity</code>).</td>
+    <td><strong>Zero</strong> extra calls</td></tr>
+<tr><td><strong>1</strong></td>
+    <td><code>fetch_kalshi_depth</code> (board build, after edge gating): one orderbook GET per
+    sim-graded row with a positive Kalshi edge — the only rows the portfolio can fund there.
+    Throttled 0.13s (&lt;10 reads/sec limit), 429 exponential backoff, 150-call hard budget
+    (deepest-edge first when exceeded), every failure soft.</td>
+    <td>~20–80 calls/build, &lt;10s</td></tr>
+</table>
+
+<h3>Semantics worth remembering</h3>
+<ul>
+  <li><strong>Yes-taker ladder:</strong> Kalshi's orderbook arrays are <em>resting bids per
+  side</em>. A YES taker crosses the NO bids, so the YES ask ladder is <code>100 − each NO
+  bid</code>. Depth = $ stake available within 1¢ of best ask
+  (<code>_yes_taker_depth</code>, <code>board/build.py</code>).</li>
+  <li><strong>Fallback chain (fail-soft, never blocks a build):</strong> exact orderbook depth
+  → <code>liquidity/4</code> proxy (whole book, both sides, so a quarter is conservative) →
+  uncapped. Non-exchange books (Betcris/BOL/Pinnacle — no depth concept to scrape) are
+  uncapped, i.e. status quo.</li>
+  <li><strong>Caps are enforced client-side</strong>, because dollars need a bankroll and only
+  the browser knows it. Both solve paths clamp each bet's stake at its <em>chosen</em> book's
+  depth. Browser re-solve clamps before the P&amp;L loop (risk summary stays exact); the server
+  fast path clamps after κ-scaling, so its aggregate <code>ret_dist</code> slightly overstates
+  exposure for capped bets — the UI notes this whenever caps bit.</li>
+  <li><strong>Depth is a snapshot.</strong> It's stale the moment it's fetched. A cap means
+  "never <em>plan</em> to take more than was visible," not a fill guarantee — same philosophy
+  as the maker's re-fetch-before-POST invariant.</li>
+  <li><strong>Refinement not done (deliberately):</strong> the clamp is post-solve, not a box
+  constraint inside the optimizer — clamped-off stake isn't redistributed to other bets. It's
+  strictly conservative. If caps bind often, add upper bounds to
+  <code>pfOptimize</code>/<code>solve_kelly</code>'s projection (clamp-within-projection is a
+  small change; the server side would also need an assumed bankroll, which is why it wasn't
+  done now).</li>
+</ul>
+
+<h2>2 · The WebSocket path (deferred, on purpose)</h2>
+<p>Kalshi's WS API has an <code>orderbook_delta</code> channel: one authenticated connection,
+any number of tickers, an <code>orderbook_snapshot</code> per subscription then sequenced
+deltas. It is the <em>correct</em> transport for a standing consumer that needs current book
+state continuously. We deferred it because <strong>neither consumer is a standing
+process — by design</strong>:</p>
+<ul>
+  <li>The <strong>board</strong> is a batch CI job: it would connect, wait for snapshots,
+  disconnect — a REST snapshot with extra failure modes. The stream part would go unconsumed.
+  The board stays batch forever.</li>
+  <li>The <strong>maker</strong> is a systemd oneshot + 2-min timer + rolling native TTL. Its
+  load-bearing safety property is <em>the process dying is always safe</em> (crash /
+  <code>kill -9</code> / reboot → quotes self-cancel ≤600s). A WS consumer means a long-running
+  daemon whose death or silent book-state drift is the <em>dangerous</em> state — an inversion
+  of the risk model the whole 07-01 audit was built around.</li>
+  <li>Rate limits are a non-problem: total need is a few hundred reads/day against 10/sec.
+  WS solves a limit we don't hit, at the price of an ops burden we don't carry.</li>
+</ul>
+
+<h3>What survives a WS future (why Tier 0/1 isn't throwaway)</h3>
+<p>The durable layer — <code>ticker</code>/<code>liquidity</code> on scraped lines, per-bet
+<code>depth</code> schema, the clamp/box-constraint plumbing, the fallback chain — is
+transport-agnostic. A WS book store changes <em>where the depth number comes from</em>: one
+function swaps a REST call for a D1/file read. The expensive parts of a standing engine
+(sequence-gap handling, reconnect semantics, supervision, state reconciliation) share almost
+no code with the snapshot path in either direction.</p>
+
+<h3>Step 1 if/when: the read-only book recorder</h3>
+<div class="note">The right first brick is NOT converting the maker — it's a standalone
+<strong>recorder</strong>: a WS consumer (VPS process or a kalshi_exec Durable Object) that
+maintains book state for the golf series and writes snapshots to D1/parquet, touching no
+orders. Maker and board read it when fresh, fall back to REST when not. It solves the hard
+book-state problems on zero-risk infrastructure, leaves the oneshot safety model untouched,
+and its data directly answers whether an event-driven maker is even worth building.</div>
+<ul>
+  <li><strong>Auth:</strong> WS connect uses the same RSA key signature as REST
+  (<code>kalshi_auth</code> already builds these headers).</li>
+  <li><strong>State discipline:</strong> per-ticker sequence numbers; any gap → drop book,
+  resubscribe for a fresh snapshot. Never patch over a gap.</li>
+  <li><strong>Staleness stamp:</strong> every written snapshot carries
+  <code>as_of</code>; consumers gate on it exactly like <code>sim_run_at</code> — unstamped or
+  old ⇒ fall back to REST. Same fail-closed pattern as everything else in this system.</li>
+  <li><strong>Ops:</strong> it's a standing process — systemd service (not oneshot) with
+  restart, healthchecks ping, Telegram on death. Budget for it paging you.</li>
+</ul>
+
+<h3>Step 2 (much later): the event-driven maker</h3>
+<p>Re-quote when the book moves instead of on the 2-min clock; track queue position; size off
+live depth every cycle. This is a rewrite of the maker's process and risk model —
+supervision, heartbeats, reconciliation-on-restart — and should be A/B'd against the
+known-good oneshot at small caps, never swapped in wholesale.</p>
+
+<h3>Decision gates — build the recorder when live data shows any of:</h3>
+<table>
+<tr><th class="p0">Signal</th><th>What it means</th></tr>
+<tr><td>Fills consistently worse than the quoted price's queue implied</td>
+    <td>Queue position matters → need book state, not snapshots</td></tr>
+<tr><td>Quotes routinely re-quoted past / picked off between 2-min cycles</td>
+    <td>Golf books move faster than the cadence → event-driven re-quote pays</td></tr>
+<tr><td>Depth caps binding on most candidate bets at your actual caps</td>
+    <td>Sizing needs finer, fresher depth than build-time snapshots</td></tr>
+<tr><td>Raising maker caps past small-ball</td>
+    <td>The economics start covering a standing process's ops cost</td></tr>
+</table>
+<p>Until one of those shows up in the supervised-live / early-live fill data, the snapshot
+path is not a compromise — it's the right architecture for batch consumers.</p>
+
+<p style="color:#8a93a0; font-size:.85em; margin-top:2rem;">Session of 2026-07-02 (part 2).
+golf_scraping <code>f3c9f47</code>; prior context <code>MM_PATCH_SESSION_2026-07-02.html</code>.
+With this, all 36 findings from the 2026-07-01 audit are closed or explicitly gated.</p>
+</body>
+</html>
