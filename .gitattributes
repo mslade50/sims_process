@@ -1,0 +1,2 @@
+# Shell scripts run on the Linux VPS — must stay LF even on Windows checkouts.
+*.sh text eol=lf
