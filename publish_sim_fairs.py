@@ -94,6 +94,23 @@ def _utc_stamp(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _parse_utc(ts) -> datetime | None:
+    try:
+        return datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _alert(text: str) -> None:
+    """Best-effort Telegram (maker_alerts env). Publish failures must be LOUD —
+    a silent skipped/rejected push is how Monday's Render deploy got stranded."""
+    try:
+        from maker_alerts import send_telegram
+        send_telegram(f"[publish_sim_fairs] {text}")
+    except Exception as e:
+        logger.warning(f"telegram alert failed ({e})")
+
+
 def _sim_run_at(tourney: str, rnd) -> str | None:
     """When the SIM actually ran — the max mtime of the source files build_payload
     reads — NOT the publish wall-clock. `generated_at` is stamped at publish time,
@@ -797,6 +814,55 @@ def _git_push(files=("sim_fairs.json",)) -> None:
         logger.info("sim publish: nothing changed on origin/main")
         return
 
+    # ── Never regress origin's fairs (2026-07-01 audit, freshness #2). Git push
+    # here is last-writer-wins on CONTENT: a machine holding older sim artifacts
+    # (stale clone, unrotated laptop) builds a valid commit on top of origin/main
+    # that replaces fresher fairs with older ones. Compare sim_run_at and refuse
+    # the WHOLE publish (round samples from the same stale sim are equally wrong).
+    if "sim_fairs.json" in blobs:
+        local_pay = origin_pay = None
+        try:
+            local_pay = json.loads(
+                (PROJECT_ROOT / "sim_fairs.json").read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        show = git("show", f"{base}:sim_fairs.json")
+        if show.returncode == 0:
+            try:
+                origin_pay = json.loads(show.stdout)
+            except Exception:
+                pass
+        local_run = _parse_utc((local_pay or {}).get("sim_run_at"))
+        origin_run = _parse_utc((origin_pay or {}).get("sim_run_at"))
+        if origin_run is not None and (local_run is None or local_run < origin_run):
+            msg = (f"REFUSED: origin sim_run_at {origin_run:%Y-%m-%d %H:%M} UTC is fresher "
+                   f"than local {f'{local_run:%Y-%m-%d %H:%M} UTC' if local_run else '(unstamped)'} "
+                   f"— this machine holds stale sim artifacts; not overwriting")
+            logger.warning(f"sim publish {msg}")
+            _alert(msg)
+            return
+        # A machine with only PARTIAL sim outputs (e.g. just simulated_probs.csv)
+        # builds a valid, freshly-stamped payload that silently strips whole market
+        # categories from the board/maker. Within the same event, a legit publish
+        # never empties a category origin had populated — refuse unless overridden.
+        if (origin_pay and local_pay
+                and origin_pay.get("event_id") == local_pay.get("event_id")
+                and (os.environ.get("PUBLISH_ALLOW_SHRINK") or "").strip().lower()
+                    not in ("1", "true", "yes")):
+            def _counts(p):
+                d = {k: len(v or {}) for k, v in (p.get("outrights") or {}).items()}
+                d["matchups"] = len(p.get("matchups") or [])
+                return d
+            oc, lc = _counts(origin_pay), _counts(local_pay)
+            gone = sorted(k for k, n in oc.items() if n > 0 and lc.get(k, 0) == 0)
+            if gone:
+                msg = (f"REFUSED: would strip populated market(s) {gone} from origin's "
+                       f"fairs (same event {local_pay.get('event_id')}) — this machine "
+                       f"lacks the full sim outputs. PUBLISH_ALLOW_SHRINK=1 overrides.")
+                logger.warning(f"sim publish {msg}")
+                _alert(msg)
+                return
+
     idx = os.path.join(tempfile.gettempdir(), f"sim_fairs_index_{os.getpid()}")
     try:
         env = {**os.environ, "GIT_INDEX_FILE": idx}
@@ -815,10 +881,13 @@ def _git_push(files=("sim_fairs.json",)) -> None:
         if p.returncode == 0:
             logger.info(f"Pushed {', '.join(blobs)} to origin/main")
         else:
-            logger.warning(f"sim publish push rejected (retries next run): "
-                           f"{(p.stderr or p.stdout).strip()[:160]}")
+            err = (p.stderr or p.stdout).strip()[:160]
+            logger.warning(f"sim publish push rejected (retries next run): {err}")
+            _alert(f"push rejected — fairs on origin NOT updated, maker/board serve "
+                   f"old fairs until a publish lands: {err}")
     except Exception as e:
         logger.warning(f"sim publish failed ({e}); skipping push")
+        _alert(f"publish failed ({e}) — fairs on origin NOT updated")
     finally:
         try:
             if os.path.exists(idx):
