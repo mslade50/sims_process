@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MM Patch Session — 2026-07-02</title>
+<style>
+  body { background:#1a1d21; color:#d8dce1; font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; max-width:980px; margin:2rem auto; padding:0 1.25rem; }
+  h1 { font-size:1.5rem; border-bottom:2px solid #3a3f45; padding-bottom:.4rem; }
+  h2 { font-size:1.15rem; margin-top:2rem; color:#e8b34b; }
+  h3 { font-size:1rem; margin-top:1.4rem; color:#9fd0ff; }
+  code { background:#2a2e33; padding:.1rem .35rem; border-radius:3px; font-size:.88em; color:#9fd0ff; }
+  table { border-collapse:collapse; width:100%; margin:.75rem 0; font-size:.92em; }
+  th, td { border:1px solid #3a3f45; padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#24282d; }
+  .done { color:#6fc276; font-weight:600; }
+  .open { color:#e8b34b; font-weight:600; }
+  .warn { color:#e06c60; font-weight:600; }
+  .note { background:#24282d; border-left:4px solid #e8b34b; padding:.6rem .9rem; margin:.9rem 0; }
+  .good { background:#22291f; border-left:4px solid #6fc276; padding:.6rem .9rem; margin:.9rem 0; }
+  li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+<h1>MM Patch Session — 2026-07-02</h1>
+<p>Closeout of the 2026-07-01 pipeline audit's maker-side work (see
+<code>MM_PATCH_NOTES_2026-07-01.html</code> for the full finding list). Four commits pushed today:
+<code>608474d</code> + <code>70aa883</code> (this morning), <code>010ff0b</code>, <code>a85c0b5</code> (this session).
+Test suite: <strong>140 passing</strong> (104 guard + 24 TTL + 12 publish).</p>
+
+<div class="good"><strong>Bottom line:</strong> every finding in the audit's maker patch table (#1–#8) and
+freshness items #1–#2 are now closed. All three go-live gates are cleared. What remains before real money:
+provision the VPS, watch one full tournament of shadow, run the supervised live test, set real caps.
+Nothing left is a code blocker in this repo — the remaining audit items live in <code>golf_scraping</code>.</div>
+
+<h2>1 · What changed and why</h2>
+
+<h3>This morning (<code>608474d</code>) — fail-closed guards, recap</h3>
+<table>
+<tr><th>Change</th><th>Why</th></tr>
+<tr><td><code>sim_run_at</code> stamped from source-file mtimes; maker gates on it and fail-closes when missing</td>
+    <td><code>generated_at</code> is publish wall-clock — any machine re-publishing old artifacts looked "fresh," defeating the 48h cap, prefer-fresher, and the board banner at once. Highest-leverage fix in the audit.</td></tr>
+<tr><td>Round-consistency gate + 8h intra-event fairs max-age (48h pre-event)</td>
+    <td>The old 48h gate was round-blind: pre-cut fairs could price post-cut markets all Saturday.</td></tr>
+<tr><td>Event filter fail-closes on zero/weak (&lt;70%)/ambiguous sim↔market overlap</td>
+    <td>Zero overlap used to keep ALL markets — Sunday night with unrotated <code>sim_inputs</code> meant NO-side quotes against last week's tournament.</td></tr>
+<tr><td>Daily realized-loss circuit breaker ($200, ET day) + balance-vs-caps sanity check</td>
+    <td>Open-exposure caps free up as losses settle — without a realized-PnL halt the bot could re-lose the cap every day forever.</td></tr>
+<tr><td>Exposure governor nets out the bot's own resting quote</td>
+    <td>Double-counting halved steady-state cap room and created a cancel/repost oscillator that burned queue priority.</td></tr>
+<tr><td>Zero-candidate <code>--live</code> runs do a cancel-only reconcile</td>
+    <td>Previously they exited without touching resting quotes — stale prices sat on the book until TTL.</td></tr>
+<tr><td><code>maker_alerts.py</code> (Telegram) + <code>deploy/run_maker.sh</code> (healthchecks dead-man ping)</td>
+    <td>TTL stops the bleeding <em>silently</em>; a dead maker and a halted maker must page you. This was go-live gate #3.</td></tr>
+</table>
+
+<h3>This session (<code>010ff0b</code>) — audit maker patches #7–#8</h3>
+<table>
+<tr><th>Change</th><th>Why</th></tr>
+<tr><td><code>--cancel-script</code>: pulls only the bot's script-placed golf orders (client_order_id prefix); manual hand-clicks stay resting</td>
+    <td><code>--cancel-all</code> was the only lever and it kills manual orders too. Smoke-tested in shadow against the real account: your 3 resting golf orders were classified manual and untouched, 0 script orders pulled.</td></tr>
+<tr><td><code>TimeoutStartSec=100</code> placeholder resolved to <strong>60s</strong> in <code>DEPLOY_MAKER_VPS.md</code></td>
+    <td>Measured 142 shadow runs (06-29→07-02): median 6.5s, p95 8.8s, max 12.3s. 60s ≈ 7× shadow p95 leaves headroom for the live reconcile path shadow never exercises (0.12s auth throttle × up to 40 orders + POST/DELETE round-trips ≈ +20s worst case) and stays under the 2-min timer cadence. Revisit after the supervised live test.</td></tr>
+</table>
+
+<h3>This session (<code>a85c0b5</code>) — publish guards (audit freshness #2)</h3>
+<table>
+<tr><th>Change</th><th>Why</th></tr>
+<tr><td><strong>Regress guard</strong>: publish refuses when origin's <code>sim_run_at</code> is fresher than local (stamped local still beats an unstamped pre-guard origin)</td>
+    <td><code>_git_push</code> was last-writer-wins on content: any machine holding older sim artifacts could build a perfectly valid commit on top of origin/main that replaced fresher fairs with older ones.</td></tr>
+<tr><td><strong>Shrink guard</strong>: within the same event, refuses a payload that empties a market category origin had populated (<code>PUBLISH_ALLOW_SHRINK=1</code> overrides)</td>
+    <td>Caught a live near-miss today — see §2. A machine with only partial sim outputs builds a valid, freshly-stamped payload that silently strips whole markets.</td></tr>
+<tr><td><strong>Loud failures</strong>: Telegram on refused publish, rejected push, and publish exceptions</td>
+    <td>A rejected push was a silent <code>logger.warning</code> — the exact class that stranded Monday's Render deploy and left this morning's commits sitting local-only.</td></tr>
+<tr><td><code>test_publish_guards.py</code>: 12 end-to-end cases against a throwaway local bare repo</td>
+    <td>Regress, unstamped-local, shrink, event-rotation allowance, clean push, stamped-beats-unstamped. Real origin never touched.</td></tr>
+</table>
+
+<h2>2 · Today's near-miss (why the shrink guard exists)</h2>
+<p>Plan was to re-publish fairs from this box to stamp <code>sim_run_at</code> and clear the maker's HALT.
+The dry-run showed the payload this machine would build: <span class="warn">winner-only</span>
+(142 winner fairs, <strong>zero</strong> top_5/10/20/make_cut, zero matchups) — because yesterday's full R1 sim
+ran on the <em>other</em> machine, and this box only has <code>simulated_probs.csv</code>. Origin currently
+carries the full payload (5 outright markets, 10,296 matchups). Publishing would have stripped the board and
+maker down to winner markets, with a fresh stamp making it look healthy. The <code>sim_run_at</code> regress
+guard alone can't catch this (the local stamp <em>was</em> newer than origin's missing one) — hence the
+market-shrink guard, which now refuses exactly this publish.</p>
+
+<div class="note"><strong>Multi-machine reality check:</strong> the sim machine and the dev/maker machine are
+different boxes, and the stale OneDrive copy (<code>~/OneDrive/sims_process</code>, May-era) is a third.
+Every guard added today assumes any of them can try to publish. The rule the guards enforce: <em>the machine
+with the freshest, fullest sim output wins; everyone else is refused loudly.</em></div>
+
+<h2>3 · Current operational state (as of this session)</h2>
+<table>
+<tr><th>Thing</th><th>State</th></tr>
+<tr><td>Maker shadow (this box, every 15 min)</td>
+    <td><span class="warn">HALT</span> — "sim_fairs has no parseable sim_run_at". Expected: origin's fairs
+    predate this morning's stamping change, and the guard correctly distrusts them.</td></tr>
+<tr><td>How the HALT clears</td>
+    <td>The next full sim/publish from the <strong>sim machine</strong> stamps <code>sim_run_at</code>.
+    <strong>That machine must <code>git pull</code> first</strong> — it needs both the stamping code and
+    today's publish guards. Natural timing: tomorrow's R1 live pricing run
+    (<code>live_stats_engine</code> → <code>round_sim</code>).</td></tr>
+<tr><td>Real orders</td><td>None, ever. <code>MAKER_SHADOW=1</code> hard-blocks post/cancel at the API boundary.</td></tr>
+<tr><td>Resting book</td><td>3 manual golf orders (verified via the <code>--cancel-script</code> smoke).</td></tr>
+<tr><td>Known automation gap</td>
+    <td><code>nightly-round-sim.yml</code> publishes <code>round_h2h_r{N}</code> only — it never refreshes
+    <code>sim_fairs.json</code>, so the maker's fairs age all week unless a machine publishes. With the 8h
+    intra-event max-age this now fail-closes (HALT) rather than quoting stale. See roadmap: decide whether
+    CI should do a full stamped publish.</td></tr>
+</table>
+
+<h2>4 · Road to live — VPS &amp; automation</h2>
+
+<h3>Go-live gates (from the audit) — all cleared</h3>
+<table>
+<tr><td class="done">DONE</td><td>Commit + push maker WIP (TTL switch, deploy doc, requirements)</td></tr>
+<tr><td class="done">DONE</td><td>US-region VPS step-0 in <code>DEPLOY_MAKER_VPS.md</code> + <code>--list-orders</code> auth smoke</td></tr>
+<tr><td class="done">DONE</td><td>Dead-man alerting: <code>maker_alerts.py</code> Telegram + healthchecks ping in <code>run_maker.sh</code></td></tr>
+</table>
+
+<h3>The path (gated — you decide each step)</h3>
+<ol>
+  <li><strong>This week (John Deere): watch a full tournament of shadow.</strong> The three unvalidated behaviors:
+    does the cockpit flip HALT when DataGolf goes live mid-round; do proposed quotes look sane when the governor
+    gives room; does fairs age reset after each sim publish. Also confirm the new HALT reasons read correctly on
+    the Maker tab.</li>
+  <li><strong>Provision the VPS</strong> per <code>DEPLOY_MAKER_VPS.md</code>: US region
+    (<code>curl ipinfo.io/country</code> = US), <code>--list-orders</code> smoke as the go/no-go, systemd oneshot +
+    2-min timer (<code>TimeoutStartSec=60</code>), <code>HEALTHCHECKS_URL</code> + Telegram env, and set the box
+    timezone to <code>America/New_York</code> deliberately (open decision: naive tee-time parsing may shift the
+    live-round window ~4–5h under UTC — <code>kalshi_maker.py:1338-1354</code>, still unverified).
+    <code>DATAGOLF_API_KEY</code> on the box is effectively mandatory or both live-round signals go blind → permanent HALT.</li>
+  <li><strong>Supervised live test</strong> (1-contract caps, you watching). Pin the four unknowns the audit
+    couldn't resolve from code:
+    <ul>
+      <li>Kalshi <code>client_order_id</code> reuse-after-cancel semantics (does a revisited price level post-fail?)</li>
+      <li><code>expires=</code> visible on exchange, then <code>kill -9</code> → quote self-cancels ≤600s</li>
+      <li>the sub-cent <code>_dollars</code> path (never fired)</li>
+      <li>live run-duration p95 → confirm <code>TimeoutStartSec=60</code>; timer cadence must stay &lt; the 300s refresh invariant</li>
+    </ul></li>
+  <li><strong>Set real caps.</strong> Current <code>$50/$400/$1000</code> are placeholders that your existing golf
+    book already exceeds, which is why shadow shows "TRADE · 0 quotes". Decide caps vs. your book, or whether the
+    maker should stop counting held positions (<code>MAKER_CAP_*</code> env, no code change).</li>
+  <li><strong>Scale</strong>: <code>--live</code> at 1 contract → small + capped → up. Kill switches:
+    <code>MAKER_KILL=1</code> env, <code>permanent_data/MAKER_HALT</code> file, sheet <code>maker_enabled</code>,
+    <code>--cancel-script</code> (bot only) / <code>--cancel-all</code> (panic, includes manual).</li>
+</ol>
+
+<h3>Automation decisions to make (not blockers)</h3>
+<ul>
+  <li><strong>Should CI publish stamped <code>sim_fairs.json</code>?</strong> Today only sim-machine runs do a full
+    publish; nightly CI covers round_h2h only. If sim-machine cadence ever misses the 8h intra-event window, the
+    maker HALTs (safe but idle). Options: add the full publish to <code>nightly-round-sim.yml</code> (CI has fresh
+    source files, so stamping is honest), or accept HALT-when-stale.</li>
+  <li><strong>Repo visibility</strong> (unverified claim from the audit): if this repo is public, fairs, edge floors,
+    caps, and the order-id scheme are counterparty-readable. Decide private-vs-accept before raising caps.</li>
+  <li><strong>Move the shadow to the VPS?</strong> Once the VPS exists, the 15-min Windows Task Scheduler shadow can
+    retire; the same systemd timer runs shadow first, then flips to <code>--live</code> by changing one flag in
+    <code>run_maker.sh</code>.</li>
+</ul>
+
+<h2>5 · Remaining audit items (not this repo, not gating the maker)</h2>
+<table>
+<tr><th>Item</th><th>Where</th><th>When</th></tr>
+<tr><td class="open">Board portfolio blockers #1–#5 (settlement mismatch, Kalshi bid=0 phantoms on the board path,
+    make_cut independence, depth caps, budget-bind flag)</td><td><code>golf_scraping</code></td>
+    <td>Planned "same day or Thursday" — i.e. tomorrow</td></tr>
+<tr><td class="open">Freshness #3: release-asset replace is delete-then-upload (non-atomic, freshness-blind) —
+    versioned asset names + consumer picks max</td><td><code>publish_sim_fairs.py</code> + <code>board/build.py</code></td>
+    <td>With the board work</td></tr>
+<tr><td class="open">Freshness #4: board round-pointer coupling (CI fetches round_h2h by <code>sim_fairs.round</code>
+    but prices the day-of-week round; round_samples unstamped)</td><td><code>golf_scraping</code></td>
+    <td>With the board work</td></tr>
+</table>
+
+<p style="color:#8a93a0; font-size:.85em; margin-top:2rem;">Session of 2026-07-02. Commits
+<code>608474d</code>, <code>70aa883</code>, <code>010ff0b</code>, <code>a85c0b5</code> — all pushed to origin/main.
+140 tests passing. Prior context: <code>MM_PATCH_NOTES_2026-07-01.html</code>, memory
+<code>kalshi-maker-operations</code>.</p>
+</body>
+</html>
