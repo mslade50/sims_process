@@ -1030,7 +1030,18 @@ def publish(push: bool = True) -> dict:
     files = ["sim_fairs.json"]
     samples = _build_round_samples(payload["tourney"], payload.get("round"), _name_replacements())
     if samples is not None:
-        samples.to_parquet(LOCAL_SAMPLES)
+        # Stamp round/event/sim_run_at into the parquet metadata — the board's
+        # round-matchup fallback guards on these (an unstamped samples file from a
+        # prior round/event used to be trusted blindly).
+        import pyarrow as _pa
+        import pyarrow.parquet as _pq
+        _tbl = _pa.Table.from_pandas(samples, preserve_index=True)
+        _tbl = _tbl.replace_schema_metadata({**(_tbl.schema.metadata or {}),
+                b"event_id": str(payload.get("event_id")).encode(),
+                b"round": str(payload.get("round") or "").encode(),
+                b"sim_run_at": str(payload.get("sim_run_at") or "").encode(),
+                b"tourney": str(payload["tourney"]).encode()})
+        _pq.write_table(_tbl, LOCAL_SAMPLES)
         files.append("round_samples.parquet")
         logger.info(f"Wrote {LOCAL_SAMPLES}")
     files.extend(write_round_h2h(payload["tourney"], payload.get("round"), _name_replacements()))
