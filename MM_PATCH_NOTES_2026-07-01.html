@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MM Pipeline Patch Notes — 2026-07-01</title>
+<style>
+  body { background:#1a1d21; color:#d8dce1; font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; max-width:980px; margin:2rem auto; padding:0 1.25rem; }
+  h1 { font-size:1.5rem; border-bottom:2px solid #3a3f45; padding-bottom:.4rem; }
+  h2 { font-size:1.15rem; margin-top:2rem; color:#e8b34b; }
+  code { background:#2a2e33; padding:.1rem .35rem; border-radius:3px; font-size:.88em; color:#9fd0ff; }
+  table { border-collapse:collapse; width:100%; margin:.75rem 0; font-size:.92em; }
+  th, td { border:1px solid #3a3f45; padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#24282d; }
+  .done { color:#6fc276; font-weight:600; }
+  .p0 { color:#e06c60; font-weight:600; }
+  .p1 { color:#e8b34b; font-weight:600; }
+  .p2 { color:#8a93a0; font-weight:600; }
+  .note { background:#24282d; border-left:4px solid #e8b34b; padding:.6rem .9rem; margin:.9rem 0; }
+  li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+<h1>MM Pipeline Patch Notes — from the 2026-07-01 audit</h1>
+<p>Source: 36-agent ultracode audit of sim &rarr; board &rarr; kalshi_exec &rarr; maker (37 findings, 36 kept after adversarial verify).
+Full detail in session memory <code>mm-pipeline-audit-july-2026</code>. All line refs verified against code on 2026-07-01.</p>
+
+<div class="note"><strong>Done tonight:</strong> maker TTL WIP committed &amp; pushed (<code>95865cd</code> TTL switch + test_maker_ttl.py 24/24 + DEPLOY_MAKER_VPS.md + requirements httpx/requests/cryptography; <code>60fa342</code> api_utils CLV fetch). Go-live gate #1 cleared. Pushing also released the stranded <code>e490d47</code> Render dashboard deploy.</div>
+
+<h2>Tomorrow's order of work</h2>
+<ol>
+  <li>Fail-closed flip in <code>maker_guard.py:150-152</code> (5 min, highest risk-per-line)</li>
+  <li><code>sim_run_at</code> from source mtime in <code>publish_sim_fairs.py</code> + consumers gate on it (highest leverage)</li>
+  <li>Maker guard patches #2&ndash;#6 below</li>
+  <li>Alerting (gate #3), then DEPLOY_MAKER_VPS.md step-0 edit (gate #2)</li>
+  <li>Board portfolio blockers (separate repo, can be same day or Thursday)</li>
+</ol>
+
+<h2>Go-live gates</h2>
+<table>
+<tr><th></th><th>Gate</th><th>Status / action</th></tr>
+<tr><td class="done">DONE</td><td>Commit + push maker WIP</td><td>Done tonight. <code>deploy/run_maker.sh</code> still doesn't exist &mdash; create in-repo when doing gate #3 (doc references it).</td></tr>
+<tr><td class="p0">P0</td><td>US-region VPS + auth smoke</td><td>Add step 0 to <code>DEPLOY_MAKER_VPS.md</code> (line 23 says "any small Linux VPS" &mdash; wrong): US region, <code>curl ipinfo.io/country</code>=US, exchange status 200, then <code>python kalshi_maker.py --list-orders</code> (pure-GET smoke, <code>kalshi_maker.py:985-1008</code>) as provider go/no-go.</td></tr>
+<tr><td class="p0">P0</td><td>Dead-man alerting</td><td>Zero alert code exists (verified: no telegram/notify in <code>kalshi_maker.py</code>/<code>maker_guard.py</code>, no systemd <code>OnFailure=</code>, <code>push_maker_state.py || true</code>). TTL stops bleeding <em>silently</em>. Minimum: healthchecks ping in <code>run_maker.sh</code> + Telegram on HALT transitions, post-fail streaks, new fills (D1 cron Worker already has fill data).</td></tr>
+</table>
+
+<h2>Maker patches (real-money holes, all CONFIRMED)</h2>
+<table>
+<tr><th>#</th><th>What</th><th>Where</th><th>Fix</th></tr>
+<tr><td class="p0">1</td><td>Freshness gate fails OPEN on missing/unparseable <code>generated_at</code>; also poisons prefer-fresher (<code>or 0.0</code> &rarr; stale-parseable beats fresh-unparseable)</td><td><code>maker_guard.py:150-152</code>, <code>kalshi_maker.py:386-387</code>; <code>parse_fairs_ts</code> only accepts <code>%Y-%m-%d %H:%M:%S UTC</code></td><td>Flip to fail-closed; update <code>test_maker_guard.py:198</code> which asserts the fail-open</td></tr>
+<tr><td class="p0">2</td><td>Wrong-event quoting window: <code>_apply_event_filter</code> max-overlap with no minimum; zero overlap keeps ALL markets. Sunday night + unrotated sim_inputs = NO-side quotes off last week's tournament</td><td><code>kalshi_maker.py:308, 317-320</code></td><td>Minimum overlap fraction + fail-closed on ambiguity/zero. Ops rule until then: touch <code>MAKER_HALT</code> Sunday night &rarr; rotation</td></tr>
+<tr><td class="p0">3</td><td>48h fairs gate is round-blind: payload <code>round</code> never checked vs tournament state; nightly cron never refreshes sim_fairs.json &rarr; can quote post-cut markets off pre-cut fairs all Saturday</td><td><code>maker_guard.py:140-157</code> (<code>check_fairs_fresh_payload</code>)</td><td>Round-consistency gate + drop intra-event max-age to ~6-8h Thu&ndash;Sun</td></tr>
+<tr><td class="p0">4</td><td>No realized-loss circuit breaker; balance read only under <code>--preview</code>. Open-exposure caps free up as losses settle &rarr; can re-lose daily forever</td><td><code>maker_guard.py:50-57</code>, <code>kalshi_maker.py:1512-1611</code></td><td>Daily realized-PnL halt from durable D1/parquet fills + startup balance-vs-caps sanity check</td></tr>
+<tr><td class="p1">5</td><td>Exposure governor double-counts keeps (own resting order counted in <code>build_exposure</code> AND re-charged as candidate spend) &rarr; halves steady-state room; governor-before-reconcile makes a cancel/repost oscillator that burns queue priority</td><td><code>maker_guard.py:340-352</code>, cancel at <code>kalshi_maker.py:887</code></td><td>Net out candidate's own resting order by <code>_resting_key</code>; add unit test</td></tr>
+<tr><td class="p1">6</td><td>Zero-candidate runs skip reconcile entirely &rarr; between events / fairs FileNotFoundError, resting quotes sit at stale prices until TTL (or forever pre-TTL)</td><td><code>kalshi_maker.py:1691-1695</code></td><td>Empty-candidate path runs cancel-only reconcile</td></tr>
+<tr><td class="p2">7</td><td>No script-scoped cancel (<code>--cancel-all</code> kills manual orders too); <code>client_order_id</code> reuse-after-cancel semantics unknown &mdash; if Kalshi doesn't free ids, revisited price levels silently fail (<code>[post-fail]</code> print only)</td><td><code>kalshi_maker.py:860-862</code>; <code>pull_script_quotes</code> exists</td><td>Add <code>--cancel-script</code>; pin id semantics during supervised live test</td></tr>
+<tr><td class="p2">8</td><td><code>TimeoutStartSec=100</code> unvalidated vs paginated fetches + 0.12s auth throttle &times; up to 40 orders &rarr; SIGTERM mid-reconcile every cycle if slow</td><td><code>DEPLOY_MAKER_VPS.md:114</code></td><td>Set from shadow-run p95 (<code>done in Xs</code> log lines)</td></tr>
+</table>
+
+<h2>Freshness &amp; multi-machine (sustainability)</h2>
+<table>
+<tr><th>#</th><th>What</th><th>Where</th><th>Fix</th></tr>
+<tr><td class="p0">1</td><td><code>generated_at</code> = PUBLISH wall-clock, not sim time &rarr; any machine that publishes publishes "fresh"; defeats 48h cap, prefer-fresher, board banner simultaneously. <strong>Highest-leverage single fix.</strong></td><td><code>publish_sim_fairs.py:696,702</code>; sidecars <code>:571/:671</code></td><td>Stamp <code>sim_run_at</code> from source cache mtime/run-id; consumers gate on it; missing stamp = failure</td></tr>
+<tr><td class="p1">2</td><td>Git publish is last-writer-wins; rejected push = <code>logger.warning</code> only (tonight's stranded Render deploy was this class)</td><td><code>publish_sim_fairs.py:734-772</code> (<code>_git_push</code>)</td><td>Refuse to regress origin's <code>generated_at</code>; Telegram on rejected push; alert when local main ahead of origin &gt;1h</td></tr>
+<tr><td class="p1">3</td><td>Release-asset replace is delete-then-upload: non-atomic, freshness-blind; GH_TOKEN-less publish (warn+skip, <code>:428-431</code>) leaves older tape that board prefers over fresher git tape; stale-event asset forces copula fallback</td><td><code>publish_sim_fairs.py:453-458</code>; <code>board/build.py:316-351,1346-1348</code></td><td>Versioned assets <code>tournament_samples_full_{event_id}_{ts}.parquet</code>, consumer picks max; minimally compare parquet-metadata generated_at before overwrite</td></tr>
+<tr><td class="p1">4</td><td>Board round-pointer coupling: <code>board.yml:120</code> fetches round_h2h by <code>sim_fairs.round</code> but <code>build.py:1349</code> prices the DOW round; fallback <code>round_samples.parquet</code> has no round/event stamp (<code>build.py:258-274</code>); nightly cron publishes r{N+1} without bumping pointer &rarr; Friday board prices new round off old round's joint labeled <code>source='sim'</code></td><td><code>golf_scraping</code></td><td>Fetch both rounds in CI; stamp round_samples; <code>--round-h2h-only</code> patches round pointer; board reads the meta sidecars it currently ignores</td></tr>
+</table>
+
+<h2>Board portfolio tab (golf_scraping) — solver correct, 3 input blockers before real sizing</h2>
+<table>
+<tr><th>#</th><th>What</th><th>Where</th><th>Fix</th></tr>
+<tr><td class="p0">1</td><td>Settlement mismatch: outcomes ties-inside/NDH for EVERY book, but p/EV/gating use dead-heat fair for EVERY book &rarr; over-stakes ties at Betcris/BOL/Pinnacle, under-weights binary-settled Kalshi/NoVig (worst on top_20)</td><td><code>board/portfolio.py:197-199</code> vs <code>:405, :237-242, :321-327</code></td><td>Book-aware (p, outcome, payout) triples; per-book NODH edges already computed at <code>build.py:628-639</code> &mdash; just read them</td></tr>
+<tr><td class="p0">2</td><td>Kalshi bid=0 phantom asks unfiltered on the board path; log-utility loves fake cheap binaries (5c ask vs p&approx;0.15 &rarr; ~+180% EV of nothing)</td><td><code>scrapers/kalshi.py:449-464</code> (ask&gt;0 only)</td><td>Port the sims-side bid=0 filter (pattern at <code>new_sim.py:1978</code>)</td></tr>
+<tr><td class="p1">3</td><td><code>make_cut</code> always an independent copula draw even with tape present &rarr; same-golfer win+topN+cut stacks treated independent = over-staked exactly where stacking is heaviest</td><td><code>board/portfolio.py:421-428</code></td><td>Publish <code>made_cut_mask</code> on the tape draw axis (already cached sim-side; missed cuts encoded r1_r2+200 at <code>new_sim.py:943-948</code> &mdash; publish the mask, NOT a min+150 threshold)</td></tr>
+<tr><td class="p1">4</td><td>Depth/lot-size unmodeled: solve assumes unlimited fill at single best quote; real stake sweeps exchange longshot books</td><td><code>board/portfolio.py</code></td><td>Cap stakes at scraped depth &mdash; box constraint, fits the projected-gradient solver trivially</td></tr>
+<tr><td class="p2">5</td><td>κ scalar fractional-Kelly is fine (conservative both ways) but silent when ΣF hits the C=1.0 budget; dark round/matchup paths have latent bugs (cross-sim draw pairing labeled exact; round-leader ties treated as losses vs Kalshi $1/N)</td><td><code>board/web/portfolio.js:216-226</code></td><td>UI flag at budget bind; do NOT enable round/matchup paths without fixing</td></tr>
+</table>
+
+<h2>Pin down during supervised live test</h2>
+<ul>
+  <li>Kalshi <code>client_order_id</code>-after-cancel semantics (re-arm docstring concedes unknown)</li>
+  <li><code>expires=</code> visible on exchange, then <code>kill -9</code> &rarr; quote self-cancels &le;600s</li>
+  <li>Sub-cent <code>_dollars</code> path (never fired)</li>
+  <li>Run duration p95 &rarr; set <code>TimeoutStartSec</code>; timer cadence must stay &lt; 300s refresh invariant</li>
+</ul>
+
+<h2>Open decisions</h2>
+<ul>
+  <li>Repo visibility: if public, fairs/edge floors/caps/id scheme are counterparty-readable &mdash; decide private-vs-accept before raising caps (UNVERIFIED claim, check repo settings)</li>
+  <li>UTC vs <code>America/New_York</code> on the VPS: naive tee-time parsing may shift the live-round window ~4-5h (<code>kalshi_maker.py:1338-1354</code>, UNVERIFIED) &mdash; set ET deliberately or verify parsing</li>
+  <li><code>DATAGOLF_API_KEY</code> on the box is effectively mandatory or both live-round signals go blind &rarr; permanent HALT</li>
+</ul>
+
+<p style="color:#8a93a0; font-size:.85em; margin-top:2rem;">One refuted finding excluded (reprice's tourney gate does catch the generic-fallback wrong-event path). Generated from workflow run wf_173fb5bd-2a1, 2026-07-01.</p>
+</body>
+</html>
