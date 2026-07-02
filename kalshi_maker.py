@@ -32,6 +32,8 @@ Modes:
     --live           reconcile + auto-cancel stale + POST new intents
     --rungs          use the legacy edge-rung ladder for outrights (not the engine)
     --cancel-all     cancel every resting order owned by our key, then exit
+    --cancel-script  cancel only the bot's script-placed orders (client_order_id
+                     prefix); manual hand-clicked orders are left resting
 
 Automation safety layer (maker_guard.py) — applies to --live AND the dry-run:
     KILL SWITCH (any halts --live; a halt also pulls the bot's own quotes):
@@ -1085,6 +1087,20 @@ def cancel_all():
                             f"@{_resting_key(o)[2]}c")
 
 
+def cancel_script():
+    """--cancel-script entry point: cancel only SCRIPT-placed golf orders
+    (identified by the client_order_id prefix). Manual hand-clicked orders are
+    left resting — the softer sibling of --cancel-all for pulling the bot
+    without disturbing positions worked by hand.
+    """
+    golf = list_resting_orders(golf_only=True)
+    manual = sum(1 for o in golf if not _is_script_order(o))
+    print(f"[cancel-script] pulling script quotes: {len(golf) - manual} script, "
+          f"{manual} manual golf order(s) left untouched.")
+    n = maker_guard.pull_script_quotes(lambda: golf, _is_script_order, cancel_order)
+    print(f"[cancel-script] cancelled {n} script order(s).")
+
+
 def list_orders_smoke():
     """--list-orders entry point: pure GET, no DELETE. Auth smoke test."""
     print("[list-orders] GET /portfolio/orders?status=resting (no side effects)")
@@ -1576,6 +1592,10 @@ if __name__ == "__main__":
     ap.add_argument("--cancel-all", action="store_true",
                     help="Cancel every resting GOLF order owned by our key, then exit. "
                          "Non-golf orders are NEVER touched.")
+    ap.add_argument("--cancel-script", action="store_true",
+                    help="Cancel only the bot's script-placed golf orders "
+                         "(client_order_id prefix match). Manual orders are "
+                         "left resting. Softer than --cancel-all.")
     ap.add_argument("--list-orders", action="store_true",
                     help="Pure-GET auth smoke test. Lists resting orders with golf vs "
                          "non-golf breakdown, no DELETE or POST. Then exits.")
@@ -1610,6 +1630,10 @@ if __name__ == "__main__":
         sys.exit(0)
     if args.cancel_all:
         cancel_all()
+        _client.close()
+        sys.exit(0)
+    if args.cancel_script:
+        cancel_script()
         _client.close()
         sys.exit(0)
 

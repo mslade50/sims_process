@@ -138,11 +138,13 @@ User=maker
 Group=maker
 WorkingDirectory=/opt/sims_process
 ExecStart=/opt/sims_process/deploy/run_maker.sh
-TimeoutStartSec=100          # PLACEHOLDER — set from shadow-run p95 before go-live:
-                             # take the `done in Xs` lines from a day of shadow runs
-                             # and set this ~2x the p95 (SIGTERM mid-reconcile every
-                             # cycle is worse than a rare long run). Must stay under
-                             # the 2-min cadence.
+TimeoutStartSec=60           # From 142 shadow runs (2026-06-29..07-02): median 6.5s,
+                             # p95 8.8s, max 12.3s. 60s ≈ 7x shadow p95 — headroom for
+                             # the live reconcile path shadow never exercises (0.12s
+                             # auth throttle x up to 40 orders + POST/DELETE round
+                             # trips ≈ +20s worst case). Stays under the 2-min cadence.
+                             # Revisit against `done in Xs` after the supervised live
+                             # test — SIGTERM mid-reconcile is worse than a long run.
 Nice=5
 ```
 
