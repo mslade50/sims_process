@@ -147,6 +147,31 @@ _allow_pre_matchup_fallback = False
 # default — so we don't lose precision near the bounds.
 DEFAULT_TICK = 0.01        # fallback only if a market doesn't report ranges
 
+
+def _env_int(name, default):
+    """Parse an int env override; fall back to default on unset/garbage."""
+    try:
+        v = os.getenv(name)
+        return int(v) if v not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+# ── Rolling quote TTL (dead-man's switch) ──────────────────────────────
+# Every live maker quote is posted with a native Kalshi expiration_ts of
+# now + QUOTE_TTL_SEC, and re-armed each reconcile cycle once its remaining
+# life drops below QUOTE_REFRESH_SEC. If this process dies (crash, dropped
+# network, VPS reboot, kill -9 mid-deploy), every resting quote self-cancels
+# within QUOTE_TTL_SEC — with NO dependence on the reconcile loop, the cron
+# Worker, or anything else staying up. Manual hand-clicks never get a TTL here.
+#
+# INVARIANT: run the maker MORE OFTEN than QUOTE_REFRESH_SEC, or quotes will
+# lapse between normal cycles. A lapse is fail-safe (no quote is safe) but it
+# defeats the maker. With the defaults below, schedule the live loop to run at
+# least every ~4 min; on a crash, all exposure is pulled within 10 min.
+QUOTE_TTL_SEC     = _env_int("MAKER_QUOTE_TTL_SEC", 600)      # native expiry: 10 min
+QUOTE_REFRESH_SEC = _env_int("MAKER_QUOTE_REFRESH_SEC", 300)  # re-arm when < 5 min left
+
 # ── Kalshi public API (no auth) ────────────────────────────────────────
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 OUTRIGHT_SERIES = {
@@ -606,6 +631,18 @@ def _client_order_id(ticker, side, post_price_dollars):
     return SCRIPT_ORDER_PREFIX + h[:28]
 
 
+def _rearm_client_order_id(ticker, side, post_price_dollars, now_ts):
+    """A script-prefixed but time-UNIQUE id for a TTL re-arm re-post. The normal
+    id is deterministic per (ticker,side,price) for idempotency; on a re-arm we
+    cancel the twin and re-post at the same price, so a fresh id makes the re-post
+    well-defined regardless of whether Kalshi frees the cancelled client_order_id.
+    Still starts with SCRIPT_ORDER_PREFIX so _is_script_order recognizes it."""
+    milli = int(round(post_price_dollars * 1000))
+    raw = f"sims_maker|{ticker}|{side}|{milli}|{int(now_ts)}"
+    h = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return SCRIPT_ORDER_PREFIX + h[:28]
+
+
 def _is_script_order(o):
     """True if this resting order was placed by this script."""
     return str(o.get("client_order_id", "")).startswith(SCRIPT_ORDER_PREFIX)
@@ -680,6 +717,30 @@ def _resting_count(o):
         return 0
 
 
+def _order_expiration_ts(o):
+    """Native Kalshi expiration for a resting order as a Unix-seconds int, or
+    None when the order carries no expiration (legacy unlimited-GTC) or the value
+    is unreadable. Kalshi returns `expiration_ts` as integer Unix seconds."""
+    raw = o.get("expiration_ts")
+    if raw in (None, "", 0):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _needs_refresh(o, now_ts):
+    """True if a resting SCRIPT quote must be re-armed: it has no native TTL
+    (legacy unlimited GTC) or its expiration is within QUOTE_REFRESH_SEC of now.
+    Re-arming renews the rolling dead-man's switch so live quotes never lapse
+    while the maker runs, yet die on their own within QUOTE_TTL_SEC if it stops."""
+    exp = _order_expiration_ts(o)
+    if exp is None:
+        return True
+    return (exp - now_ts) <= QUOTE_REFRESH_SEC
+
+
 def _shadow_mode():
     """MAKER_SHADOW truthy => HARD no-orders: post_limit and cancel_order become
     no-ops at the API boundary, so even an accidental --live can't touch the book.
@@ -709,7 +770,7 @@ def cancel_order(order_id, ticker, reason=""):
     return ok
 
 
-def post_limit(ticker, side, price_dollars, count, expiration_ts=None):
+def post_limit(ticker, side, price_dollars, count, expiration_ts=None, client_order_id=None):
     """POST a single resting limit order. Re-fetches the orderbook FIRST and
     re-asserts no-cross against the live ask. Returns (ok, order_id_or_err).
 
@@ -721,6 +782,11 @@ def post_limit(ticker, side, price_dollars, count, expiration_ts=None):
     Kalshi auto-cancels any unfilled remainder at that wall-clock time. Per
     Kalshi docs, the field must be paired with time_in_force=good_till_canceled
     (omitting expiration_ts under GTC = true unlimited GTC, the prior default).
+
+    `client_order_id` overrides the default deterministic per-(ticker,side,price)
+    id. The reconcile loop passes a fresh one only on a TTL re-arm (cancel +
+    re-post at the same price); every other post keeps the deterministic id so
+    Kalshi's duplicate rejection still guards against a missed reconciliation.
     """
     if not _is_golf_ticker(ticker):
         print(f"  [skip] {ticker} non-golf ticker — refusing")
@@ -773,7 +839,7 @@ def post_limit(ticker, side, price_dollars, count, expiration_ts=None):
     # Source: https://docs.kalshi.com/api-reference/orders/create-order
     body = {
         "ticker": ticker,
-        "client_order_id": _client_order_id(ticker, side, price_dollars),
+        "client_order_id": client_order_id or _client_order_id(ticker, side, price_dollars),
         "type": "limit",
         "action": "buy",
         "side": side,
@@ -832,25 +898,70 @@ def reconcile_and_post(candidates):
               f"{', '.join(o.get('ticker','?') for o in manual_orders[:5])}"
               f"{'…' if len(manual_orders) > 5 else ''})")
 
-    # ── 2. Skip candidates already on the book at the same price.
-    # Use ALL resting (script + manual) for the dedup so we never put a
-    # duplicate order on top of one of your hand-clicks. ─────────────────
-    still_resting = [o for o in resting if o not in stale]
-    already = {_resting_key(o) for o in still_resting}
-    to_post = [c for c in candidates
-               if (c["ticker"], c["side"], int(round(c["post_price"] * 1000))) not in already]
-    skipped = len(candidates) - len(to_post)
-    if skipped:
-        print(f"  Skipping {skipped} candidate(s) already resting at target price")
+    # ── 2. Bucket candidates that match a resting order. Manual hand-clicks
+    # are immune (never touched, never stacked). A matching SCRIPT quote is
+    # KEPT when its rolling TTL is still healthy (preserves queue priority), or
+    # RE-ARMED (cancel + re-post with a fresh native expiration) when its expiry
+    # is within QUOTE_REFRESH_SEC — so the dead-man's switch never lapses while
+    # we're alive. ───────────────────────────────────────────────────────────
+    now_ts = int(time.time())
+    expiration_ts = now_ts + QUOTE_TTL_SEC
 
-    # ── 3. POST new ones (re-validate happens inside post_limit) ────────
-    print(f"  Posting {len(to_post)} new order(s)…")
+    still_resting = [o for o in resting if o not in stale]
+    script_by_key, manual_keys = {}, set()
+    for o in still_resting:
+        if _is_script_order(o):
+            script_by_key.setdefault(_resting_key(o), o)
+        else:
+            manual_keys.add(_resting_key(o))
+
+    to_post, to_rearm, kept = [], [], 0
+    for c in candidates:
+        key = (c["ticker"], c["side"], int(round(c["post_price"] * 1000)))
+        if key in manual_keys:
+            continue  # sitting on your hand-click — leave it, never stack on top
+        ro = script_by_key.get(key)
+        if ro is None:
+            to_post.append(c)
+        elif _needs_refresh(ro, now_ts):
+            to_rearm.append((c, ro))
+        else:
+            kept += 1
+    if kept:
+        print(f"  Keeping {kept} healthy script quote(s) (> {QUOTE_REFRESH_SEC}s TTL left)")
+
+    # ── 3. Re-arm aging script quotes: cancel first, then re-post below. Only
+    # re-post the ones we actually cancelled, so a cancel failure can never
+    # leave a stacked duplicate. A skipped re-arm still self-expires on its
+    # native TTL — fail-safe. ────────────────────────────────────────────────
+    rearm_post = []
+    if to_rearm:
+        print(f"  Re-arming {len(to_rearm)} script quote(s) nearing expiry…")
+        for c, ro in to_rearm:
+            if cancel_order(ro.get("order_id"), ro.get("ticker", ""),
+                            reason=f"TTL refresh {ro.get('ticker')} {ro.get('side')}"):
+                rearm_post.append(c)
+
+    # ── 4. POST fresh quotes (deterministic id) + re-armed quotes (fresh id),
+    # each carrying the rolling native expiration. Re-validation happens inside
+    # post_limit. ────────────────────────────────────────────────────────────
+    print(f"  Posting {len(to_post) + len(rearm_post)} order(s) "
+          f"({len(to_post)} new, {len(rearm_post)} re-armed; TTL {QUOTE_TTL_SEC}s)…")
     n_ok = n_fail = 0
     for c in to_post:
-        ok, _ = post_limit(c["ticker"], c["side"], c["post_price"], c["contracts"])
+        ok, _ = post_limit(c["ticker"], c["side"], c["post_price"], c["contracts"],
+                           expiration_ts=expiration_ts)
         n_ok += int(ok)
         n_fail += int(not ok)
-    print(f"\n[live] posted={n_ok}  failed={n_fail}  cancelled={len(stale)}")
+    for c in rearm_post:
+        ok, _ = post_limit(c["ticker"], c["side"], c["post_price"], c["contracts"],
+                           expiration_ts=expiration_ts,
+                           client_order_id=_rearm_client_order_id(
+                               c["ticker"], c["side"], c["post_price"], now_ts))
+        n_ok += int(ok)
+        n_fail += int(not ok)
+    print(f"\n[live] posted={n_ok}  failed={n_fail}  re-armed={len(rearm_post)}  "
+          f"kept={kept}  cancelled_stale={len(stale)}")
 
 
 def cancel_all():
