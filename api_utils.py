@@ -628,3 +628,90 @@ def fetch_historical_rounds(event_id, year=None, api_key=None):
     df = clean_names(df)
     print(f"  Fetched {len(df)} player-round rows ({df['player_name'].nunique()} players)")
     return df
+
+
+# --------------------------------------------------------------------------
+# Historical Betting Odds (opening + closing lines, with outcomes)
+# --------------------------------------------------------------------------
+
+def fetch_historical_matchup_odds(year, book, event_id="all",
+                                  market="tournament_matchups", api_key=None):
+    """
+    Fetch historical matchup odds (opening + closing lines + settled outcomes)
+    from DataGolf's historical-odds/matchups feed.
+
+    betcris and pinnacle do NOT fully overlap on matchup offerings, so callers
+    should pull both books and union on (event_id, dg_id pair) coverage.
+
+    Returns long-format DataFrame, one row per matchup:
+        event_id, event_name, season, book, bet_type, open_time, close_time,
+        p1_dg_id, p1_player_name, p1_open, p1_close, p1_outcome,
+        p2_dg_id, p2_player_name, p2_open, p2_close, p2_outcome
+    Odds columns are American (float). Outcomes: 1.0 win, 0.0 loss (NaN if void).
+    """
+    if api_key is None:
+        api_key = os.getenv("DATAGOLF_API_KEY")
+
+    params = {
+        "tour": "pga",
+        "event_id": str(event_id),
+        "year": year,
+        "market": market,
+        "book": book,
+        "odds_format": "american",
+        "file_format": "json",
+        "key": api_key,
+    }
+
+    # DataGolf allows 45 req/min across ALL endpoints; exceeding it triggers a
+    # 5-min suspension returned as 403. Do NOT retry into it — every request made
+    # while suspended resets the clock. Return a rate-limit signal so the caller
+    # can stop immediately and resume after a clean cooldown. Pace under 45/min.
+    try:
+        resp = requests.get(
+            f"{DATAGOLF_BASE}/historical-odds/matchups",
+            params=params,
+            timeout=45,
+        )
+        if resp.status_code in (403, 429):
+            print(f"  Rate-limited ({resp.status_code}) on {book} event {event_id}.")
+            return "RATE_LIMITED"
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  Error fetching historical matchup odds ({book}, event {event_id}): {e}")
+        return pd.DataFrame()
+
+    # event_id="all" returns a list of event dicts; a single event returns one dict.
+    events = data if isinstance(data, list) else [data]
+    rows = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        meta = {
+            "event_id": ev.get("event_id"),
+            "event_name": ev.get("event_name"),
+            "season": ev.get("season") or ev.get("year"),
+            "book": ev.get("book", book),
+        }
+        for o in ev.get("odds", []) or []:
+            row = dict(meta)
+            row.update({
+                "bet_type": o.get("bet_type"),
+                "open_time": o.get("open_time"),
+                "close_time": o.get("close_time"),
+                "tie_rule": o.get("tie_rule"),
+            })
+            for side in ("p1", "p2"):
+                row[f"{side}_dg_id"] = o.get(f"{side}_dg_id")
+                row[f"{side}_player_name"] = o.get(f"{side}_player_name")
+                row[f"{side}_open"] = pd.to_numeric(o.get(f"{side}_open"), errors="coerce")
+                row[f"{side}_close"] = pd.to_numeric(o.get(f"{side}_close"), errors="coerce")
+                row[f"{side}_outcome"] = o.get(f"{side}_outcome")
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        print(f"  Fetched {len(df)} {market} rows from {book} "
+              f"({df['event_id'].nunique()} events)")
+    return df
