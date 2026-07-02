@@ -56,6 +56,8 @@ TOURN_SAMPLE_N = 20000
 GH_REPO = "mslade50/sims_process"
 FULL_TAPE_TAG = "sim-data"
 FULL_TAPE_ASSET = "tournament_samples_full.parquet"
+MATCHUP_TAPE_ASSET = "matchup_scores_live.parquet"
+MATCHUP_TAPE_DRAWS = 25000  # H2H prob SE ~0.3pp at 25k draws vs the maker's 5pp gate
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -484,34 +486,111 @@ def _upload_full_tape_release(tourney, event_id, generated_at, repl) -> bool:
         return False
     try:
         import io
-        import requests
         import pyarrow.parquet as pq
         buf = io.BytesIO()
         pq.write_table(tbl, buf)
         data = buf.getvalue()
-        api = "https://api.github.com"
-        H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-             "X-GitHub-Api-Version": "2022-11-28"}
-        # find (or create) the sim-data release
-        r = requests.get(f"{api}/repos/{GH_REPO}/releases/tags/{FULL_TAPE_TAG}", headers=H, timeout=30)
-        if r.status_code == 404:
-            r = requests.post(f"{api}/repos/{GH_REPO}/releases", headers=H, timeout=30, json={
-                "tag_name": FULL_TAPE_TAG, "name": "Sim data (board tapes)", "prerelease": True,
-                "body": "Full-resolution tournament finish tape for the odds-board portfolio solve."})
-        r.raise_for_status()
-        rel = r.json()
-        # asset names must be unique — delete the previous one first
-        for a in rel.get("assets", []):
-            if a.get("name") == FULL_TAPE_ASSET:
-                requests.delete(f"{api}/repos/{GH_REPO}/releases/assets/{a['id']}", headers=H, timeout=30)
-        up = f"https://uploads.github.com/repos/{GH_REPO}/releases/{rel['id']}/assets?name={FULL_TAPE_ASSET}"
-        ur = requests.post(up, headers={**H, "Content-Type": "application/octet-stream"}, data=data, timeout=600)
-        ur.raise_for_status()
+        _upload_release_asset(FULL_TAPE_ASSET, data, token)
         logger.info(f"full tape: uploaded {tbl.num_rows} players x {tbl.num_columns - 1} draws "
                     f"-> release {FULL_TAPE_TAG}/{FULL_TAPE_ASSET} ({len(data) // 1_000_000}MB)")
         return True
     except Exception as e:
         logger.warning(f"full tape: release upload failed ({e})")
+        return False
+
+
+def _upload_release_asset(asset_name: str, data: bytes, token: str) -> None:
+    """Replace one asset on this repo's `sim-data` release (created if absent).
+    Delete-then-upload — asset names must be unique on a release."""
+    import requests
+    api = "https://api.github.com"
+    H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+         "X-GitHub-Api-Version": "2022-11-28"}
+    r = requests.get(f"{api}/repos/{GH_REPO}/releases/tags/{FULL_TAPE_TAG}", headers=H, timeout=30)
+    if r.status_code == 404:
+        r = requests.post(f"{api}/repos/{GH_REPO}/releases", headers=H, timeout=30, json={
+            "tag_name": FULL_TAPE_TAG, "name": "Sim data (board tapes)", "prerelease": True,
+            "body": "Sim tapes for the odds-board portfolio solve and the Kalshi maker."})
+    r.raise_for_status()
+    rel = r.json()
+    for a in rel.get("assets", []):
+        if a.get("name") == asset_name:
+            requests.delete(f"{api}/repos/{GH_REPO}/releases/assets/{a['id']}", headers=H, timeout=30)
+    up = f"https://uploads.github.com/repos/{GH_REPO}/releases/{rel['id']}/assets?name={asset_name}"
+    ur = requests.post(up, headers={**H, "Content-Type": "application/octet-stream"}, data=data, timeout=600)
+    ur.raise_for_status()
+
+
+def _build_live_matchup_tape(tourney: str, event_id, repl: dict, max_draws=MATCHUP_TAPE_DRAWS):
+    """Per-draw LIVE score tape (players x draws) from round_sim's
+    final_scores_live npy + its OWN name sidecar. The live field order differs
+    from new_sim's alphabetical player_names.json — pairing across runs computes
+    P(wrong player beats wrong player) — so the names ride inside the parquet as
+    the index. Feeds kalshi_maker H2H pricing on machines that didn't run the
+    sim (VPS). None if the live files aren't on disk."""
+    import numpy as np
+    import pyarrow as pa
+
+    fs = _find(f"final_scores_live_{tourney}.npy", f"{tourney}/final_scores_live_{tourney}.npy")
+    pn = _find(f"player_names_live_{tourney}.json", f"{tourney}/player_names_live_{tourney}.json")
+    if fs is None or pn is None:
+        logger.info("matchup tape: no live final_scores/player_names — skipping")
+        return None
+    scores = np.load(fs)
+    names = json.loads(Path(pn).read_text())
+    if scores.ndim != 2 or scores.shape[0] != len(names):
+        logger.warning(f"matchup tape: final_scores {scores.shape} vs {len(names)} names "
+                       f"mismatch — skipping")
+        return None
+    n = scores.shape[1]
+    if max_draws and n > max_draws:                      # fixed-stride downsample keeps the joint
+        idx = np.linspace(0, n - 1, max_draws).round().astype(int)
+        scores = scores[:, idx]
+    # H2H prices depend on exact ties — only compress to int16 when lossless
+    if np.allclose(scores, np.round(scores)):
+        scores = np.round(scores).astype("int16")
+    else:
+        scores = scores.astype("float32")
+    df = pd.DataFrame(scores, index=[_norm(nm, repl) for nm in names],
+                      columns=[str(i) for i in range(scores.shape[1])])
+    df = df[~df.index.duplicated(keep="first")]
+    tbl = pa.Table.from_pandas(df, preserve_index=True)
+    meta = {**(tbl.schema.metadata or {}),
+            b"event_id": str(event_id).encode(),
+            b"sim_run_at": _utc_stamp(fs.stat().st_mtime).encode(),
+            b"tourney": str(tourney).encode(),
+            b"source": b"final_scores_live"}
+    tbl = tbl.replace_schema_metadata(meta)
+    logger.info(f"matchup tape: {df.shape[0]} players x {df.shape[1]} draws (event {event_id})")
+    return tbl
+
+
+def _upload_matchup_tape_release(tourney, event_id, repl) -> bool:
+    """Upload the live matchup tape as a release asset so the maker can price
+    H2H matchups on machines that never ran round_sim (final_scores_live is
+    tens of MB and gitignored — git transport is the wrong channel)."""
+    import os
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        logger.warning("matchup tape: GH_TOKEN not set — skipping release upload "
+                       "(maker H2H needs a local round_sim run)")
+        return False
+    tbl = _build_live_matchup_tape(tourney, event_id, repl)
+    if tbl is None:
+        return False
+    try:
+        import io
+        import pyarrow.parquet as pq
+        buf = io.BytesIO()
+        pq.write_table(tbl, buf)
+        data = buf.getvalue()
+        _upload_release_asset(MATCHUP_TAPE_ASSET, data, token)
+        logger.info(f"matchup tape: uploaded {tbl.num_rows} players x {tbl.num_columns - 1} "
+                    f"draws -> release {FULL_TAPE_TAG}/{MATCHUP_TAPE_ASSET} "
+                    f"({len(data) // 1_000_000}MB)")
+        return True
+    except Exception as e:
+        logger.warning(f"matchup tape: release upload failed ({e})")
         return False
 
 
@@ -936,6 +1015,15 @@ def publish(push: bool = True) -> dict:
                                       payload.get("generated_at"), _name_replacements())
     except Exception as e:
         logger.warning(f"full tape release upload failed (non-fatal): {e}")
+
+    # LIVE matchup tape -> release asset (kalshi_maker prices H2H matchups from it
+    # on machines that never ran round_sim, e.g. the VPS).
+    try:
+        if push:
+            _upload_matchup_tape_release(payload["tourney"], payload.get("event_id"),
+                                         _name_replacements())
+    except Exception as e:
+        logger.warning(f"matchup tape release upload failed (non-fatal): {e}")
 
     if push:
         _git_push(files)

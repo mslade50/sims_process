@@ -492,16 +492,108 @@ def load_sim_probs():
     return lookup
 
 
+# Live matchup tape published by publish_sim_fairs as a `sim-data` release asset —
+# lets a machine that never ran round_sim (the VPS) price H2H matchups. Cached on
+# disk keyed by the asset's updated_at so the 2-min cadence costs one cheap
+# release-metadata GET, not a tens-of-MB download.
+_MATCHUP_TAPE_ASSET = "matchup_scores_live.parquet"
+_MATCHUP_TAPE_CACHE = os.path.join("permanent_data", "matchup_tape_cache.parquet")
+_MATCHUP_TAPE_CACHE_META = os.path.join("permanent_data", "matchup_tape_cache_meta.json")
+
+
+def _load_matchup_tape_file(path, want_tourney):
+    """Parse a matchup-tape parquet -> (scores (players, draws), names, meta dict).
+    Fail-closed on tourney mismatch or malformed shape: wrong-event or wrong-name
+    H2H prices are worse than skipping matchups. Returns (None, None, meta)."""
+    import pyarrow.parquet as pq
+    tbl = pq.read_table(path)
+    md = {k.decode(): v.decode() for k, v in (tbl.schema.metadata or {}).items()
+          if isinstance(k, bytes) and isinstance(v, bytes)}
+    tape_tourney = (md.get("tourney") or "").strip().lower()
+    if tape_tourney != str(want_tourney or "").strip().lower():
+        print(f"    [matchups] release tape is for '{tape_tourney}', not "
+              f"'{want_tourney}' — skipping matchups")
+        return None, None, md
+    df = tbl.to_pandas()
+    names = [str(i) for i in df.index]
+    scores = df.to_numpy()
+    if scores.ndim != 2 or scores.shape[0] != len(names) or not names:
+        print(f"    [matchups] release tape malformed ({scores.shape} vs "
+              f"{len(names)} names) — skipping matchups")
+        return None, None, md
+    return scores, names, md
+
+
+def _fetch_matchup_tape_release():
+    """Fetch (with on-disk cache) the published live matchup tape. Returns
+    (final_scores, player_names) or (None, None). Fail-closed when the tape is
+    unstamped or materially older than the sim fairs the maker already gated on
+    (they're published by the same run — a big gap means a stale asset)."""
+    repo = os.getenv("SIMS_PROCESS_REPO", "mslade50/sims_process")
+    token = os.getenv("SIMS_PROCESS_PAT") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    try:
+        import tempfile as _tempfile
+        import requests
+        H = {"Accept": "application/vnd.github+json", "User-Agent": _BROWSER_UA}
+        if token:
+            H["Authorization"] = f"Bearer {token}"
+        r = requests.get(f"https://api.github.com/repos/{repo}/releases/tags/sim-data",
+                         headers=H, timeout=15)
+        r.raise_for_status()
+        asset = next((a for a in r.json().get("assets", [])
+                      if a.get("name") == _MATCHUP_TAPE_ASSET), None)
+        if asset is None:
+            print(f"    [matchups] no {_MATCHUP_TAPE_ASSET} on the sim-data release "
+                  f"— skipping matchups")
+            return None, None
+        cache_key = f"{asset.get('id')}:{asset.get('updated_at')}"
+        try:
+            with open(_MATCHUP_TAPE_CACHE_META, encoding="utf-8") as f:
+                cached_key = _json.load(f).get("key")
+        except Exception:
+            cached_key = None
+        if cache_key != cached_key or not os.path.exists(_MATCHUP_TAPE_CACHE):
+            dr = requests.get(asset["url"],
+                              headers={**H, "Accept": "application/octet-stream"},
+                              timeout=300)
+            dr.raise_for_status()
+            os.makedirs(os.path.dirname(_MATCHUP_TAPE_CACHE), exist_ok=True)
+            fd, tmp = _tempfile.mkstemp(dir=os.path.dirname(_MATCHUP_TAPE_CACHE))
+            with os.fdopen(fd, "wb") as f:
+                f.write(dr.content)
+            os.replace(tmp, _MATCHUP_TAPE_CACHE)
+            with open(_MATCHUP_TAPE_CACHE_META, "w", encoding="utf-8") as f:
+                _json.dump({"key": cache_key}, f)
+            print(f"    [matchups] downloaded matchup tape "
+                  f"({len(dr.content) // 1_000_000}MB, updated {asset.get('updated_at')})")
+        scores, names, md = _load_matchup_tape_file(_MATCHUP_TAPE_CACHE, tourney)
+        if scores is None:
+            return None, None
+        tape_ts = maker_guard.parse_fairs_ts(md.get("sim_run_at"))
+        fairs_ts = maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("sim_run_at"))
+        if tape_ts is None or (fairs_ts and tape_ts < fairs_ts - 12 * 3600):
+            print(f"    [matchups] release tape stale/unstamped "
+                  f"(sim_run_at={md.get('sim_run_at')!r} vs fairs "
+                  f"{_SIM_FAIRS_META.get('sim_run_at')!r}) — skipping matchups")
+            return None, None
+        print(f"    [matchups] using RELEASE matchup tape: {scores.shape[0]} players x "
+              f"{scores.shape[1]} draws (sim_run_at={md.get('sim_run_at')})")
+        return scores, names
+    except Exception as e:
+        print(f"    [matchups] release tape fetch failed ({e}) — skipping matchups")
+        return None, None
+
+
 def load_matchup_sim_data(allow_pre_fallback=False):
     """Load final_scores + player_names so we can compute P(p1 beats p2) on
     demand for any H2H matchup.
 
     Prefers the live post-round final_scores written by round_sim.py
-    (`final_scores_live_{tourney}.npy`). If absent, returns (None, None) so
-    matchups get skipped — falling back to the pre-tournament
-    `pga_c/final_scores.npy` mid-event would produce stale prices, which is
-    worse than no proposal. Pass allow_pre_fallback=True to override (e.g.
-    when running the maker pre-tournament before any round has finished).
+    (`final_scores_live_{tourney}.npy`), then the tape the sim machine published
+    to the sim-data release (VPS path), then — only with allow_pre_fallback —
+    the pre-tournament `{tourney}/final_scores.npy`. Falling back to
+    pre-tournament scores mid-event would produce stale prices, which is worse
+    than no proposal, so that path stays opt-in.
     """
     import json as _json
     live_fs = f"final_scores_live_{tourney}.npy"
@@ -529,6 +621,11 @@ def load_matchup_sim_data(allow_pre_fallback=False):
             return None, None
         print(f"    [matchups] using live final_scores: {live_fs} "
               f"({final_scores.shape[0]} players)")
+        return final_scores, player_names
+
+    # No local live sim on this machine — try the published release tape (VPS path)
+    final_scores, player_names = _fetch_matchup_tape_release()
+    if final_scores is not None:
         return final_scores, player_names
 
     if allow_pre_fallback and os.path.exists(pre_fs) and os.path.exists(pn_path):
