@@ -157,6 +157,15 @@ def diff_alerts(prev, status, reason, post_report=None, fills=None,
     return alerts, new_state
 
 
+def _console(msg):
+    """Print that survives non-UTF consoles (Windows cp1252 chokes on the alert
+    emoji and would otherwise kill the loop BEFORE the Telegram send)."""
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", "replace").decode("ascii"))
+
+
 def process_run(status, reason, post_report=None, fills=None, enabled=True,
                 state_path=None):
     """I/O wrapper: load state, diff, persist, send. Returns the alert texts."""
@@ -168,7 +177,7 @@ def process_run(status, reason, post_report=None, fills=None, enabled=True,
     except Exception as e:
         print(f"  [alerts] state save failed: {e}")
     for a in alerts:
-        print(f"  [alerts] {' '.join(a.splitlines())}")
+        _console(f"  [alerts] {' '.join(a.splitlines())}")
         if enabled:
             send_telegram(a)
     if alerts and not enabled:
