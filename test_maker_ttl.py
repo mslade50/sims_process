@@ -35,6 +35,12 @@ def truthy(name, got):
 TICK = "KXPGATOUR-26XYZ-ABC"
 NOW = int(time.time())
 
+# Schedule-aware expiry: pin the round + tee times so reconcile is offline.
+# Next tee 8h out, buffer 900s -> every post expires at exactly TEE - 900.
+TEE = NOW + 8 * 3600
+km._current_play_round = lambda: 1
+km._teetimes_memo[1] = [TEE]
+
 
 def _resting(price, cid, order_id, exp=None):
     """Build a fake YES resting order at `price` dollars. cid='' => manual."""
@@ -94,10 +100,10 @@ eq("cancelled stale + both re-arms", sorted(cancels), ["oid_c3", "oid_c4", "oid_
 eq("manual never cancelled", "oid_manual" in cancels, False)
 eq("healthy never cancelled", "oid_c2" in cancels, False)
 
-# Every post carries the rolling native expiration ~ now + TTL.
+# Every post carries the schedule-pinned native expiration: next tee - buffer.
 for pr, p in by_price.items():
     truthy(f"expiration set on {pr}", p["exp"] is not None)
-    truthy(f"expiration ~now+TTL on {pr}", NOW + 590 <= (p["exp"] or 0) <= NOW + 610)
+    eq(f"expiration pinned to tee-buffer on {pr}", p["exp"], TEE - 900)
 
 # New post keeps the deterministic id (None override); re-arms get a fresh,
 # still-script-prefixed id so the re-post is well-defined after the cancel.
@@ -107,6 +113,36 @@ for pr in (0.50, 0.60):
     truthy(f"re-arm {pr} has an explicit id", cid is not None)
     truthy(f"re-arm {pr} id is script-recognizable",
            str(cid or "").startswith(km.SCRIPT_ORDER_PREFIX))
+
+# ── Scenario 2: expiry pinned at an imminent tee — expiring quote is KEPT, not
+# re-armed (re-arming can't extend it; it lapses on schedule before golf). ──────
+km._teetimes_memo[1] = [NOW + 300]          # tee 5 min out (inside the 900s buffer)
+resting2 = [_resting(0.45, "smk_p1", "oid_p1", exp=NOW + 250)]  # needs refresh
+posts2, cancels2 = [], []
+km.list_resting_orders = lambda golf_only=True: list(resting2)
+km.cancel_order = lambda order_id, ticker, reason="": (cancels2.append(order_id) or True)
+km.post_limit = (
+    lambda ticker, side, price_dollars, count, expiration_ts=None, client_order_id=None:
+    (posts2.append(round(price_dollars, 4)) or (True, "fake_oid"))
+)
+r2 = km.reconcile_and_post([_cand(0.45)])
+eq("pinned quote not cancelled", cancels2, [])
+eq("pinned quote not re-posted", posts2, [])
+eq("pinned quote counted as kept", r2["kept"], 1)
+km._teetimes_memo[1] = [TEE]  # restore
+
+# ── Pure-helper checks: maker_guard.quote_expiry ────────────────────────────────
+KW = dict(ttl_max=43200, ttl_fallback=3600, tee_buffer=900, ttl_short=600)
+gq = km.maker_guard.quote_expiry
+eq("expiry: schedule blind -> fallback", gq(NOW, [], **KW), NOW + 3600)
+eq("expiry: quiet window -> tee - buffer", gq(NOW, [TEE], **KW), TEE - 900)
+eq("expiry: far tee capped at ttl_max", gq(NOW, [NOW + 86400], **KW), NOW + 43200)
+eq("expiry: inside buffer -> short leash, hard-stop at tee",
+   gq(NOW, [NOW + 300], **KW), NOW + 300)
+eq("expiry: inside buffer, tee past short -> short leash",
+   gq(NOW, [NOW + 850], **KW), NOW + 600)
+eq("expiry: all tees past -> short leash", gq(NOW, [NOW - 7200], **KW), NOW + 600)
+eq("expiry: picks next future tee", gq(NOW, [NOW - 7200, TEE], **KW), TEE - 900)
 
 # ── Pure-helper checks ──────────────────────────────────────────────────────────
 eq("no-expiration => needs refresh", km._needs_refresh({}, NOW), True)

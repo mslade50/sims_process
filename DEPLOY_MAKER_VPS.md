@@ -6,15 +6,21 @@ the desktop's fragility (sleep, OneDrive truncation, reboots). The serverless
 Cloudflare side (UI, auto-kill sweep, tape, PnL) stays as-is; this only relocates
 the Python quoting brain.
 
-> **Safety model.** Every live quote is now posted with a rolling native
-> expiration (`MAKER_QUOTE_TTL_SEC`, default 600s) and re-armed each cycle. If
-> this box dies, every resting quote self-cancels within the TTL with no
-> dependence on anything else staying up. See `reconcile_and_post` in
-> `kalshi_maker.py` and `test_maker_ttl.py`.
+> **Safety model.** Every live quote is posted with a native expiration pinned
+> to the schedule (`maker_guard.quote_expiry`): it rests until just before the
+> next round's first tee (minus `MAKER_TEE_BUFFER_SEC`), capped at
+> `MAKER_QUOTE_TTL_MAX_SEC`, so untouched quotes keep queue priority through
+> the whole quiet window. If this box dies, every resting quote self-cancels
+> on its own — and because expiry is pinned to tee-off, a dead box's quotes
+> can never survive into live play. When tee times are unreadable the leash
+> shortens to `MAKER_QUOTE_TTL_FALLBACK_SEC` (bounds overnight-news risk
+> while schedule-blind). See `reconcile_and_post` in `kalshi_maker.py` and
+> `test_maker_ttl.py`.
 >
 > **Cadence invariant:** the run interval MUST be shorter than
-> `MAKER_QUOTE_REFRESH_SEC` (default 300s) or quotes lapse between runs. The
-> systemd timer below fires every 2 min — comfortably under 300s.
+> `MAKER_QUOTE_REFRESH_SEC` (default 300s) or a schedule-blind quote can lapse
+> between runs. The systemd timer below fires every 2 min — comfortably under
+> 300s.
 
 ---
 
@@ -79,9 +85,18 @@ DATAGOLF_API_KEY=<datagolf key>
 # SIMS_PROCESS_PAT=<github pat with repo:read>
 # ── Dashboard Maker tab mirror (push_maker_state.py) ─────────────
 MAKER_STATE_TOKEN=<same value as the Cloudflare Pages secret>
-# ── Rolling TTL dead-man's switch (defaults shown) ───────────────
-MAKER_QUOTE_TTL_SEC=600
-MAKER_QUOTE_REFRESH_SEC=300
+# ── Schedule-pinned quote expiry / dead-man's switch (defaults shown) ─
+MAKER_QUOTE_TTL_MAX_SEC=43200      # max rest: 12h (quiet-window cap)
+MAKER_QUOTE_TTL_FALLBACK_SEC=3600  # tee times unreadable: 1h leash
+MAKER_TEE_BUFFER_SEC=900           # expire 15 min before first tee
+MAKER_QUOTE_TTL_SEC=600            # tee imminent/past: 10 min leash
+MAKER_QUOTE_REFRESH_SEC=300        # re-arm eligible below 5 min left
+# ── Kelly pricing floors (min Kelly fraction a fill must keep) ────
+MAKER_KELLY_MIN_WINNER=0.25
+MAKER_KELLY_MIN_TOP5=0.25
+MAKER_KELLY_MIN_TOP10=0.25
+MAKER_KELLY_MIN_TOP20=0.15
+MAKER_KELLY_MIN_H2H=0.05
 # ── Exposure governor (tune to taste; these are the code defaults) ─
 MAKER_CAP_MARKET_USD=50
 MAKER_CAP_EVENT_USD=400
@@ -181,7 +196,8 @@ the rolling TTL is the final backstop if the box itself is unreachable.
 sudo -u maker touch /opt/sims_process/permanent_data/MAKER_HALT
 # env (edit /etc/kalshi-maker.env): MAKER_KILL=1
 # phone: set round_config `maker_enabled` = no/0/false in the Google Sheet
-# stop scheduling entirely (quotes then expire within MAKER_QUOTE_TTL_SEC):
+# stop scheduling entirely (quotes then lapse on their native expiry —
+# at the latest by first tee, or within the fallback leash if schedule-blind):
 sudo systemctl disable --now kalshi-maker.timer
 ```
 
@@ -229,9 +245,11 @@ You have never posted a live quote, so stage it:
 
 - **Matchups.** Wrapper starts with `--no-matchups`. Confirm what live inputs the
   matchup scan needs on the VPS (e.g. `final_scores*.npy`) before dropping the flag.
-- **Queue priority vs crash window.** Re-arming every ~5 min resets queue priority
-  on refreshed quotes. Raising `MAKER_QUOTE_TTL_SEC`/`_REFRESH_SEC` re-arms less
-  often (better queue priority) at the cost of a longer stranded-exposure window
-  on a crash. 600/300 is a conservative start.
+- **Queue priority vs crash window.** Resolved by the schedule-pinned expiry:
+  an untouched quote is never cancel/re-posted during the quiet window (it keeps
+  its queue spot until tee-off), while a dead box's quotes still die before
+  play. The residual trade-off lives in `MAKER_QUOTE_TTL_FALLBACK_SEC` (leash
+  while tee times are unreadable) and `MAKER_QUOTE_TTL_MAX_SEC` (overnight-news
+  bound on a dead box).
 - **Clock.** The TTL is wall-clock; keep the box on NTP (`timedatectl` → NTP=yes).
 ```

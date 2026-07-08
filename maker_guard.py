@@ -298,6 +298,31 @@ def schedule_live(first_tee_ts, last_tee_ts, now_ts, round_hours=None):
     return (now_ts >= first_tee_ts) and (now_ts <= last_tee_ts + rh * 3600.0)
 
 
+def quote_expiry(now_ts, tee_times, *, ttl_max, ttl_fallback, tee_buffer, ttl_short):
+    """Pure. Native expiration_ts for a quote posted now, pinned to the schedule.
+
+    Quotes only rest while golf is NOT being played, so let an untouched quote
+    keep its queue priority for the whole quiet window: expire it just before
+    the next round's first tee (minus tee_buffer), capped at ttl_max. The native
+    expiry doubles as the dead-man's switch — pinned to tee-off, a dead box's
+    quotes cannot survive into live play.
+
+    - tee times unknown (not posted yet / fetch failed) -> now + ttl_fallback
+      (schedule-blind: keep the leash short enough to bound overnight news risk)
+    - all tee times past (round underway or sheet round stale) -> now + ttl_short
+    - inside the pre-tee buffer -> now + ttl_short, hard-stopped at tee-off
+    """
+    if not tee_times:
+        return int(now_ts + ttl_fallback)
+    nxt = min((t for t in tee_times if t > now_ts), default=None)
+    if nxt is None:
+        return int(now_ts + ttl_short)
+    exp = min(now_ts + ttl_max, nxt - tee_buffer)
+    if exp <= now_ts:  # already inside the pre-tee buffer
+        exp = min(now_ts + ttl_short, nxt)
+    return int(exp)
+
+
 # ── Pre-Wednesday rule: no YES outrights before field lock (withdrawal risk) ───
 OUTRIGHT_MARKETS = {"winner", "top_5", "top_10", "top_20"}
 

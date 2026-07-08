@@ -23,9 +23,10 @@ Surviving rungs absorb the dropped budget via kelly_solver's even split.
 
 Outright quoting (default) = the passive-accumulation engine (quote_engine.py via
 maker_quotes.plan_market): one working order per market on the side the model
-favors, pegged near the touch, capped at fair minus the side's min edge (YES 0.5c
-/ NO 0.3c), never crossing, worked in iceberg slices. Legacy static edge rungs are
-available via --rungs. H2H matchups still use scan_matchups (5pp gate).
+favors, pegged near the touch, capped at the Kelly-floor price for its market type
+(maker_quotes.KELLY_MIN_BY_TYPE; flat YES 0.5c / NO 0.3c as absolute floors),
+never crossing, worked in iceberg slices. Legacy static edge rungs are available
+via --rungs. H2H matchups use scan_matchups (same h2h Kelly floor, default 5%).
 
 Modes:
     (default)        scan + print intents only
@@ -135,7 +136,8 @@ def _estimate_fill_pct(post_price, best_ask, volume):
 # for the Kelly solver per design discussion.
 LEVEL_CONTRACTS = 33               # outright: top_5/top_10/top_20/winner
 MATCHUP_LEVEL_CONTRACTS = 500      # H2H matchups
-MATCHUP_MIN_EDGE_PP = 5.0          # matchup-specific raw-edge gate (no Kelly gate)
+# Matchup gate is Kelly-based: maker_quotes.KELLY_MIN_BY_TYPE["h2h"] (default
+# 5%, env MAKER_KELLY_MIN_H2H). The old flat 5pp raw-edge gate is retired.
 MATCHUP_SERIES = "KXPGAH2H"
 
 # Pre-tournament fallback for matchup final_scores. Off by default — mid-event
@@ -159,20 +161,29 @@ def _env_int(name, default):
         return default
 
 
-# ── Rolling quote TTL (dead-man's switch) ──────────────────────────────
-# Every live maker quote is posted with a native Kalshi expiration_ts of
-# now + QUOTE_TTL_SEC, and re-armed each reconcile cycle once its remaining
-# life drops below QUOTE_REFRESH_SEC. If this process dies (crash, dropped
-# network, VPS reboot, kill -9 mid-deploy), every resting quote self-cancels
-# within QUOTE_TTL_SEC — with NO dependence on the reconcile loop, the cron
-# Worker, or anything else staying up. Manual hand-clicks never get a TTL here.
+# ── Native quote expiry (schedule-aware rest + dead-man's switch) ───────
+# Every live maker quote is posted with a native Kalshi expiration_ts pinned
+# to the schedule (maker_guard.quote_expiry): quotes only rest while golf is
+# NOT being played, so an untouched quote keeps its queue priority for the
+# whole quiet window — it expires just before the next round's first tee
+# (minus QUOTE_TEE_BUFFER_SEC), capped at QUOTE_TTL_MAX_SEC. The native
+# expiry doubles as the dead-man's switch: if this process dies (crash,
+# dropped network, reboot, kill -9 mid-deploy), every resting quote
+# self-cancels on its own — and because it's pinned to tee-off, a dead box's
+# quotes can never survive into live play. When the schedule is unreadable
+# (tee times not posted yet / fetch failed) quotes fall back to a short
+# leash so overnight-news risk on a dead box stays bounded. Manual
+# hand-clicks never get a TTL here.
 #
-# INVARIANT: run the maker MORE OFTEN than QUOTE_REFRESH_SEC, or quotes will
-# lapse between normal cycles. A lapse is fail-safe (no quote is safe) but it
-# defeats the maker. With the defaults below, schedule the live loop to run at
-# least every ~4 min; on a crash, all exposure is pulled within 10 min.
-QUOTE_TTL_SEC     = _env_int("MAKER_QUOTE_TTL_SEC", 600)      # native expiry: 10 min
-QUOTE_REFRESH_SEC = _env_int("MAKER_QUOTE_REFRESH_SEC", 300)  # re-arm when < 5 min left
+# Re-arm: a quote whose remaining life drops below QUOTE_REFRESH_SEC is
+# cancelled + re-posted ONLY when the fresh expiry meaningfully extends it;
+# a quote pinned at the next tee-off is left to lapse on schedule (that IS
+# the design — quotes die before golf starts).
+QUOTE_TTL_MAX_SEC      = _env_int("MAKER_QUOTE_TTL_MAX_SEC", 43200)     # rest cap: 12 h
+QUOTE_TTL_FALLBACK_SEC = _env_int("MAKER_QUOTE_TTL_FALLBACK_SEC", 3600) # schedule blind: 1 h
+QUOTE_TEE_BUFFER_SEC   = _env_int("MAKER_TEE_BUFFER_SEC", 900)          # expire 15 min pre-tee
+QUOTE_TTL_SEC     = _env_int("MAKER_QUOTE_TTL_SEC", 600)      # tee imminent/past: 10 min
+QUOTE_REFRESH_SEC = _env_int("MAKER_QUOTE_REFRESH_SEC", 300)  # re-arm eligible < 5 min left
 
 # ── Kalshi public API (no auth) ────────────────────────────────────────
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
@@ -1100,12 +1111,14 @@ def reconcile_and_post(candidates):
 
     # ── 2. Bucket candidates that match a resting order. Manual hand-clicks
     # are immune (never touched, never stacked). A matching SCRIPT quote is
-    # KEPT when its rolling TTL is still healthy (preserves queue priority), or
-    # RE-ARMED (cancel + re-post with a fresh native expiration) when its expiry
-    # is within QUOTE_REFRESH_SEC — so the dead-man's switch never lapses while
-    # we're alive. ───────────────────────────────────────────────────────────
+    # KEPT while healthy (preserves queue priority), and RE-ARMED (cancel +
+    # re-post with a fresh native expiration) only when its remaining life is
+    # within QUOTE_REFRESH_SEC AND the fresh expiry actually extends it. A
+    # quote whose expiry is pinned at the next tee-off is left to lapse on
+    # schedule — quotes die before golf starts, by design. ───────────────────
     now_ts = int(time.time())
-    expiration_ts = now_ts + QUOTE_TTL_SEC
+    expiration_ts = _quote_expiration_ts(now_ts)
+    print(f"  Quote expiry this run: now +{expiration_ts - now_ts}s")
 
     still_resting = [o for o in resting if o not in stale]
     script_by_key, manual_keys = {}, set()
@@ -1124,11 +1137,15 @@ def reconcile_and_post(candidates):
         if ro is None:
             to_post.append(c)
         elif _needs_refresh(ro, now_ts):
-            to_rearm.append((c, ro))
+            ro_exp = _order_expiration_ts(ro)
+            if ro_exp is not None and expiration_ts <= ro_exp + 60:
+                kept += 1  # can't extend (expiry pinned at tee-off) — lapse on schedule
+            else:
+                to_rearm.append((c, ro))
         else:
             kept += 1
     if kept:
-        print(f"  Keeping {kept} healthy script quote(s) (> {QUOTE_REFRESH_SEC}s TTL left)")
+        print(f"  Keeping {kept} healthy/schedule-pinned script quote(s)")
 
     # ── 3. Re-arm aging script quotes: cancel first, then re-post below. Only
     # re-post the ones we actually cancelled, so a cancel failure can never
@@ -1146,7 +1163,8 @@ def reconcile_and_post(candidates):
     # each carrying the rolling native expiration. Re-validation happens inside
     # post_limit. ────────────────────────────────────────────────────────────
     print(f"  Posting {len(to_post) + len(rearm_post)} order(s) "
-          f"({len(to_post)} new, {len(rearm_post)} re-armed; TTL {QUOTE_TTL_SEC}s)…")
+          f"({len(to_post)} new, {len(rearm_post)} re-armed; "
+          f"expiry now+{expiration_ts - now_ts}s)…")
     n_ok = n_fail = 0
     for c in to_post:
         ok, _ = post_limit(c["ticker"], c["side"], c["post_price"], c["contracts"],
@@ -1229,12 +1247,16 @@ def scan_matchups():
     """Scan KXPGAH2H matchup markets for maker candidates.
 
     Gates differ from outright scan:
-      - raw edge >= MATCHUP_MIN_EDGE_PP (default 5pp), no Kelly gate
+      - Kelly fraction at the post price >= KELLY_MIN_BY_TYPE['h2h']
+        (default 5%, env MAKER_KELLY_MIN_H2H) — same Kelly-floor pricing
+        as the outright engine, replacing the old flat 5pp edge gate
       - level size = MATCHUP_LEVEL_CONTRACTS (default 500) per intent
 
-    Uses the same 3-level intent structure (near_ask/mid/bid) and the
-    same no-cross safety as outrights.
+    Uses the same per-tick rung intent structure and the same no-cross
+    safety as outrights.
     """
+    import maker_quotes
+    h2h_kelly_min = maker_quotes.KELLY_MIN_BY_TYPE["h2h"]
     final_scores, player_names = load_matchup_sim_data(
         allow_pre_fallback=_allow_pre_matchup_fallback
     )
@@ -1281,7 +1303,7 @@ def scan_matchups():
 
         price_ranges = _parse_price_ranges(m)
         for intent in _maker_intent(bid, ask, sim_yes, price_ranges):
-            if intent["edge_pp"] < MATCHUP_MIN_EDGE_PP:
+            if intent["kelly_f"] < h2h_kelly_min:
                 continue
             assert intent["post_price"] < intent["best_ask"], (
                 f"SAFETY: post {intent['post_price']} >= ask {intent['best_ask']}"
@@ -1394,8 +1416,11 @@ def _engine_outright_candidates(all_mkts, prob_lookup):
     if blocked_yes:
         print(f"  [rule] pre-Wed: blocked {blocked_yes} YES outright quote(s) "
               f"(no YES outrights before Wed 4pm ET)")
+    kmins = maker_quotes.KELLY_MIN_BY_TYPE
     print(f"  [engine] {len(out)} working quote(s) from {len(all_mkts)} markets "
-          f"(edge YES>={maker_quotes.EDGE_YES*100:.1f}c / NO>={maker_quotes.EDGE_NO*100:.1f}c, "
+          f"(kelly floors win/t5/t10={kmins['winner']:.0%}/{kmins['top_5']:.0%}/"
+          f"{kmins['top_10']:.0%} t20={kmins['top_20']:.0%}; "
+          f"flat floors YES>={maker_quotes.EDGE_YES*100:.1f}c NO>={maker_quotes.EDGE_NO*100:.1f}c; "
           f"target ${target_usd:.0f}/market)")
     return out
 
@@ -1522,8 +1547,10 @@ def scan():
         print("\n  [matchups] fetching H2H markets...")
         matchup_cands = scan_matchups()
         candidates.extend(matchup_cands)
+        import maker_quotes as _mq
         print(f"  [matchups] {len(matchup_cands)} candidate(s) added "
-              f"(edge>={MATCHUP_MIN_EDGE_PP}pp, contracts={MATCHUP_LEVEL_CONTRACTS}/level)")
+              f"(kelly>={_mq.KELLY_MIN_BY_TYPE['h2h']:.0%}, "
+              f"contracts={MATCHUP_LEVEL_CONTRACTS}/level)")
 
     candidates.sort(key=lambda r: r["edge_pp"], reverse=True)
 
@@ -1580,6 +1607,38 @@ def _current_play_round():
     return max(1, min(4, rc + 1))
 
 
+# One fetch per run: the live guard and the quote-expiry calc share tee times.
+_teetimes_memo = {}
+
+
+def _round_teetimes(rnd):
+    """Unix timestamps of round `rnd`'s tee times (best-effort, memoized per
+    run). Empty list = schedule unavailable — callers fail toward safety."""
+    if rnd in _teetimes_memo:
+        return _teetimes_memo[rnd]
+    tts = []
+    try:
+        from api_utils import fetch_field_updates
+        col = f"r{rnd}_teetime"
+        fu = fetch_field_updates(os.getenv("DATAGOLF_API_KEY", ""), teetime_col=col,
+                                 fill_missing_teetimes=False)
+        tts = [t for t in (_parse_dt_to_ts(str(x)) for x in fu[col].dropna().tolist()) if t]
+    except Exception as e:
+        print(f"  [live] schedule (tee-times) unavailable: {e}")
+    _teetimes_memo[rnd] = tts
+    return tts
+
+
+def _quote_expiration_ts(now_ts):
+    """Native expiration for quotes posted this run: rest until just before the
+    next tee-off (queue priority through the quiet window), short leash when
+    tee-off is imminent or the schedule is unreadable. See maker_guard.quote_expiry."""
+    return maker_guard.quote_expiry(
+        now_ts, _round_teetimes(_current_play_round()),
+        ttl_max=QUOTE_TTL_MAX_SEC, ttl_fallback=QUOTE_TTL_FALLBACK_SEC,
+        tee_buffer=QUOTE_TEE_BUFFER_SEC, ttl_short=QUOTE_TTL_SEC)
+
+
 def _check_fairs_fresh():
     payload = _fetch_sim_fairs()
     return maker_guard.check_fairs_fresh_payload(
@@ -1623,15 +1682,9 @@ def _check_not_live():
     rnd = _current_play_round()
     api_key = os.getenv("DATAGOLF_API_KEY", "")
     sched = dg = None
-    try:  # schedule from this round's tee times
-        from api_utils import fetch_field_updates
-        col = f"r{rnd}_teetime"
-        fu = fetch_field_updates(api_key, teetime_col=col, fill_missing_teetimes=False)
-        tts = [t for t in (_parse_dt_to_ts(str(x)) for x in fu[col].dropna().tolist()) if t]
-        if tts:
-            sched = maker_guard.schedule_live(min(tts), max(tts), now)
-    except Exception as e:
-        print(f"  [live] schedule (tee-times) unavailable: {e}")
+    tts = _round_teetimes(rnd)  # shared with _quote_expiration_ts (memoized)
+    if tts:
+        sched = maker_guard.schedule_live(min(tts), max(tts), now)
     try:  # DataGolf live feed freshness
         from api_utils import fetch_live_stats
         ls = fetch_live_stats(rnd, api_key)
