@@ -125,7 +125,7 @@ def main():
     # ── 5. Dedup against Sheets + store only new rows ─────────────────────
     from sheets_storage import get_spreadsheet, store_round_matchups, load_dg_id_lookup
     spreadsheet = get_spreadsheet()
-    new_mu = rc.dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
+    new_mu, seen_alert_keys = rc.dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
 
     try:
         dg_id_lookup = load_dg_id_lookup(tourney, NAME_REPL)
@@ -140,8 +140,9 @@ def main():
     else:
         print("  [reprice] No new matchup rows to store.")
 
-    # ── 6. Telegram-alert new sharp edges (silent when nothing new) ───────
-    rc.send_matchup_alert(new_mu, sim_round, tourney)
+    # ── 6. Telegram-alert new sharp edges (silent when nothing new; edges
+    # already surfaced for this pairing+side re-store silently, no re-ping) ──
+    rc.send_matchup_alert(new_mu, sim_round, tourney, seen_alert_keys=seen_alert_keys)
 
     n_new = len(new_mu) if new_mu is not None and not new_mu.empty else 0
     print(f"\n  [reprice] Done. Stored {n_new} new matchups. "

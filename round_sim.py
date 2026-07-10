@@ -3975,29 +3975,38 @@ def _canonical_mu_key(p1, p2, book, o1, o2):
 
 
 def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
-    """Return rows from `combined` that aren't already in the Round Matchups sheet.
+    """Split `combined` against the Round Matchups sheet for this event+round.
 
-    Dedup key: order-insensitive {players}, bookmaker, {odds} for this event+round
-    (see _canonical_mu_key — players are sorted with odds following so scraped vs
-    DataGolf player ordering can't double-store the same matchup).
+    Returns (new_rows, seen_alert_keys):
+      new_rows        — rows not already stored. Dedup key: order-insensitive
+                        {players}, bookmaker, {odds} (see _canonical_mu_key), so a
+                        price move on a seen matchup still stores (feeds grading).
+      seen_alert_keys — reprice_core.alerted_key() of every already-stored row, so
+                        the Telegram layer can suppress edges previously surfaced
+                        and ping only pairings (or flipped sides) that are new.
     """
+    from reprice_core import alerted_key
+
     if combined is None or combined.empty:
-        return combined
+        return combined, set()
 
     from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
     existing = ws.get_all_records()
 
     existing_keys = set()
+    seen_alert_keys = set()
     for row in existing:
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
             existing_keys.add(_canonical_mu_key(
                 row.get("player_1", ""), row.get("player_2", ""),
                 row.get("bookmaker", ""), row.get("p1_odds", ""), row.get("p2_odds", ""),
             ))
+            seen_alert_keys.add(alerted_key(
+                row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
 
     if not existing_keys:
-        return combined
+        return combined, seen_alert_keys
 
     mask = []
     for _, r in combined.iterrows():
@@ -4009,7 +4018,7 @@ def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
 
     new_rows = combined[mask].copy()
     print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new (deduped {len(combined) - len(new_rows)})")
-    return new_rows
+    return new_rows, seen_alert_keys
 
 
 def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
@@ -4170,7 +4179,7 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
 
     spreadsheet = get_spreadsheet()
 
-    new_mu = _dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
+    new_mu, seen_alert_keys = _dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
     new_se = _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round)
     new_op = _dedup_finish_positions(outrights_combined, spreadsheet, event_id)
 
@@ -4203,11 +4212,22 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
     else:
         print("  [reprice] No new outright rows to store.")
 
-    # Telegram filter: only sharp books in matchup alerts
+    # Telegram filter: only sharp books, and only edges NOT previously surfaced —
+    # a price/edge-size move on an already-seen pairing+side re-stores silently;
+    # only a new pairing (or the edge flipping to the other player) pings.
+    from reprice_core import alerted_key as _akey
     TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
     _tg_mu = None
     if new_mu is not None and not new_mu.empty:
         _tg_mu = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
+        if seen_alert_keys and not _tg_mu.empty:
+            _fresh = [_akey(r.get("Player 1", ""), r.get("Player 2", ""), r.get("bet_on", ""))
+                      not in seen_alert_keys for _, r in _tg_mu.iterrows()]
+            _n_drop = len(_tg_mu) - sum(_fresh)
+            if _n_drop:
+                print(f"  [reprice] Alert: suppressed {_n_drop} previously-seen edge(s) "
+                      f"(price moved, same bet)")
+            _tg_mu = _tg_mu[_fresh]
         if _tg_mu.empty:
             _tg_mu = None
 

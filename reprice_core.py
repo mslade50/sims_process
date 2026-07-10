@@ -280,20 +280,35 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
     return combined, sharp
 
 
-# ── dedup vs Sheets (verbatim mirror of round_sim._dedup_round_matchups) ────────
-def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
-    """Return rows from `combined` not already in the Round Matchups sheet.
+# ── dedup vs Sheets (mirror of round_sim._dedup_round_matchups) ─────────────────
+def alerted_key(p1, p2, bet_on):
+    """Alert-level identity of a matchup edge: order-insensitive pairing + which
+    player the bet is on. A price/edge-size change on the same bet maps to the
+    same key; the edge flipping to the other player maps to a new one."""
+    a, b = sorted([str(p1).lower().strip(), str(p2).lower().strip()])
+    return (a, b, str(bet_on).lower().strip())
 
-    Dedup key: (player_1, player_2, bookmaker, p1_odds, p2_odds) for event+round.
+
+def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
+    """Split `combined` against the Round Matchups sheet for this event+round.
+
+    Returns (new_rows, seen_alert_keys):
+      new_rows        — rows not already stored. The store key includes the odds
+                        (player_1, player_2, bookmaker, p1_odds, p2_odds), so a
+                        price move on a seen matchup still stores (feeds grading).
+      seen_alert_keys — alerted_key() of every already-stored row, so the Telegram
+                        layer can suppress edges previously surfaced to the user
+                        and ping only pairings (or flipped sides) that are new.
     """
     if combined is None or combined.empty:
-        return combined
+        return combined, set()
 
     from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
     existing = ws.get_all_records()
 
     existing_keys = set()
+    seen_alert_keys = set()
     for row in existing:
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
             existing_keys.add((
@@ -303,9 +318,11 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
                 str(row.get("p1_odds", "")),
                 str(row.get("p2_odds", "")),
             ))
+            seen_alert_keys.add(alerted_key(
+                row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
 
     if not existing_keys:
-        return combined
+        return combined, seen_alert_keys
 
     mask = []
     for _, r in combined.iterrows():
@@ -321,7 +338,7 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     new_rows = combined[mask].copy()
     print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new "
           f"(deduped {len(combined) - len(new_rows)})")
-    return new_rows
+    return new_rows, seen_alert_keys
 
 
 # ── Telegram (mirror of round_sim._send_telegram + matchup section) ─────────────
@@ -347,14 +364,25 @@ def _fmt_odds(v):
     return str(v)
 
 
-def send_matchup_alert(new_mu, sim_round, tourney_name):
+def send_matchup_alert(new_mu, sim_round, tourney_name, seen_alert_keys=None):
     """Telegram alert for newly-priced round matchups (sharp books only).
 
     Sends only when there is something new (the cache-free repricer fires on every
-    scrape, so a 'nothing new' ping every time would be noise)."""
+    scrape, so a 'nothing new' ping every time would be noise). `seen_alert_keys`
+    (from dedup_round_matchups) suppresses edges the user has already been shown:
+    a re-store caused by a price/edge-size move on a previously-seen bet doesn't
+    re-alert — only a new pairing, or the edge flipping to the other player, does."""
     if new_mu is None or new_mu.empty:
         return
     tg = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
+    if seen_alert_keys and not tg.empty:
+        fresh = [alerted_key(r.get("Player 1", ""), r.get("Player 2", ""), r.get("bet_on", ""))
+                 not in seen_alert_keys for _, r in tg.iterrows()]
+        n_dropped = len(tg) - sum(fresh)
+        if n_dropped:
+            print(f"  [reprice] Alert: suppressed {n_dropped} previously-seen edge(s) "
+                  f"(price moved, same bet)")
+        tg = tg[fresh]
     if tg.empty:
         return
 
