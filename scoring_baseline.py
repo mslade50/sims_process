@@ -62,6 +62,18 @@ try:
         historical_event_ids = event_ids
 except ImportError:
     historical_event_ids = event_ids
+# Force EVENT-LEVEL (all venues) category variance instead of the course
+# filter — for rotating-venue events at a course we have no data for.
+try:
+    from sim_inputs import variance_event_level_only
+except ImportError:
+    variance_event_level_only = False
+# Hard-coded per-round field scoring averages (par-space absolute strokes)
+# that override the computed baseline when set. dict {1:.., 2:.., 3:.., 4:..}.
+try:
+    from sim_inputs import expected_score_override
+except ImportError:
+    expected_score_override = None
 
 # Paths
 DG_HISTORICAL_DB = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
@@ -1969,8 +1981,12 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
         hist_avgs = compute_historical_round_averages(detail_df)
         regression = compute_wind_variance_regression(detail_df)
         sg_result = compute_sg_variance_analysis(historical_event_ids, min_year=start_yr)
-        sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr, course_id=course_id)
-        sg_cat_result = _maybe_blend_prewindow_course(sg_cat_result, historical_event_ids, course_id)
+        _var_course_id = None if variance_event_level_only else course_id
+        if variance_event_level_only:
+            print(f"  [sg_cat_var] variance_event_level_only=True — pooling event "
+                  f"{historical_event_ids} across all venues (course filter OFF).")
+        sg_cat_result = compute_sg_category_variance_analysis(historical_event_ids, min_year=start_yr, course_id=_var_course_id)
+        sg_cat_result = _maybe_blend_prewindow_course(sg_cat_result, historical_event_ids, _var_course_id)
 
     # --- Cut adjustment for R3/R4 ---
     cut_adj = 0.25 if CUT_LINE < 120 else 0.0
@@ -2036,17 +2052,24 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
             if row and row[0].strip():
                 param_rows[row[0].strip().lower()] = i + 1
 
+        # Hard-coded per-round scores (sim_inputs.expected_score_override) take
+        # precedence over the computed baseline — used when the venue has no
+        # usable history (e.g. a rotating-venue major we have no data for).
+        scores_to_write = expected_score_override if expected_score_override else adjusted
+        _score_note = ("Hard-coded (sim_inputs.expected_score_override)"
+                       if expected_score_override
+                       else "Pre-tourney estimate (set by scoring_baseline.py)")
         updated_params = []
-        for rnd in sorted(adjusted.keys()):
+        for rnd in sorted(scores_to_write.keys()):
             param_name = f"expected_score_r{rnd}"
-            value = str(adjusted[rnd])
+            value = str(scores_to_write[rnd])
             row_idx = param_rows.get(param_name)
 
             if row_idx is None:
                 next_row = len(all_values) + 1
                 ws.update_cell(next_row, 1, param_name)
                 ws.update_cell(next_row, 2, value)
-                ws.update_cell(next_row, 3, "Pre-tourney estimate (set by scoring_baseline.py)")
+                ws.update_cell(next_row, 3, _score_note)
                 all_values.append([param_name, value])
                 updated_params.append(f"{param_name}={value} (new row)")
             else:
