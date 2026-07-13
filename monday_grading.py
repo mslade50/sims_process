@@ -2,9 +2,13 @@
 monday_grading.py - Scheduled Monday Grading Pipeline
 
 Orchestrates the post-tournament grading pipeline:
-1. Detect last completed event from DataGolf
-2. Check if grading already done (idempotent for retry)
-3. Run grade_bets.py
+1. Detect last completed event(s) from DataGolf. On opposite-field /
+   co-sanctioned multi-event weeks (e.g. ISCO Championship + Genesis Scottish
+   Open) every same-week event is detected by shared DataGolf date.
+2. Check which event(s) actually have ungraded bets (idempotent for retry)
+3. Run grade_bets.py for the event(s) with bets — passing --event-id on
+   multi-event weeks so we grade the event we bet on, not whichever event
+   DataGolf happens to list first
 4. Verify grading succeeded
 5. Run sg_diagnostic.py --no-email (graceful skip if prediction CSV missing)
 6. Run push_dashboard_data.py (graceful skip if no files to push)
@@ -40,35 +44,70 @@ def _setup_env():
     return project_root
 
 
-def _get_event_and_results():
+def _detect_week():
     """
-    Detect last completed event and fetch results.
+    Detect the most recently completed event and every other current-year event
+    that finished the SAME week (shares the DataGolf `date`).
 
-    Returns (event_id, event_name, year, results_df) or raises SystemExit.
+    A normal week returns one event, so behaviour is identical to the old
+    single-event auto-detect. Opposite-field / co-sanctioned weeks (e.g. ISCO
+    Championship + Genesis Scottish Open, both dated 2026-07-12) return every
+    same-week event, so the caller can grade whichever one(s) actually have bets
+    instead of whichever event DataGolf happens to list first.
+
+    Same-week detection is date-based (from the event list), so it does NOT
+    depend on every sibling's results being posted yet, and — critically — it
+    does NOT read sim_inputs, which by grading time has already rolled forward
+    to next week's tournament.
+
+    Returns (multi, [(event_id, event_name, year), ...]) where `multi` is True
+    on a multi-event week. Raises SystemExit(1) if no event has completed
+    results yet (triggers the workflow's retry at the next scheduled run).
     """
     from grade_bets import fetch_event_list, fetch_historical_results
     from datetime import datetime
 
-    print("\n  Detecting last completed event from DataGolf...")
+    print("\n  Detecting last completed event(s) from DataGolf...")
     events = fetch_event_list()
     if not events:
         print("  ERROR: Could not fetch event list from DataGolf.")
         sys.exit(1)
 
-    current_year = datetime.now().year
+    year = datetime.now().year
+    current = [e for e in events if e.get("calendar_year") == year]
 
-    for event in events:
-        if event.get("calendar_year") == current_year:
-            event_id = event.get("event_id")
-            event_name = event.get("event_name")
+    # Anchor = most recent current-year event with posted results. The event
+    # list is ordered most-recent-first.
+    anchor = None
+    for event in current:
+        results = fetch_historical_results(event.get("event_id"), year)
+        if not results.empty and len(results) > 10:
+            anchor = event
+            break
 
-            results = fetch_historical_results(event_id, current_year)
-            if not results.empty and len(results) > 10:
-                print(f"  Found: {event_name} (ID: {event_id}, {len(results)} players)")
-                return event_id, event_name, current_year, results
+    if anchor is None:
+        print("  No completed event with results found. DataGolf may not have updated yet.")
+        sys.exit(1)
 
-    print("  No completed event with results found. DataGolf may not have updated yet.")
-    sys.exit(1)
+    anchor_date = anchor.get("date")
+
+    # Siblings = every current-year event sharing the anchor's date (incl.
+    # anchor). Date-based, so a sibling whose results lag is still detected.
+    siblings = [
+        (e.get("event_id"), e.get("event_name"), year)
+        for e in current
+        if e.get("date") and e.get("date") == anchor_date
+    ]
+
+    multi = len(siblings) > 1
+    if multi:
+        names = ", ".join(f"{n} (ID {i})" for i, n, _ in siblings)
+        print(f"  Multi-event week detected ({anchor_date}): {names}")
+    else:
+        i, n, _ = siblings[0]
+        print(f"  Found: {n} (ID {i})")
+
+    return multi, siblings
 
 
 def _count_ungraded(spreadsheet, event_id):
@@ -134,42 +173,53 @@ def main():
         print("  MODE: DRY RUN")
 
     # ------------------------------------------------------------------
-    # Step 1: Detect completed event and verify results available
+    # Step 1: Detect completed event(s) for the week
     # ------------------------------------------------------------------
-    event_id, event_name, year, results_df = _get_event_and_results()
+    multi, week_events = _detect_week()
 
     # ------------------------------------------------------------------
-    # Step 2: Check if already graded (idempotent for retry runs)
+    # Step 2: Check which event(s) have ungraded bets (idempotent for retries)
     # ------------------------------------------------------------------
     print("\n  Connecting to Google Sheets...")
     from sheets_storage import get_spreadsheet
     spreadsheet = get_spreadsheet()
 
-    print("\n  Checking for ungraded bets...")
-    ungraded_count = _count_ungraded(spreadsheet, event_id)
+    if multi:
+        print(f"\n  {len(week_events)} events finished this week — grading only the one(s) with bets.")
 
-    if ungraded_count == 0:
-        print(f"\n  Already graded: 0 ungraded bets for {event_name}.")
+    to_grade = []  # [(event_id, event_name, ungraded_count)]
+    for event_id, event_name, year in week_events:
+        print(f"\n  Checking for ungraded bets — {event_name}...")
+        n = _count_ungraded(spreadsheet, event_id)
+        if n > 0:
+            to_grade.append((event_id, event_name, n))
+
+    if not to_grade:
+        label = ", ".join(name for _, name, _ in week_events)
+        print(f"\n  Already graded: 0 ungraded bets for {label}.")
         print("  Skipping grade_bets.py — nothing to grade.")
     else:
-        print(f"\n  Found {ungraded_count} ungraded bets for {event_name}.")
-
         if args.dry_run:
-            print("\n  [DRY RUN] Would run: grade_bets.py, sg_diagnostic.py, push_dashboard_data.py")
+            for event_id, event_name, n in to_grade:
+                print(f"\n  [DRY RUN] Would grade {n} bets for {event_name} (ID {event_id}).")
+            print("\n  [DRY RUN] Would then run: sg_diagnostic.py, push_dashboard_data.py")
             print("=" * 60 + "\n")
             sys.exit(0)
 
         # ------------------------------------------------------------------
-        # Step 3: Run grade_bets.py
+        # Step 3: Grade each event that has bets.
+        #   Single-event weeks keep the original bare invocation (grade_bets
+        #   auto-detects the same event). Multi-event weeks pass --event-id so
+        #   we grade the event we bet on, not whichever DataGolf lists first.
         # ------------------------------------------------------------------
-        success = _run_subprocess(
-            [python, "grade_bets.py"],
-            "grade_bets.py",
-        )
-
-        if not success:
-            print("  grade_bets.py reported failure.")
-            sys.exit(1)
+        for event_id, event_name, n in to_grade:
+            print(f"\n  Found {n} ungraded bets for {event_name}.")
+            cmd = [python, "grade_bets.py"]
+            if multi:
+                cmd += ["--event-id", str(event_id), "--event-name", str(event_name)]
+            if not _run_subprocess(cmd, f"grade_bets.py ({event_name})"):
+                print("  grade_bets.py reported failure.")
+                sys.exit(1)
 
         # ------------------------------------------------------------------
         # Step 4: Verify grading succeeded
@@ -180,14 +230,15 @@ def main():
 
         # Reconnect to get fresh data (cache may be stale)
         spreadsheet = get_spreadsheet()
-        remaining = _count_ungraded(spreadsheet, event_id)
+        remaining = sum(_count_ungraded(spreadsheet, event_id)
+                        for event_id, event_name, n in to_grade)
 
         if remaining > 0:
             print(f"\n  WARNING: {remaining} bets still ungraded after running grade_bets.py.")
             print("  This may indicate DataGolf data was incomplete.")
             sys.exit(1)
 
-        print(f"\n  Verification passed: all bets graded for {event_name}.")
+        print("\n  Verification passed: all bets graded.")
 
     # ------------------------------------------------------------------
     # Step 5: Run sg_diagnostic.py --no-email (always runs)
@@ -210,8 +261,10 @@ def main():
     # ------------------------------------------------------------------
     # Done
     # ------------------------------------------------------------------
+    done_events = to_grade if to_grade else week_events
+    done_label = ", ".join(name for _, name, _ in done_events)
     print("\n" + "=" * 60)
-    print(f"  GRADING PIPELINE COMPLETE — {event_name}")
+    print(f"  GRADING PIPELINE COMPLETE — {done_label}")
     print("=" * 60 + "\n")
     sys.exit(0)
 
