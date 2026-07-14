@@ -1,5 +1,13 @@
+"""Weekly event configuration ONLY.
+
+Every fitted coefficient dict now lives in the golf_sims sheet's 'coefficients'
+tab (single source of truth) and is materialized into this module's namespace
+by coeff_loader at the bottom of this file - consumers keep importing names
+from sim_inputs unchanged. Edit the sheet to change the model; edit THIS FILE
+only for the week's event/course/cut/wind and manual player knobs.
+"""
+
 from datetime import datetime
-import numpy as np
 
 ##New sim inputs
 SIMULATIONS   = 100000
@@ -8,7 +16,7 @@ PAR           = 70
 CUT_LINE      = 70
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
-TOP_K = 20 
+TOP_K = 20
 
 #number of simulations you want to run. Applied to rd lvl and hole lvl scripts
 num_sims=50000
@@ -30,9 +38,6 @@ tourney = 'the_open'
 course_par = 70
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
-
-major_adjustment = 0.00182 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
-links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 # --- No-data-course overrides (The Open @ Royal Birkdale 2026) ---
 # We have no ShotLink/scoring history for this specific venue, so:
@@ -56,7 +61,7 @@ shot_rule=0
 default_birthday = datetime(1995, 1, 1)
 
 #expected tee time range on the weekend to forecast weather in sims
-tee_time_start="8:30" 
+tee_time_start="8:30"
 tee_time_end="1:00"
 
 #any names that cause trouble, want to ensure consistency
@@ -90,56 +95,6 @@ name_replacements = {
     'spaun, jj': 'spaun, j.j.'
 }
 
-#regression informed coefficients for base model
-coefficients = {
-    'adj_skill_est': 1.0757,
-    'player_age': 0.010859,
-    'age_squared': -0.000347,
-    'delta_adj_skill_est':0.2226,
-    'good_shot_ema':-0.0201,
-    'relative_dsle': -0.0134,
-    'consec_wks': 0.0,
-    'delta_putt': -0.13,
-    'delta_ott': 0.24
-}
-
-# # regression informed coefficients for base model
-coefficients_2 = {
-    'adj_skill_est': 0.6968,
-    'ema_sg_adj': 0.1874,
-    'player_age': 0.013838,
-    'age_squared': -0.000394,
-    'good_shot_ema': -0.0652,
-    'delta_putt': -0.23,
-    'delta_ott': 0.18,
-    'delta_adj_skill_est': 0.0,
-    'relative_dsle': -0.0117,
-    'max_skill': 0.1167,
-    'max_skill_50': 0.0,
-    'c_exp': 0.0055,
-    'course_adjustment': 0.95,
-    'course_history': 0.010
-}
-
-####change the course history impacts each week, default low skill is 0.0088
-
-coefficients_3 = {
-    'adj_skill_est': 0.6118,
-    'ema_sg_adj': 0.0957,
-    'player_age': 0.012253,
-    'age_squared': -0.000382,
-    'good_shot_ema': 0.0,
-    'delta_putt': 0.0,
-    'delta_ott': 0.0,
-    'delta_adj_skill_est': 0.0,
-    'relative_dsle': -0.013,
-    'max_skill': 0.0,
-    'max_skill_50': 0.2514,
-    'c_exp':0.0064,
-    'course_adjustment': 1.05,
-    'course_history': 0.005
-}
-
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {
@@ -150,7 +105,6 @@ overrides_sd = {
 
 manual_boosts={
 }
-# manual_boosts = { }
 
 # Field replacements: WD'd player -> replacement (used by skill_imports.py
 # when DataGolf hasn't updated the field yet). Both names lowercase
@@ -171,162 +125,11 @@ dk_naming_convention= {
     'nesmith, matt': 'nesmith, matthew'
 }
 
+# ── coefficients: loaded from the golf_sims sheet (single source of truth) ───
+from coeff_loader import load_sheet_coefficients as _load_sheet_coefficients
+globals().update(_load_sheet_coefficients())
 
-
-
-coefficients_r1_high = {
-    'residual': 0.0460,
-    'residual2': 0.0126,
-    'ott': 0,
-    'putt': 0,
-}
-
-coefficients_r1_midh = {
-    'residual': 0.0415,
-    'residual2': -0.0057,
-    'ott': 0,
-    'putt': 0,
-
-}
-coefficients_r1_midl = {
-    'residual': 0.0571,
-    'residual2': -0.0052,
-    'ott': 0.11,
-    'putt': -0.03,
-
-}
-coefficients_r1_low = {
-    'residual': 0.0578,
-    'residual2': -0.0092,
-    'ott': 0.09,
-    'putt': -0.07,
-}
-
-coefficients_r2 = {
-    'residual': 0.1641,
-    'residual2': -0.0809,
-    'residual3': 0.0076,
-    'avg_ott': 0.11,
-    'avg_putt': -0.03,
-    'avg_app': -0.0128,
-    'avg_arg': -0.15,
-    'delta_app': 0.06
-}
-
-coefficients_r2_6_30 = {
-    'residual': 0.0029,
-    'residual2': -0.0209,
-    'residual3': 0.0038,
-    'avg_ott': 0.07,
-    'avg_putt': -0.01,
-    'avg_app': -0.03,
-    'avg_arg': -0.03,
-    'delta_app': 0.01
-}
-
-coefficients_r2_30_up = {
-    'residual': 0.0603,
-    'residual2': -0.0010,
-    'residual3': 0.0015,
-    'avg_ott': 0.166,
-    'avg_putt': 0.00,
-    'avg_app': 0.015,
-    'avg_arg': -0.06,
-    'delta_app': 0.004
-}
-
-coefficients_r3 = {
-    'sg_ott_avg': 0.035,
-    'sg_putt_avg': -0.14,
-    'sg_app_avg': -0.02,
-    'sg_arg_avg': -0.3,
-}
-
-coefficients_r3_mid = {
-    'sg_ott_avg': 0.089,
-    'sg_putt_avg': -0.02,
-    'sg_app_avg': -0.07,
-    'sg_arg_avg': -0.13,
-}
-
-coefficients_r3_high = {
-    'sg_ott_avg': 0.15,
-    'sg_putt_avg': -0.00,
-    'sg_app_avg': 0.05,
-    'sg_arg_avg': -0.01,
-}
-
-pressure_curves_r3 = {
-    'skill_1': {
-        1: -0.8, 2: -0.45, 3: -0.31, 4: -0.35, 5: -0.38,
-        6: -0.49, 11: -0.34, 21: -0.25, 31: -0.25, 41: -0.1,
-        51: -0.1, 61: -0.01, 70: 0.0,160:0
-    },
-    'skill_2': {
-        1: -0.47, 2: -0.35, 3: -0.31, 4: -0.3, 5: -0.25,
-        6: -0.225, 11: -0.2, 21: -0.175, 31: -0.15, 41: -0.1,
-        51: -0.1, 61: -0.01, 70: 0.0,160:0
-    },
-    'skill_3': {
-        1: -0.425, 2: -0.35, 3: -0.25, 4: -0.225, 5: -0.2,
-        6: -0.18, 11: -0.1, 21: -0.05, 31: -0.02, 41: -0.01,
-        51: 0, 61: 0.01, 70: 0.0,160:0
-    },
-    'skill_4': {
-        1: -0.38, 2: -0.3, 3: -0.21, 4: -0.21, 5: -0.2,
-        6: -0.13, 11: -0.03, 21: -0.15, 31: 0.0, 41: 0.015,
-        51: 0.05, 61: 0.00, 70: 0.0, 160:0
-    },
-    'skill_5': {
-        1: -0.33, 2: -0.21, 3: -0.15, 4: -0.125, 5: -0.1,
-        6: -0.08, 11: -0.03, 21: -0.01, 31: 0.01, 41: 0.015,
-        51: 0.07, 61: 0.00, 70: 0.0, 160:0
-    }
-}
-
-pressure_curves_r4 = {
-    'skill_1': {
-        1: -1, 2: -0.7, 3: -0.31, 4: -0.35, 5: -0.38,
-        6: -0.49, 11: -0.34, 21: -0.25, 31: -0.25, 41: -0.1,
-        51: -0.1, 61: -0.01, 70: 0.0,160:0
-    },
-    'skill_2': {
-        1: -0.9, 2: -0.6, 3: -0.31, 4: -0.3, 5: -0.25,
-        6: -0.225, 11: -0.2, 21: -0.175, 31: -0.15, 41: -0.1,
-        51: -0.1, 61: -0.01, 70: 0.0,160:0
-    },
-    'skill_3': {
-        1: -0.8, 2: -0.5, 3: -0.25, 4: -0.225, 5: -0.2,
-        6: -0.18, 11: -0.1, 21: -0.05, 31: -0.02, 41: -0.01,
-        51: 0, 61: 0.01, 70: 0.0,160:0
-    },
-    'skill_4': {
-        1: -0.75, 2: -0.4, 3: -0.21, 4: -0.21, 5: -0.2,
-        6: -0.13, 11: -0.03, 21: -0.15, 31: 0.0, 41: 0.015,
-        51: 0.05, 61: 0.00, 70: 0.0, 160:0
-    },
-    'skill_5': {
-        1: -0.7, 2: -0.3, 3: -0.15, 4: -0.125, 5: -0.1,
-        6: -0.08, 11: -0.03, 21: -0.01, 31: 0.01, 41: 0.015,
-        51: 0.07, 61: 0.00, 70: 0.0, 160:0
-    }
-}
-
-pressure_curves_wins = {
-    'over_5': {
-        1: 0.12, 2: 0.1, 3: 0.09, 4: 0.08, 5: 0.05,
-        6: 0.02, 11: 0
-    },
-    'two_to_4': {
-        1: 0.05, 2: 0.05, 3: 0.03, 4: 0.02, 5: 0.01,
-        6: 0, 11: 0
-    },
-    'exactly_1': {
-        1: -0.0, 2: -0.0, 3: -0.0, 4: -0.0, 5: -0.0,
-        6: -0.0, 11: 0
-    },
-    'none': {
-        1: -0.25, 2: -0.2, 3: -0.15, 4: -0.08, 5: -0.05,
-        6: -0.02, 11: 0
-    }
-}
+# majors scalar comes from the sheet (scalars/major_adjustment); the event
+# lists are event identity, not tunable values, so they stay here
+major_adjustment = major_adjustment if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0  # noqa: F821
+links_adjustment = 1 if any(eid in [100, 541] for eid in event_ids) else 0
