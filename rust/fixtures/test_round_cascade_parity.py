@@ -31,7 +31,7 @@ COEFFS = dict(
     r2_30up=dict(residual=0.0603, residual2=-0.0010, residual3=0.0015, avg_ott=0.166,
                  avg_putt=0.00, avg_app=0.015, avg_arg=-0.06, delta_app=0.004),
     r3_lt6=dict(sg_ott_avg=0.035, sg_putt_avg=-0.14, sg_app_avg=-0.02, sg_arg_avg=-0.3),
-    r3_6_20=dict(sg_ott_avg=0.089, sg_putt_avg=-0.02, sg_app_avg=-0.07, sg_arg_avg=-0.13),
+    r3_6_20=dict(sg_ott_avg=0.089, sg_putt_avg=-0.02, sg_app_avg=-0.07, sg_arg_avg=-0.13, pos_6_10=-0.13),
     r3_30up=dict(sg_ott_avg=0.15, sg_putt_avg=-0.00, sg_app_avg=0.05, sg_arg_avg=-0.01),
 )
 
@@ -65,7 +65,7 @@ def make_inputs(rng, completed):
 def c1(d): return [d["ott"], d["putt"], d["residual"], d["residual2"]]
 def c2(d): return [d["residual"], d["residual2"], d["residual3"], d["avg_ott"],
                    d["avg_putt"], d["avg_app"], d["avg_arg"], d["delta_app"]]
-def c3(d): return [d["sg_ott_avg"], d["sg_putt_avg"], d["sg_app_avg"], d["sg_arg_avg"]]
+def c3(d): return [d["sg_ott_avg"], d["sg_putt_avg"], d["sg_app_avg"], d["sg_arg_avg"], d.get("pos_6_10", 0.0)]
 
 
 def run_rust(inp):
@@ -102,7 +102,7 @@ def verify(completed):
     inp = make_inputs(rng, completed)
     print(f"[completed_round={completed}] n={N}, sims={SIMS:,}")
     fs_py, mc_py, win_py = run_py(inp, seed=SEED)
-    fs_r, mc_r, win_r = run_rust(inp)
+    fs_r, mc_r, win_r, *_extra = run_rust(inp)  # kernel also returns r1_r2/r1_r3 now
 
     praw_p, tdh_p, tnodh_p = k.aggregate_round(np.ascontiguousarray(fs_py))
     praw_r, tdh_r, tnodh_r = k.aggregate_round(np.ascontiguousarray(fs_r))

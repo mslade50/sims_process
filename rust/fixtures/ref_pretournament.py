@@ -192,6 +192,8 @@ def run(inp, seed=456):
         + r3_adj(inp["r3_6_20"], (pos3 >= 6) & (pos3 <= 20))
         + r3_adj(inp["r3_30up"], pos3 > 20)
     )
+    # pos_6_10 LEVEL term: flat add for positions 6-10 into R4 (mid bucket only)
+    ts_r3 = ts_r3 + ((pos3 >= 6) & (pos3 <= 10)) * inp["r3_6_20"].get("pos_6_10", 0.0)
     updated_skill_r4 = updated_skill_r3 - (tot_sg_adj_r2 + tot_resid_adj_r2) + ts_r3
     sg_r4_mean = updated_skill_r4 + (r4_mu - my_pred)[:, None]
 

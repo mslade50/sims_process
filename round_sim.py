@@ -676,7 +676,8 @@ def simulate_remaining_rounds(
             _cv1 = lambda c: [c['ott'], c['putt'], c['residual'], c['residual2']]
             _cv2 = lambda c: [c['residual'], c['residual2'], c['residual3'], c['avg_ott'],
                               c['avg_putt'], c['avg_app'], c['avg_arg'], c['delta_app']]
-            _cv3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg']]
+            _cv3 = lambda c: [c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'], c['sg_arg_avg'],
+                              c.get('pos_6_10', 0.0)]
             _mu = np.stack([m for (m, s) in player_cf_params])
             _std = np.stack([s for (m, s) in player_cf_params])
 
@@ -901,12 +902,14 @@ def simulate_remaining_rounds(
     pos_lt_6_mask_r3 = np.zeros((n_players, num_sims), dtype=bool)
     pos_6_20_mask_r3 = np.zeros((n_players, num_sims), dtype=bool)
     pos_gt_20_mask_r3 = np.zeros((n_players, num_sims), dtype=bool)
+    pos_6_10_mask_r3 = np.zeros((n_players, num_sims), dtype=bool)
 
     for j in range(num_sims):
         pos = rank_positions_from_strokes(r1_r3_scores[:, j])
         pos_lt_6_mask_r3[:, j] = (pos < 6)
         pos_6_20_mask_r3[:, j] = (pos >= 6) & (pos <= 20)
         pos_gt_20_mask_r3[:, j] = (pos > 20)
+        pos_6_10_mask_r3[:, j] = (pos >= 6) & (pos <= 10)
 
     def apply_block_r3_avg(adj_dict, mask, avg_ott, avg_putt, avg_app, avg_arg):
         out = {}
@@ -938,6 +941,10 @@ def simulate_remaining_rounds(
         ensure_array(adj_sum_r3.get('sg_putt_avg_adj_r3', 0.0), shape2) +
         ensure_array(adj_sum_r3.get('sg_app_avg_adj_r3', 0.0), shape2) +
         ensure_array(adj_sum_r3.get('sg_arg_avg_adj_r3', 0.0), shape2)
+    )
+    # pos_6_10 LEVEL term (parity with the Rust kernel): positions 6-10 into R4 only
+    tot_sg_adj_r3 = tot_sg_adj_r3 + np.where(
+        pos_6_10_mask_r3, coefficients_r3_mid.get('pos_6_10', 0.0), 0.0
     )
 
     # Undo R2 adjustments, apply R3 adjustments

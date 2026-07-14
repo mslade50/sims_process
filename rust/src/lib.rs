@@ -141,7 +141,7 @@ fn rows4(a: &numpy::ndarray::ArrayView2<f64>) -> Vec<[f64; 4]> {
 /// buckets are passed as fixed-length sequences:
 ///   r1_*: [ott, putt, residual, residual2]
 ///   r2_*: [residual, residual2, residual3, avg_ott, avg_putt, avg_app, avg_arg, delta_app]
-///   r3_*: [sg_ott_avg, sg_putt_avg, sg_app_avg, sg_arg_avg]
+///   r3_*: [sg_ott_avg, sg_putt_avg, sg_app_avg, sg_arg_avg, pos_6_10]
 /// Returns (final_scores (n,sims) i64, win_prob (n,) f64,
 ///          cat_means_r1, cat_means_r2, cat_means_r3, cat_means_r4 — each (n,4) f64,
 ///          per-player per-category SG means over sims; feed avg_expected_cat_sg,
@@ -162,7 +162,7 @@ fn run_pretournament<'py>(
     weather_delta_r2: PyReadonlyArray1<'py, f64>,
     r1_high: [f64; 4], r1_midh: [f64; 4], r1_midl: [f64; 4], r1_low: [f64; 4],
     r2_lt6: [f64; 8], r2_6_30: [f64; 8], r2_30up: [f64; 8],
-    r3_lt6: [f64; 4], r3_6_20: [f64; 4], r3_30up: [f64; 4],
+    r3_lt6: [f64; 5], r3_6_20: [f64; 5], r3_30up: [f64; 5],
     cut_line: usize,
     use_10_shot_rule: bool,
     sims: usize,
@@ -184,8 +184,9 @@ fn run_pretournament<'py>(
         residual: a[0], residual2: a[1], residual3: a[2], avg_ott: a[3],
         avg_putt: a[4], avg_app: a[5], avg_arg: a[6], delta_app: a[7],
     };
-    let c3 = |a: [f64; 4]| CoeffR3 {
+    let c3 = |a: [f64; 5]| CoeffR3 {
         sg_ott_avg: a[0], sg_putt_avg: a[1], sg_app_avg: a[2], sg_arg_avg: a[3],
+        pos_6_10: a[4],
     };
     let lc_v = l_corr.as_array();
     let mut lc = [[0.0f64; 4]; 4];
@@ -269,7 +270,7 @@ fn aggregate_round<'py>(
     known_strokes_r3=None, known_cats_r3=None,
     r1_high=[0.0;4], r1_midh=[0.0;4], r1_midl=[0.0;4], r1_low=[0.0;4],
     r2_lt6=[0.0;8], r2_6_30=[0.0;8], r2_30up=[0.0;8],
-    r3_lt6=[0.0;4], r3_6_20=[0.0;4], r3_30up=[0.0;4],
+    r3_lt6=[0.0;5], r3_6_20=[0.0;5], r3_30up=[0.0;5],
     cut_line=0, use_10_shot_rule=true, sims=0, seed=42
 ))]
 #[allow(clippy::too_many_arguments)]
@@ -291,7 +292,7 @@ fn run_remaining_rounds<'py>(
     known_cats_r3: Option<PyReadonlyArray2<'py, f64>>,
     r1_high: [f64; 4], r1_midh: [f64; 4], r1_midl: [f64; 4], r1_low: [f64; 4],
     r2_lt6: [f64; 8], r2_6_30: [f64; 8], r2_30up: [f64; 8],
-    r3_lt6: [f64; 4], r3_6_20: [f64; 4], r3_30up: [f64; 4],
+    r3_lt6: [f64; 5], r3_6_20: [f64; 5], r3_30up: [f64; 5],
     cut_line: usize,
     use_10_shot_rule: bool,
     sims: usize,
@@ -312,8 +313,9 @@ fn run_remaining_rounds<'py>(
         residual: a[0], residual2: a[1], residual3: a[2], avg_ott: a[3],
         avg_putt: a[4], avg_app: a[5], avg_arg: a[6], delta_app: a[7],
     };
-    let c3 = |a: [f64; 4]| CoeffR3 {
+    let c3 = |a: [f64; 5]| CoeffR3 {
         sg_ott_avg: a[0], sg_putt_avg: a[1], sg_app_avg: a[2], sg_arg_avg: a[3],
+        pos_6_10: a[4],
     };
     let mk_known = |st: Option<PyReadonlyArray1<i64>>, ct: Option<PyReadonlyArray2<f64>>| {
         match (st, ct) {

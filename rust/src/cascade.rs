@@ -46,12 +46,15 @@ pub struct CoeffR2 {
 }
 
 /// R3 skill-update coefficients (one of 3 position buckets; avg-SG only).
+/// pos_6_10 is a LEVEL add applied only when position-into-R4 is 6..=10
+/// (live only in the 6-20 bucket dict; 0.0 elsewhere).
 #[derive(Clone, Copy)]
 pub struct CoeffR3 {
     pub sg_ott_avg: f64,
     pub sg_putt_avg: f64,
     pub sg_app_avg: f64,
     pub sg_arg_avg: f64,
+    pub pos_6_10: f64,
 }
 
 /// Fully-precomputed kernel inputs (everything RNG-independent comes from Python).
@@ -424,10 +427,14 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
                 let avg_app = 0.66 * (0.5 * (cats_r1[k][1] + cats_r2[k][1])) + 0.34 * cats_r3[k][1];
                 let avg_arg = 0.66 * (0.5 * (cats_r1[k][2] + cats_r2[k][2])) + 0.34 * cats_r3[k][2];
                 let avg_putt = 0.66 * (0.5 * (cats_r1[k][3] + cats_r2[k][3])) + 0.34 * cats_r3[k][3];
-                let ts = avg_ott * c.sg_ott_avg
+                let mut ts = avg_ott * c.sg_ott_avg
                     + avg_putt * c.sg_putt_avg
                     + avg_app * c.sg_app_avg
                     + avg_arg * c.sg_arg_avg;
+                // level term gated to positions 6-10 into R4 (subset of the 6-20 bucket)
+                if pos[i] >= 6 && pos[i] <= 10 {
+                    ts += c.pos_6_10;
+                }
                 // undo prior R2 adjustment, add R3 adjustment
                 let usk4 = updated_skill_r3[k] - (tot_sg_adj_r2[k] + tot_resid_adj_r2[k]) + ts;
                 sg_r4_mean[k] = usk4 + (inp.r4_mu[i] - inp.my_pred_base[i]);
@@ -527,7 +534,7 @@ mod tests {
             residual: 0.0, residual2: 0.0, residual3: 0.0, avg_ott: 0.0,
             avg_putt: 0.0, avg_app: 0.0, avg_arg: 0.0, delta_app: 0.0,
         };
-        let z3 = CoeffR3 { sg_ott_avg: 0.0, sg_putt_avg: 0.0, sg_app_avg: 0.0, sg_arg_avg: 0.0 };
+        let z3 = CoeffR3 { sg_ott_avg: 0.0, sg_putt_avg: 0.0, sg_app_avg: 0.0, sg_arg_avg: 0.0, pos_6_10: 0.0 };
         Inputs {
             n,
             sims,

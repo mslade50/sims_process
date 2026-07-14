@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sims_kernel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rust Monte Carlo kernel for new_sim/round_sim (statistical-equivalence port)"
 requires-python = ">=3.10"
 classifiers = [

@@ -174,6 +174,9 @@ _R3R4_COL_MAP = {
     "sg_ott_avg": "sg_ott_avg", "sg_putt_avg": "sg_putt_avg",
     "sg_app_avg": "sg_app_avg", "sg_arg_avg": "sg_arg_avg",
     "avg_great_shots": "great_shots_avg",
+    # LEVEL term: indicator column (1.0 for positions 6-10 into the round) so the
+    # generic column*coeff application yields a flat add for those players only
+    "pos_6_10": "pos_6_10",
 }
 
 COL_MAPS = {1: _R1_COL_MAP, 2: _R2_COL_MAP, 3: _R3R4_COL_MAP, 4: _R3R4_COL_MAP}
@@ -237,6 +240,11 @@ def load_and_merge(round_num):
         .str.replace("CUT", "", regex=False)
         .pipe(pd.to_numeric, errors="coerce").fillna(999).astype(int)
     )
+
+    # Indicator for the pos_6_10 LEVEL term (coefficients_r3_mid): during the R3
+    # run df["position"] is the standing after R3 = going INTO R4, which is the
+    # population the term was fit on.
+    df["pos_6_10"] = df["position"].between(6, 10).astype(float)
 
     return df
 
@@ -652,7 +660,7 @@ def _totals_r3r4(df, round_num):
     """
     # This round's fresh SG adjustments
     adj_cols = ["sg_ott_avg_adj", "sg_putt_avg_adj", "sg_app_avg_adj", "sg_arg_avg_adj",
-                "avg_great_shots_adj"]
+                "avg_great_shots_adj", "pos_6_10_adj"]
     adj_cols = [c for c in adj_cols if c in df.columns]
     fresh_adj = df[adj_cols].sum(axis=1) if adj_cols else 0
 
@@ -1084,7 +1092,7 @@ def export_results(df, round_num):
     else:
         adj_cols = [f"{c}_adj_r{round_num}" for c in
                     ["sg_ott_avg", "sg_putt_avg", "sg_app_avg", "sg_arg_avg",
-                     "avg_great_shots"]]
+                     "avg_great_shots", "pos_6_10"]]
         next_pred = f"updated_pred_r{round_num + 1}" if round_num < 4 else "updated_pred_final"
         summary_cols = ["player_name"] + adj_cols + [f"updated_pred_r{round_num}", next_pred]
 
@@ -1206,6 +1214,7 @@ def _get_component_columns(df, round_num):
             ("sg_app_avg_adj", "Avg APP Adj"),
             ("sg_arg_avg_adj", "Avg ARG Adj"),
             ("avg_great_shots_adj", "Avg Great Shots Adj"),
+            ("pos_6_10_adj", "Pos 6-10 Level Adj"),
         ]
 
     # Only return columns that actually exist in the DataFrame

@@ -359,10 +359,14 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
                 let avg_app = 0.66 * (0.5 * (cats_r1[k][1] + cats_r2[k][1])) + 0.34 * cats_r3[k][1];
                 let avg_arg = 0.66 * (0.5 * (cats_r1[k][2] + cats_r2[k][2])) + 0.34 * cats_r3[k][2];
                 let avg_putt = 0.66 * (0.5 * (cats_r1[k][3] + cats_r2[k][3])) + 0.34 * cats_r3[k][3];
-                let ts = avg_ott * c.sg_ott_avg
+                let mut ts = avg_ott * c.sg_ott_avg
                     + avg_putt * c.sg_putt_avg
                     + avg_app * c.sg_app_avg
                     + avg_arg * c.sg_arg_avg;
+                // level term gated to positions 6-10 into R4 (subset of the 6-20 bucket)
+                if pos[i] >= 6 && pos[i] <= 10 {
+                    ts += c.pos_6_10;
+                }
                 updated_skill_r4[k] = updated_skill_r3[k] - (tot_sg_adj_r2[k] + tot_resid_adj_r2[k]) + ts;
             }
         }
@@ -525,7 +529,7 @@ mod tests {
             residual: 0.0, residual2: 0.0, residual3: 0.0, avg_ott: 0.0,
             avg_putt: 0.0, avg_app: 0.0, avg_arg: 0.0, delta_app: 0.0,
         };
-        let z3 = CoeffR3 { sg_ott_avg: 0.0, sg_putt_avg: 0.0, sg_app_avg: 0.0, sg_arg_avg: 0.0 };
+        let z3 = CoeffR3 { sg_ott_avg: 0.0, sg_putt_avg: 0.0, sg_app_avg: 0.0, sg_arg_avg: 0.0, pos_6_10: 0.0 };
         let mk_known = |val: i64| KnownRound {
             strokes: vec![val; n],
             cats: vec![[0.1, 0.1, 0.0, 0.0]; n],
@@ -545,6 +549,37 @@ mod tests {
             r2_lt6: z2, r2_6_30: z2, r2_30up: z2,
             r3_lt6: z3, r3_6_20: z3, r3_30up: z3,
             cut_line: 65, use_10_shot_rule: true,
+        }
+    }
+
+    #[test]
+    fn pos_6_10_level_hits_only_ranks_6_to_10() {
+        let n = 15usize;
+        let sims = 4000usize;
+        let mut inp = base_inputs(n, sims, 3);
+        // distinct known strokes -> deterministic ranks 1..n into R4 in every sim
+        for round in [&mut inp.known_r1, &mut inp.known_r2, &mut inp.known_r3] {
+            if let Some(k) = round {
+                k.strokes = (0..n).map(|i| 70 + i as i64).collect();
+            }
+        }
+        inp.cut_line = n; // everyone survives the cut
+        let base = run_remaining_rounds(&inp);
+        inp.r3_6_20.pos_6_10 = -0.5;
+        let with_term = run_remaining_rounds(&inp);
+        // same seed + level-add consumes no RNG -> paired sims isolate the term:
+        // affected players' skill drops 0.5 -> mean strokes rise ~0.5; others unmoved
+        for i in 0..n {
+            let mean = |o: &Output| {
+                (0..sims).map(|s| o.final_scores[idx(i, s, sims)] as f64).sum::<f64>() / sims as f64
+            };
+            let delta = mean(&with_term) - mean(&base);
+            let rank = i as i64 + 1;
+            if (6..=10).contains(&rank) {
+                assert!((delta - 0.5).abs() < 0.15, "rank {rank}: delta {delta} != ~0.5");
+            } else {
+                assert!(delta.abs() < 0.15, "rank {rank}: delta {delta} != ~0");
+            }
         }
     }
 
