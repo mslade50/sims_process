@@ -5,7 +5,7 @@ import numpy as np
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 70
-CUT_LINE      = 65
+CUT_LINE      = 70
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
 TOP_K = 20 
@@ -14,7 +14,7 @@ TOP_K = 20
 num_sims=50000
 
 ###basic information for the week
-wind_override = 0.0
+wind_override = 0.2
 baseline_wind = 0.12
 
 baseline_dew = -0.018
@@ -24,18 +24,20 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [541]
-course_id = 977
-tourney = 'scottish'
+event_ids = [100]
+course_id = 541
+tourney = 'open'
 course_par = 70
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
-major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
+# 0.0018 by owner judgment 2026-07-12: leak-free refit says ~0.0006 (p=0.75, sign-flips
+# across sample halves) but a positive majors-history prior is retained deliberately
+major_adjustment = 0.0018 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=977
+course_id_1=541
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -237,6 +239,9 @@ coefficients_r3_mid = {
     'sg_putt_avg': -0.02,
     'sg_app_avg': -0.07,
     'sg_arg_avg': -0.13,
+    # level term: positions 6-10 into R4 over-predicted ~0.13 SG (neg. 7 of last 8 seasons);
+    # multiplied by the pos_6_10 indicator, so only 6-10 within this 6-20 bucket are hit
+    'pos_6_10': -0.13,
 }
 
 coefficients_r3_high = {
