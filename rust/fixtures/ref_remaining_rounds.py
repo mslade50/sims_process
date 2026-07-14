@@ -80,7 +80,10 @@ def run(inp, seed=42):
 
     # ---- R1 -> R2 update ----
     sg_r1_actual = par - strokes_r1.astype(float)
-    resid_r1 = sg_r1_actual - my_pred[:, None]
+    # field_skill offset added to production (round_sim.py:731-732, mirroring
+    # live_stats _residuals_r1) after this spec was frozen 2026-06; kernel has it
+    field_skill = float(np.mean(my_pred))
+    resid_r1 = sg_r1_actual + field_skill - my_pred[:, None]
     resid2_r1 = resid_r1 ** 2
     C = np.zeros((n, 6))
     C[my_pred > 1.0] = coeff_vec_r1(inp["r1_high"])

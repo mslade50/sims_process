@@ -665,6 +665,32 @@ def simulate_remaining_rounds(
         if np.unique(player_expected_r2).size > 1:
             print(f"    Multi-course R2: expected scores = {dict(zip(*np.unique(player_expected_r2, return_counts=True)))}")
 
+    # ─── Fixture dump hook (HANDOFF step 2: round_sim production verification) ───
+    # SIMS_DUMP_FIXTURE=<path.npz> freezes the fully-assembled kernel inputs so the
+    # Rust kernel and the Python cascade can be compared on IDENTICAL real arrays.
+    _dump_path = os.getenv("SIMS_DUMP_FIXTURE")
+    if _dump_path:
+        _kw = {}
+        for _r in (1, 2, 3):
+            if completed_round >= _r and _r in known_strokes:
+                _kw[f"known_strokes_r{_r}"] = np.asarray(known_strokes[_r], dtype=np.int64)
+                _kw[f"known_cats_r{_r}"] = np.asarray(
+                    known_categories.get(_r, np.zeros((n_players, 4))), dtype=float)
+        np.savez_compressed(
+            _dump_path,
+            completed_round=completed_round, default_par=default_par,
+            mu=np.stack([m for (m, s) in player_cf_params]),
+            std=np.stack([s for (m, s) in player_cf_params]),
+            eff_skew=np.asarray(effective_skew, dtype=float),
+            l_corr=np.asarray(L_corr, dtype=float),
+            my_pred_base=np.asarray(my_pred_base, dtype=float),
+            expected_r2=np.asarray(player_expected_r2, dtype=float),
+            cut_line=CUT_LINE, use_10_shot_rule=USE_10_SHOT_RULE, num_sims=num_sims,
+            player_names=np.asarray(player_names, dtype=object),
+            **_kw,
+        )
+        print(f"  [fixture] dumped kernel inputs -> {_dump_path}")
+
     # ─── Rust kernel (default; --use-python forces the legacy Python cascade) ───
     # All inputs are assembled above; sims_kernel.run_remaining_rounds (seed 42)
     # returns the same (final_scores, made_cut_mask). On --use-python or any Rust
