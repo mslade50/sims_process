@@ -162,6 +162,19 @@ def _live_dump_is_current(tourney: str, rnd, repl: dict) -> bool:
         logger.info("live dump: pre-event build (no live round) -> ignoring "
                     "simulated_probs_live.csv (using simulated_probs.csv)")
         return False
+    # Staleness by construction: during an event, round_sim writes the live dump
+    # AFTER the pre-event new_sim wrote simulated_probs.csv. A live dump OLDER
+    # than this week's full sim is therefore a leftover from a PRIOR event and
+    # must never outrank it. This catches what the player-overlap check below
+    # can't: consecutive events sharing most of the field (Scottish Open R4
+    # leftovers passed 50% overlap vs The Open and shipped MacIntyre at 20% to
+    # win The Open, 2026-07-15).
+    full = _find("simulated_probs.csv")
+    if full is not None and live.stat().st_mtime < full.stat().st_mtime:
+        logger.warning("live dump: simulated_probs_live.csv predates this week's "
+                       "simulated_probs.csv -> treating as STALE leftover from a "
+                       "prior event, ignoring (using simulated_probs.csv)")
+        return False
     pcf = _find(f"pre_course_fit_{tourney}.csv", f"{tourney}/pre_course_fit_{tourney}.csv")
     if pcf is None:
         return True  # no field to validate against; trust it mid-event
