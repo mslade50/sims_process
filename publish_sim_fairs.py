@@ -158,9 +158,14 @@ def _live_dump_is_current(tourney: str, rnd, repl: dict) -> bool:
     live = PROJECT_ROOT / "simulated_probs_live.csv"
     if not live.exists():
         return False
-    if not rnd:
-        logger.info("live dump: pre-event build (no live round) -> ignoring "
-                    "simulated_probs_live.csv (using simulated_probs.csv)")
+    if not rnd or rnd < 2:
+        # R1 round files are built PRE-event (Thursday's round is priced
+        # Tue/Wed), so their existence must NEVER flip the publish into live
+        # mode. A legitimate live outright dump only exists once the R2 files
+        # do (i.e. R1 is actually underway/complete).
+        logger.info(f"live dump: round={rnd or 'none'} build (pre-event; R1 files "
+                    "don't mean live) -> ignoring simulated_probs_live.csv "
+                    "(using simulated_probs.csv)")
         return False
     # Staleness by construction: during an event, round_sim writes the live dump
     # AFTER the pre-event new_sim wrote simulated_probs.csv. A live dump OLDER
@@ -932,6 +937,12 @@ def build_payload() -> dict:
         # per-player skill estimate (pred, SG/round vs field) for the board's
         # skill filter. Older boards ignore this key.
         "pred": _pred_lookup(tourney, repl),
+        # provenance of the outright fairs: "live" = simulated_probs_live.csv
+        # (live-conditioned, only legit once R2 exists), "pre" = the pre-event
+        # full sim. The board refuses live-sourced outrights while its
+        # tournament freeze isn't active (pre-R1) — a dead-man's switch against
+        # exactly the 2026-07-15 stale-live-dump incident.
+        "outrights_source": "live" if use_live else "pre",
     }
     return payload
 
