@@ -670,6 +670,26 @@ def _sample_lookup(tourney: str, repl: dict) -> dict:
     return out
 
 
+def _pred_lookup(tourney: str, repl: dict) -> dict:
+    """Per-player skill estimate (`pred`, strokes-gained/round vs the field) from
+    pre_sim_summary. Shipped in sim_fairs.json so the odds board can filter rows
+    by our skill number (e.g. only players > 0)."""
+    f = _find(f"pre_sim_summary_{tourney}.csv", f"{tourney}/pre_sim_summary_{tourney}.csv")
+    if f is None:
+        return {}
+    try:
+        df = pd.read_csv(f)
+    except Exception:
+        return {}
+    if not {"player_name", "pred"} <= set(df.columns):
+        return {}
+    out = {}
+    for _, r in df.iterrows():
+        if pd.notna(r["player_name"]) and pd.notna(r["pred"]):
+            out[_norm(r["player_name"], repl)] = round(float(r["pred"]), 3)
+    return out
+
+
 def _build_round_h2h(tourney: str, rnd, repl: dict):
     """All-pairs round head-to-head computed from the FULL sim-cache joint draws.
 
@@ -896,6 +916,9 @@ def build_payload() -> dict:
         "outrights_nodh": outrights_nodh,
         "matchups": _build_matchups(tourney, repl),
         "round_scores": _build_round_scores(tourney, rnd, repl),
+        # per-player skill estimate (pred, SG/round vs field) for the board's
+        # skill filter. Older boards ignore this key.
+        "pred": _pred_lookup(tourney, repl),
     }
     return payload
 
@@ -1137,7 +1160,8 @@ def main():
     logger.info(f"  outrights_nodh (Kalshi/NoVig): "
                 f"{{{', '.join(f'{k}:{len(v)}' for k, v in ondh.items())}}}")
     logger.info(f"  matchup pairs: {len(payload['matchups'])} | round_scores players: "
-                f"{len(payload.get('round_scores') or {})}")
+                f"{len(payload.get('round_scores') or {})} | preds: "
+                f"{len(payload.get('pred') or {})}")
 
     if args.dry_run:
         return
