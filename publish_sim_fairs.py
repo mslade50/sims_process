@@ -1011,27 +1011,59 @@ def _git_push(files=("sim_fairs.json",)) -> None:
             logger.warning(f"sim publish {msg}")
             _alert(msg)
             return
-        # A machine with only PARTIAL sim outputs (e.g. just simulated_probs.csv)
-        # builds a valid, freshly-stamped payload that silently strips whole market
-        # categories from the board/maker. Within the same event, a legit publish
-        # never empties a category origin had populated — refuse unless overridden.
+        # A machine with only PARTIAL sim outputs (e.g. no tournament h2h matrix
+        # once the event is live) builds a valid, freshly-stamped payload that
+        # would empty a market origin had populated. Rather than abort the WHOLE
+        # publish (stranding the fresh markets we DID produce), MERGE per market:
+        # carry origin's value forward for any tournament-long market this machine
+        # didn't produce, and publish the fresh version of everything else.
+        # Tournament-long markets (outrights, outrights_nodh, matchups, field) are
+        # round-independent, so carrying origin's forward can never mislabel a
+        # round; round-scoped markets (round_scores/pred/round) stay local — this
+        # machine is authoritative for the round it just simmed.
+        # PUBLISH_ALLOW_SHRINK=1 forces a raw publish (no backfill; strips allowed).
         if (origin_pay and local_pay
                 and origin_pay.get("event_id") == local_pay.get("event_id")
                 and (os.environ.get("PUBLISH_ALLOW_SHRINK") or "").strip().lower()
                     not in ("1", "true", "yes")):
-            def _counts(p):
-                d = {k: len(v or {}) for k, v in (p.get("outrights") or {}).items()}
-                d["matchups"] = len(p.get("matchups") or [])
-                return d
-            oc, lc = _counts(origin_pay), _counts(local_pay)
-            gone = sorted(k for k, n in oc.items() if n > 0 and lc.get(k, 0) == 0)
-            if gone:
-                msg = (f"REFUSED: would strip populated market(s) {gone} from origin's "
-                       f"fairs (same event {local_pay.get('event_id')}) — this machine "
-                       f"lacks the full sim outputs. PUBLISH_ALLOW_SHRINK=1 overrides.")
-                logger.warning(f"sim publish {msg}")
-                _alert(msg)
-                return
+            carried = []  # market ids backfilled from origin (kept, not stripped)
+            # nested outright dicts: backfill per sub-market (winner/top_5/...)
+            for grp in ("outrights", "outrights_nodh"):
+                o_grp = origin_pay.get(grp)
+                if not isinstance(o_grp, dict):
+                    continue
+                l_grp = local_pay.get(grp)
+                if not isinstance(l_grp, dict):
+                    l_grp = {}
+                for sub, o_val in o_grp.items():
+                    if o_val and not l_grp.get(sub):
+                        l_grp[sub] = o_val
+                        carried.append(f"{grp}.{sub}")
+                if l_grp:
+                    local_pay[grp] = l_grp
+            # top-level list markets: matchups (tournament h2h), field (roster)
+            for key in ("matchups", "field"):
+                if origin_pay.get(key) and not local_pay.get(key):
+                    local_pay[key] = origin_pay[key]
+                    carried.append(key)
+            if carried:
+                # Re-serialize the merged payload and re-hash WITHOUT touching the
+                # working tree (hash-object --stdin), so the pushed commit carries
+                # origin's markets we lack alongside our fresh ones.
+                rehash = subprocess.run(
+                    ["git", "-C", str(PROJECT_ROOT), "hash-object", "-w",
+                     "--stdin", "--path", "sim_fairs.json"],
+                    input=json.dumps(local_pay), capture_output=True, text=True)
+                new_blob = rehash.stdout.strip()
+                if rehash.returncode != 0 or not new_blob:
+                    msg = ("REFUSED: merge re-hash failed; not overwriting origin "
+                           f"(git: {(rehash.stderr or '').strip()[:120]})")
+                    logger.warning(f"sim publish {msg}")
+                    _alert(msg)
+                    return
+                blobs["sim_fairs.json"] = new_blob
+                logger.info(f"sim publish: carried origin markets forward {carried} "
+                            f"— fresh local markets still published")
 
     idx = os.path.join(tempfile.gettempdir(), f"sim_fairs_index_{os.getpid()}")
     try:
