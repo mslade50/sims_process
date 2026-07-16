@@ -1062,6 +1062,15 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                     _alert(msg)
                     return
                 blobs["sim_fairs.json"] = new_blob
+                # Mirror the merged payload to the local file so the working tree
+                # matches the pushed commit (the docstring's fast-forward invariant);
+                # otherwise the next `git pull` refuses to overwrite sim_fairs.json.
+                try:
+                    (PROJECT_ROOT / "sim_fairs.json").write_text(
+                        json.dumps(local_pay), encoding="utf-8")
+                except OSError as e:
+                    logger.warning(f"sim publish: could not mirror merged payload "
+                                   f"locally ({e}); next pull may need checkout")
                 logger.info(f"sim publish: carried origin markets forward {carried} "
                             f"— fresh local markets still published")
 
