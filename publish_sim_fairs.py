@@ -132,6 +132,7 @@ def _sim_run_at(tourney: str, rnd) -> str | None:
         f"make_cut_probs_{tourney}.csv", f"{tourney}/make_cut_probs_{tourney}.csv",
         f"h2h_matrix_{tourney}.parquet", f"{tourney}/h2h_matrix_{tourney}.parquet",
         f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy",
+        f"final_scores_live_{tourney}.npy", f"{tourney}/final_scores_live_{tourney}.npy",
     ]
     if rnd:
         cands += [
@@ -316,8 +317,54 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
             {k: v for k, v in out_nodh.items() if v})
 
 
+def _build_matchups_live(tourney: str, repl: dict) -> list:
+    """Tournament H2H pairs from round_sim's LIVE tournament joint
+    (final_scores_live npy + name sidecar) — ties pushed, same convention as
+    new_sim's h2h_matrix (prob_a = wins / (wins + losses)). [] if the live
+    files aren't on disk (pre-event / machine that never ran round_sim)."""
+    import numpy as np
+    fs = _find(f"final_scores_live_{tourney}.npy", f"{tourney}/final_scores_live_{tourney}.npy")
+    pn = _find(f"player_names_live_{tourney}.json", f"{tourney}/player_names_live_{tourney}.json")
+    if fs is None or pn is None:
+        return []
+    scores = np.load(fs)
+    names = json.loads(Path(pn).read_text())
+    if scores.ndim != 2 or scores.shape[0] != len(names):
+        logger.warning(f"matchups (live): final_scores {scores.shape} vs {len(names)} "
+                       f"names mismatch — falling back to h2h_matrix")
+        return []
+    first = {}
+    for i, nm in enumerate(_norm(n, repl) for n in names):
+        first.setdefault(nm, i)
+    order = sorted(first)
+    S = scores[[first[nm] for nm in order]]
+    rows = []
+    for i in range(len(order) - 1):
+        rest = S[i + 1:]
+        wins = (S[i] < rest).sum(axis=1)
+        losses = (S[i] > rest).sum(axis=1)
+        for j, (w, l) in enumerate(zip(wins, losses), start=i + 1):
+            if w + l == 0:
+                continue
+            rows.append([order[i], order[j], round(float(w) / float(w + l), 5)])
+    logger.info(f"tournament matchups (live, ties pushed): {len(rows)} pairs "
+                f"from {Path(fs).name} ({S.shape[1]:,} draws)")
+    return rows
+
+
 def _build_matchups(tourney: str, repl: dict) -> list:
-    """Tournament head-to-head: [player_a, player_b, P(a beats b), tie%]."""
+    """Tournament head-to-head: [player_a, player_b, P(a beats b)] (ties pushed).
+
+    Live-first: once round_sim has run, final_scores_live IS the current
+    tournament joint, so pairwise fairs from it track the live event. The
+    pre-event h2h_matrix_{tourney}.parquet (new_sim.py) is the fallback for
+    machines/weeks with no live sim yet. Without the live build, a machine
+    lacking the h2h matrix published matchups=[] every live run and the shrink
+    guard carried origin's PRE-EVENT full-field pairs forward all weekend
+    (The Open 2026: 12,090 stale pairs shipping beside fresh live outrights)."""
+    rows = _build_matchups_live(tourney, repl)
+    if rows:
+        return rows
     h = _find(f"h2h_matrix_{tourney}.parquet", f"{tourney}/h2h_matrix_{tourney}.parquet")
     if h is None:
         return []
@@ -1047,6 +1094,10 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                     local_pay[key] = origin_pay[key]
                     carried.append(key)
             if carried:
+                # Stamp provenance so a payload serving backfilled markets is
+                # self-describing (debugging stale fairs starts here, not in
+                # git archaeology). Consumers ignore unknown keys.
+                local_pay["carried_from_origin"] = carried
                 # Re-serialize the merged payload and re-hash WITHOUT touching the
                 # working tree (hash-object --stdin), so the pushed commit carries
                 # origin's markets we lack alongside our fresh ones.
