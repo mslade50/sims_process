@@ -90,10 +90,12 @@ def load_round_bets(sim_round, event_id=None):
     if df.empty:
         return df
 
-    # Normalize names
-    df["player_1"] = df["player_1"].str.lower().str.strip()
-    df["player_2"] = df["player_2"].str.lower().str.strip()
-    df["bet_on"] = df["bet_on"].str.lower().str.strip()
+    # Normalize names — same lower/strip + name_replacements as the closing
+    # feed, so a mapped name (e.g. an accent variant) still pair-matches.
+    from sim_inputs import name_replacements
+    df["player_1"] = df["player_1"].str.lower().str.strip().replace(name_replacements)
+    df["player_2"] = df["player_2"].str.lower().str.strip().replace(name_replacements)
+    df["bet_on"] = df["bet_on"].str.lower().str.strip().replace(name_replacements)
     df["bookmaker"] = df["bookmaker"].str.lower().str.strip()
 
     # Only include sharp books for CLV tracking
@@ -110,12 +112,13 @@ def load_round_bets(sim_round, event_id=None):
 # Fetch closing odds
 # ---------------------------------------------------------------------------
 
-def fetch_closing_odds():
-    """Fetch current round matchup odds from odds_loader."""
+def fetch_closing_odds(sim_round):
+    """Fetch current round matchup odds from odds_loader, scoped to the round
+    being graded so a prior/next round's lines can never stand in as closes."""
     from odds_loader import load_matchup_odds
     from sim_inputs import name_replacements
 
-    df = load_matchup_odds("round_matchups")
+    df = load_matchup_odds("round_matchups", round=sim_round)
     if df.empty:
         return df
 
@@ -131,10 +134,12 @@ def fetch_closing_odds():
 # ---------------------------------------------------------------------------
 
 def compute_clv(bets, closing_odds):
-    """Match stored bets to closing odds and compute CLV.
+    """Match stored bets to closing odds at the SAME book and compute CLV.
 
     CLV = implied_prob(closing_line) - implied_prob(opening/bet_line)
     Positive CLV means we got a better price than the closing line.
+    Bets whose book no longer shows the line are reported as unmatched
+    rather than graded against another book's price.
     """
     results = []
 
@@ -154,10 +159,15 @@ def compute_clv(bets, closing_odds):
         if bet_implied is None:
             continue
 
-        # Find closing line — match on player pair (any book order)
+        # Find closing line at the SAME book the bet was placed at (either
+        # player order). No cross-book fallback: if the bet book isn't showing
+        # the line anymore, the honest answer is "no close", not another
+        # book's (or a DataGolf aggregate's) price.
         match = closing_odds[
-            ((closing_odds["Player 1"] == p1) & (closing_odds["Player 2"] == p2)) |
-            ((closing_odds["Player 1"] == p2) & (closing_odds["Player 2"] == p1))
+            (closing_odds["Bookmaker"] == book) & (
+                ((closing_odds["Player 1"] == p1) & (closing_odds["Player 2"] == p2)) |
+                ((closing_odds["Player 1"] == p2) & (closing_odds["Player 2"] == p1))
+            )
         ]
 
         if match.empty:
@@ -169,21 +179,13 @@ def compute_clv(bets, closing_odds):
                 "bet_implied": round(bet_implied * 100, 1),
                 "close_odds": None,
                 "close_implied": None,
+                "close_book": None,
                 "clv": None,
                 "edge_on": bet.get("edge_on", ""),
             })
             continue
 
-        # Use the sharpest available book for closing line, preferring pinnacle
-        sharp_order = ["pinnacle", "betcris", "betonline", "draftkings", "fanduel"]
-        close_row = None
-        for sharp in sharp_order:
-            sharp_match = match[match["Bookmaker"] == sharp]
-            if not sharp_match.empty:
-                close_row = sharp_match.iloc[0]
-                break
-        if close_row is None:
-            close_row = match.iloc[0]
+        close_row = match.iloc[0]
 
         # Get closing odds for the player we bet on
         if bet_on == close_row["Player 1"].lower().strip():
@@ -236,9 +238,10 @@ def format_alert(clv_df, sim_round, tourney_name):
     unmatched = clv_df[clv_df["clv"].isna()]
 
     if not matched.empty:
-        # Deduplicate display: best CLV per unique matchup (bet_on + opponent)
+        # One row per (matchup, book) — same-book CLV means each book's bet on
+        # the same pairing is its own data point, so don't collapse across books.
         best = matched.sort_values("clv", ascending=False).drop_duplicates(
-            subset=["bet_on", "opponent"], keep="first"
+            subset=["bet_on", "opponent", "book"], keep="first"
         )
         avg_clv = matched["clv"].mean()
         positive = (matched["clv"] > 0).sum()
@@ -252,7 +255,7 @@ def format_alert(clv_df, sim_round, tourney_name):
             clv_val = r["clv"]
             marker = "+" if clv_val > 0 else ""
             lines.append(
-                f"  {r['bet_on']} vs {r['opponent']}"
+                f"  {r['bet_on']} vs {r['opponent']} [{r['book']}]"
                 f"  {int(r['bet_odds'])} -> {int(r['close_odds'])}"
                 f"  <b>{marker}{clv_val:.1f}pp</b>"
             )
@@ -261,7 +264,7 @@ def format_alert(clv_df, sim_round, tourney_name):
 
     if not unmatched.empty:
         lines.append("")
-        lines.append(f"<i>{len(unmatched)} bet(s) -- no closing line found</i>")
+        lines.append(f"<i>{len(unmatched)} bet(s) -- no closing line at bet book</i>")
 
     return "\n".join(lines)
 
@@ -314,8 +317,8 @@ def main():
 
     print(f"  Found {len(bets)} stored R{sim_round} matchup bets")
 
-    # Fetch closing odds
-    closing_odds = fetch_closing_odds()
+    # Fetch closing odds (scoped to the round being graded)
+    closing_odds = fetch_closing_odds(sim_round)
     if closing_odds.empty:
         print("  No closing odds available.")
         send_telegram(f"R{sim_round} CLV — {tourney}: no closing odds available.")
