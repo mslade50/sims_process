@@ -131,6 +131,44 @@ def _count_ungraded(spreadsheet, event_id):
     return total
 
 
+def _alert_orphan_ungraded(spreadsheet, week_event_ids):
+    """Page on ungraded bets whose event_id matches NO event detected this week.
+
+    A DP World bet (grading only queries tour=pga), a mis-stamped event_id, or a
+    prior week left ungraded would otherwise print 'Already graded' forever and
+    stay buried. Scans UNGRADED rows only (get_all_event_ids would drag in all
+    history)."""
+    import time
+    from grade_bets import get_ungraded_bets
+    week_ids = {str(e) for e in week_event_ids}
+    orphans = {}
+    for i, tab in enumerate(["Tournament Matchups", "Round Matchups",
+                             "Finish Positions", "Live"]):
+        if i > 0:
+            time.sleep(3)
+        try:
+            df = get_ungraded_bets(spreadsheet, tab)   # all events
+        except Exception as e:
+            print(f"    orphan scan: {tab} failed ({e})")
+            continue
+        if df is None or df.empty or "event_id" not in df.columns:
+            continue
+        for eid, n in df["event_id"].astype(str).value_counts().items():
+            if eid and eid not in week_ids and eid.lower() not in ("nan", "none", ""):
+                orphans[eid] = orphans.get(eid, 0) + int(n)
+    if orphans:
+        msg = ("[monday_grading] ORPHAN ungraded bets, event(s) not detected this "
+               "week (euro tour? mis-stamped id? prior week?): "
+               + ", ".join(f"event {e}: {n} bets" for e, n in sorted(orphans.items())))
+        print("  " + msg)
+        try:
+            from maker_alerts import send_telegram
+            send_telegram(msg)
+        except Exception as e:
+            print(f"    orphan alert failed ({e})")
+    return orphans
+
+
 def _run_subprocess(cmd, label, ignore_failure=False):
     """Run a subprocess, printing output. Returns True on success."""
     print(f"\n  Running {label}...")
@@ -193,6 +231,10 @@ def main():
         n = _count_ungraded(spreadsheet, event_id)
         if n > 0:
             to_grade.append((event_id, event_name, n))
+
+    # Ungraded bets for an event NOT in this week's (pga-detected) list would
+    # otherwise be silently skipped forever: surface them loudly.
+    _alert_orphan_ungraded(spreadsheet, [e for e, _, _ in week_events])
 
     if not to_grade:
         label = ", ".join(name for _, name, _ in week_events)

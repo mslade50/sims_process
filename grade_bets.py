@@ -102,7 +102,7 @@ def categorize_book(book_name):
 # DataGolf API - Results Fetching
 # ══════════════════════════════════════════════════════════════════════════════
 
-def fetch_historical_results(event_id, year=None):
+def fetch_historical_results(event_id, year=None, tour="pga"):
     """
     Fetch historical tournament results from DataGolf historical-raw-data/rounds endpoint.
 
@@ -117,7 +117,7 @@ def fetch_historical_results(event_id, year=None):
         year = datetime.now().year
 
     params = {
-        "tour": "pga",
+        "tour": tour,
         "event_id": str(event_id),
         "year": year,
         "file_format": "json",
@@ -219,14 +219,14 @@ def parse_finish_position(pos_text):
         return 999
 
 
-def fetch_event_list():
+def fetch_event_list(tour="pga"):
     """
     Fetch list of recent PGA events from DataGolf.
 
     Returns list of dicts with event_id, event_name, calendar_year, etc.
     """
     params = {
-        "tour": "pga",
+        "tour": tour,
         "file_format": "json",
         "key": API_KEY,
     }

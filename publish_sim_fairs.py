@@ -880,7 +880,7 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
 DATAGOLF_BASE = "https://feeds.datagolf.com"
 
 
-def _tee_groups(rnd, repl):
+def _tee_groups(rnd, repl, tour: str = "pga"):
     """R{rnd} tee-time threesomes from DataGolf field-updates, as lists of normalized
     player names. Groups are split by (course, start_hole, teetime) so a split-tee
     start doesn't merge two groups. Only size-3 groups (3-balls) are returned —
@@ -899,7 +899,7 @@ def _tee_groups(rnd, repl):
         return []
     try:
         r = requests.get(f"{DATAGOLF_BASE}/field-updates",
-                         params={"tour": "pga", "file_format": "json", "key": key}, timeout=20)
+                         params={"tour": tour, "file_format": "json", "key": key}, timeout=20)
         if r.status_code != 200:
             return []
         field = (r.json() or {}).get("field") or []
@@ -924,7 +924,7 @@ def _nball_fairs(arrs):
     return (is_min / is_min.sum(axis=0)).mean(axis=1)   # one prob per row (player)
 
 
-def _build_round_3balls(tourney: str, rnd, repl: dict):
+def _build_round_3balls(tourney: str, rnd, repl: dict, tour: str = "pga"):
     """Exact 3-ball fairs for the ACTUAL R{rnd} tee-time threesomes, from the FULL
     sim cache (all draws) — only the ~groups that exist, not every triple. Returns
     (df[player_a,b,c, p_a,b,c], meta) or (None, None)."""
@@ -933,7 +933,7 @@ def _build_round_3balls(tourney: str, rnd, repl: dict):
     f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if f is None:
         return None, None
-    groups = _tee_groups(rnd, repl)
+    groups = _tee_groups(rnd, repl, tour=tour)
     if not groups:
         logger.info(f"round_3ball (R{rnd}): no threesomes (2-ball round or tee times unposted)")
         return None, None
@@ -951,6 +951,10 @@ def _build_round_3balls(tourney: str, rnd, repl: dict):
                      "p_a": round(float(pr[0]), 5), "p_b": round(float(pr[1]), 5),
                      "p_c": round(float(pr[2]), 5)})
     if not rows:
+        if groups and skipped == len(groups):
+            logger.warning(f"round_3ball (R{rnd}): ALL {skipped} threesomes skipped - "
+                           f"tour mismatch (field-updates tour={tour}) or "
+                           f"name-normalization gap vs the sim cache?")
         return None, None
     df = pd.DataFrame(rows)
     meta = {"tourney": tourney, "round": rnd, "num_groups": len(rows),
@@ -960,11 +964,16 @@ def _build_round_3balls(tourney: str, rnd, repl: dict):
     return df, meta
 
 
-def write_round_3ball(tourney: str, rnd, repl: dict | None = None) -> list:
+def write_round_3ball(tourney: str, rnd, repl: dict | None = None,
+                      tour: str | None = None) -> list:
     """Build + write round_3ball_r{N}.parquet (+ _meta.json). Returns the repo-relative
-    file list (empty if no live threesomes / no sim cache for the round)."""
+    file list (empty if no live threesomes / no sim cache for the round).
+    `tour` defaults to sim_inputs.tour so non-PGA weeks fetch the right field
+    (a pga-hardcoded fetch made 3-ball parquets silently absent every euro week)."""
     repl = repl if repl is not None else _name_replacements()
-    df, meta = _build_round_3balls(tourney, rnd, repl)
+    if tour is None:
+        tour = getattr(_sim_inputs(), "tour", "pga") or "pga"
+    df, meta = _build_round_3balls(tourney, rnd, repl, tour=tour)
     if df is None:
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1066,7 +1075,7 @@ def build_payload() -> dict:
 BOARD_REPO = "mslade50/golf_scraping"
 
 
-def _dispatch_board_build() -> None:
+def _dispatch_board_build(sha: str | None = None) -> None:
     """Best-effort repository_dispatch to the board repo so a fairs publish always
     triggers one board build, even when it lands outside the board's cron window.
     (The Open 2026-07-19: R4 fairs published Sat night fell in the overnight cron
@@ -1095,9 +1104,16 @@ def _dispatch_board_build() -> None:
                "the next board cron (may miss a pre-freeze window)")
         return
     try:
+        # client_payload.sha pins the dispatched build's sims_process fetches to
+        # THIS push (the GitHub contents API can serve a pre-push cached copy
+        # for minutes after a push — the dispatched build then freezes the very
+        # stale fairs it was fired to replace).
+        body = {"event_type": "sim-fairs-published"}
+        if sha:
+            body["client_payload"] = {"sha": sha}
         resp = requests.post(
             f"https://api.github.com/repos/{BOARD_REPO}/dispatches",
-            json={"event_type": "sim-fairs-published"},
+            json=body,
             headers={"Authorization": f"Bearer {token}",
                      "Accept": "application/vnd.github+json",
                      "X-GitHub-Api-Version": "2022-11-28"},
@@ -1260,7 +1276,7 @@ def _git_push(files=("sim_fairs.json",)) -> None:
         p = git("push", "origin", f"{commit}:main")
         if p.returncode == 0:
             logger.info(f"Pushed {', '.join(blobs)} to origin/main")
-            _dispatch_board_build()
+            _dispatch_board_build(sha=commit)
         else:
             err = (p.stderr or p.stdout).strip()[:160]
             logger.warning(f"sim publish push rejected (retries next run): {err}")
