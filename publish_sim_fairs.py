@@ -996,6 +996,52 @@ def build_payload() -> dict:
 
 # ─── publish (commit to repo; board fetches via SIMS_PROCESS_PAT) ──────────────
 
+BOARD_REPO = "mslade50/golf_scraping"
+
+
+def _dispatch_board_build() -> None:
+    """Best-effort repository_dispatch to the board repo so a fairs publish always
+    triggers one board build, even when it lands outside the board's cron window.
+    (The Open 2026-07-19: R4 fairs published Sat night fell in the overnight cron
+    gap; every Sunday run then gate-skipped mid-play, so the board served R3-era
+    fairs all day.) The dispatched run still goes through the board's own mid-play
+    gate, so extra fires are harmless. Never breaks a publish."""
+    import os
+    import subprocess
+
+    import requests
+
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        # Local runs (round_sim on the laptop) have no PAT in env but do have an
+        # authenticated gh CLI — borrow its token.
+        try:
+            r = subprocess.run(["gh", "auth", "token"], capture_output=True,
+                               text=True, timeout=15)
+            token = r.stdout.strip() if r.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            token = None
+    if not token:
+        logger.warning("board dispatch: no GitHub token (GH_TOKEN / gh CLI) — "
+                       "board picks the fairs up on its next cron build")
+        return
+    try:
+        resp = requests.post(
+            f"https://api.github.com/repos/{BOARD_REPO}/dispatches",
+            json={"event_type": "sim-fairs-published"},
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28"},
+            timeout=15)
+        if resp.status_code == 204:
+            logger.info(f"board dispatch: triggered {BOARD_REPO} board build")
+        else:
+            logger.warning(f"board dispatch rejected (HTTP {resp.status_code}): "
+                           f"{resp.text[:120]} — board waits for its next cron")
+    except Exception as e:
+        logger.warning(f"board dispatch failed (non-fatal): {e}")
+
+
 def _git_push(files=("sim_fairs.json",)) -> None:
     """Publish the given repo-relative files to origin/main WITHOUT touching the
     local working tree, index, or branches. Builds one commit on top of origin/main
@@ -1142,6 +1188,7 @@ def _git_push(files=("sim_fairs.json",)) -> None:
         p = git("push", "origin", f"{commit}:main")
         if p.returncode == 0:
             logger.info(f"Pushed {', '.join(blobs)} to origin/main")
+            _dispatch_board_build()
         else:
             err = (p.stderr or p.stdout).strip()[:160]
             logger.warning(f"sim publish push rejected (retries next run): {err}")
