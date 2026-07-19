@@ -93,6 +93,33 @@ def _find(*candidates) -> Path | None:
     return None
 
 
+ROUND_CACHE_MAX_AGE_DAYS = 10
+
+
+def _find_fresh(*candidates, max_age_days: int = ROUND_CACHE_MAX_AGE_DAYS) -> Path | None:
+    """_find restricted to RECENTLY-written files, for round-scoped sim caches.
+
+    Tourney dirs persist on this machine across YEARS, and recurring slugs
+    (the_open, us_open, ...) mean a bare existence check happily revives LAST
+    year's round_score_probs_r4/sim_cache_r4 and publishes them stamped with
+    THIS year's event_id — the tourney-stamp guard compares an identical
+    year-over-year string and is defeated. A round cache older than
+    ~ROUND_CACHE_MAX_AGE_DAYS cannot belong to the current event; skip it."""
+    import time
+    cutoff = time.time() - max_age_days * 86400
+    for c in candidates:
+        p = PROJECT_ROOT / c
+        try:
+            if p.exists():
+                if p.stat().st_mtime >= cutoff:
+                    return p
+                logger.warning(f"ignoring stale round cache {c} "
+                               f"(>{max_age_days}d old — prior event/year?)")
+        except OSError:
+            pass
+    return None
+
+
 def _utc_stamp(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -438,13 +465,24 @@ def _latest_round(tourney: str):
     """Highest round N for which the sim has produced round-level data."""
     import glob
     import re
+    import os
+    import time
+    cutoff = time.time() - ROUND_CACHE_MAX_AGE_DAYS * 86400
     best = None
     for pat in (f"{tourney}/round_score_probs_r*.parquet", "round_score_probs_r*.parquet",
                 f"{tourney}/sim_cache_r*.parquet", "sim_cache_r*.parquet"):
         for p in glob.glob(str(PROJECT_ROOT / pat)):
             m = re.search(r"_r(\d+)\.parquet$", p)
-            if m:
-                best = max(best or 0, int(m.group(1)))
+            if not m:
+                continue
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    # a recurring slug (the_open) revives LAST year's r4 cache and
+                    # pins the round pointer at 4 all week — stale files don't vote
+                    continue
+            except OSError:
+                continue
+            best = max(best or 0, int(m.group(1)))
     return best
 
 
@@ -453,7 +491,7 @@ def _build_round_scores(tourney: str, rnd, repl: dict) -> dict:
     {player: {score: prob}} for round `rnd`. Board computes P(under line) = CDF."""
     if not rnd:
         return {}
-    f = _find(f"{tourney}/round_score_probs_r{rnd}.parquet", f"round_score_probs_r{rnd}.parquet")
+    f = _find_fresh(f"{tourney}/round_score_probs_r{rnd}.parquet", f"round_score_probs_r{rnd}.parquet")
     if f is None:
         return {}
     df = pd.read_parquet(f)
@@ -474,7 +512,7 @@ def _build_round_samples(tourney: str, rnd, repl: dict):
     preserved -> shared wave/weather conditions cancel). Returns a DataFrame or None."""
     if not rnd:
         return None
-    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if f is None:
         return None
     import numpy as np
@@ -707,7 +745,7 @@ def _cache_meta(tourney: str, rnd) -> dict:
     """Read the sim_cache meta sidecar (carries pred_lookup + wx_lookup)."""
     if not rnd:
         return {}
-    f = _find(f"{tourney}/sim_cache_r{rnd}_meta.json", f"sim_cache_r{rnd}_meta.json")
+    f = _find_fresh(f"{tourney}/sim_cache_r{rnd}_meta.json", f"sim_cache_r{rnd}_meta.json")
     if f is None:
         return {}
     try:
@@ -769,7 +807,7 @@ def _build_round_h2h(tourney: str, rnd, repl: dict):
     """
     if not rnd:
         return None, None
-    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if f is None:
         return None, None
     import numpy as np
@@ -827,7 +865,7 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
         logger.info("round_h2h: no sim cache; skipping")
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    cache_f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    cache_f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if cache_f is not None:
         meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
     pq = f"round_h2h_r{rnd}.parquet"
@@ -892,7 +930,7 @@ def _build_round_3balls(tourney: str, rnd, repl: dict):
     (df[player_a,b,c, p_a,b,c], meta) or (None, None)."""
     if not rnd:
         return None, None
-    f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if f is None:
         return None, None
     groups = _tee_groups(rnd, repl)
@@ -930,7 +968,7 @@ def write_round_3ball(tourney: str, rnd, repl: dict | None = None) -> list:
     if df is None:
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    cache_f = _find(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
+    cache_f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if cache_f is not None:
         meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
     pq = f"round_3ball_r{rnd}.parquet"
@@ -940,6 +978,34 @@ def write_round_3ball(tourney: str, rnd, repl: dict | None = None) -> list:
         json.dump(meta, f)
     logger.info(f"Wrote {pq} + {mj}")
     return [pq, mj]
+
+
+def _check_outright_mass(outrights: dict, tourney: str) -> None:
+    """Refuse to publish an outright book whose probability mass is impossible.
+
+    The pre-event finish_equity/top_finish layers can refill live-zeroed players
+    with PRE-event winner probs inside an outrights_source='live' market (~20%
+    of the field shipping pre-event probs, mass >1) — a 0.04 'sim' fair against
+    +50000 is a massive fake edge that freezes into the closing and gets
+    CLV-graded. Bands: winner must sum to ~1; top_N to ~N. make_cut/nodh are
+    deliberately unbanded (post-cut they legitimately sum to the survivor
+    count). Raises so nothing ships; Telegram carries the numbers."""
+    bands = {"winner": (0.97, 1.05), "top_5": (5 * 0.95, 5 * 1.05),
+             "top_10": (10 * 0.95, 10 * 1.05), "top_20": (20 * 0.95, 20 * 1.05)}
+    problems = []
+    for mkt, (lo, hi) in bands.items():
+        probs = outrights.get(mkt) or {}
+        if not probs:
+            continue
+        s = sum(float(p) for p in probs.values())
+        if not (lo <= s <= hi):
+            problems.append(f"{mkt}: sum={s:.3f} (band {lo:.2f}-{hi:.2f}, n={len(probs)})")
+    if problems:
+        msg = (f"outright probability mass INSANE for {tourney} — refusing to publish: "
+               + "; ".join(problems)
+               + ". Likely pre-event layers refilling live-zeroed players.")
+        _alert(msg)
+        raise RuntimeError(msg)
 
 
 def build_payload() -> dict:
@@ -966,6 +1032,7 @@ def build_payload() -> dict:
         raise RuntimeError(f"no sim source files found for '{tourney}' — cannot stamp "
                            f"sim_run_at; run the sim before publishing")
     outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl, use_live=use_live)
+    _check_outright_mass(outrights, tourney)
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),

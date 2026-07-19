@@ -236,10 +236,24 @@ def load_betcris_outrights() -> pd.DataFrame:
         if scoped:
             lines = scoped
         else:
-            logger.warning(
-                "No betcris outright lines matched target event_ids %s "
-                "(event_id missing/unresolved?) — using all lines unfiltered", targets
-            )
+            # Fall back ONLY to untagged lines (registry down / unresolved).
+            # Lines resolved to a DIFFERENT event are known-foreign: the Monday
+            # after a major, Betcris lists only the next major's futures — the
+            # old use-all fallback priced that board as this week's Betcris
+            # (phantom edges on every dual-field player). All-foreign -> empty.
+            untagged = [l for l in lines if not str(l.get("event_id") or "").strip()]
+            if untagged:
+                logger.warning(
+                    "No betcris outright lines matched target event_ids %s — using "
+                    "%d UNTAGGED lines (registry down?); resolved-foreign lines dropped",
+                    targets, len(untagged))
+                lines = untagged
+            else:
+                logger.warning(
+                    "No betcris outright lines matched target event_ids %s and all "
+                    "lines are tagged to other events — returning empty (no betcris "
+                    "outrights this week)", targets)
+                lines = []
 
     rows = []
     for line in lines:
