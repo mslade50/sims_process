@@ -73,3 +73,14 @@ jobs:
         # 3-ball publish silently returns no groups.
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
       run: python publish_sim_fairs.py --round-h2h-only
+    - name: Telegram on failure
+      if: failure()
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
+          "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+          -d chat_id="$TELEGRAM_CHAT_ID" \
+          -d text="FAILED: nightly-round-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          >/dev/null || true

@@ -51,6 +51,10 @@ MAX_AGE_HOURS = 6  # ignore scraped files older than this
 # Books we scrape ourselves — prefer our odds over DataGolf for these
 SCRAPED_BOOKS = {"betonline", "pinnacle", "betcris"}
 
+# Per-process dedup for the guard's event-rejection Telegram (a sim run calls
+# guard_scraped_data once per market; without this a retry loop could spam).
+_EVENT_REJECT_ALERTED: set = set()
+
 
 def _target_event_ids() -> set[str]:
     """This week's canonical DataGolf event id(s) from sim_inputs (as strings).
@@ -167,6 +171,19 @@ def guard_scraped_data(data, market, *, round=None, event_ids=None,
     sid = str((data or {}).get("event_id") or "").strip()
     if targets and sid and sid not in targets:
         logger.warning(f"Scraped {market} is for event {sid}, not target {targets} — rejecting")
+        # This rejection means the sim is pricing with NO scraped sharp-book odds
+        # (board targeting another event / sim_inputs stale) — page, deduped by
+        # the (market, event-pair) so a repricing loop can't spam.
+        try:
+            from maker_alerts import send_telegram
+            key = f"{market}|{sid}|{'/'.join(sorted(targets))}"
+            if key not in _EVENT_REJECT_ALERTED:
+                _EVENT_REJECT_ALERTED.add(key)
+                send_telegram(f"[odds_loader] scraped {market} rejected: event {sid} != "
+                              f"sim target {targets} — sim pricing WITHOUT scraped "
+                              f"sharp-book odds (board/sim event split?)")
+        except Exception as e:
+            logger.warning(f"event-reject alert failed ({e})")
         return None
 
     if market in ("round_matchups", "round_scores") and round is not None:

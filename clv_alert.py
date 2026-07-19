@@ -351,4 +351,7 @@ if __name__ == "__main__":
         print(f"\n  UNEXPECTED ERROR: {e}")
         import traceback
         traceback.print_exc()
+        # A crashed CLV run must not be silent — the report simply not arriving
+        # reads as "no bets this round", which is exactly wrong.
+        send_telegram(f"❌ CLV alert CRASHED before reporting: {type(e).__name__}: {e}")
         sys.exit(1)

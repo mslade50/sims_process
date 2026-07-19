@@ -1311,8 +1311,26 @@ def main():
         if not tourney:
             raise RuntimeError("sim_inputs.tourney is not set")
         rnd = _latest_round(tourney)
+        if rnd is None:
+            # Thu-Sun this means the nightly backup found NO round caches at all
+            # (sheet/sim_inputs tourney split-brain, or the sim never ran) — the
+            # board silently degrades to consensus, so page instead of exiting 0.
+            if datetime.now(timezone.utc).isoweekday() in (4, 5, 6, 7):
+                _alert(f"round-h2h-only: no round sim cache for '{tourney}' on a "
+                       f"live day — nightly backup published NOTHING; board falls "
+                       f"back to consensus. Sheet vs sim_inputs tourney mismatch?")
+            logger.warning(f"round-h2h-only: no round cache for {tourney} — nothing to publish")
+            return
         logger.info(f"round-h2h-only: {tourney} R{rnd}")
-        files = write_round_h2h(tourney, rnd)
+        files = list(write_round_h2h(tourney, rnd) or [])
+        # 3-balls ride the same backup publish: when this is the week's only
+        # publish path, a missing round_3ball parquet silently degrades every
+        # 3-ball to consensus on exactly the mornings the backup exists for.
+        # Needs DATAGOLF_API_KEY in env for the tee-time threesomes.
+        try:
+            files += list(write_round_3ball(tourney, rnd) or [])
+        except Exception as e:
+            logger.warning(f"round 3-ball publish failed (non-fatal): {e}")
         if args.dry_run:
             return
         if files and not args.no_push:
