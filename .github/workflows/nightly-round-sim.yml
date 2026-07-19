@@ -64,4 +64,12 @@ jobs:
     # local sim_cache_r{N}.parquet; pushes round_h2h_r{N}.parquet (+ _meta.json)
     # to main via git plumbing (needs contents: write above).
     - name: Publish round H2H fair table
+      env:
+        # GH_TOKEN lets _dispatch_board_build fire the sim-fairs-published
+        # repository_dispatch at golf_scraping from CI (without it the dispatch
+        # silently no-ops and only laptop publishes trigger a board build).
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        # _tee_groups needs DataGolf for real tee-time threesomes; without it the
+        # 3-ball publish silently returns no groups.
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
       run: python publish_sim_fairs.py --round-h2h-only

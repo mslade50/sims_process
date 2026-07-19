@@ -1024,6 +1024,8 @@ def _dispatch_board_build() -> None:
     if not token:
         logger.warning("board dispatch: no GitHub token (GH_TOKEN / gh CLI) — "
                        "board picks the fairs up on its next cron build")
+        _alert("board dispatch SKIPPED: no GitHub token — fresh fairs wait for "
+               "the next board cron (may miss a pre-freeze window)")
         return
     try:
         resp = requests.post(
@@ -1038,8 +1040,11 @@ def _dispatch_board_build() -> None:
         else:
             logger.warning(f"board dispatch rejected (HTTP {resp.status_code}): "
                            f"{resp.text[:120]} — board waits for its next cron")
+            _alert(f"board dispatch REJECTED (HTTP {resp.status_code}) — check the "
+                   f"PAT's dispatch permission on {BOARD_REPO}")
     except Exception as e:
         logger.warning(f"board dispatch failed (non-fatal): {e}")
+        _alert(f"board dispatch FAILED ({e}) — fresh fairs wait for the next cron")
 
 
 def _git_push(files=("sim_fairs.json",)) -> None:

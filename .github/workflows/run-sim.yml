@@ -51,6 +51,9 @@ jobs:
 
     - name: Run simulation
       env:
+        # GH_TOKEN: round_sim's publish hook dispatches a board build after a
+        # successful push — absent token = silent no-op from CI.
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
