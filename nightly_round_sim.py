@@ -85,6 +85,32 @@ def main():
 
     print(f"  Sheet round: R{detected_round} complete")
 
+    # Split-brain tripwire: the sheet (round_sim's cache dirs, bet event_ids)
+    # and sim_inputs (publish target, odds scoping) must agree on the event.
+    # A missed init_weekly used to leave them split: caches written under LAST
+    # week's dir while publish searches the new one -> nothing publishes, the
+    # board drops to consensus, and nothing said a word. Hard-fail so the
+    # nightly run pages instead of simming the wrong event.
+    try:
+        import sim_inputs as _si
+        _si_tourney = getattr(_si, "tourney", None)
+        _sheet_tourney = _pre_config.get("tourney")
+        if _si_tourney and _sheet_tourney and _si_tourney != _sheet_tourney:
+            msg = (f"[nightly_round_sim] SPLIT-BRAIN: sheet tourney "
+                   f"'{_sheet_tourney}' != sim_inputs.tourney '{_si_tourney}' - "
+                   f"run init_weekly / roll sim_inputs before the nightly sim.")
+            print("  " + msg)
+            try:
+                from maker_alerts import send_telegram
+                send_telegram(msg)
+            except Exception:
+                pass
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"  split-brain check skipped ({e})")
+
     # Pre-event (round=0) — nothing to sim
     if detected_round == 0:
         print("\n  Pre-event (no round data). No round sim needed.")

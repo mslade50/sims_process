@@ -1186,12 +1186,34 @@ def _git_push(files=("sim_fairs.json",)) -> None:
         local_run = _parse_utc((local_pay or {}).get("sim_run_at"))
         origin_run = _parse_utc((origin_pay or {}).get("sim_run_at"))
         if origin_run is not None and (local_run is None or local_run < origin_run):
-            msg = (f"REFUSED: origin sim_run_at {origin_run:%Y-%m-%d %H:%M} UTC is fresher "
-                   f"than local {f'{local_run:%Y-%m-%d %H:%M} UTC' if local_run else '(unstamped)'} "
-                   f"— this machine holds stale sim artifacts; not overwriting")
-            logger.warning(f"sim publish {msg}")
-            _alert(msg)
-            return
+            # Cross-event escape hatch: on a 2-event week, event B's later sim
+            # inflates origin's sim_run_at past anything a no-resim republish of
+            # event A can produce — the un-qualified comparison then locks A out
+            # deterministically. A DIFFERENT event with a FRESH local sim (<48h)
+            # is a genuine concurrent-event publish, not a stale clone (a stale
+            # clone's artifacts are days old). PUBLISH_ALLOW_EVENT_SWITCH=1
+            # forces it manually.
+            _ev_switch = (origin_pay and local_pay
+                          and str(origin_pay.get("event_id")) != str(local_pay.get("event_id")))
+            _force_switch = (os.environ.get("PUBLISH_ALLOW_EVENT_SWITCH") or "").strip().lower() in ("1", "true", "yes")
+            _local_fresh = (local_run is not None and
+                            (datetime.now(timezone.utc) - local_run).total_seconds() < 48 * 3600)
+            if _ev_switch and (_local_fresh or _force_switch):
+                _alert(f"EVENT SWITCH publish: replacing origin event "
+                       f"{origin_pay.get('event_id')} ({origin_pay.get('tourney')}) with "
+                       f"{local_pay.get('event_id')} ({local_pay.get('tourney')}) — "
+                       f"{'forced' if _force_switch and not _local_fresh else 'fresh local sim'}. "
+                       f"The board serving the OTHER event will drop to consensus.")
+                logger.warning("sim publish: cross-event switch allowed "
+                               f"(local sim_run_at {local_run})")
+            else:
+                msg = (f"REFUSED: origin sim_run_at {origin_run:%Y-%m-%d %H:%M} UTC is fresher "
+                       f"than local {f'{local_run:%Y-%m-%d %H:%M} UTC' if local_run else '(unstamped)'} "
+                       f"— this machine holds stale sim artifacts; not overwriting"
+                       + (" (cross-event: set PUBLISH_ALLOW_EVENT_SWITCH=1 to force)" if _ev_switch else ""))
+                logger.warning(f"sim publish {msg}")
+                _alert(msg)
+                return
         # A machine with only PARTIAL sim outputs (e.g. no tournament h2h matrix
         # once the event is live) builds a valid, freshly-stamped payload that
         # would empty a market origin had populated. Rather than abort the WHOLE

@@ -92,16 +92,44 @@ def load_sheet_coefficients(verbose: bool = True) -> dict:
         dicts = json.loads(cache_path.read_text(encoding="utf-8"))
         print(f"[coeff_loader] {len(dicts)} dicts loaded from CACHE (hash={_hash(dicts)}) - deliberate override")
     else:
-        try:
-            dicts = parse_rows(_worksheet_rows())
-        except Exception as exc:
-            raise RuntimeError(
-                f"[coeff_loader] failed to load coefficients from sheet: {exc}. "
-                "Fix connectivity or set COEFFS_FROM_CACHE=1 to run from the last good cache."
-            ) from exc
-        cache_path.write_text(json.dumps(dicts, indent=2, sort_keys=True), encoding="utf-8")
-        if verbose:
-            print(f"[coeff_loader] {len(dicts)} coefficient dicts loaded from sheet (hash={_hash(dicts)})")
+        # 3-attempt backoff: one transient Sheets 429/503 at a scheduled run used
+        # to kill the whole nightly sim (no round parquet -> board on consensus,
+        # silently). After retries, fall back LOUDLY to the last good cache when
+        # one exists; hard-raise only with no cache at all.
+        import time as _time
+        dicts = None
+        last_exc = None
+        for attempt in range(3):
+            try:
+                dicts = parse_rows(_worksheet_rows())
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    print(f"[coeff_loader] sheet fetch failed ({exc}); retry in {wait}s "
+                          f"({attempt + 2}/3)")
+                    _time.sleep(wait)
+        if dicts is None:
+            if cache_path.is_file():
+                dicts = json.loads(cache_path.read_text(encoding="utf-8"))
+                msg = (f"[coeff_loader] sheet unreachable after 3 attempts ({last_exc}) - "
+                       f"running from CACHED coefficients (hash={_hash(dicts)})")
+                print(msg)
+                try:
+                    from maker_alerts import send_telegram
+                    send_telegram(msg)
+                except Exception:
+                    pass
+            else:
+                raise RuntimeError(
+                    f"[coeff_loader] failed to load coefficients from sheet: {last_exc}. "
+                    "Fix connectivity or set COEFFS_FROM_CACHE=1 to run from the last good cache."
+                ) from last_exc
+        else:
+            cache_path.write_text(json.dumps(dicts, indent=2, sort_keys=True), encoding="utf-8")
+            if verbose:
+                print(f"[coeff_loader] {len(dicts)} coefficient dicts loaded from sheet (hash={_hash(dicts)})")
 
     result = dict(dicts)
     for term, value in dicts.get(SCALARS_KEY, {}).items():

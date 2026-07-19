@@ -276,4 +276,5 @@ permanent_data/maker_alert_state.json
 # Local Task Scheduler wrapper (machine-specific python path)
 run_maker_shadow.cmd
 permanent_data/maker_scheduler.log
-coeffs_cache.json
+# coeffs_cache.json is COMMITTED: CI checkouts need the last good
+# coefficient cache as the Sheets-outage fallback (audit F22)

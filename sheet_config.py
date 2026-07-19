@@ -115,10 +115,22 @@ def _connect_sheet():
         creds_path = _find_credentials()
         creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     
-    client = gspread.authorize(creds)
-    spreadsheet = client.open(SHEET_NAME)
-    worksheet = spreadsheet.worksheet(TAB_NAME)
-    return worksheet
+    # 3-attempt backoff: a transient Sheets 429/503 here crashes every consumer
+    # of load_config (sim, publish, CLV, grading) — retry before giving up.
+    import time as _time
+    last = None
+    for attempt in range(3):
+        try:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open(SHEET_NAME)
+            return spreadsheet.worksheet(TAB_NAME)
+        except Exception as exc:
+            last = exc
+            if attempt < 2:
+                wait = 5 * (attempt + 1)
+                print(f"[sheet_config] connect failed ({exc}); retry in {wait}s ({attempt + 2}/3)")
+                _time.sleep(wait)
+    raise last
 
 
 def _parse_array(value_str):

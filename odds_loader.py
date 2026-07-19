@@ -169,7 +169,25 @@ def guard_scraped_data(data, market, *, round=None, event_ids=None,
 
     targets = event_ids if event_ids is not None else _target_event_ids()
     sid = str((data or {}).get("event_id") or "").strip()
-    if targets and sid and sid not in targets:
+    rows_key = "match_list" if "match_list" in (data or {}) else (
+        "lines" if "lines" in (data or {}) else None)
+    row_tagged = bool(rows_key) and any(
+        str(r.get("event_id") or "").strip() for r in (data.get(rows_key) or []))
+    if targets and row_tagged:
+        # Rows carry per-event tags (multi-event file by design: the board now
+        # writes the FULL tagged list so an oppo-week sim keeps its scraped
+        # odds) — row-filter to OUR event; untagged rows pass (registry blip).
+        rows = data.get(rows_key) or []
+        kept = [r for r in rows
+                if not str(r.get("event_id") or "").strip()
+                or str(r["event_id"]).strip() in targets]
+        if len(kept) != len(rows):
+            logger.info(f"Scraped {market}: kept {len(kept)}/{len(rows)} rows for "
+                        f"target event(s) {targets} (rest tagged to other events)")
+        data = {**data, rows_key: kept}
+    elif targets and sid and sid not in targets:
+        # Untagged rows + foreign top-level stamp: reject wholesale (this is
+        # what caught the Scottish->Open bleed — keep it for legacy files).
         logger.warning(f"Scraped {market} is for event {sid}, not target {targets} — rejecting")
         # This rejection means the sim is pricing with NO scraped sharp-book odds
         # (board targeting another event / sim_inputs stale) — page, deduped by

@@ -112,6 +112,59 @@ def load_round_bets(sim_round, event_id=None):
 # Fetch closing odds
 # ---------------------------------------------------------------------------
 
+def fetch_board_closing(sim_round, event_id=None):
+    """The board's FROZEN closing snapshot for this round, from R2 closing.json.
+
+    This is the actual line set at the freeze cutoff — strictly better than
+    'whatever is live at 11:30 UTC' (on UK weeks the live feed is 7-12h stale by
+    then and gets freshness-rejected, losing the round's CLV entirely). Returns
+    a DataFrame in the load_matchup_odds schema, or empty on ANY failure so the
+    caller falls back to the live feed."""
+    import boto3
+
+    account_id = os.getenv("CF_ACCOUNT_ID")
+    if not (account_id and os.getenv("R2_ACCESS_KEY_ID")
+            and os.getenv("R2_SECRET_ACCESS_KEY")):
+        return pd.DataFrame()
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        )
+        import json as _json
+        obj = s3.get_object(Bucket="golf-odds-board", Key="board/closing.json")
+        closing = _json.loads(obj["Body"].read())
+    except Exception as e:
+        print(f"  board closing fetch failed ({e}) — falling back to live feed")
+        return pd.DataFrame()
+    if event_id is not None and str(closing.get("event_id")) != str(event_id):
+        print(f"  board closing is for event {closing.get('event_id')}, "
+              f"not {event_id} — ignoring")
+        return pd.DataFrame()
+    snap = (closing.get("rounds") or {}).get(str(sim_round)) or {}
+    rows = []
+    for mt, rws in ((snap.get("rmatch") or {}).get("markets") or {}).items():
+        if mt != "round_matchup":
+            continue
+        for r in rws:
+            for bk, entry in (r.get("books") or {}).items():
+                if not (entry.get("a") and entry.get("b")):
+                    continue
+                rows.append({"Player 1": str(r.get("player_a", "")).lower().strip(),
+                             "Player 2": str(r.get("player_b", "")).lower().strip(),
+                             "Bookmaker": str(bk).lower(),
+                             "P1 Odds": entry.get("a"), "P2 Odds": entry.get("b")})
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        from sim_inputs import name_replacements
+        df["Player 1"] = df["Player 1"].replace(name_replacements)
+        df["Player 2"] = df["Player 2"].replace(name_replacements)
+        print(f"  Using board FROZEN closing for R{sim_round}: {len(df)} lines")
+    return df
+
+
 def fetch_closing_odds(sim_round):
     """Fetch current round matchup odds from odds_loader, scoped to the round
     being graded so a prior/next round's lines can never stand in as closes."""
@@ -317,8 +370,11 @@ def main():
 
     print(f"  Found {len(bets)} stored R{sim_round} matchup bets")
 
-    # Fetch closing odds (scoped to the round being graded)
-    closing_odds = fetch_closing_odds(sim_round)
+    # Closing lines: prefer the board's FROZEN closing snapshot (the actual
+    # pre-cutoff lines), fall back to the live scraped/API feed.
+    closing_odds = fetch_board_closing(sim_round, event_id)
+    if closing_odds.empty:
+        closing_odds = fetch_closing_odds(sim_round)
     if closing_odds.empty:
         print("  No closing odds available.")
         send_telegram(f"R{sim_round} CLV — {tourney}: no closing odds available.")
