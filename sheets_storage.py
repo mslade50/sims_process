@@ -95,6 +95,7 @@ TOURNAMENT_MU_HEADERS = [
     "half_shot_p1", "half_shot_p2",
     "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
 ]
 
 FINISH_POS_HEADERS = [
@@ -105,6 +106,7 @@ FINISH_POS_HEADERS = [
     "sim_prob", "edge", "kelly_stake",
     "my_pred", "sample", "type_on",
     "result", "actual_finish", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
 ]
 
 SCORE_EDGES_HEADERS = [
@@ -126,6 +128,7 @@ ROUND_MU_HEADERS = [
     "half_shot_p1", "half_shot_p2",
     "wx_diff",
     "result", "p1_round_score", "p2_round_score", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
 ]
 
 
@@ -889,6 +892,11 @@ def _empty_ledger_record():
         "opp_sg_app": np.nan,
         "opp_sg_arg": np.nan,
         "opp_sg_putt": np.nan,
+        "open_odds": np.nan,
+        "close_odds": np.nan,
+        "tot_clv": np.nan,
+        "clv": np.nan,
+        "clv_book": "",
     }
 
 
@@ -1243,6 +1251,80 @@ def update_ledger_grades(graded_bets):
             raise
 
     print(f"  [ledger] Graded {updated} / {len(graded_bets)} bets in ledger")
+
+
+def update_ledger_clv(clv_bets):
+    """
+    Update the Parquet ledger with closing-line-value fields from clv.py.
+    Matches on LEDGER_DEDUP_COLS. Updates: open_odds, close_odds, tot_clv,
+    clv, clv_book.
+
+    Args:
+        clv_bets: list of dicts, each with the dedup key fields
+            (event_id, bet_type, round, bet_on, opponent, bookmaker)
+            plus open_odds, close_odds, tot_clv, clv, clv_book.
+    """
+    if not clv_bets or not os.path.exists(LEDGER_PATH):
+        if not os.path.exists(LEDGER_PATH):
+            print("  [ledger] No ledger file found — skipping CLV update")
+        return
+
+    try:
+        ledger = pd.read_parquet(LEDGER_PATH)
+    except Exception as e:
+        print(f"  [ledger] Error reading ledger: {e}")
+        return
+
+    if ledger.empty:
+        return
+
+    # Normalized copies of the dedup cols for matching (don't mutate stored values)
+    key = {
+        col: ledger[col].astype(str).str.lower().str.strip()
+        for col in LEDGER_DEDUP_COLS if col in ledger.columns
+    }
+
+    for col in ("open_odds", "close_odds", "tot_clv", "clv"):
+        if col not in ledger.columns:
+            ledger[col] = np.nan
+    if "clv_book" not in ledger.columns:
+        ledger["clv_book"] = ""
+
+    updated = 0
+    for bet in clv_bets:
+        mask = pd.Series(True, index=ledger.index)
+        for col in LEDGER_DEDUP_COLS:
+            if col not in key:
+                continue
+            val = str(bet.get(col, "")).lower().strip()
+            mask &= key[col] == val
+
+        matches = ledger.index[mask]
+        if len(matches) == 0:
+            continue
+
+        idx = matches[0]
+        ledger.at[idx, "open_odds"] = _safe_float(bet.get("open_odds"))
+        ledger.at[idx, "close_odds"] = _safe_float(bet.get("close_odds"))
+        ledger.at[idx, "tot_clv"] = _safe_float(bet.get("tot_clv"))
+        ledger.at[idx, "clv"] = _safe_float(bet.get("clv"))
+        ledger.at[idx, "clv_book"] = str(bet.get("clv_book") or "")
+        updated += 1
+
+    if updated > 0:
+        # Atomic write
+        ledger_dir = os.path.dirname(LEDGER_PATH)
+        fd, tmp_path = tempfile.mkstemp(suffix=".parquet", dir=ledger_dir)
+        os.close(fd)
+        try:
+            ledger.to_parquet(tmp_path, index=False)
+            os.replace(tmp_path, LEDGER_PATH)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+
+    print(f"  [ledger] CLV updated for {updated} / {len(clv_bets)} bets in ledger")
 
 
 def query_ledger(**filters):

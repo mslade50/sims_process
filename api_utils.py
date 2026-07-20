@@ -688,6 +688,9 @@ def fetch_historical_matchup_odds(year, book, event_id="all",
     for ev in events:
         if not isinstance(ev, dict):
             continue
+        # Book doesn't archive this market — API returns a message string
+        if not isinstance(ev.get("odds"), list):
+            continue
         meta = {
             "event_id": ev.get("event_id"),
             "event_name": ev.get("event_name"),
@@ -714,4 +717,88 @@ def fetch_historical_matchup_odds(year, book, event_id="all",
     if not df.empty:
         print(f"  Fetched {len(df)} {market} rows from {book} "
               f"({df['event_id'].nunique()} events)")
+    return df
+
+
+def fetch_historical_outright_odds(year, book, event_id, market="win", api_key=None):
+    """
+    Fetch historical outright/finish-position odds (opening + closing lines)
+    from DataGolf's historical-odds/outrights feed.
+
+    market: win, top_5, top_10, top_20 (also mc, make_cut, frl upstream).
+    Not every book archives every market (e.g. pinnacle only archives win) —
+    the API returns a message string instead of a list for missing markets,
+    which is handled here as an empty DataFrame.
+
+    Returns long-format DataFrame, one row per player:
+        event_id, event_name, season, book, market, dg_id, player_name,
+        open_time, close_time, open_odds, close_odds, outcome, bet_outcome_numeric
+    Odds columns are American (float).
+    Returns "RATE_LIMITED" (str) on a 403/429 so callers can stop immediately
+    (same contract as fetch_historical_matchup_odds).
+    """
+    if api_key is None:
+        api_key = os.getenv("DATAGOLF_API_KEY")
+
+    params = {
+        "tour": "pga",
+        "event_id": str(event_id),
+        "year": year,
+        "market": market,
+        "book": book,
+        "odds_format": "american",
+        "file_format": "json",
+        "key": api_key,
+    }
+
+    try:
+        resp = requests.get(
+            f"{DATAGOLF_BASE}/historical-odds/outrights",
+            params=params,
+            timeout=45,
+        )
+        if resp.status_code in (403, 429):
+            print(f"  Rate-limited ({resp.status_code}) on {book} {market} event {event_id}.")
+            return "RATE_LIMITED"
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  Error fetching historical outright odds ({book}, {market}, event {event_id}): {e}")
+        return pd.DataFrame()
+
+    events = data if isinstance(data, list) else [data]
+    rows = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        odds = ev.get("odds")
+        if not isinstance(odds, list):
+            # Book doesn't archive this market — API returns a message string
+            continue
+        meta = {
+            "event_id": ev.get("event_id"),
+            "event_name": ev.get("event_name"),
+            "season": ev.get("season") or ev.get("year"),
+            "book": ev.get("book", book),
+            "market": ev.get("market", market),
+        }
+        for o in odds:
+            if not isinstance(o, dict):
+                continue
+            row = dict(meta)
+            row.update({
+                "dg_id": o.get("dg_id"),
+                "player_name": o.get("player_name"),
+                "open_time": o.get("open_time"),
+                "close_time": o.get("close_time"),
+                "open_odds": pd.to_numeric(o.get("open_odds"), errors="coerce"),
+                "close_odds": pd.to_numeric(o.get("close_odds"), errors="coerce"),
+                "outcome": o.get("outcome"),
+                "bet_outcome_numeric": o.get("bet_outcome_numeric"),
+            })
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        print(f"  Fetched {len(df)} {market} outright rows from {book}")
     return df

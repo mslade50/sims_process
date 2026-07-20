@@ -1240,7 +1240,7 @@ def write_summary_row(spreadsheet, metrics):
 # Email Summary Report
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_results_email_html(metrics, graded_bets, event_name, filter_label=None):
+def build_results_email_html(metrics, graded_bets, event_name, filter_label=None, clv_stats=None):
     """Build HTML email with betting results summary including detailed breakdowns.
 
     Args:
@@ -1248,6 +1248,8 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
         graded_bets: List of graded bet dicts
         event_name: Tournament name
         filter_label: Optional label for filtered results (e.g., "Pred > 0.75")
+        clv_stats: Optional dict from clv.clv_summary_stats() — adds a
+            closing-line-value strip under the summary box
     """
     total = metrics.get("total_bets", 0)
     wins = metrics.get("wins", 0)
@@ -1527,6 +1529,52 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
             </tr>"""
 
     # ═══════════════════════════════════════════════════════════════════════
+    # CLV strip (closing line value vs DataGolf's archived closes)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    clv_section = ""
+    if clv_stats:
+        sharp_avg = clv_stats.get("sharp_avg_clv")
+        sharp_color = "#28a745" if (sharp_avg or 0) >= 0 else "#dc3545"
+        sharp_val = f"{sharp_avg:+.2f}pp" if sharp_avg is not None else "n/a"
+        overall_color = "#28a745" if clv_stats["avg_clv"] >= 0 else "#dc3545"
+
+        fam_cells = ""
+        for fam, label in [("matchup", "Matchups"), ("finish", "Finish Pos")]:
+            avg = clv_stats.get(f"{fam}_avg_clv")
+            if avg is None:
+                continue
+            fam_color = "#28a745" if avg >= 0 else "#dc3545"
+            fam_cells += f"""
+                    <div style="text-align:center; padding:10px 20px;">
+                        <div style="font-size:22px; font-weight:700; color:{fam_color};">{avg:+.2f}pp</div>
+                        <div style="color:#666; font-size:12px;">{label} (n={clv_stats.get(f'{fam}_n', 0)})</div>
+                    </div>"""
+
+        clv_section = f"""
+            <!-- CLV vs Close -->
+            <div style="background:#f0f4f8; border-radius:8px; padding:14px 20px; margin-bottom:24px;">
+                <div style="color:#2c5282; font-weight:600; font-size:13px; margin-bottom:6px;">
+                    CLOSING LINE VALUE &nbsp;<span style="color:#999; font-weight:400;">(implied close − implied bet; positive = beat the close)</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
+                    <div style="text-align:center; padding:10px 20px;">
+                        <div style="font-size:22px; font-weight:700; color:{sharp_color};">{sharp_val}</div>
+                        <div style="color:#666; font-size:12px;">vs Sharp Close (n={clv_stats.get('sharp_n', 0)})</div>
+                    </div>
+                    <div style="text-align:center; padding:10px 20px;">
+                        <div style="font-size:22px; font-weight:700; color:{overall_color};">{clv_stats['avg_clv']:+.2f}pp</div>
+                        <div style="color:#666; font-size:12px;">All Books (n={clv_stats['n']})</div>
+                    </div>
+                    <div style="text-align:center; padding:10px 20px;">
+                        <div style="font-size:22px; font-weight:700; color:#333;">{clv_stats['pos_pct']:.0f}%</div>
+                        <div style="color:#666; font-size:12px;">Beat Close</div>
+                    </div>
+                    {fam_cells}
+                </div>
+            </div>"""
+
+    # ═══════════════════════════════════════════════════════════════════════
     # Build HTML
     # ═══════════════════════════════════════════════════════════════════════
 
@@ -1560,7 +1608,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
                     </div>
                 </div>
             </div>
-
+            {clv_section}
             <!-- Results by Round/Market -->
             <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:24px;">
                 <div style="flex:1; min-width:300px;">
@@ -1673,7 +1721,7 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
     return html
 
 
-def send_results_email(metrics, graded_bets, event_name, filter_label=None):
+def send_results_email(metrics, graded_bets, event_name, filter_label=None, clv_stats=None):
     """Send betting results email summary.
 
     Args:
@@ -1681,6 +1729,7 @@ def send_results_email(metrics, graded_bets, event_name, filter_label=None):
         graded_bets: List of graded bet dicts
         event_name: Tournament name
         filter_label: Optional filter description for subject line
+        clv_stats: Optional CLV summary dict (from clv.clv_summary_stats)
     """
     if not EMAIL_PASSWORD:
         print("  Warning: EMAIL_PASSWORD not set. Skipping email.")
@@ -1691,7 +1740,7 @@ def send_results_email(metrics, graded_bets, event_name, filter_label=None):
         return False
 
     try:
-        html = build_results_email_html(metrics, graded_bets, event_name, filter_label)
+        html = build_results_email_html(metrics, graded_bets, event_name, filter_label, clv_stats=clv_stats)
 
         units_won = metrics.get("units_won", 0)
         emoji = "+" if units_won >= 0 else ""
@@ -1768,6 +1817,7 @@ def main():
     parser.add_argument("--event-name", type=str, help="Event name (for display)")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     parser.add_argument("--no-email", action="store_true", help="Skip sending email report")
+    parser.add_argument("--no-clv", action="store_true", help="Skip closing line value annotation")
     parser.add_argument("--regrade", action="store_true", help="Re-grade already-graded bets (overwrites existing grades)")
     parser.add_argument("--all-events", action="store_true", help="Grade all events in sheets (use with --regrade to re-grade everything)")
     args = parser.parse_args()
@@ -1808,6 +1858,7 @@ def main():
         events_to_grade.append((event_id, event_name, year))
 
     grand_total_graded = []
+    clv_stats = None
 
     for evt_idx, (event_id, event_name, year) in enumerate(events_to_grade):
         if evt_idx > 0:
@@ -1988,13 +2039,25 @@ def main():
                 print(f"  ROI:            {metrics['roi']:+.1f}%")
                 print("  [DRY RUN] Would write summary, results tabs, and send email")
 
+        # Closing line value — annotate open/close odds + CLV columns from
+        # DataGolf's odds archive (sheet tabs + ledger). Re-runnable via
+        # `python clv.py --event-id N --write`.
+        if not args.dry_run and not args.no_clv:
+            print("\n  Computing closing line value (CLV)...")
+            try:
+                from clv import annotate_event_clv, clv_summary_stats
+                clv_df = annotate_event_clv(spreadsheet, event_id, year)
+                clv_stats = clv_summary_stats(clv_df)
+            except Exception as e:
+                print(f"  Warning: CLV annotation failed: {e}")
+
         grand_total_graded.extend(all_graded_bets)
 
     # Skip email for multi-event re-grades
     if len(events_to_grade) == 1 and grand_total_graded and not args.dry_run:
         if not args.no_email:
             print("\n  Sending email reports...")
-            send_results_email(metrics, grand_total_graded, event_name)
+            send_results_email(metrics, grand_total_graded, event_name, clv_stats=clv_stats)
             send_filtered_results_email(grand_total_graded, event_name, event_id, year, pred_threshold=0.75)
         else:
             print("\n  Email report skipped (--no-email)")

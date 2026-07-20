@@ -102,6 +102,7 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - **Dedup key**: `(event_id, bet_type, round, bet_on, opponent, bookmaker)` — all lowercased/stripped. First write wins.
 - **Atomic writes**: `tempfile.mkstemp()` + `os.replace()` to prevent corruption.
 - **Grading**: `grade_bets.py` writes grades back to the individual source tabs (Tournament Matchups, Round Matchups, Finish Positions).
+- **CLV**: `clv.py` annotates `open_odds`/`close_odds`/`tot_clv`/`clv`/`clv_book` on those same tabs + the ledger from DataGolf's historical-odds archive (called by `grade_bets.py` post-grading; re-run/backfill via `python clv.py --backfill --write`). Scope: matchups + pre-tourney finish bets at DG-covered books only — no exchanges (kalshi/novig), no Live tab. CLV convention: `implied(close) - implied(bet)` in pp, positive = beat the close.
 - **Finish position sizing**: Uses kelly-stake-based units (3-43+), NOT flat 1.0. `units_wagered` derived from `kelly_stake`.
 - **Auth is DRY**: `grade_bets.py` imports `get_spreadsheet` from `sheets_storage`. Never duplicate auth.
 
