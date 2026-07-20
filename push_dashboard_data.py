@@ -220,7 +220,10 @@ def git_push(dry_run=False):
         return subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
 
     # The exact set of paths this deploy commit is allowed to touch.
-    paths = ["dashboard_data", "sim_inputs.py"]
+    # historical_dists is included so the per-event rank_probs archives written
+    # above actually publish — they're the cross-machine/Render copy; without
+    # this they stay local to whichever machine ran the deploy that week.
+    paths = ["dashboard_data", "sim_inputs.py", "permanent_data/historical_dists"]
     tourney = get_tourney()
     if tourney:
         prep_files = [
