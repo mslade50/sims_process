@@ -6,11 +6,10 @@ by coeff_loader at the bottom of this file - consumers keep importing names
 from sim_inputs unchanged. Edit the sheet to change the model; edit THIS FILE
 only for the week's event/course/cut/wind and manual player knobs.
 
-This file is the SHARED weekly config: sim_prep holds the master copy and
-push_sim_inputs.py syncs it (plus coeff_loader.py) into sims_process. It must
-stay in this slim format on both sides — prep-model-only coefficient dicts
-(base `coefficients`, full coefficients_2/3, pressure curves) live in
-sim_prep/prep_coefficients.py and are never pushed here.
+sim_prep holds the master copy; push_sim_inputs.py syncs this file (and
+coeff_loader.py) into sims_process. Keep it in this slim format on both
+sides — a fat copy with inline coefficient dicts clobbers the sheet
+architecture (2026-07-20 bug: weekly push from a stale sim_prep clone).
 """
 
 from datetime import datetime
