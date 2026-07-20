@@ -4349,7 +4349,11 @@ if is_valid_run_time() and not os.getenv("SKIP_STORAGE"):
         # Build dg_id lookup from the predictions file
         dg_id_lookup = load_dg_id_lookup(tourney, name_replacements)
 
-        # Reuse archetypes computed before email (or compute if not yet done)
+        # Reuse archetypes computed before email (or compute if not yet done).
+        # A no-matchups run skips the entire matchup branch, so _arch_map may
+        # not exist at all — finish positions still need it for type_on.
+        if '_arch_map' not in dir():
+            _arch_map = {}
         if not _arch_map:
             try:
                 from sg_diagnostic import compute_rolling_archetypes
