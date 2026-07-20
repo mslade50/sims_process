@@ -34,6 +34,10 @@ jobs:
 
       - name: Run Kalshi preflight
         env:
+          # Preflight only needs tourney/name_replacements from sim_inputs, not
+          # fitted coefficients — run from the committed coeffs_cache.json instead
+          # of fetching the sheet (gspread isn't installed here).
+          COEFFS_FROM_CACHE: "1"
           DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

@@ -33,9 +33,13 @@ load_dotenv()
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Series the pricers handle today (ancillary + outrights + maker H2H).
+# R1LEAD/R1TOP10 have no automated pricer (no standings_r1 fair source) but are
+# priced manually later in the week — counted as handled so they don't fail the
+# build daily Mon-Thu while their markets sit open.
 HANDLED = {
     "KXPGATOUR", "KXPGAWIN", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20",
-    "KXPGAR2LEAD", "KXPGAR3LEAD", "KXPGAR2TOP10", "KXPGAR3TOP10", "KXPGAR3TOP5", "KXPGAR2TOP5",
+    "KXPGAR1LEAD", "KXPGAR2LEAD", "KXPGAR3LEAD",
+    "KXPGAR1TOP10", "KXPGAR2TOP10", "KXPGAR3TOP10", "KXPGAR3TOP5", "KXPGAR2TOP5",
     "KXPGAPLAYOFF", "KXPGA3BALL", "KXPGAH2H",
 }
 # Intentionally NOT priceable — need hole-by-hole modeling our SG sim doesn't have.
