@@ -4,7 +4,7 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Pipeline Execution Order
 
-**Pre-tournament**: `init_weekly.py` → `cat_dists_player.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`
+**Pre-tournament**: `init_weekly.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`. The SG distribution files (`sg_dist_player.csv`, `this_week_dists_v2.csv`) are NOT built here — sim_prep's `cat_dists_player.py` is the single producer and fans them out to this repo, the OneDrive root, and etr-golf-sims (the local copy is archived).
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
 **Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
 **Live (R1-R4)**: Update Google Sheet (`round_config` tab) → `live_stats_engine.py` → `round_sim.py` (round matchups + score cards)
@@ -80,7 +80,7 @@ The name is misleading. When summing R2 adjustment components, explicitly list c
 Convert: `expected_score = course_par - scores_r{N}`. A player with `scores_r2 = 0.83` at par 72 → expected 71.17.
 
 ### 5. Player names always lowercase
-Both sides of every join/merge must go through `name_replacements`. The `cat_dists_player.py` pattern is canonical.
+Both sides of every join/merge must go through `name_replacements`. The `cat_dists_player.py` pattern (now in sim_prep; archived copy in `archive/`) is canonical.
 
 ## Traps That Have Caused Bugs
 

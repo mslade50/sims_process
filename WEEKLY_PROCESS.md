@@ -183,25 +183,29 @@ Run the skill model outside this repo. It produces:
 
 **Downstream consumers:**
 - `scoring_baseline.py` — reads `pre_course_fit` for field strength adjustment
-- `cat_dists_player.py` — checks `pre_course_fit` for hot players missing the sample cut
+- `cat_dists_player.py` (runs in sim_prep) — uses `pre_course_fit` as the field and checks it for hot players missing the sample cut
 - `new_sim.py` — reads predictions for Monte Carlo sim (prefers `final_predictions`, falls back to `pre_course_fit`)
 - `mkt_regress.py` — reads first-pass sim outputs + market odds, produces `final_predictions`
 - `live_stats_engine.py` — reads `final_predictions` for round=0 baseline (live rounds only)
 - `sheets_storage.py` — reads `pre_course_fit` for `dg_id` lookup
 
-### 1.3 Run Distribution Builder (if new SG data available)
-```bash
-python cat_dists_player.py
-```
+### 1.3 Distribution Files (built in sim_prep, not here)
 
-**What this does:**
+`sg_dist_player.csv` and `this_week_dists_v2.csv` arrive from **sim_prep's**
+`cat_dists_player.py` (single producer as of 2026-07-20; the local copy is in
+`archive/`). It runs as part of the sim_prep weekly prep, next to the fresh
+`field_adjusted_sg.csv` it needs, and fans the outputs out to this repo, the
+OneDrive root, and etr-golf-sims.
+
+**What it does:**
 - Reads `field_adjusted_sg.csv` (PGA rounds since 2019)
 - Computes EMA-weighted SG distributions per player per category
-- Outputs `sg_dist_player.csv`
-- Uses alpha = 2/(50+1), effective half-life ~17 rounds
-- Minimum 20 observations per category
+- Uses `pre_course_fit_{tourney}.csv` as the field (aligned with new_sim / scoring_baseline)
+- Uses alpha = 2/(50+1), effective half-life ~17 rounds; minimum 20 observations per category
 
-**When to skip:** If no new historical data has been added since last run.
+**Check before simming:** both files in this repo's root should be dated after
+the sim_prep prep run for the current week. If they're stale, the prep didn't
+run (or its fan-out failed) — rerun `cat_dists_player.py` in sim_prep.
 
 ---
 
@@ -265,9 +269,7 @@ python init_weekly.py
 - Writes them to the `round_config` tab in the Google Sheet
 - Resets `round` to `0`
 
-**Why this runs AFTER humidity + scoring_baseline:** Those two scripts read tournament config directly from `sim_inputs.py`, so they don't need the Sheet updated first. But everything downstream (`cat_dists_player.py`, `live_stats_engine.py`, `round_sim.py`) reads from the Sheet via `sheet_config.py` — so the Sheet must reflect the new tournament before they'll work. If you skip this step, downstream scripts will silently run against last week's tournament.
-
-**Note:** `cat_dists_player.py` (Phase 1.3) also depends on this — if you ran it earlier, re-run it now that the Sheet is updated.
+**Why this runs AFTER humidity + scoring_baseline:** Those two scripts read tournament config directly from `sim_inputs.py`, so they don't need the Sheet updated first. But everything downstream (`live_stats_engine.py`, `round_sim.py`) reads from the Sheet via `sheet_config.py` — so the Sheet must reflect the new tournament before they'll work. If you skip this step, downstream scripts will silently run against last week's tournament. (The distribution builder no longer runs here — sim_prep's copy reads `tourney` from `sim_inputs.py`, so it has no Sheet dependency.)
 
 ### 2.1d Write Base Rates Reference
 ```bash
@@ -607,7 +609,7 @@ python humidity.py                               # Step 1: Auto-populate weather
 python update_sheet_courses.py                   # Step 1: Auto-populate course codes
 python scoring_baseline.py                       # Step 2: Scoring baselines + expected scores (reads sim_inputs)
 python init_weekly.py                            # Step 3: Push tourney/event_id/course_id/round=0 to Sheet
-python cat_dists_player.py                       # Step 4: SG distributions (reads Sheet — must run AFTER init_weekly)
+# Step 4: SG distributions arrive from sim_prep's cat_dists_player.py (verify freshness)
 python write_base_rates.py                       # Step 5: Base rates reference tab
 
 # Pre-tournament sim (two-pass)
@@ -703,7 +705,7 @@ python sg_diagnostic.py --report                 # Cross-event trends
 ```
 sim_inputs.py ──────────────────────┐
                                     ▼
-cat_dists_player.py ──► sg_dist_player.csv + this_week_dists_v2.csv
+cat_dists_player.py (in sim_prep) ──► sg_dist_player.csv + this_week_dists_v2.csv
                                                               │
                                               pre_course_fit_{tourney}.csv
                                                               │
