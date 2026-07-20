@@ -5,6 +5,12 @@ tab (single source of truth) and is materialized into this module's namespace
 by coeff_loader at the bottom of this file - consumers keep importing names
 from sim_inputs unchanged. Edit the sheet to change the model; edit THIS FILE
 only for the week's event/course/cut/wind and manual player knobs.
+
+This file is the SHARED weekly config: sim_prep holds the master copy and
+push_sim_inputs.py syncs it (plus coeff_loader.py) into sims_process. It must
+stay in this slim format on both sides — prep-model-only coefficient dicts
+(base `coefficients`, full coefficients_2/3, pressure curves) live in
+sim_prep/prep_coefficients.py and are never pushed here.
 """
 
 from datetime import datetime
@@ -12,8 +18,8 @@ from datetime import datetime
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
-PAR           = 70
-CUT_LINE      = 70
+PAR           = 71
+CUT_LINE      = 65
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
 TOP_K = 20
@@ -22,7 +28,7 @@ TOP_K = 20
 num_sims=50000
 
 ###basic information for the week
-wind_override = 0.2
+wind_override = 0.0
 baseline_wind = 0.12
 
 baseline_dew = -0.018
@@ -32,25 +38,15 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [100]
-course_id = 541
-tourney = 'the_open'
-course_par = 70
+event_ids = [525]
+course_id = 883
+tourney = '3m_open'
+course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
-# --- No-data-course overrides (The Open @ Royal Birkdale 2026) ---
-# We have no ShotLink/scoring history for this specific venue, so:
-#  1) Pull category variance from the EVENT (Open Champ, all venues 2019-25),
-#     not the empty Birkdale course filter — see scoring_baseline.py.
-variance_event_level_only = True
-#  2) Hard-code per-round field scoring averages instead of the mixed-venue
-#     computed baseline. Absolute strokes (par 70). Consumed by scoring_baseline
-#     when writing expected_score_r1..r4 to the round_config sheet.
-expected_score_override = {1: 71.3, 2: 71.3, 3: 71.0, 4: 71.0}
-
 #for multiple course setups in the showdown sim
-course_id_1=541
+course_id_1=883
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -98,6 +94,9 @@ name_replacements = {
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {
+    # tiny-sample fallback outliers; placeholder until DG preds replace them
+    'cowan, ryder': -2.0,
+    'campbell, thomas': -2.0,
 }
 
 overrides_sd = {
