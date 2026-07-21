@@ -110,7 +110,7 @@ layout = dbc.Container([
                           value=None, min=0, step=1,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
-        ], md=3),
+        ], md=2),
         dbc.Col([
             html.Label("Pred (Skill Estimate)", className="form-label small text-muted"),
             dbc.InputGroup([
@@ -123,7 +123,23 @@ layout = dbc.Container([
                           value=None, min=0, step=0.1,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
-        ], md=3),
+        ], md=2),
+        dbc.Col([
+            html.Label("Market (Finish Pos)", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-market-filter",
+                options=[
+                    {"label": "Win", "value": "win"},
+                    {"label": "Top 5", "value": "top_5"},
+                    {"label": "Top 10", "value": "top_10"},
+                    {"label": "Top 20", "value": "top_20"},
+                ],
+                value=None,
+                multi=True,
+                placeholder="All markets",
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
         dbc.Col([
             html.Label("Side (Finish Pos)", className="form-label small text-muted"),
             dcc.Dropdown(
@@ -334,13 +350,14 @@ def _convert_to_units(df):
     Input("perf-player-filter", "value"),
     Input("perf-include-live", "value"),
     Input("perf-side-filter", "value"),
+    Input("perf-market-filter", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter, dow_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
                        archetype_filter, archetype_against_filter, player_filter,
-                       include_live, side_filter):
+                       include_live, side_filter, market_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
     empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
@@ -392,6 +409,17 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
         is_no = df["opponent"].astype(str).str.strip().str.lower().str.endswith("_no")
         is_finish = df["bet_type"].astype(str).str.startswith("finish_position")
         df = df[is_finish & (is_no if side_filter == "no" else ~is_no)]
+
+    # Market filter (finish positions only): match the base market on `opponent`,
+    # ignoring any NO-side suffix. "win" also matches the exchange "winner" market.
+    if market_filter and "opponent" in df.columns and "bet_type" in df.columns:
+        mkts = set(market_filter if isinstance(market_filter, list) else [market_filter])
+        if "win" in mkts:
+            mkts.add("winner")
+        base_mkt = (df["opponent"].astype(str).str.strip().str.lower()
+                    .str.replace(r"_no$", "", regex=True))
+        is_finish = df["bet_type"].astype(str).str.startswith("finish_position")
+        df = df[is_finish & base_mkt.isin(mkts)]
 
     # Apply round filter
     if round_filter and "round" in df.columns:
