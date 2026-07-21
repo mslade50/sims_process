@@ -359,9 +359,12 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
 
     # Hide Kalshi/NoVig results until scraped prices are validated. Rows stay in the
     # ledger; we just don't render them on this page — EXCEPT the live finish positions
-    # the user opted into above (those are exchange books, so they'd be hidden here).
-    if "bookmaker" in df.columns:
-        is_exch = df["bookmaker"].astype(str).str.lower().str.contains("kalshi|novig", na=False)
+    # the user opted into above (those are exchange books, so they'd be hidden here),
+    # and EXCEPT exchange books explicitly picked in the Sportsbook filter.
+    _book_list = [str(b).lower() for b in (books if isinstance(books, list) else [books])] if books else []
+    _hidden_exch = [b for b in ("kalshi", "novig") if b not in _book_list]
+    if _hidden_exch and "bookmaker" in df.columns:
+        is_exch = df["bookmaker"].astype(str).str.lower().str.contains("|".join(_hidden_exch), na=False)
         if show_live and "bet_type" in df.columns:
             keep_live = df["bet_type"].astype(str) == "finish_position_live"
         else:
