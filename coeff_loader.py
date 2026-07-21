@@ -11,7 +11,8 @@ are non-empty is a coefficient; the value comes from the 'live' column.
 Everything else (section bands, labels, notes, reference rows) is decoration.
 
 Failure semantics: fetch failure raises (loud, like the fetch guards elsewhere
-in the pipeline). Set COEFFS_FROM_CACHE=1 to deliberately run from the last
+in the pipeline). Set COEFFS_FROM_CACHE=1 to deliberately skip the sheet, or
+COEFFS_ALLOW_CACHE_FALLBACK=1 to allow a failed sheet fetch to use the last
 good coeffs_cache.json (written to the CWD after every successful fetch).
 """
 
@@ -93,9 +94,8 @@ def load_sheet_coefficients(verbose: bool = True) -> dict:
         print(f"[coeff_loader] {len(dicts)} dicts loaded from CACHE (hash={_hash(dicts)}) - deliberate override")
     else:
         # 3-attempt backoff: one transient Sheets 429/503 at a scheduled run used
-        # to kill the whole nightly sim (no round parquet -> board on consensus,
-        # silently). After retries, fall back LOUDLY to the last good cache when
-        # one exists; hard-raise only with no cache at all.
+        # to kill the whole nightly sim. Cache fallback is opt-in: otherwise a
+        # connectivity error could silently run a stale model.
         import time as _time
         dicts = None
         last_exc = None
@@ -111,7 +111,7 @@ def load_sheet_coefficients(verbose: bool = True) -> dict:
                           f"({attempt + 2}/3)")
                     _time.sleep(wait)
         if dicts is None:
-            if cache_path.is_file():
+            if cache_path.is_file() and os.getenv("COEFFS_ALLOW_CACHE_FALLBACK") == "1":
                 dicts = json.loads(cache_path.read_text(encoding="utf-8"))
                 msg = (f"[coeff_loader] sheet unreachable after 3 attempts ({last_exc}) - "
                        f"running from CACHED coefficients (hash={_hash(dicts)})")
@@ -124,7 +124,8 @@ def load_sheet_coefficients(verbose: bool = True) -> dict:
             else:
                 raise RuntimeError(
                     f"[coeff_loader] failed to load coefficients from sheet: {last_exc}. "
-                    "Fix connectivity or set COEFFS_FROM_CACHE=1 to run from the last good cache."
+                    "Fix connectivity, set COEFFS_FROM_CACHE=1 to deliberately use the cache, "
+                    "or set COEFFS_ALLOW_CACHE_FALLBACK=1 to permit automatic fallback."
                 ) from last_exc
         else:
             cache_path.write_text(json.dumps(dicts, indent=2, sort_keys=True), encoding="utf-8")

@@ -23,8 +23,8 @@ USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
 TOP_K = 20
 
-#number of simulations you want to run. Applied to rd lvl and hole lvl scripts
-num_sims=50000
+# One simulation-count contract for both round- and hole-level consumers.
+num_sims = SIMULATIONS
 
 ###basic information for the week
 wind_override = 0.0
@@ -40,6 +40,19 @@ tour='pga'
 event_ids = [525]
 course_id = 883
 tourney = '3m_open'
+
+# Betting validation did not support allowing the 0.65 category-profile
+# calibration to change production prices yet. False writes the original,
+# unshrunk category means (factor 1.0); flip only for an intentional shadow run.
+# Supported course-category history remains active independently below this
+# layer in cat_dists_player.py.
+category_profile_shrinkage_enabled = False
+
+# Completed events to ingest before the weekly model run. Keep these separate
+# from event_ids, which identifies the upcoming simulation slate.
+ingest_event_ids = [100, 522]
+ingest_tour = 'pga'
+ingest_years = [2026]
 course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
