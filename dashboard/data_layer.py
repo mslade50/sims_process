@@ -234,6 +234,18 @@ def _normalize_tab(tab_df, bet_type):
     if bet_type in ("finish_position", "finish_position_live"):
         sim_prob = pd.to_numeric(tab_df.get("sim_prob", ""), errors="coerce")
         dec_odds = pd.to_numeric(tab_df.get("decimal_odds", ""), errors="coerce")
+        # Exchange rows stored before ~2026-06-30 have blank sim_prob (and some
+        # blank decimal_odds) — without a fallback their Kelly edge reads as 0.
+        # Reconstruct: decimal from american_odds, sim_prob from my_fair (fair
+        # American odds; implied prob of fair == sim probability).
+        am = pd.to_numeric(tab_df.get("american_odds", ""), errors="coerce")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            am_dec = np.where(am > 0, am / 100.0 + 1.0, 100.0 / np.abs(am) + 1.0)
+            fair_am = pd.to_numeric(tab_df.get("my_fair", ""), errors="coerce")
+            fair_dec = np.where(fair_am > 0, fair_am / 100.0 + 1.0,
+                                100.0 / np.abs(fair_am) + 1.0)
+        dec_odds = dec_odds.fillna(pd.Series(am_dec, index=tab_df.index))
+        sim_prob = sim_prob.fillna(pd.Series(1.0 / fair_dec, index=tab_df.index))
         n["edge"] = (sim_prob * dec_odds - 1.0) * 100.0
     else:
         n["edge"] = tab_df.get("edge_on", tab_df.get("edge", ""))
