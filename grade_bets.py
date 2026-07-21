@@ -66,6 +66,10 @@ TAB_RESULTS_SUMMARY = "Bet Results Summary"
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris", "bet online", "bookmaker"]
 RETAIL_BOOKS = ["fanduel", "draftkings", "caesars", "dk", "fd", "czr", "betmgm", "mgm"]
 
+# Books that pay ties IN FULL on finish positions (no dead-heat reduction):
+# the exchanges settle top-N as a binary, and Bovada pays ties in full by rule.
+FULL_TIE_PAYOUT_BOOKS = ("kalshi", "novig", "bovada")
+
 # Bet sizing assumptions
 FLAT_BET_SIZE = 1.0  # 1 unit for matchups (flat betting)
 UNIT_SIZE = 200.0    # $200 = 1 unit for finish position sizing
@@ -884,13 +888,15 @@ def grade_finish_position(row, results_df):
         except:
             decimal_odds = 2.0
 
-    # Settlement. Exchange (Kalshi/NoVig) markets — and every NO-side bet, which
-    # only exists on exchanges — settle with NO dead-heat: a tie at the threshold
-    # counts as finishing INSIDE. YES wins inside the threshold, NO wins outside.
-    # Sportsbook YES bets keep standard dead-heat settlement (unchanged).
-    is_exchange = str(row.get("sportsbook", row.get("bookmaker", ""))).lower().strip() in ("kalshi", "novig")
+    # Settlement. Books that pay ties IN FULL — exchanges (Kalshi/NoVig) and
+    # Bovada — and every NO-side bet, which only exists on exchanges, settle
+    # with NO dead-heat: a tie at the threshold counts as finishing INSIDE.
+    # YES wins inside the threshold, NO wins outside.
+    # All other sportsbook YES bets keep standard dead-heat settlement.
+    book = str(row.get("sportsbook", row.get("bookmaker", ""))).lower().strip()
+    pays_ties_full = book in FULL_TIE_PAYOUT_BOOKS
 
-    if side == "no" or is_exchange:
+    if side == "no" or pays_ties_full:
         inside = actual_pos <= threshold
         won = inside if side == "yes" else not inside
         result = "win" if won else "loss"
