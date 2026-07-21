@@ -2664,6 +2664,153 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
     return combined, sharp
 
 
+# Books whose 3-ball edges are trusted enough to surface in the email / Telegram
+# alert. FanDuel / DraftKings 3-balls are still TRACKED and stored to the sheet —
+# just not alerted on — per the "email books = kalshi/betonline/betcris" decision.
+EMAIL_3BALL_BOOKS = {"kalshi", "betonline", "betcris"}
+
+
+def price_3balls(tb_df, sim_dict):
+    """Attach fair 3-ball probabilities — P(each player is lowest of the trio).
+
+    The 3-ball analogue of price_matchups(). Two modes per side:
+        my_pN     — dead-heat: ties for low split credit evenly (3-ball books
+                    settle ties by dead-heat rules; matches the feed's "dead heat")
+        my_pN_tl  — ties-loss: only a STRICT sole-low counts (books that void ties)
+
+    Fairs come straight from the sim score arrays (sim_dict), so there's no
+    dependency on round_3ball_rN.parquet or any cross-repo name normalization —
+    the three players are looked up in sim_dict exactly like a pairwise matchup.
+    Name mismatches are stashed in tb_df.attrs["name_mismatches"].
+    """
+    dh = {1: [], 2: [], 3: []}
+    tl = {1: [], 2: [], 3: []}
+    name_mismatches = defaultdict(set)
+
+    for _, row in tb_df.iterrows():
+        players = [row["Player 1"], row["Player 2"], row["Player 3"]]
+        book = row.get("Bookmaker", "unknown")
+        if any(p not in sim_dict for p in players):
+            for p in players:
+                if p not in sim_dict:
+                    name_mismatches[p].add(book)
+            for i in (1, 2, 3):
+                dh[i].append(None)
+                tl[i].append(None)
+            continue
+
+        arr = np.vstack([sim_dict[players[0]], sim_dict[players[1]], sim_dict[players[2]]])  # (3, n_sims)
+        mn = arr.min(axis=0)
+        is_min = arr == mn                        # (3, n) True where a player holds/ties the low
+        ntied = is_min.sum(axis=0)                # (n,) 1 = sole low .. 3 = all tied
+        dh_credit = (is_min / ntied).mean(axis=1)         # dead-heat expected credit per player
+        strict = (is_min & (ntied == 1)).mean(axis=1)     # sole-low only
+        for i in (1, 2, 3):
+            dh[i].append(float(dh_credit[i - 1]))
+            tl[i].append(float(strict[i - 1]))
+
+    for i in (1, 2, 3):
+        tb_df[f"my_p{i}"] = dh[i]
+        tb_df[f"my_p{i}_tl"] = tl[i]
+
+    if name_mismatches:
+        tb_df.attrs["name_mismatches"] = dict(name_mismatches)
+    return tb_df
+
+
+def calculate_3ball_edges(df):
+    """Per-player edges + fair odds for 3-ball rows (all books).
+
+    3-balls settle by dead-heat, so the dead-heat fair (my_pN) drives the edge;
+    my_pN_tl is kept for reference / any ties-void book. Same edge formula as
+    matchups: edge = (prob*(dec-1) - (1-prob)) * 100.
+    """
+    df = df.dropna(subset=["my_p1", "my_p2", "my_p3"]).copy()
+    for i in (1, 2, 3):
+        oc = f"P{i} Odds"
+        df[f"p{i}_dec"] = np.where(df[oc] > 0, df[oc] / 100 + 1, 100 / df[oc].abs() + 1)
+        prob = df[f"my_p{i}"]
+        df[f"edge_p{i}"] = (prob * (df[f"p{i}_dec"] - 1) - (1 - prob)) * 100
+        df[f"Fair_p{i}"] = df[f"my_p{i}"].apply(
+            lambda p: implied_to_american(p) if pd.notna(p) else None)
+        df[f"p{i}_implied"] = df[oc].apply(
+            lambda o: round(american_to_implied(o) * 100, 1) if pd.notna(o) else None)
+    return df
+
+
+def build_3ball_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None):
+    """Filter/annotate 3-ball rows into (combined, email) frames.
+
+    combined = all tracked books passing the same edge/sample/pred gate as
+    matchups. email = the subset limited to EMAIL_3BALL_BOOKS, deduped per
+    threesome by highest edge (FanDuel/DraftKings are tracked but never alerted).
+    """
+    for i in (1, 2, 3):
+        df[f"p{i}_pred"] = df[f"Player {i}"].map(pred_lookup)
+        df[f"Sample_P{i}"] = df[f"Player {i}"].map(sample_lookup)
+    df["Round"] = f"r{sim_round}"
+
+    edges = df[["edge_p1", "edge_p2", "edge_p3"]]
+    df["edge_on"] = edges.max(axis=1).round(1)
+    best = edges.values.argmax(axis=1)  # 0/1/2 -> which player carries the edge
+    players = df[["Player 1", "Player 2", "Player 3"]].values
+    preds = df[["p1_pred", "p2_pred", "p3_pred"]].values
+    samples = df[["Sample_P1", "Sample_P2", "Sample_P3"]].values
+    idx = range(len(df))
+    df["bet_on"] = [players[r, best[r]] for r in idx]
+    df["pred_on"] = [preds[r, best[r]] for r in idx]
+    df["sample_on"] = [samples[r, best[r]] for r in idx]
+
+    if wx_lookup:
+        df["wx_on"] = df["bet_on"].map(wx_lookup).fillna(0)
+
+        def _wx_diff(r):
+            others = [p for p in (r["Player 1"], r["Player 2"], r["Player 3"]) if p != r["bet_on"]]
+            ow = [wx_lookup.get(p, 0) for p in others]
+            return r["wx_on"] - (sum(ow) / len(ow) if ow else 0)
+
+        df["wx_diff"] = df.apply(_wx_diff, axis=1)
+
+    # --- Combined: same gate as matchups ---
+    combined = df[df["edge_on"] > 3].copy()
+    combined = combined[combined["sample_on"].fillna(0) >= 20]
+    combined = combined[
+        ((combined["pred_on"] > 0) & (combined["edge_on"] > 7))
+        | (combined["pred_on"] > 1)
+    ]
+    combined = combined[~((combined["edge_on"] < 5) & (combined["pred_on"] < 1))]
+
+    # --- Email: trusted books only, dedup per threesome by highest edge ---
+    email = combined[combined["Bookmaker"].str.lower().isin(EMAIL_3BALL_BOOKS)].copy()
+    if not email.empty:
+        email["_key"] = ["-".join(sorted([a, b, c])) for a, b, c in
+                         zip(email["Player 1"], email["Player 2"], email["Player 3"])]
+        email = email.sort_values("edge_on", ascending=False).drop_duplicates("_key", keep="first")
+        email = email.drop(columns="_key")
+
+    for out in (combined, email):
+        for i in (1, 2, 3):
+            if f"p{i}_pred" in out.columns:
+                out[f"p{i}_pred"] = out[f"p{i}_pred"].round(2)
+            out[f"edge_p{i}"] = out[f"edge_p{i}"].round(1)
+
+    display_cols = [
+        "Player 1", "Player 2", "Player 3", "Round", "Bookmaker", "Ties",
+        "P1 Odds", "P2 Odds", "P3 Odds", "Fair_p1", "Fair_p2", "Fair_p3",
+        "edge_p1", "edge_p2", "edge_p3", "edge_on", "bet_on",
+        "p1_pred", "p2_pred", "p3_pred", "pred_on",
+        "Sample_P1", "Sample_P2", "Sample_P3", "sample_on",
+    ]
+    if wx_lookup:
+        display_cols += ["wx_on", "wx_diff"]
+    combined = combined[[c for c in display_cols if c in combined.columns]]
+    email = email[[c for c in display_cols if c in email.columns]]
+
+    print(f"  Combined 3-balls:  {len(combined)} rows")
+    print(f"  Email 3-balls:     {len(email)} rows ({'/'.join(sorted(EMAIL_3BALL_BOOKS))})")
+    return combined, email
+
+
 def build_betonline_all_matchups_csv(matchup_df, sim_round, out_dir):
     """
     Extract ALL BetOnline matchup rows (no edge/sample/pred filters) and save as CSV.
@@ -3216,7 +3363,8 @@ def load_sample_data():
 def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp=None,
                              win_positive_top10=None, win_negative_top10=None,
                              wx_lookup=None, score_edges=None, kalshi_mids=None,
-                             ancillary_df=None, matchup_book_counts=None):
+                             ancillary_df=None, matchup_book_counts=None,
+                             threeball_df=None):
     """
     Build HTML email body with a table of sharp matchup picks, finish position edges,
     and outright win edge tables (top positive + top negative).
@@ -3352,6 +3500,70 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
             matchups_html = "<p>No matchups passed filters (pred &gt; 0.75, sample &gt; 30).</p>"
     else:
         matchups_html = "<p>No sharp matchup picks for this round.</p>"
+
+    # Build 3-ball picks section. threeball_df is already the email-book subset
+    # (kalshi/betonline/betcris); FanDuel/DraftKings are tracked but never alerted.
+    threeball_html = ""
+    if threeball_df is not None and not threeball_df.empty:
+        f3 = threeball_df.copy()
+        f3["sample_on"] = f3["bet_on"].map(sample_lookup).fillna(0)
+        f3 = f3[
+            (
+                (f3["pred_on"] > EMAIL_MIN_PRED)
+                | ((f3["pred_on"] > 0) & (f3["edge_on"] > 7))
+            )
+            & (f3["sample_on"] >= EMAIL_MIN_SAMPLE)
+        ]
+        if not f3.empty:
+            f3 = f3.sort_values("edge_on", ascending=False)
+            rows_html = ""
+            for _, row in f3.iterrows():
+                players = [row["Player 1"], row["Player 2"], row["Player 3"]]
+                bet_on = row["bet_on"]
+                si = players.index(bet_on) + 1 if bet_on in players else 1
+                others = [p for p in players if p != bet_on]
+                book = row.get("Bookmaker", "")
+                book_odds = row.get(f"P{si} Odds")
+                fair_odds = row.get(f"Fair_p{si}")
+                edge = row["edge_on"]
+                pred = row["pred_on"] if pd.notna(row["pred_on"]) else 0.0
+                sample = int(row["sample_on"])
+                archetype = row.get("type_on", "")
+                edge_color = "#d4edda" if edge >= 7 else ("#fff3cd" if edge >= 4 else "#ffffff")
+                pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
+                book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
+                fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
+                vs_str = " / ".join(p.title() for p in others)
+                rows_html += f"""
+                <tr>
+                    <td style="padding:6px 10px; font-weight:600;">{bet_on.title()}</td>
+                    <td style="padding:6px 10px; color:#666;">vs {vs_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book}</td>
+                    <td style="padding:6px 10px; text-align:center;">{book_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
+                    <td style="padding:6px 10px; text-align:center; background:{pred_color};">{pred:.2f}</td>
+                    <td style="padding:6px 10px; text-align:center;">{sample}</td>
+                </tr>"""
+            threeball_html = f"""
+            <h3 style="color:#2c5282; margin:20px 0 8px 0;">
+                3-Ball Picks ({'/'.join(sorted(EMAIL_3BALL_BOOKS))}; pred &gt; {EMAIL_MIN_PRED}, sample &gt; {EMAIL_MIN_SAMPLE})
+            </h3>
+            <table style="border-collapse:collapse; font-family:Arial,sans-serif; font-size:13px; width:100%;">
+                <tr style="background:#343a40; color:white;">
+                    <th style="padding:6px 10px; text-align:left;">Bet On</th>
+                    <th style="padding:6px 10px; text-align:left;">Group</th>
+                    <th style="padding:6px 10px; text-align:center;">Type</th>
+                    <th style="padding:6px 10px; text-align:center;">Book</th>
+                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Fair</th>
+                    <th style="padding:6px 10px; text-align:center;">Edge</th>
+                    <th style="padding:6px 10px; text-align:center;">Pred</th>
+                    <th style="padding:6px 10px; text-align:center;">Sample</th>
+                </tr>
+                {rows_html}
+            </table>"""
 
     # Build finish position edges section
     outrights_html = ""
@@ -3831,6 +4043,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
 
         {matchups_html}
 
+        {threeball_html}
+
         {score_edges_html}
 
         {outrights_html}
@@ -3869,7 +4083,7 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          win_positive_top10=None, win_negative_top10=None,
                          wx_lookup=None, score_edges=None, kalshi_mids=None,
                          ancillary_df=None, ancillary_csv_path=None,
-                         matchup_book_counts=None):
+                         matchup_book_counts=None, threeball_df=None):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -3892,7 +4106,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                                         score_edges=score_edges,
                                         kalshi_mids=kalshi_mids,
                                         ancillary_df=ancillary_df,
-                                        matchup_book_counts=matchup_book_counts)
+                                        matchup_book_counts=matchup_book_counts,
+                                        threeball_df=threeball_df)
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
@@ -4532,6 +4747,28 @@ def main():
         bol_matchups_csv = None
         all_books_csv = None
 
+    # ── Step 2b: 3-ball pricing (scraped feed -> fair vs sim) ─────────────
+    # 3-ball fairs are computed straight from sim_dict (P of lowest, dead-heat),
+    # priced against the scraped board feed (soft books + betcris/betonline/kalshi).
+    # combined_3b = all tracked books; email_3b = the alert subset (kalshi/betonline/betcris).
+    try:
+        from odds_loader import load_3ball_odds
+        tb_df = load_3ball_odds(round=sim_round)
+        if tb_df is None or tb_df.empty:
+            print("  No 3-ball lines available yet.")
+            combined_3b = pd.DataFrame()
+            email_3b = pd.DataFrame()
+        else:
+            tb_df = price_3balls(tb_df, sim_dict)
+            tb_df = calculate_3ball_edges(tb_df)
+            combined_3b, email_3b = build_3ball_outputs(
+                tb_df, sim_round, pred_lookup, sample_lookup, wx_lookup=_wx_lookup
+            )
+    except Exception as e:
+        print(f"  Warning: 3-ball pricing failed: {e}")
+        combined_3b = pd.DataFrame()
+        email_3b = pd.DataFrame()
+
     # ── Step 3: Score card ───────────────────────────────────────────────
     # Multi-course: build separate score cards per course
     score_cards_by_course = {}
@@ -4973,6 +5210,11 @@ def main():
             combined['type_on'] = (
                 combined['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
             )
+        for _df3b in (combined_3b, email_3b):
+            if _df3b is not None and not _df3b.empty:
+                _df3b['type_on'] = (
+                    _df3b['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
+                )
         if not sharp.empty:
             sharp['type_on'] = (
                 sharp['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
@@ -5042,6 +5284,7 @@ def main():
                 score_edges=score_edges,
                 kalshi_mids=kalshi_mids,
                 matchup_book_counts=matchup_book_counts,
+                threeball_df=email_3b,
             )
 
         print(f"\n{'='*60}\n  Done (--reprice).\n{'='*60}")
@@ -5070,6 +5313,7 @@ def main():
             ancillary_df=ancillary_edges,
             ancillary_csv_path=ancillary_csv_path,
             matchup_book_counts=matchup_book_counts,
+            threeball_df=email_3b,
         )
     else:
         print(f"\n  [dry-run] Skipping email")
@@ -5080,6 +5324,7 @@ def main():
             is_valid_run_time,
             get_spreadsheet,
             store_round_matchups,
+            store_round_3balls,
             store_finish_positions,
             store_score_edges,
             load_dg_id_lookup,
@@ -5097,6 +5342,13 @@ def main():
                 # 1. All filtered round matchups
                 store_round_matchups(
                     combined, sim_round, tourney, _event_id,
+                    dg_id_lookup=dg_id_lookup,
+                    spreadsheet=spreadsheet,
+                )
+
+                # 1b. All filtered 3-balls (tracks every book; alerting is separate)
+                store_round_3balls(
+                    combined_3b, sim_round, tourney, _event_id,
                     dg_id_lookup=dg_id_lookup,
                     spreadsheet=spreadsheet,
                 )

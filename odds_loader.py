@@ -204,7 +204,7 @@ def guard_scraped_data(data, market, *, round=None, event_ids=None,
             logger.warning(f"event-reject alert failed ({e})")
         return None
 
-    if market in ("round_matchups", "round_scores") and round is not None:
+    if market in ("round_matchups", "round_scores", "round_3balls") and round is not None:
         file_round = data.get("round")
         if file_round is None:
             logger.warning(f"Scraped {market} has no top-level round but target is R{round} "
@@ -358,6 +358,59 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
     return df
 
 
+def _parse_3ball_json(data: dict) -> pd.DataFrame:
+    """Parse the scraped 3-ball feed (round_3balls_latest.json) into a 3-player
+    odds DataFrame.
+
+    Schema mirrors the pairwise DataGolf match_list but with three players:
+        {p1_player_name, p2_player_name, p3_player_name, ties, round,
+         odds: {book: {p1, p2, p3}}}   (see utils.output.to_datagolf_3ball_format)
+
+    Unlike _parse_datagolf_json, kalshi is NOT skipped — Kalshi 3-balls are a
+    first-class book here (the pairwise parser drops kalshi because tournament
+    H2H is priced separately). Player names are kept lowercase "last, first" to
+    match the sim's player_name convention.
+
+    Returns columns: Player 1, Player 2, Player 3, Bookmaker,
+        P1 Odds, P2 Odds, P3 Odds, round, Ties.
+    """
+    rows = []
+    for match in data.get("match_list", []):
+        p1 = str(match.get("p1_player_name", "")).lower()
+        p2 = str(match.get("p2_player_name", "")).lower()
+        p3 = str(match.get("p3_player_name", "")).lower()
+        ties = match.get("ties", "dead heat")
+        rnd = match.get("round")
+        for book, odds in match.get("odds", {}).items():
+            if book == "datagolf":
+                continue  # DG model odds not carried on the scraped 3-ball feed
+            rows.append({
+                "Player 1": p1,
+                "Player 2": p2,
+                "Player 3": p3,
+                "Bookmaker": book,
+                "P1 Odds": odds.get("p1"),
+                "P2 Odds": odds.get("p2"),
+                "P3 Odds": odds.get("p3"),
+                "round": rnd,
+                "Ties": ties,
+            })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        try:
+            from sim_inputs import name_replacements
+            for c in ("Player 1", "Player 2", "Player 3"):
+                df[c] = df[c].replace(name_replacements)
+        except ImportError:
+            pass
+        df = df.drop_duplicates(subset=["Player 1", "Player 2", "Player 3", "Bookmaker"],
+                                keep="first")
+        for c in ("P1 Odds", "P2 Odds", "P3 Odds"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 def _fetch_datagolf_api(market: str, api_key: str, target_round: int | None = None) -> pd.DataFrame:
     """Fetch odds from DataGolf API.
 
@@ -504,6 +557,43 @@ def load_matchup_odds(
     if not df.empty:
         df = df.drop_duplicates(subset=["Player 1", "Player 2", "Bookmaker"], keep="first")
 
+    return df
+
+
+def load_3ball_odds(round: int | None = None) -> pd.DataFrame:
+    """Load 3-ball odds from the scraped board feed (round_3balls_latest.json).
+
+    Unlike matchups, 3-balls come ONLY from our scraped feed — the soft books
+    (fanduel, draftkings) plus betcris/betonline/kalshi that actually hang them.
+    DataGolf's native 3_balls market is not used. All event/round/freshness
+    guards are shared with matchups via guard_scraped_data().
+
+    Args:
+        round: the live round (sim_round). When set, the feed's top-level `round`
+            must match, and rows are scoped to that round — same protection as
+            round_matchups, so lingering prior-round 3-ball lines are never priced.
+
+    Returns:
+        DataFrame with columns: Player 1, Player 2, Player 3, Bookmaker,
+            P1 Odds, P2 Odds, P3 Odds, round, Ties, source.
+        Empty DataFrame if the feed is missing/stale/off-event/off-round.
+    """
+    market = "round_3balls"
+    data = _fetch_scraped_json(market)
+    data = guard_scraped_data(data, market, round=round)
+    if not data:
+        logger.info("No 3-ball scraped odds available "
+                    "(feed missing/stale/off-event/off-round)")
+        return pd.DataFrame()
+    try:
+        df = _parse_3ball_json(data)
+    except Exception as e:
+        logger.warning(f"Failed to parse 3-ball scraped data: {e}")
+        return pd.DataFrame()
+    if not df.empty:
+        df["source"] = "scraped"
+        logger.info(f"3-ball scraped: {len(df)} lines across "
+                    f"{df['Bookmaker'].nunique()} books")
     return df
 
 
