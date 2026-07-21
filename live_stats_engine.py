@@ -1706,15 +1706,17 @@ def write_actuals_to_sheet(round_num):
     # base_score is already the absolute baseline (not relative to par)
     expected_score = base_score + field_adj + wind_impact + dew_impact
 
-    # Fetch actual scoring average from DataGolf
-    # Note: API "score" column is absolute strokes (e.g. 72, 68), not SG
+    # Fetch actual scoring average from DataGolf.
+    # The live-tournament-stats endpoint has no absolute "score" field; the
+    # per-round score-to-par is in "round" (stat_round). Convert to strokes with
+    # course_par, matching the df["round"] + course_par pattern used elsewhere.
     actual_score = None
     try:
-        live_df = fetch_live_stats(round_num, API_KEY, include_score=True)
-        if live_df is not None and "score" in live_df.columns:
-            scores = pd.to_numeric(live_df["score"], errors="coerce").dropna()
-            if not scores.empty:
-                actual_score = float(scores.mean())
+        live_df = fetch_live_stats(round_num, API_KEY)
+        if live_df is not None and "round" in live_df.columns:
+            to_par = pd.to_numeric(live_df["round"], errors="coerce").dropna()
+            if not to_par.empty:
+                actual_score = float(to_par.mean() + course_par)
     except Exception as e:
         print(f"  [actuals] Could not fetch live scores: {e}")
 
