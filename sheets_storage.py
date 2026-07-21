@@ -57,6 +57,7 @@ CREDENTIALS_PATHS = [
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
+TAB_ROUND_3BALL = "Round 3-Balls"
 TAB_BASE_RATES = "Base Rates"
 TAB_LIVE = "Live"
 TAB_DETAILS = "Details"
@@ -128,6 +129,21 @@ ROUND_MU_HEADERS = [
     "half_shot_p1", "half_shot_p2",
     "wx_diff",
     "result", "p1_round_score", "p2_round_score", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
+]
+
+# 3-ball version of ROUND_MU_HEADERS: three players (no half-shot spreads — those
+# are a 2-way concept). Column indices are wired into _DEDUP_KEYS["round_3ball"];
+# keep the two in sync if you reorder.
+ROUND_3BALL_HEADERS = [
+    "run_timestamp", "event_name", "year", "event_id", "round",
+    "player_1", "player_2", "player_3", "dg_id_p1", "dg_id_p2", "dg_id_p3",
+    "bookmaker", "ties_rule",
+    "p1_odds", "p2_odds", "p3_odds", "fair_p1", "fair_p2", "fair_p3",
+    "edge_p1", "edge_p2", "edge_p3",
+    "bet_on", "type_on", "edge_on", "pred_on", "sample_on",
+    "wx_diff",
+    "result", "p1_round_score", "p2_round_score", "p3_round_score", "units_won",
     "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
 ]
 
@@ -234,6 +250,7 @@ def _append_rows(ws, rows):
 _DEDUP_KEYS = {
     "tournament_mu": [3, 4, 5, 8, 10, 11],     # event_id, player_1, player_2, bookmaker, p1_odds, p2_odds
     "round_mu":      [3, 4, 5, 6, 9, 11, 12],  # event_id, round, player_1, player_2, bookmaker, p1_odds, p2_odds
+    "round_3ball":   [3, 4, 5, 6, 7, 11, 13, 14, 15],  # event_id, round, player_1/2/3, bookmaker, p1/p2/p3_odds
     "finish_pos":    [3, 4, 6, 7, 8],          # event_id, player_name, market_type, sportsbook, decimal_odds
     "score_edges":   [3, 4, 5, 6, 7, 9, 10],   # event_id, round, player, line, book, mkt_under, mkt_over
 }
@@ -701,6 +718,80 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
     _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
 
 
+def store_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup=None, spreadsheet=None):
+    """Write round 3-ball rows to the "Round 3-Balls" tab (auto-created on first write).
+
+    Args:
+        combined_df:    Filtered 3-ball DataFrame from build_3ball_outputs().
+                        Expected columns: Player 1, Player 2, Player 3, Bookmaker,
+                        Ties, P1/P2/P3 Odds, Fair_p1/2/3, edge_p1/2/3, edge_on,
+                        bet_on, p1/p2/p3_pred, pred_on, sample_on. Optional: wx_diff.
+        sim_round:      Round number (1-4)
+        tourney:        Tournament name
+        event_id:       DataGolf event ID
+        dg_id_lookup:   Optional dict {player_name: dg_id}
+    """
+    if combined_df is None or combined_df.empty:
+        print("  [storage] No round 3-balls to store.")
+        return
+
+    year = datetime.now().year
+    ts = _now_est_iso()
+    dg = dg_id_lookup or {}
+
+    rows = []
+    for _, r in combined_df.iterrows():
+        p1 = str(_get(r, "Player 1")).lower().strip()
+        p2 = str(_get(r, "Player 2")).lower().strip()
+        p3 = str(_get(r, "Player 3")).lower().strip()
+
+        rows.append([
+            ts,                                          # run_timestamp
+            tourney,                                     # event_name
+            year,                                        # year
+            str(event_id),                               # event_id
+            int(sim_round),                              # round
+            p1,                                          # player_1
+            p2,                                          # player_2
+            p3,                                          # player_3
+            _safe(dg.get(p1, "")),                       # dg_id_p1
+            _safe(dg.get(p2, "")),                       # dg_id_p2
+            _safe(dg.get(p3, "")),                       # dg_id_p3
+            _safe(_get(r, "Bookmaker")),                 # bookmaker
+            _safe(_get(r, "Ties")),                      # ties_rule
+            _safe(_get(r, "P1 Odds")),                   # p1_odds
+            _safe(_get(r, "P2 Odds")),                   # p2_odds
+            _safe(_get(r, "P3 Odds")),                   # p3_odds
+            _safe(_get(r, "Fair_p1")),                   # fair_p1
+            _safe(_get(r, "Fair_p2")),                   # fair_p2
+            _safe(_get(r, "Fair_p3")),                   # fair_p3
+            _safe(_get(r, "edge_p1"), round_digits=1),   # edge_p1
+            _safe(_get(r, "edge_p2"), round_digits=1),   # edge_p2
+            _safe(_get(r, "edge_p3"), round_digits=1),   # edge_p3
+            _safe(_get(r, "bet_on")),                    # bet_on
+            _safe(_get(r, "type_on")),                   # type_on
+            _safe(_get(r, "edge_on"), round_digits=1),   # edge_on
+            _safe(_get(r, "pred_on"), round_digits=2),   # pred_on
+            _safe(_get(r, "sample_on")),                 # sample_on
+            _safe(_get(r, "wx_diff"), round_digits=1),   # wx_diff
+            "",                                          # result (grading)
+            "",                                          # p1_round_score (grading)
+            "",                                          # p2_round_score (grading)
+            "",                                          # p3_round_score (grading)
+            "",                                          # units_won (grading)
+        ])
+
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_3BALL, ROUND_3BALL_HEADERS)
+    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["round_3ball"])
+    print(f"  [storage] Wrote {written} R{sim_round} 3-ball rows to '{TAB_ROUND_3BALL}'"
+          + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
+
+    # Parquet write-through
+    _ledger_write_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
+
+
 def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=None):
     """Store round score O/U edges to the 'Score Edges' tab.
 
@@ -1106,6 +1197,60 @@ def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_i
         _append_to_ledger(records)
     except Exception as e:
         print(f"  [ledger] Warning: round matchup write failed: {e}")
+
+
+def _ledger_write_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts):
+    """Build ledger records from the 3-ball DataFrame and append.
+
+    A 3-ball has two opponents; both are recorded in `opponent` as a sorted
+    "oppA + oppB" string so the existing LEDGER_DEDUP_COLS uniquely key each
+    3-ball bet WITHOUT a ledger schema change (matchup dedup is untouched).
+    bet_type = "round_3ball". No half-shot (2-way concept).
+    """
+    try:
+        if combined_df is None or combined_df.empty:
+            return
+        dg = dg_id_lookup or {}
+        year = datetime.now().year
+        records = []
+        for _, r in combined_df.iterrows():
+            players = [str(_get(r, f"Player {i}")).lower().strip() for i in (1, 2, 3)]
+            bet_on = str(_get(r, "bet_on")).lower().strip()
+            # side index (1/2/3) of the bet -> pull that side's book/fair odds
+            si = players.index(bet_on) + 1 if bet_on in players else 1
+            book_odds = _get(r, f"P{si} Odds", default=np.nan)
+            fair_odds = _get(r, f"Fair_p{si}", default=np.nan)
+            opponents = sorted(p for p in players if p != bet_on)
+            opponent = " + ".join(opponents)
+            bookmaker = str(_get(r, "Bookmaker", default=""))
+
+            rec = _empty_ledger_record()
+            rec.update({
+                "bet_id": str(uuid.uuid4()),
+                "run_timestamp": ts,
+                "event_name": tourney,
+                "year": year,
+                "event_id": str(event_id),
+                "bet_type": "round_3ball",
+                "round": int(sim_round),
+                "bet_on": bet_on,
+                "opponent": opponent,
+                "dg_id_bet_on": str(dg.get(bet_on, "")),
+                "dg_id_opponent": str(dg.get(opponents[0], "")) if opponents else "",
+                "bookmaker": bookmaker,
+                "book_odds": _safe_float(book_odds),
+                "fair_odds": _safe_float(fair_odds),
+                "edge": _safe_float(_get(r, "edge_on", default=np.nan)),
+                "pred_on": _safe_float(_get(r, "pred_on", default=np.nan)),
+                "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
+                "wx_diff": _safe_float(_get(r, "wx_diff", default=np.nan)),
+                "book_category": _categorize_book(bookmaker),
+            })
+            records.append(rec)
+
+        _append_to_ledger(records)
+    except Exception as e:
+        print(f"  [ledger] Warning: round 3-ball write failed: {e}")
 
 
 def _safe_float(val):
