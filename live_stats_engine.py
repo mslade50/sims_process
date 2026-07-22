@@ -902,9 +902,7 @@ def create_next_round_predictions(round_num):
             n = mask.sum()
             if n > 0:
                 course_skill = preds.loc[mask, pred_name].mean()
-                course_wind = preds.loc[mask, wind_col].mean()
-                exp_score = round(adj - course_skill + course_wind, 2)
-                print(f"    {code} -> adj={adj}, players={n}, avg_skill={course_skill:.3f}, expected scoring={exp_score}")
+                print(f"    {code} -> target avg={adj}, players={n}, avg_skill={course_skill:.3f}")
                 preds.loc[mask, "course_score_adj"] = adj
         # Warn about unmapped players
         unmapped = preds[course_col].notna() & preds["course_score_adj"].isna()
@@ -933,7 +931,7 @@ def create_next_round_predictions(round_num):
             print(f"  Warning: No next-round course from API — flipped R{round_num} assignments for R{next_round}")
         else:
             score_adj = SCORE_ADJS.get(next_round, 0)
-            expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
+            expected_scoring = round(score_adj, 2)
             print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
 
     # Legacy fallback: positional COURSE_SCORE_ADJS (no COURSE_SCORE_MAP)
@@ -945,14 +943,12 @@ def create_next_round_predictions(round_num):
             adj = COURSE_SCORE_ADJS[i] if i < len(COURSE_SCORE_ADJS) else COURSE_SCORE_ADJS[0]
             course_players = preds[preds[course_col] == cid]
             course_skill = course_players[pred_name].mean()
-            course_wind = course_players[wind_col].mean()
-            exp_score = round(adj - course_skill + course_wind, 2)
-            print(f"    expected_score_{i+1} -> {cid}: adj={adj}, expected scoring={exp_score}")
+            print(f"    expected_score_{i+1} -> {cid}: target avg={adj}")
             preds.loc[preds[course_col] == cid, "course_score_adj"] = adj
 
     else:
         score_adj = SCORE_ADJS.get(next_round, 0)
-        expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
+        expected_scoring = round(score_adj, 2)
         print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
 
     _save_predictions(preds, next_round)
@@ -1035,8 +1031,9 @@ def create_pre_event_predictions():
     avg_wind = preds["wind_adj1"].mean()
     avg_skill = preds["my_pred"].mean()
 
-    # Expected scoring
-    expected_scoring = round(SCORE_ADJS[1] - avg_skill + avg_wind, 2)
+    # SCORE_ADJS is a literal field scoring average. Player skill and wave
+    # weather are centered around it later by round_sim.
+    expected_scoring = round(SCORE_ADJS[1], 2)
     # dew_adj is SCORE-space like wind_adj (dew_calculation comes from
     # humidity.py's score regression: negative coef -> humid = lower scores
     # = easier), so it must be SUBTRACTED like wind: a player in the more
