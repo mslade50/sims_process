@@ -642,6 +642,42 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
         _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts=ts, bet_type="finish_position_live")
 
 
+def load_finish_position_keys(spreadsheet, event_id, tab_name=None):
+    """Return every stored player/market key for an event, ignoring book/price.
+
+    The compact manifest is published with sim_fairs.json so golf_scraping can
+    distinguish a genuinely new reprice bet from a player/market already stored
+    by the initial sim at any sportsbook.
+    """
+    tab = tab_name or TAB_FINISH_POS
+    try:
+        rows = spreadsheet.worksheet(tab).get_all_values()
+    except Exception as exc:
+        print(f"  [storage] Could not read '{tab}' keys for reprice manifest: {exc}")
+        return []
+    if len(rows) <= 1:
+        return []
+    headers = [str(value).strip().lower() for value in rows[0]]
+    required = ("event_id", "player_name", "market_type")
+    if any(name not in headers for name in required):
+        print(f"  [storage] '{tab}' missing columns needed for reprice manifest: {required}")
+        return []
+    ei, pi, mi = (headers.index(name) for name in required)
+    target = str(event_id).strip()
+    keys = set()
+    for row in rows[1:]:
+        if ei >= len(row) or str(row[ei]).strip() != target:
+            continue
+        player = str(row[pi] if pi < len(row) else "").strip().lower()
+        market = str(row[mi] if mi < len(row) else "").strip().lower()
+        if market == "winner":
+            market = "win"
+        if player and market:
+            keys.add((player, market))
+    return [{"player_name": player, "market_type": market}
+            for player, market in sorted(keys)]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Store: Round Matchups
 # ══════════════════════════════════════════════════════════════════════════════

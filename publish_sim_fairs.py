@@ -1017,7 +1017,31 @@ def _check_outright_mass(outrights: dict, tourney: str) -> None:
         raise RuntimeError(msg)
 
 
-def build_payload() -> dict:
+def _manifest_keys(event_id, supplied=None) -> list[dict]:
+    """Normalize supplied initial-bet keys, or preserve this event's prior manifest."""
+    values = supplied
+    if values is None and LOCAL_OUT.exists():
+        try:
+            prior = json.loads(LOCAL_OUT.read_text(encoding="utf-8"))
+            if str(prior.get("event_id")) == str(event_id):
+                values = prior.get("initial_finish_keys") or []
+        except (OSError, json.JSONDecodeError, TypeError):
+            values = []
+    keys = set()
+    for item in values or []:
+        if not isinstance(item, dict):
+            continue
+        player = str(item.get("player_name") or item.get("player") or "").strip().lower()
+        market = str(item.get("market_type") or item.get("market") or "").strip().lower()
+        if market == "winner":
+            market = "win"
+        if player and market:
+            keys.add((player, market))
+    return [{"player_name": player, "market_type": market}
+            for player, market in sorted(keys)]
+
+
+def build_payload(initial_finish_keys=None) -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
     event_ids = getattr(si, "event_ids", []) or []
@@ -1066,6 +1090,10 @@ def build_payload() -> dict:
         # tournament freeze isn't active (pre-R1) — a dead-man's switch against
         # exactly the 2026-07-15 stale-live-dump incident.
         "outrights_source": "live" if use_live else "pre",
+        # Player/market identities already stored by the initial sim.  The board
+        # uses this credential-free manifest when deciding whether an odds-only
+        # reprice is genuinely new; bookmaker and price are intentionally absent.
+        "initial_finish_keys": _manifest_keys(event_id, initial_finish_keys),
     }
     return payload
 
@@ -1315,11 +1343,11 @@ def _git_push(files=("sim_fairs.json",)) -> None:
             pass
 
 
-def publish(push: bool = True) -> dict:
+def publish(push: bool = True, initial_finish_keys=None) -> dict:
     """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
-    payload = build_payload()
+    payload = build_payload(initial_finish_keys=initial_finish_keys)
     with open(LOCAL_OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
