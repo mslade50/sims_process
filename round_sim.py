@@ -135,6 +135,11 @@ RNG_CF = np.random.default_rng(789)  # separate seed for catfirst draws
 # sims_kernel; the Python draws remain as a flagged fallback.
 _USE_PYTHON = False
 
+# Contract for expected_score_1 / --expected-avg: the entered value is the
+# literal average score for the players being simulated, not a zero-SG anchor.
+# Player skill and weather still move individual golfers around that average.
+SCORING_AVG_MODE = "literal_field_mean_v1"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tournament Sim Helper Functions
@@ -2119,6 +2124,7 @@ def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=Non
     meta = {
         "sim_round": sim_round,
         "expected_avg": expected_avg,
+        "scoring_avg_mode": SCORING_AVG_MODE,
         "num_sims": len(next(iter(sim_dict.values()))),
         "num_players": len(players),
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2160,12 +2166,97 @@ def load_sim_cache(sim_round):
 # Step 1: Score Simulation (shared by matchups + score card)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _prepare_round_scoring_context(model_preds, scores_col, expected_avg):
+    """Build literal field-average targets and skill-centering offsets.
+
+    ``scores_rN`` is an SG expectation: positive is better. Subtracting its raw
+    value from an entered scoring average would make a weak field score worse
+    than the number the user entered. Centering the SG expectations first
+    preserves every player-to-player difference while making the entered
+    number the actual average for the simulated field.
+
+    Multi-course fields are centered separately when a course assignment or
+    distinct ``course_score_adj`` target is available, so each entered course
+    average keeps the same literal meaning.
+    """
+    scores = pd.to_numeric(model_preds[scores_col], errors="coerce")
+    valid = scores.notna()
+    if not valid.any():
+        raise ValueError(f"Column '{scores_col}' has no numeric predictions")
+
+    player_avgs = pd.Series(float(expected_avg), index=model_preds.index, dtype=float)
+    if "course_score_adj" in model_preds.columns:
+        course_avgs = pd.to_numeric(model_preds["course_score_adj"], errors="coerce")
+        player_avgs = course_avgs.fillna(float(expected_avg)).astype(float)
+
+    # Prefer an explicit course assignment. Include the numeric target in the
+    # key as protection against a malformed sheet that assigns two targets to
+    # the same course code.
+    group_key = pd.Series("field", index=model_preds.index, dtype=object)
+    course_col = next(
+        (
+            col for col in ("course", "course_x", "course_y")
+            if col in model_preds.columns
+            and model_preds.loc[valid, col].dropna().astype(str).str.strip().nunique() > 1
+        ),
+        None,
+    )
+    target_key = player_avgs.map(lambda value: f"{value:.6f}")
+    if course_col is not None:
+        course_key = model_preds[course_col].fillna("").astype(str).str.strip()
+        group_key = course_key.where(course_key.ne(""), "unmapped") + "|" + target_key
+    elif player_avgs.loc[valid].nunique() > 1:
+        group_key = "target|" + target_key
+
+    field_centers = scores.groupby(group_key).transform("mean")
+    field_centers = field_centers.fillna(float(scores.loc[valid].mean()))
+
+    return pd.DataFrame(
+        {
+            "player_avg": player_avgs,
+            "field_center": field_centers,
+            "scoring_group": group_key,
+        },
+        index=model_preds.index,
+    )
+
+
+def _print_round_scoring_context(context, scores):
+    """Print the field-average contract used by this simulation."""
+    valid = pd.to_numeric(scores, errors="coerce").notna()
+    for group, rows in context.loc[valid].groupby("scoring_group", sort=False):
+        print(
+            f"  Scoring target [{group}]: {rows['player_avg'].iloc[0]:.3f} "
+            f"field avg; centered SG by {rows['field_center'].iloc[0]:+.4f} "
+            f"({len(rows)} players)"
+        )
+
+
+def _print_realized_scoring_average(sim_dict, model_preds, context):
+    """Report the Monte Carlo field average against the literal target."""
+    for group, rows in context.groupby("scoring_group", sort=False):
+        players = model_preds.loc[rows.index, "player_name"]
+        player_means = [sim_dict[player].mean() for player in players if player in sim_dict]
+        if not player_means:
+            continue
+        realized = float(np.mean(player_means))
+        target = float(rows["player_avg"].iloc[0])
+        print(
+            f"  Realized scoring avg [{group}]: {realized:.3f} "
+            f"(target {target:.3f}, delta {realized - target:+.3f})"
+        )
+
+
 def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIMULATIONS):
     """
     Simulate integer round scores for every player.
 
     Formula per player:
-        actual_score = round( expected_avg − Normal(scores_rN, STD_DEV) )
+        centered_sg = scores_rN - mean(scores_rN for the field/course)
+        actual_score = round(expected_avg - Normal(centered_sg, STD_DEV))
+
+    Therefore ``expected_avg`` is the literal expected average score of the
+    simulated field. Player skill changes relative scores, not the field mean.
 
     For multi-course events, each player's expected_avg comes from the
     'course_score_adj' column if present; otherwise uses the global expected_avg.
@@ -2180,10 +2271,11 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
         raise ValueError(f"Column '{scores_col}' not found in predictions file. "
                          f"Available: {list(model_preds.columns)}")
 
-    has_course_adj = "course_score_adj" in model_preds.columns
+    scoring_context = _prepare_round_scoring_context(model_preds, scores_col, expected_avg)
+    _print_round_scoring_context(scoring_context, model_preds[scores_col])
 
     sim_dict = {}
-    for _, row in model_preds.iterrows():
+    for row_idx, row in model_preds.iterrows():
         player = row["player_name"]
         skill = row[scores_col]
 
@@ -2191,17 +2283,15 @@ def simulate_round_scores(model_preds, sim_round, expected_avg, num_sims=NUM_SIM
         if pd.isna(skill):
             continue
 
-        # Per-player expected avg (multi-course) or global
-        if has_course_adj and pd.notna(row.get("course_score_adj")):
-            player_avg = row["course_score_adj"]
-        else:
-            player_avg = expected_avg
+        player_avg = scoring_context.at[row_idx, "player_avg"]
+        centered_skill = skill - scoring_context.at[row_idx, "field_center"]
 
-        raw = np.random.normal(loc=skill, scale=STD_DEV, size=num_sims)
+        raw = np.random.normal(loc=centered_skill, scale=STD_DEV, size=num_sims)
         scores = np.round(player_avg - raw).astype(int)
         sim_dict[player] = np.clip(scores, int(round(player_avg)) - 12, int(round(player_avg)) + 12)
 
     print(f"  Simulated {len(sim_dict)} players × {num_sims:,} iterations")
+    _print_realized_scoring_average(sim_dict, model_preds, scoring_context)
     return sim_dict, {}
 
 
@@ -2227,7 +2317,8 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         return simulate_round_scores(model_preds, sim_round, expected_avg, num_sims)
     player_cf_params, effective_skew, L_corr = dists_result
 
-    has_course_adj = "course_score_adj" in model_preds.columns
+    scoring_context = _prepare_round_scoring_context(model_preds, scores_col, expected_avg)
+    _print_round_scoring_context(scoring_context, model_preds[scores_col])
 
     # ─── Rust kernel (default; --use-python forces the legacy Python loop) ───
     # Build per-(valid)player input arrays and draw via sims_kernel.run_single_round
@@ -2236,20 +2327,18 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         try:
             import sims_kernel as _sk
             _players, _mu, _std, _skew, _skill, _wx, _pavg = [], [], [], [], [], [], []
-            for idx, (_, row) in enumerate(model_preds.iterrows()):
+            for idx, (row_idx, row) in enumerate(model_preds.iterrows()):
                 player = row["player_name"]
                 scores_rn = row[scores_col]
                 if pd.isna(scores_rn):
                     continue
-                if has_course_adj and pd.notna(row.get("course_score_adj")):
-                    player_avg = row["course_score_adj"]
-                else:
-                    player_avg = expected_avg
+                player_avg = scoring_context.at[row_idx, "player_avg"]
+                field_center = scoring_context.at[row_idx, "field_center"]
                 mu, std_c = player_cf_params[idx]
                 wx_delta = wx_lookup.get(player, 0.0)
                 _players.append(player)
                 _mu.append(mu); _std.append(std_c); _skew.append(effective_skew[idx])
-                _skill.append(float(scores_rn) - wx_delta); _wx.append(wx_delta)
+                _skill.append(float(scores_rn) - wx_delta - field_center); _wx.append(wx_delta)
                 _pavg.append(float(player_avg))
             if _players:
                 _A = np.ascontiguousarray
@@ -2263,6 +2352,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
                 cat_mu_lookup = {p: np.ascontiguousarray(_catmu[k]).copy()
                                  for k, p in enumerate(_players)}
                 print(f"  [rust] catfirst {len(sim_dict)} players × {num_sims:,} via run_single_round")
+                _print_realized_scoring_average(sim_dict, model_preds, scoring_context)
                 return sim_dict, cat_mu_lookup
         except Exception as _rust_err:
             print(f"  [rust] WARNING: run_single_round failed ({_rust_err!r}); "
@@ -2270,23 +2360,20 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
 
     sim_dict = {}
     cat_mu_lookup = {}
-    for idx, (_, row) in enumerate(model_preds.iterrows()):
+    for idx, (row_idx, row) in enumerate(model_preds.iterrows()):
         player = row["player_name"]
         scores_rn = row[scores_col]
         if pd.isna(scores_rn):
             continue
 
-        # Per-player expected avg (multi-course) or global
-        if has_course_adj and pd.notna(row.get("course_score_adj")):
-            player_avg = row["course_score_adj"]
-        else:
-            player_avg = expected_avg
+        player_avg = scoring_context.at[row_idx, "player_avg"]
+        field_center = scoring_context.at[row_idx, "field_center"]
 
         mu, std_c = player_cf_params[idx]
 
-        # Decompose: skill = scores_rN - weather
+        # Decompose and center: relative skill = scores_rN - weather - group mean
         wx_delta = wx_lookup.get(player, 0.0)
-        skill = scores_rn - wx_delta
+        skill = scores_rn - wx_delta - field_center
 
         # Re-center + weather split (inline, not via _catfirst_draw)
         shift = (skill - mu.sum()) / 4.0
@@ -2309,6 +2396,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
     print(f"  [catfirst] Simulated {len(sim_dict)} players × {num_sims:,} iterations")
     print(f"  [catfirst] Course mults: OTT={_course_mults_cf[0]:.3f}, APP={_course_mults_cf[1]:.3f}, "
           f"ARG={_course_mults_cf[2]:.3f}, PUTT={_course_mults_cf[3]:.3f}")
+    _print_realized_scoring_average(sim_dict, model_preds, scoring_context)
     return sim_dict, cat_mu_lookup
 
 
@@ -4610,6 +4698,13 @@ def main():
                 print(f"  [reprice] Nothing to reprice without a cache. Exiting cleanly.")
                 return
             raise
+
+        cached_mode = cached_meta.get("scoring_avg_mode")
+        if cached_mode != SCORING_AVG_MODE:
+            raise RuntimeError(
+                "This sim cache predates literal field-average centering. "
+                "Regenerate it with --sim-only before price-only/reprice."
+            )
 
         if args.score_est is not None:
             cached_avg = float(cached_meta.get("expected_avg", expected_avg))

@@ -222,6 +222,13 @@ def main():
     from sheets_storage import get_spreadsheet
     spreadsheet = get_spreadsheet()
 
+    # Pull queued odds-only outright bets into the canonical Sheet + ledger before
+    # counting ungraded rows.  The importer dedups on event/player/market (book and
+    # price intentionally ignored), so the scheduled retry is idempotent.
+    print("\n  Importing reprice overflow...")
+    from reprice_overflow import import_overflow
+    import_overflow(spreadsheet, week_events, dry_run=args.dry_run)
+
     if multi:
         print(f"\n  {len(week_events)} events finished this week — grading only the one(s) with bets.")
 

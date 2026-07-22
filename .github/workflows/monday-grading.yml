@@ -24,6 +24,18 @@ jobs:
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter
 
+    - name: Fetch reprice bet overflow from golf_scraping
+      env:
+        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+      run: |
+        mkdir -p permanent_data/scraped_odds
+        curl -fsSL -H "Authorization: token $GH_TOKEN" \
+          "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/reprice_bet_overflow.json" \
+          -o permanent_data/scraped_odds/reprice_bet_overflow.json.download \
+          && mv permanent_data/scraped_odds/reprice_bet_overflow.json.download \
+                permanent_data/scraped_odds/reprice_bet_overflow.json \
+          || echo "::notice::No reprice overflow available; grading continues"
+
     - name: Run grading pipeline
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}

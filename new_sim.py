@@ -4337,9 +4337,11 @@ from sheets_storage import (
     get_spreadsheet,
     store_tournament_matchups,
     store_finish_positions,
+    load_finish_position_keys,
     load_dg_id_lookup,
 )
 
+_initial_finish_keys = None
 if is_valid_run_time() and not os.getenv("SKIP_STORAGE"):
     print("\n[storage] Saving to Google Sheets...")
     try:
@@ -4391,6 +4393,11 @@ if is_valid_run_time() and not os.getenv("SKIP_STORAGE"):
                 spreadsheet=spreadsheet,
             )
 
+        # Read the canonical sheet after all initial writes.  This captures keys
+        # stored by either sim pass and by any book, while exposing no credentials
+        # to the scraping repository.
+        _initial_finish_keys = load_finish_position_keys(spreadsheet, _event_id)
+
         print("[storage] Done.")
     except Exception as e:
         print(f"[storage] FAILED: {e}")
@@ -4419,7 +4426,7 @@ try:
     import publish_sim_fairs
     print(f"\n{'='*60}")
     print("  Publishing sim fairs to R2 (odds board)...")
-    publish_sim_fairs.publish()
+    publish_sim_fairs.publish(initial_finish_keys=_initial_finish_keys)
     print(f"{'='*60}")
 except Exception as e:
     print(f"  [publish_sim_fairs] Warning: {e}")
