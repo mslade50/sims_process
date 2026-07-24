@@ -271,6 +271,47 @@ def compute_wind_factor(event_ids, wind_override, baseline_wind):
     return wind_calculation
 
 
+def compute_dew_factor(course_id, baseline_dew_factor):
+    """
+    Per-course dew coefficient (strokes per degF of dewpoint deviation).
+
+    Analog of compute_wind_factor: courses with enough weather history get
+    an empirical-Bayes-shrunk course-specific slope from
+    permanent_data/dew_test.csv (built by archive/dew_course_effects.py,
+    clamped to [-0.06, 0] — tropical venues with a pinned dew range land
+    at 0, i.e. dew adjustment off). Courses not in the CSV fall back to
+    the sim_inputs baseline blend.
+
+    Args:
+        course_id: Course ID (same ID space as dg_historical course_num)
+        baseline_dew_factor: Fallback coefficient (sim_inputs blend)
+
+    Returns:
+        Float: dew coefficient (negative = humid plays easier)
+    """
+    try:
+        # Lives in permanent_data/ (survives weekly cleanup)
+        _dt_path = os.path.join("permanent_data", "dew_test.csv")
+        if not os.path.exists(_dt_path):
+            print(f"Dew factor: {baseline_dew_factor:.4f} (baseline — dew_test.csv not found)")
+            return baseline_dew_factor
+
+        dew_test_df = pd.read_csv(_dt_path)
+        row = dew_test_df[dew_test_df["course_num"] == int(course_id)]
+        if row.empty:
+            print(f"Dew factor: {baseline_dew_factor:.4f} (baseline — course {course_id} not in dew_test.csv)")
+            return baseline_dew_factor
+
+        dew_coef = float(row["dew_coef"].iloc[-1])
+        print(f"Dew factor: {dew_coef:.4f} (course {course_id} — raw {float(row['raw_slope'].iloc[-1]):+.4f} "
+              f"over {int(row['n_round_days'].iloc[-1])} round-days, "
+              f"shrink_wt {float(row['shrink_wt'].iloc[-1]):.2f}; baseline {baseline_dew_factor:.4f})")
+        return dew_coef
+    except Exception as e:
+        print(f"Dew factor: {baseline_dew_factor:.4f} (baseline — dew_test lookup failed: {e})")
+        return baseline_dew_factor
+
+
 # --------------------------------------------------------------------------
 # Bayesian Wind Blending (climatology prior + forecast)
 # --------------------------------------------------------------------------
@@ -371,6 +412,61 @@ def blend_wind_with_climo(forecast_array, climo_array, lead_days=None, round_dat
     if len(forecast_array) > n:
         blended.extend(forecast_array[n:])
     return blended, w_climo
+
+
+# Models for the multi-model wind blend. AIFS is the model behind Windy's
+# "AI" layer; AIGFS is NOAA's AI model. Both run 6-hourly natively and are
+# interpolated to hourly by Open-Meteo. gfs_graphcast025 excluded (returns
+# all-null as of July 2026).
+AI_WIND_MODELS = ["ecmwf_ifs025", "ecmwf_aifs025_single", "ncep_aigfs025"]
+
+
+def fetch_multimodel_wind(lat, lon, start_date, end_date, models=None,
+                          timezone="auto"):
+    """
+    Fetch hourly wind (mph) from multiple forecast models and blend them.
+
+    Multi-model mean of ECMWF IFS + ECMWF AIFS + NOAA AIGFS. A multi-model
+    mean is robustly more accurate than any single member; rows where a
+    model is missing use the mean of the models present.
+
+    Args:
+        lat, lon: Course coordinates
+        start_date, end_date: YYYY-MM-DD strings (inclusive)
+        models: Optional list of Open-Meteo model names (default AI_WIND_MODELS)
+        timezone: Open-Meteo timezone param. Pass the SAME timezone as the
+            forecast call whose timestamps you join against (humidity.py
+            uses America/New_York) or hour keys will silently misalign.
+
+    Returns:
+        DataFrame with 'time' (datetime), one mph column per model, and
+        'wind_blend' (row-wise mean, mph) — or None on failure.
+    """
+    models = models or AI_WIND_MODELS
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat, "longitude": lon,
+                "hourly": "wind_speed_10m",
+                "models": ",".join(models),
+                "windspeed_unit": "mph", "timezone": timezone,
+                "start_date": start_date, "end_date": end_date,
+            }, timeout=20)
+        data = resp.json()
+        if "hourly" not in data:
+            print(f"  [multimodel wind] No hourly data in response: {data.get('reason', data)}")
+            return None
+        df = pd.DataFrame(data["hourly"])
+        df["time"] = pd.to_datetime(df["time"])
+        wind_cols = [c for c in df.columns if c.startswith("wind_speed_10m")]
+        if not wind_cols:
+            return None
+        df["wind_blend"] = df[wind_cols].mean(axis=1, skipna=True)
+        return df
+    except Exception as e:
+        print(f"  [multimodel wind] Fetch failed: {e}")
+        return None
 
 
 def fetch_realized_wind(lat, lon, date_str):

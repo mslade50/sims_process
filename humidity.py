@@ -12,7 +12,7 @@ except ImportError:
     lat_override = None
     lon_override = None
 from sheets_storage import get_spreadsheet
-from api_utils import fetch_historical_hourly_wind
+from api_utils import fetch_historical_hourly_wind, compute_dew_factor
 
 load_dotenv()
 
@@ -126,8 +126,12 @@ month = tournament_dates[0].month
 # Adjust dewpoint wave factor
 dewpoint_wave = dewpoint_wave * 0.6 + baseline_dew * 0.4
 
-# Blended dew coefficient: same formula as sim_inputs.dew_calculation
-dew_factor = 0.6 * baseline_dew + 0.4 * dewpoint_wave
+# Baseline blended dew coefficient: same formula as sim_inputs.dew_calculation
+baseline_dew_factor = 0.6 * baseline_dew + 0.4 * dewpoint_wave
+# Course-specific coefficient from permanent_data/dew_test.csv (EB-shrunk
+# per-course slope, built by archive/dew_course_effects.py). Falls back to
+# the baseline blend for courses with no weather history.
+dew_factor = compute_dew_factor(course_id, round(baseline_dew_factor, 4))
 print(f"Dew factor (for sheet): {dew_factor:.4f}  (baseline_dew={baseline_dew}, dewpoint_wave={dewpoint_wave:.4f})")
 
 # Create dictionaries to store weather data dynamically
@@ -186,10 +190,30 @@ dewpoint_values = data["hourly"]["dewpoint_2m"]
 wind_values = data["hourly"]["wind_speed_10m"]
 timestamps = data["hourly"]["time"]
 
+# Multi-model wind blend (ECMWF IFS + AIFS + NOAA AIGFS via Open-Meteo).
+# AIFS is the model behind Windy's "AI" layer. Where the blend is available
+# for an hour it overrides the default (best_match) wind; per-hour fallback
+# to best_match otherwise. Dew stays on best_match.
+from api_utils import fetch_multimodel_wind
+# timezone must match the forecast call above (America/New_York) so the
+# hour keys align — NOT course-local.
+_mm = fetch_multimodel_wind(LATITUDE, LONGITUDE, START_DATE, END_DATE,
+                            timezone="America/New_York")
+_blend_by_time = {}
+if _mm is not None:
+    _blend_by_time = {
+        t.to_pydatetime(): w
+        for t, w in zip(_mm["time"], _mm["wind_blend"]) if pd.notna(w)
+    }
+    print(f"Multi-model wind blend loaded ({len(_blend_by_time)} hours)")
+else:
+    print("WARNING: multi-model wind unavailable — using best_match only")
+
 # Store hourly values per round (6 AM - 8 PM = 15 hours)
 # Also build rounded integer arrays for sheet writing
 dew_by_round = {i: [] for i in range(1, 5)}   # {1: [...], 2: [...], ...}
 wind_by_round = {i: [] for i in range(1, 5)}
+wind_bm_by_round = {i: [] for i in range(1, 5)}  # best_match, for comparison print
 
 for time_str, dewpoint, wind in zip(timestamps, dewpoint_values, wind_values):
     dt_obj = datetime.datetime.fromisoformat(time_str)
@@ -200,10 +224,21 @@ for time_str, dewpoint, wind in zip(timestamps, dewpoint_values, wind_values):
             index = date_strs.index(date_str)
             rd = index + 1
             dewpoint_data[f"dewpoint_{rd}"].append(dewpoint)
-            wind_mph = round(wind * 0.621371, 1)
+            bm_mph = round(wind * 0.621371, 1)   # best_match (km/h -> mph)
+            blend = _blend_by_time.get(dt_obj)
+            wind_mph = round(blend, 1) if blend is not None else bm_mph
             wind_data[f"wind_{rd}"].append(wind_mph)
             dew_by_round[rd].append(round(dewpoint))
             wind_by_round[rd].append(round(wind_mph))
+            wind_bm_by_round[rd].append(bm_mph)
+
+# Model comparison (golf-window averages)
+if _blend_by_time:
+    print("\n*** Wind: best_match vs multi-model blend (6 AM - 8 PM avg) ***")
+    for rd in range(1, 5):
+        bm, bl = wind_bm_by_round.get(rd, []), wind_by_round.get(rd, [])
+        if bm and bl:
+            print(f"  R{rd}: best_match {sum(bm)/len(bm):.1f} mph -> blend {sum(bl)/len(bl):.1f} mph")
 
 # Print raw values
 print("\n*** Raw Dewpoint Values ***")
