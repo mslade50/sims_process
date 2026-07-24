@@ -4533,6 +4533,8 @@ def main():
     parser.add_argument("--use-python", action="store_true",
                         help="Use the legacy Python sim draws instead of the Rust sims_kernel "
                              "(the Rust cascade + score-card draws are the production default)")
+    parser.add_argument("--no-skew-cal", action="store_true",
+                        help="Skip the round-score skew calibration top-up (skew_calibration.py)")
     parser.add_argument("--sim-only", action="store_true",
                         help="Run round score sim, save sim_cache parquet, then exit (no pricing/email)")
     parser.add_argument("--price-only", action="store_true",
@@ -4706,6 +4708,13 @@ def main():
             sim_dict = sim_dict_legacy
         else:
             sim_dict = sim_dict_cf
+            # Top up within-player score skew to the empirical target (+0.26):
+            # the category sum CLT-washes skew to ~+0.12, leaving the sim's
+            # median ~0.05 too pessimistic vs reality. Applied before the
+            # cache save so --price-only / --reprice inherit calibrated draws.
+            if not args.no_skew_cal:
+                from skew_calibration import calibrate_round_skew
+                sim_dict = calibrate_round_skew(sim_dict)
 
         # Persist sim_dict so future --price-only / --reprice runs can skip the sim
         save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)

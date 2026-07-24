@@ -26,6 +26,7 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 - Weather delta distributed as 0.35 OTT, 0.35 APP, 0.15 ARG, 0.15 PUTT
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
 - Per-category course multipliers come from `sg_category_event_profiles.csv` — computed for each new course via `scoring_baseline.py` variance analysis
+- **Round-score skew calibration** (`skew_calibration.py`): summing 4 category draws CLT-washes skew to ~+0.12 vs the empirical within-player +0.26 (score space; blowups drag the mean UP — a player's median round is ~0.11 better than his mean). `round_sim.py` tops up the catfirst draws post-sim (dither → CF reshape → stochastic rounding; monotone, preserves per-player mean/std and the copula). Applied before the cache save so `--price-only`/`--reprice` inherit it; disable with `--no-skew-cal`. Do NOT instead inflate `course_cat_skew` inputs — the needed OTT ≈ −1.9 puts Cornish–Fisher past its monotone fold. Mean-calibration (expected_avg) stays the anchor; the median falls out of the shape.
 
 **Supporting analysis files** (in `archive/`, not part of weekly pipeline):
 - `archive/sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events
