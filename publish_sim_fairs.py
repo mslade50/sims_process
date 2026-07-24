@@ -1291,10 +1291,14 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                    env=env).returncode != 0:
                 raise RuntimeError(f"update-index failed for {fp}")
         tree = git("write-tree", env=env).stdout.strip()
-        commit = git("commit-tree", tree, "-p", base, "-m",
-                     "sim_fairs: update model fairs + round samples").stdout.strip()
+        ct = git("commit-tree", tree, "-p", base, "-m",
+                 "sim_fairs: update model fairs + round samples")
+        commit = ct.stdout.strip()
         if not commit:
-            raise RuntimeError("commit-tree failed")
+            # surface git's stderr (e.g. 'Committer identity unknown' on CI
+            # runners with no user.name/email) instead of a bare failure
+            raise RuntimeError(
+                f"commit-tree failed: {(ct.stderr or '').strip()[:160]}")
         p = git("push", "origin", f"{commit}:main")
         if p.returncode == 0:
             logger.info(f"Pushed {', '.join(blobs)} to origin/main")
