@@ -350,6 +350,11 @@ def build_rows():
 
     # --- Weather Coefficients ---
     add("Weather Coeff", "dew_calculation", BASE_DEW_CALCULATION, round(sim_inputs.dew_calculation, 4))
+
+    from api_utils import compute_dew_factor
+    course_dew = compute_dew_factor(sim_inputs.course_id, round(sim_inputs.dew_calculation, 4))
+    add("Weather Coeff", "course_dew_coef", BASE_DEW_CALCULATION, course_dew,
+        "dew_test.csv EB-shrunk per-course slope; falls back to sim_inputs blend")
     add("Weather Coeff", "baseline_wind", BASE_BASELINE_WIND, sim_inputs.baseline_wind)
 
     course_wind_eff, cw_note = _lookup_course_wind_effect(sim_inputs.event_ids)
