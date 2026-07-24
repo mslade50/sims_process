@@ -72,6 +72,10 @@ jobs:
         # _tee_groups needs DataGolf for real tee-time threesomes; without it the
         # 3-ball publish silently returns no groups.
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        # publish_sim_fairs imports sim_inputs -> coeff_loader, which needs sheet
+        # credentials; without this env it falls back to credentials.json (absent
+        # in CI) and the whole publish step dies (broke every run 7/17-7/24).
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python publish_sim_fairs.py --round-h2h-only
     - name: Telegram on failure
       if: failure()
