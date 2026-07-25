@@ -579,7 +579,10 @@ def _totals_r1(df):
     df["ott_adj"] = df.get("ott_adj", 0)
     df["putt_adj"] = df.get("putt_adj", 0)
 
-    # Residual cap logic (from live_stats.py)
+    # Residual cap logic (from live_stats.py), plus a -0.5 floor: the concave
+    # quadratics run away negative on blow-up rounds (low bucket at resid -10
+    # would give -1.5), while empirically R1 resid < -6 mean-reverts -0.507
+    # (PGA 2019-2026, n=578). Mirrors the R2 layer's floor.
     df["tot_resid_adj"] = df["residual_adj"] + df["residual2_adj"]
     df["tot_resid_adj"] = np.minimum(
         np.where(
@@ -588,7 +591,7 @@ def _totals_r1(df):
             df["tot_resid_adj"],
         ),
         0.5,
-    )
+    ).clip(-0.5)
 
     # Persist R1's category-SG piece so the R2 run can undo it when the
     # avg-based category terms replace it (original live_stats_r2.py read

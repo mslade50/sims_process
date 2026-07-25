@@ -708,7 +708,9 @@ if not args.price_only:
 
         tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
         mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-        tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
+        # -0.5 floor: parity with live_stats_engine _totals_r1 / Rust kernel
+        tot_resid_adj_r1 = np.maximum(
+            np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), -0.5)
 
         ott_adj_r1  = ott_r1  * C[:, [0]]
         putt_adj_r1 = putt_r1 * C[:, [3]]
