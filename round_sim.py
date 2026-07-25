@@ -825,8 +825,10 @@ def simulate_remaining_rounds(
         # the all-True mask is correct. The Rust kernel assumes the same.
         pass
 
-    # R2 -> R3 skill update
-    resid_r2 = sg_r2 - updated_skill_r2
+    # R2 -> R3 skill update. Residual capped at +6 before the cubic: beyond
+    # training support it explodes positive (parity: live_stats_engine.py
+    # RESID_FIX_CAP and the Rust kernel).
+    resid_r2 = np.minimum(sg_r2 - updated_skill_r2, 6.0)
     resid2_r2 = resid_r2 ** 2
     resid3_r2 = resid_r2 ** 3
 
@@ -885,10 +887,12 @@ def simulate_remaining_rounds(
         adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
 
     shape2 = (n_players, num_sims)
-    tot_resid_adj_r2 = (
+    # -0.5 lower clip: parity with live_stats_engine tot_resid_adj / Rust kernel
+    tot_resid_adj_r2 = np.maximum(
         ensure_array(adj_sum.get('residual_adj', 0.0), shape2) +
         ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
-        ensure_array(adj_sum.get('residual3_adj', 0.0), shape2)
+        ensure_array(adj_sum.get('residual3_adj', 0.0), shape2),
+        -0.5,
     )
     tot_sg_adj_r2 = (
         ensure_array(adj_sum.get('avg_ott_adj', 0.0), shape2) +

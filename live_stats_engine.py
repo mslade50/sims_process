@@ -81,6 +81,11 @@ from api_utils import (
 
 API_KEY = "c05ee5fd8f2f3b14baab409bd83c"
 
+# Upper cap on the R2 residual fed into the R2->R3 fix-layer cubic.
+# Must match round_sim.py / new_sim.py and the Rust kernel (round_cascade.rs,
+# cascade.rs).
+RESID_FIX_CAP = 6.0
+
 # Wind/dewpoint arrays indexed by round (1-based; index 0 unused)
 # Populated at runtime from Google Sheet config (_apply_sheet_overrides)
 WIND_ARRAYS = {1: [], 2: [], 3: [], 4: []}
@@ -166,7 +171,7 @@ ROUND_BUCKETS = {1: R1_BUCKETS, 2: R2_BUCKETS, 3: R3_BUCKETS, 4: R4_BUCKETS}
 # Column mapping: coefficient key → actual DataFrame column name
 _R1_COL_MAP = {"residual": "residual", "residual2": "residual2", "ott": "sg_ott", "putt": "sg_putt"}
 _R2_COL_MAP = {
-    "residual": "residual", "residual2": "residual2", "residual3": "residual3",
+    "residual": "residual_capped", "residual2": "residual2", "residual3": "residual3",
     "avg_ott": "sg_ott_avg", "avg_putt": "sg_putt_avg", "avg_app": "sg_app_avg",
     "avg_arg": "sg_arg_avg", "delta_app": "sg_app_delta",
 }
@@ -444,8 +449,13 @@ def _residuals_r2(df):
         df["sg_total_adj"] - df["updated_pred"]
         + df["player_wind_benefit"] + df["player_dew_benefit"]
     )
-    df["residual2"] = df["residual"] ** 2
-    df["residual3"] = df["residual"] ** 3
+    # Cap the fix-layer input at +6: beyond the training support the cubic
+    # explodes positive (a +9.7 residual otherwise earns ~+0.9 SG), while
+    # empirically leaders at resid >= 6 keep mean-reverting ~-0.25 (2026-07-25
+    # PGA backtest, n=382). Raw residual is kept for the weather spline/exports.
+    df["residual_capped"] = df["residual"].clip(upper=RESID_FIX_CAP)
+    df["residual2"] = df["residual_capped"] ** 2
+    df["residual3"] = df["residual_capped"] ** 3
     return df
 
 
@@ -623,10 +633,12 @@ def _totals_r2(df):
     else:
         df["r1_sg_adj_undo"] = 0.0
 
-    # Total adjustment = residual components + SG components + R1 undo
-    # Explicitly listed to avoid catching sg_total_adj (which is raw data, not an adjustment)
+    # Total adjustment = clipped residual total + SG components + R1 undo.
+    # Uses tot_resid_adj (not the raw residual components) so the -0.5 lower
+    # clip actually reaches updated_pred_r3 — the raw components previously
+    # bypassed it.
     adj_components = [
-        "residual_adj", "residual2_adj", "residual3_adj",
+        "tot_resid_adj",
         "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj", "delta_app_adj",
         "r1_sg_adj_undo",
     ]
