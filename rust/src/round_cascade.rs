@@ -235,9 +235,11 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
             if tr > 0.5 {
                 tr = 0.5;
             }
-            // -0.5 floor: parity with live_stats_engine _totals_r1.
-            if tr < -0.5 {
-                tr = -0.5;
+            // Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
+            // live_stats_engine _totals_r1.
+            let floor = if resid >= -8.0 && resid < -6.0 { -0.75 } else { -0.5 };
+            if tr < floor {
+                tr = floor;
             }
             let sg_adj = cats_r1[k][0] * c.ott + cats_r1[k][3] * c.putt;
             sg_adj_r1[k] = sg_adj;

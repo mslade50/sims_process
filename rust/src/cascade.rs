@@ -273,9 +273,11 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             if tot_resid_adj > 0.5 {
                 tot_resid_adj = 0.5;
             }
-            // -0.5 floor: parity with live_stats_engine _totals_r1.
-            if tot_resid_adj < -0.5 {
-                tot_resid_adj = -0.5;
+            // Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
+            // live_stats_engine _totals_r1.
+            let floor = if resid >= -8.0 && resid < -6.0 { -0.75 } else { -0.5 };
+            if tot_resid_adj < floor {
+                tot_resid_adj = floor;
             }
             let ott_adj = cats_r1[k][0] * c.ott;
             let putt_adj = cats_r1[k][3] * c.putt;
