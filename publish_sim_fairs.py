@@ -275,6 +275,21 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
     # simulated_probs.csv. See _live_dump_is_current().
     full = (_find("simulated_probs_live.csv", "simulated_probs.csv")
             if use_live else _find("simulated_probs.csv"))
+    # When the current LIVE full-field dump is the primary source, its player set
+    # IS the remaining field (post-cut it holds only survivors). Remember it so
+    # the pre-event layers below can backfill probs for players the live sim
+    # covered sparsely, but can never RESURRECT players who are out of the
+    # event — the pre-event-refill bug that ships winner mass > 1 (see
+    # _check_outright_mass). Guard on a sane row count so a truncated dump
+    # can't nuke the field.
+    live_field = None
+    if full is not None and use_live and full.name == "simulated_probs_live.csv":
+        try:
+            _live_names = pd.read_csv(full)["player_name"]
+            if len(_live_names) >= 20:
+                live_field = {_norm(n, repl) for n in _live_names}
+        except Exception:
+            live_field = None
     if full is not None:
         _ingest(full, col, out)
         _ingest(full, col_nodh, out_nodh)
@@ -311,6 +326,21 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
                         if p > 0:
                             out_nodh[_mkt].setdefault(_norm(nm, repl), round(float(min(p, 1.0)), 5))
                 logger.info(f"outrights_nodh top-N derived from {rk_ndh.name} [{ndh_col}]")
+
+    # Drop pre-event refills for players outside the live field (cut/WD).
+    # setdefault stops later layers overwriting live values but not ADDING
+    # eliminated players the live dump (rightly) no longer carries.
+    if live_field is not None:
+        dropped = 0
+        for target in (out, out_nodh):
+            for mkt in ("winner", "top_5", "top_10", "top_20"):
+                if mkt in target:
+                    before = len(target[mkt])
+                    target[mkt] = {k: v for k, v in target[mkt].items() if k in live_field}
+                    dropped += before - len(target[mkt])
+        if dropped:
+            logger.info(f"outrights: dropped {dropped} pre-event refill entries for "
+                        f"players outside the live field ({len(live_field)} remaining)")
 
     logger.info("outrights: " + ", ".join(f"{k}={len(v)}" for k, v in out.items() if k != "make_cut"))
     logger.info("outrights_nodh: " + ", ".join(f"{k}={len(v)}" for k, v in out_nodh.items()))
