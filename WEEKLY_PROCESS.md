@@ -257,7 +257,11 @@ python scoring_baseline.py
 
 **Requires**: `pre_course_fit_{tourney}.csv` (from pre-tournament pipeline) for field strength. Without it, field strength defaults to 0.
 
-**How the backup uses these**: If the nightly backup detects that the Sheet `round` is stale, it copies `expected_score_rN`, `wind_rN`, `dew_rN` into the primary fields and runs the pipeline. If you've already updated the Sheet manually, the backup won't overwrite your values.
+**How automation uses these**: The event-driven midweek workflow refreshes
+`wind_rN`/`dew_rN`, advances the Sheet `round`, recomputes
+`expected_score_rN`, synchronizes the target value to `expected_score_1`, and
+runs the live engine plus round sim. The nightly workflow remains a backup for
+an already-correct Sheet round; it does not advance a stale round pointer.
 
 ### 2.1c Push Tournament Config to Sheet
 ```bash
@@ -425,9 +429,50 @@ python round_sim.py
 - Sends email with filtered edges
 - **Auto-saves to Google Sheets** (Round Matchups tab)
 - **Auto-writes to Parquet ledger**
+
+### 4.3a Automated Midweek Transition
+
+`.github/workflows/midweek-round-automation.yml` listens for the odds board's
+`sentinel-scrape-complete` dispatch. It advances and runs a round only when:
+
+- `round_matchups_latest.json` is fresh, stamped for R2-R4, and has at least
+  five valid event-scoped matchups from both BetCris and BetOnline
+- the target round is exactly the next safe transition from the Sheet
+- DataGolf has at least ten completed-round stat rows and ten posted
+  next-round tee times
+- the target round is single-course (multi-course rounds remain manual)
+- all remaining rounds have complete 6 AM-8 PM Open-Meteo dewpoint and
+  ECMWF IFS/AIFS + NOAA AIGFS wind arrays
+
+The workflow then writes the remaining weather grids, updates the primary
+`wind`/`dew` fields, increments `round`, runs
+`live_stats_engine.py --automation`, and runs the full `round_sim.py`.
+
+Durable `automation_*` rows in `round_config` make duplicate scraper dispatches
+no-ops and let a failed run resume. The nightly simulation and transition
+workflow share one GitHub Actions concurrency group so two full simulations
+cannot mutate round state simultaneously. Lightweight repricing remains in its
+own queue. The readiness gate runs on GitHub-hosted infrastructure; the live
+engine and round simulation run on the Windows self-hosted runner labeled
+`golf-sim`. See `.github/self-hosted-runner/README.md` for setup and
+availability behavior.
+
+Manual preflight:
+
+```bash
+python midweek_round_automation.py --dry-run
+```
 - Uses single Google auth (1 connection, not 2)
 
-**Backup & reprice cache:** `round_sim.py` automatically triggers the `nightly-round-sim.yml` GitHub Actions workflow after every successful local sim. This runs the sim on the GitHub runner and saves the cache to Actions cache, so the overnight `reprice.yml` workflow can load it and re-price with fresh odds for CLV checking. The nightly workflow also runs on schedule at 9:45 PM EST (Thu/Fri/Sat) as a fallback — it's fully self-sufficient: auto-detects the completed round from DataGolf, updates the Sheet's primary fields from per-round fallbacks (set during Phase 2.1b), and runs `live_stats_engine.py` -> `round_sim.py`. If bets already exist, it exits cleanly.
+**Backup & reprice cache:** `round_sim.py` automatically triggers the
+`nightly-round-sim.yml` GitHub Actions workflow after every successful local
+sim. This runs the sim on the GitHub runner and saves the cache to Actions
+cache, so the overnight `reprice.yml` workflow can load it and re-price with
+fresh odds for CLV checking. The nightly workflow also runs on schedule at
+9:45 PM EST (Thu/Fri/Sat) as a fallback: it reads the already-current completed
+round from the Sheet, runs `live_stats_engine.py` and `round_sim.py --sim-only`,
+then publishes the compact H2H fair table. If the Sheet round is stale, the
+event-driven midweek workflow must advance it first.
 
 ---
 

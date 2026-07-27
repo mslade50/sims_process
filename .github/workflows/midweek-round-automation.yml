@@ -1,0 +1,176 @@
+name: Midweek Round Automation
+
+on:
+  repository_dispatch:
+    types: [sentinel-scrape-complete]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preflight only: do not update Sheets or run simulations"
+        type: boolean
+        default: true
+
+concurrency:
+  group: round-sim
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.readiness.outputs.ready }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install gate dependencies
+        run: |
+          pip install "pandas>=2.1,<2.3" "numpy>=1.24,<2.0" \
+            "python-dotenv>=1.0,<2.0" "gspread>=5.10,<6.0" \
+            "google-auth>=2.23,<3.0"
+
+      - name: Fetch fresh round-matchup odds
+        env:
+          GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        run: |
+          mkdir -p permanent_data/scraped_odds
+          curl -fLsS --max-time 30 -H "Authorization: token $GH_TOKEN" \
+            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/round_matchups_latest.json" \
+            -o permanent_data/scraped_odds/round_matchups_latest.json
+          python -m json.tool permanent_data/scraped_odds/round_matchups_latest.json >/dev/null
+
+      - name: Check whether a full transition is needed
+        id: readiness
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: |
+          set +e
+          python midweek_round_automation.py --gate-only
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [ "$RC" -eq 78 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            exit "$RC"
+          fi
+
+      - name: Telegram on gate failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
+            "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            -d chat_id="$TELEGRAM_CHAT_ID" \
+            -d text="FAILED: midweek-round-automation gate: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            >/dev/null || true
+
+  advance-round:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    # The readiness gate stays in GitHub's cloud. Only the CPU-heavy live
+    # engine and simulation run on McKinley's Windows machine.
+    runs-on: [self-hosted, Windows, X64, golf-sim]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          # This is the runner's isolated _work checkout, not the interactive
+          # C:\Users\...\dev\sims_process working tree.
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install Python dependencies
+        shell: powershell
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install pytz
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install sims_kernel Rust wheel
+        shell: powershell
+        run: |
+          python -m pip install --force-reinstall --no-deps `
+            "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
+          python -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
+
+      - name: Fetch fresh round-matchup odds
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        run: |
+          $oddsDir = Join-Path $PWD "permanent_data\scraped_odds"
+          $oddsFile = Join-Path $oddsDir "round_matchups_latest.json"
+          New-Item -ItemType Directory -Path $oddsDir -Force | Out-Null
+          $headers = @{ Authorization = "token $env:GH_TOKEN" }
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/round_matchups_latest.json" `
+            -Headers $headers `
+            -OutFile $oddsFile `
+            -TimeoutSec 30
+          python -m json.tool $oddsFile | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run guarded midweek pipeline
+        shell: powershell
+        env:
+          DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          $automationArgs = @()
+          if ("${{ inputs.dry_run }}" -eq "true") {
+            $automationArgs += "--dry-run"
+          }
+          python midweek_round_automation.py @automationArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Telegram on failure
+        if: failure()
+        shell: powershell
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if ($env:TELEGRAM_BOT_TOKEN -and $env:TELEGRAM_CHAT_ID) {
+            $body = @{
+              chat_id = $env:TELEGRAM_CHAT_ID
+              text = "FAILED: midweek-round-automation workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+            try {
+              Invoke-RestMethod `
+                -Uri "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/sendMessage" `
+                -Method Post `
+                -Body $body `
+                -TimeoutSec 15 | Out-Null
+            } catch {
+              Write-Warning "Telegram failure notification could not be sent: $($_.Exception.Message)"
+            }
+          }
