@@ -206,6 +206,106 @@ def get_spreadsheet():
     return _SPREADSHEET_CACHE
 
 
+def get_round_config_params(spreadsheet=None):
+    """Return the round_config A:B parameter area as a lower-cased dict."""
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet("round_config")
+    params = {}
+    for row in ws.get("A:B"):
+        if not row or not str(row[0]).strip():
+            continue
+        key = str(row[0]).strip().lower()
+        value = str(row[1]).strip() if len(row) > 1 else ""
+        params[key] = value
+    return params
+
+
+def update_round_config_params(updates, notes=None, spreadsheet=None):
+    """
+    Batch-update values in the round_config A:C parameter area.
+
+    Missing parameters are appended. ``notes`` may map parameter names to the
+    explanatory text written in column C. Returns the worksheet so callers can
+    reuse the same connection for weather-grid writes.
+    """
+    if not updates:
+        return None
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet("round_config")
+    all_values = ws.get("A:C")
+    param_rows = {}
+    for idx, row in enumerate(all_values, start=1):
+        if row and str(row[0]).strip():
+            param_rows[str(row[0]).strip().lower()] = idx
+
+    notes = {str(k).strip().lower(): v for k, v in (notes or {}).items()}
+    next_row = len(all_values) + 1
+    cells = []
+    for raw_name, raw_value in updates.items():
+        name = str(raw_name).strip()
+        key = name.lower()
+        row = param_rows.get(key)
+        if row is None:
+            row = next_row
+            next_row += 1
+            param_rows[key] = row
+            cells.append(gspread.Cell(row=row, col=1, value=name))
+        value = "" if raw_value is None else str(raw_value)
+        cells.append(gspread.Cell(row=row, col=2, value=value))
+        if key in notes:
+            cells.append(gspread.Cell(row=row, col=3, value=str(notes[key])))
+
+    ws.update_cells(cells, value_input_option="USER_ENTERED")
+    print(f"  [storage] Updated {len(updates)} round_config parameter(s)")
+    return ws
+
+
+def update_round_config_weather(weather_by_round, start_round,
+                                spreadsheet=None):
+    """
+    Batch-write 6 AM-8 PM wind/dew arrays for start_round through R4.
+
+    The grid columns mirror humidity.py:
+      wind: F/J/N/R (R1-R4)
+      dew:  G/K/O/S (R1-R4)
+
+    Each written array must contain exactly 15 values. Completed-round columns
+    are deliberately left untouched so the actuals audit retains its forecast.
+    """
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet("round_config")
+
+    wind_cols = {1: 6, 2: 10, 3: 14, 4: 18}
+    dew_cols = {1: 7, 2: 11, 3: 15, 4: 19}
+    cells = []
+    for rnd in range(int(start_round), 5):
+        values = weather_by_round.get(rnd) or {}
+        wind = list(values.get("wind") or [])
+        dew = list(values.get("dew") or [])
+        if len(wind) != 15 or len(dew) != 15:
+            raise ValueError(
+                f"R{rnd} weather must have 15 wind and 15 dew values "
+                f"(got wind={len(wind)}, dew={len(dew)})"
+            )
+        for offset, value in enumerate(wind):
+            cells.append(gspread.Cell(
+                row=3 + offset, col=wind_cols[rnd], value=value
+            ))
+        for offset, value in enumerate(dew):
+            cells.append(gspread.Cell(
+                row=3 + offset, col=dew_cols[rnd], value=value
+            ))
+
+    if not cells:
+        raise ValueError(f"No future-round weather to write from R{start_round}")
+    ws.update_cells(cells, value_input_option="USER_ENTERED")
+    print(f"  [storage] Updated {len(cells)} weather cells from R{start_round}-R4")
+    return ws
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab Management
 # ══════════════════════════════════════════════════════════════════════════════

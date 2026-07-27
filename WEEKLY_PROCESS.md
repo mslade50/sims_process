@@ -1,13 +1,14 @@
 # Weekly Tournament Process: Step-by-Step Guide
 
-Complete operational playbook for running the golf simulation system from Sunday cleanup through post-tournament grading.
+Complete operational playbook for running the golf simulation system from Monday grading and cleanup through the next event.
 
 ---
 
-## Phase 0: Sunday Night Cleanup & Monday Grading
+## Phase 0: Monday Grading & Cleanup
 
 ### 0.1 Automatic Cleanup (GitHub Action)
-The `weekly-cleanup.yml` workflow runs Sunday at midnight UTC. It deletes:
+The `weekly-cleanup.yml` workflow runs Monday at 17:00 UTC (noon EST / 1 PM
+EDT), after the grading retries. It deletes:
 - All CSVs, Excel files, and tournament folders from the repo root
 - `permanent_data/` and `.py` files are preserved
 
@@ -19,8 +20,8 @@ ls *.csv *.xlsx  # should return nothing
 
 ### 0.2 Automatic Monday Grading (GitHub Action)
 The `monday-grading.yml` workflow runs the full grading pipeline automatically:
-- **Monday 9 AM EST** (14:00 UTC) — primary run
-- **Monday 10 AM EST** (15:00 UTC) — retry if DataGolf data wasn't ready
+- **Monday 14:00 UTC** (9 AM EST / 10 AM EDT) — primary run
+- **Monday 15:00 UTC** (10 AM EST / 11 AM EDT) — retry if DataGolf data wasn't ready
 
 **What it does** (`monday_grading.py`):
 1. Detects last completed event from DataGolf API
@@ -257,7 +258,11 @@ python scoring_baseline.py
 
 **Requires**: `pre_course_fit_{tourney}.csv` (from pre-tournament pipeline) for field strength. Without it, field strength defaults to 0.
 
-**How the backup uses these**: If the nightly backup detects that the Sheet `round` is stale, it copies `expected_score_rN`, `wind_rN`, `dew_rN` into the primary fields and runs the pipeline. If you've already updated the Sheet manually, the backup won't overwrite your values.
+**How automation uses these**: The event-driven midweek workflow refreshes
+`wind_rN`/`dew_rN`, advances the Sheet `round`, recomputes
+`expected_score_rN`, synchronizes the target value to `expected_score_1`, and
+runs the live engine plus round sim. The nightly workflow remains a backup for
+an already-correct Sheet round; it does not advance a stale round pointer.
 
 ### 2.1c Push Tournament Config to Sheet
 ```bash
@@ -425,9 +430,52 @@ python round_sim.py
 - Sends email with filtered edges
 - **Auto-saves to Google Sheets** (Round Matchups tab)
 - **Auto-writes to Parquet ledger**
+
+### 4.3a Automated Midweek Transition
+
+`.github/workflows/midweek-round-automation.yml` listens for the odds board's
+`sentinel-scrape-complete` dispatch. It advances and runs a round only when:
+
+- `round_matchups_latest.json` is fresh, stamped for R2-R4, and has at least
+  five valid event-scoped matchups from both BetCris and BetOnline
+- the target round is exactly the next safe transition from the Sheet
+- DataGolf has at least ten completed-round stat rows and ten posted
+  next-round tee times
+- the target round is single-course (multi-course rounds remain manual)
+- all remaining rounds have complete 6 AM-8 PM Open-Meteo dewpoint and
+  ECMWF IFS/AIFS + NOAA AIGFS wind arrays
+
+The workflow uses `course_lat_lon` from the Sheet and asks Open-Meteo to
+resolve the course-local IANA timezone automatically. It then writes the
+remaining weather grids, updates the primary
+`wind`/`dew` fields, increments `round`, runs
+`live_stats_engine.py --automation`, and runs the full `round_sim.py`.
+
+Durable `automation_*` rows in `round_config` make duplicate scraper dispatches
+no-ops and let a failed run resume. The transition, nightly backup, manual sim,
+and runner smoke workflows share one GitHub Actions concurrency group so two
+full simulations cannot mutate round state simultaneously. Lightweight
+repricing remains in its own queue. The readiness gate runs on GitHub-hosted
+infrastructure; the live engine and round simulation run on the Windows
+self-hosted runner labeled `golf-sim`. See
+`.github/self-hosted-runner/README.md` for setup and availability behavior.
+
+Manual preflight:
+
+```bash
+python midweek_round_automation.py --dry-run
+```
 - Uses single Google auth (1 connection, not 2)
 
-**Backup & reprice cache:** `round_sim.py` automatically triggers the `nightly-round-sim.yml` GitHub Actions workflow after every successful local sim. This runs the sim on the GitHub runner and saves the cache to Actions cache, so the overnight `reprice.yml` workflow can load it and re-price with fresh odds for CLV checking. The nightly workflow also runs on schedule at 9:45 PM EST (Thu/Fri/Sat) as a fallback — it's fully self-sufficient: auto-detects the completed round from DataGolf, updates the Sheet's primary fields from per-round fallbacks (set during Phase 2.1b), and runs `live_stats_engine.py` -> `round_sim.py`. If bets already exist, it exits cleanly.
+**Backup & reprice cache:** `round_sim.py` automatically triggers the
+`nightly-round-sim.yml` GitHub Actions workflow after every successful local
+sim. This runs the sim on the Windows self-hosted runner and saves the cache to Actions
+cache, so the overnight `reprice.yml` workflow can load it and re-price with
+fresh odds for CLV checking. The nightly workflow also runs on schedule at
+02:45 UTC (9:45 PM EST / 10:45 PM EDT on Thu/Fri/Sat) as a fallback: it reads the already-current completed
+round from the Sheet, runs `live_stats_engine.py` and `round_sim.py --sim-only`,
+then publishes the compact H2H fair table. If the Sheet round is stale, the
+event-driven midweek workflow must advance it first.
 
 ---
 
@@ -594,6 +642,8 @@ All parameters go in the `round_config` tab of the `golf_sims` Google Sheet (Col
 | `wind_override` | float | 0 = use computed blend (blank = use sim_inputs) |
 | `course_codes` | comma-sep | Course codes from API (e.g., "PB,SG") |
 | `course_pars` | comma-sep | Par values matching course_codes order |
+| `course_lat_lon` | `lat,lon` | Primary course coordinates used for weather and timezone |
+| `course_timezone` | IANA name | Auto-resolved by Open-Meteo from `course_lat_lon` |
 | `expected_score_r1` | float | Pre-tourney R1 scoring estimate (backup fallback) |
 | `expected_score_r2` | comma-sep | R2 expected scoring (multi-course: comma-sep, backup fallback) |
 | `expected_score_r3` | comma-sep | R3 expected scoring (backup fallback) |
@@ -647,7 +697,7 @@ python push_dashboard_data.py --dry-run          # Preview only
 python monday_grading.py                         # Full pipeline: grade + diagnostic + deploy
 python monday_grading.py --dry-run               # Preview checks only
 
-# Nightly round sim backup (automated Thu-Sat 9:45 PM EST, or run manually)
+# Nightly round sim backup (automated at 02:45 UTC Thu-Sat nights, or run manually)
 python nightly_round_sim.py                      # Check + run if no bets stored yet
 python nightly_round_sim.py --dry-run            # Preview checks only
 

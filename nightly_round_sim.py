@@ -1,9 +1,10 @@
 """
-nightly_round_sim.py - Self-Sufficient Backup Round Simulation Pipeline
+nightly_round_sim.py - Backup Round Simulation Pipeline
 
-Fully autonomous backup that auto-detects the completed round from DataGolf,
-reads pre-tournament weather/scoring fallbacks from the Sheet, updates the
-Sheet's primary fields, and runs the pipeline. No manual Sheet update needed.
+Reads the already-current completed round from the Google Sheet and builds the
+next-round simulation cache. Round advancement and fresh weather/scoring
+updates are handled by midweek_round_automation.py; this scheduled job remains
+a backup once the Sheet pointer is correct.
 
 Pipeline: live_stats_engine.py -> round_sim.py
 
@@ -13,7 +14,7 @@ Exit codes:
     2 = unexpected error
 
 Usage:
-    python nightly_round_sim.py              # Auto-detect round from DataGolf
+    python nightly_round_sim.py              # Read completed round from Sheet
     python nightly_round_sim.py --dry-run    # Preview checks only
 
 Scheduled via .github/workflows/nightly-round-sim.yml:
