@@ -146,14 +146,12 @@ player_var = 2                         # Higher = more variance in sim
 ```
 
 **Course category variance multipliers (for `new_sim.py`):**
-```python
-COURSE_CAT_MULTS = {
-    'sg_ott': 1.24,                    # From scoring_baseline.py variance analysis
-    'sg_app': 1.09,                    # actual_category_std / field_expected_category_std
-    'sg_arg': 1.10,                    # >1.0 = course amplifies, <1.0 = compresses
-    'sg_putt': 1.01,
-}
-```
+Auto-managed — `scoring_baseline.py` computes them from its SG variance analysis
+(`actual_category_std / field_expected_category_std`; >1.0 = course amplifies,
+<1.0 = compresses) and writes them to the `cat_mult_*` / `cat_skew_*` param rows
+in the Sheet's `round_config` tab. `new_sim.py` reads `COURSE_CAT_MULTS` from the
+sheet config at runtime (`sheet_config.py`). Override the sheet cells after
+`scoring_baseline.py` only for a deliberate manual adjustment.
 
 **Name replacements (add any new players with naming issues):**
 ```python
@@ -323,7 +321,7 @@ python new_sim.py
 
 **Simx edge decomposition:** The email reports a **Simx** column for matchups — this is the edge difference between the full category-first sim and a simple Normal CDF analytical model (`edge_on - edge_no_wx`). It captures the value added by skewness, correlation, and course variance multipliers. Stored as `wx_edge` in Sheets and the Parquet ledger for tracking. When weather arrays are populated, the true weather contribution can be isolated as `Wx = total_wx_edge - Simx_baseline` (where Simx_baseline is from a no-weather run).
 
-**Weekly setup** — update `COURSE_CAT_MULTS` in Google Sheet `round_config` tab when you change courses. Values come from the SG variance analysis table in `scoring_baseline.py` output (or `sg_category_event_profiles.csv`).
+**Weekly setup** — `COURSE_CAT_MULTS` is auto-set: `scoring_baseline.py` writes the `cat_mult_*`/`cat_skew_*` param rows to the Sheet's `round_config` tab when it runs, and `new_sim.py` reads them from the sheet config. Just make sure `scoring_baseline.py` ran for the current course before simming; hand-edit the sheet cells only to deliberately override.
 
 ### 3.2 Market Regression
 ```bash
@@ -720,7 +718,7 @@ python sg_diagnostic.py --report                 # Cross-event trends
 2. Check weather arrays have 15 elements each
 3. Run with `num_sims=1000` first to validate
 4. Check `model_predictions_r1.csv` has expected players and reasonable `my_pred` values
-5. Verify `COURSE_CAT_MULTS` in Google Sheet `round_config` tab are set for this course
+5. Verify the `cat_mult_*` rows in the Sheet's `round_config` tab reflect this course — if stale, re-run `scoring_baseline.py` (it auto-writes them)
 
 ### Bets not saving to Sheets
 1. Check `is_valid_run_time()` — storage only works after Monday 3 PM EST
