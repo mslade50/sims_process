@@ -17,7 +17,7 @@ from datetime import datetime
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
-PAR           = 71
+PAR           = 72
 CUT_LINE      = 65
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
@@ -37,9 +37,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [525]
-course_id = 883
-tourney = '3m_open'
+event_ids = [524]
+course_id = 876
+tourney = 'rocket'
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -50,15 +50,15 @@ category_profile_shrinkage_enabled = False
 
 # Completed events to ingest before the weekly model run. Keep these separate
 # from event_ids, which identifies the upcoming simulation slate.
-ingest_event_ids = [100, 522]
+ingest_event_ids = [525]
 ingest_tour = 'pga'
 ingest_years = [2026]
-course_par = 71
+course_par = 72
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
 #for multiple course setups in the showdown sim
-course_id_1=883
+course_id_1=876
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -106,9 +106,6 @@ name_replacements = {
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {
-    # tiny-sample fallback outliers; placeholder until DG preds replace them
-    'cowan, ryder': -2.0,
-    'campbell, thomas': -2.0,
 }
 
 overrides_sd = {
