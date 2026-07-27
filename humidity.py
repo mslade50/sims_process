@@ -11,7 +11,7 @@ try:
 except ImportError:
     lat_override = None
     lon_override = None
-from sheets_storage import get_spreadsheet
+from sheets_storage import get_spreadsheet, update_round_config_params
 from api_utils import fetch_historical_hourly_wind, compute_dew_factor
 
 load_dotenv()
@@ -178,7 +178,7 @@ params = {
     "longitude": LONGITUDE,
     "hourly": ["dewpoint_2m", "wind_speed_10m"],
     "temperature_unit": "fahrenheit",
-    "timezone": "America/New_York",
+    "timezone": "auto",
     "start_date": START_DATE,
     "end_date": END_DATE,
 }
@@ -195,10 +195,10 @@ timestamps = data["hourly"]["time"]
 # for an hour it overrides the default (best_match) wind; per-hour fallback
 # to best_match otherwise. Dew stays on best_match.
 from api_utils import fetch_multimodel_wind
-# timezone must match the forecast call above (America/New_York) so the
-# hour keys align — NOT course-local.
+# ``auto`` resolves the course-local timezone from lat/lon. Both calls use
+# the same value so their local-hour keys align.
 _mm = fetch_multimodel_wind(LATITUDE, LONGITUDE, START_DATE, END_DATE,
-                            timezone="America/New_York")
+                            timezone="auto")
 _blend_by_time = {}
 if _mm is not None:
     _blend_by_time = {
@@ -425,44 +425,32 @@ def write_weather_to_sheet():
     else:
         print("  No cells to update")
 
-    # Write course_codes and dew_calculation to column B
-    all_values = ws.get("A:B")
-    param_rows = {}
-    for i, row in enumerate(all_values):
-        if row and row[0].strip():
-            param_rows[row[0].strip().lower()] = i + 1
-
-    if course_codes:
-        row_idx = param_rows.get("course_codes")
-        if row_idx:
-            ws.update_cell(row_idx, 2, ",".join(course_codes))
-            print(f"  course_codes -> {','.join(course_codes)}")
-
-    row_idx = param_rows.get("dew_calculation")
-    if row_idx:
-        ws.update_cell(row_idx, 2, str(round(dew_factor, 4)))
-        print(f"  dew_calculation -> {dew_factor:.4f}")
-
-    # Write course lat/lon so it's easy to copy into Windy
+    # Persist course metadata and weather coefficients in one batch. The Sheet's
+    # lat/lon is the live automation's primary coordinate source; Open-Meteo's
+    # resolved IANA timezone makes the 6 AM-8 PM arrays course-local.
     coord_str = f"{LATITUDE},{LONGITUDE}"
-    row_idx = param_rows.get("course_lat_lon")
-    if row_idx:
-        ws.update_cell(row_idx, 2, coord_str)
-    else:
-        next_row = len(all_values) + 1
-        ws.update_cell(next_row, 1, "course_lat_lon")
-        ws.update_cell(next_row, 2, coord_str)
+    course_timezone = data.get("timezone") or "auto"
+    param_updates = {
+        "dew_calculation": round(dew_factor, 4),
+        "course_lat_lon": coord_str,
+        "course_timezone": course_timezone,
+        "dewpoint_base": round(dewpoint_base, 1),
+    }
+    if course_codes:
+        param_updates["course_codes"] = ",".join(course_codes)
+    update_round_config_params(
+        param_updates,
+        notes={
+            "course_lat_lon": "Course coordinates used for weather/timezone",
+            "course_timezone": "Resolved by Open-Meteo from course_lat_lon",
+        },
+        spreadsheet=spreadsheet,
+    )
+    if course_codes:
+        print(f"  course_codes -> {','.join(course_codes)}")
+    print(f"  dew_calculation -> {dew_factor:.4f}")
     print(f"  course_lat_lon -> {coord_str}")
-
-    # Write dewpoint_base to config tab (used by live_stats_engine for actuals)
-    row_idx = param_rows.get("dewpoint_base")
-    if row_idx:
-        ws.update_cell(row_idx, 2, str(round(dewpoint_base, 1)))
-    else:
-        next_row = len(all_values) + 1
-        ws.update_cell(next_row, 1, "dewpoint_base")
-        ws.update_cell(next_row, 2, str(round(dewpoint_base, 1)))
-        all_values.append(["dewpoint_base", str(round(dewpoint_base, 1))])
+    print(f"  course_timezone -> {course_timezone}")
     print(f"  dewpoint_base -> {dewpoint_base:.1f}")
 
     # NOTE: wind_r1..wind_r4 and dew_r1..dew_r4 in the A:B params area are

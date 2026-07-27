@@ -6,9 +6,11 @@ from unittest.mock import patch
 from midweek_round_automation import (
     NotReady,
     PipelineFailure,
+    _load_course_coordinates,
     evaluate_odds_readiness,
     transition_action,
 )
+from sheet_config import _parse_course_lat_lon
 from sheets_storage import (
     update_round_config_params,
     update_round_config_weather,
@@ -196,6 +198,24 @@ class SheetUpdateTests(unittest.TestCase):
         self.assertEqual(values[(17, 19)], 44)
 
 
+class CourseCoordinateTests(unittest.TestCase):
+    def test_parses_valid_sheet_coordinates(self):
+        self.assertEqual(
+            _parse_course_lat_lon("45.16, -93.235"),
+            (45.16, -93.235),
+        )
+
+    def test_rejects_invalid_sheet_coordinates(self):
+        self.assertEqual(_parse_course_lat_lon("91,-93"), (None, None))
+        self.assertEqual(_parse_course_lat_lon("not coordinates"), (None, None))
+
+    def test_sheet_coordinates_take_precedence(self):
+        self.assertEqual(
+            _load_course_coordinates(999999, 45.16, -93.235),
+            (45.16, -93.235),
+        )
+
+
 class WeatherForecastTests(unittest.TestCase):
     def test_ai_wind_overrides_best_match_and_builds_15_hour_arrays(self):
         os.environ["COEFFS_FROM_CACHE"] = "1"
@@ -220,6 +240,7 @@ class WeatherForecastTests(unittest.TestCase):
 
             def json(self):
                 return {
+                    "timezone": "America/Chicago",
                     "hourly": {
                         "time": timestamps,
                         "dewpoint_2m": dew,
@@ -239,6 +260,7 @@ class WeatherForecastTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["ai_hours"], 60)
+        self.assertEqual(result["timezone"], "America/Chicago")
         for rnd in range(1, 5):
             self.assertEqual(result["ai_hours_by_round"][rnd], 15)
             self.assertEqual(result["rounds"][rnd]["wind"], [12.0] * 15)

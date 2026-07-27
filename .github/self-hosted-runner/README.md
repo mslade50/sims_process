@@ -26,6 +26,22 @@ Recommended setup:
 The service is a lightweight GitHub job listener, not an AI agent. No inbound
 port or public endpoint is required; it connects outbound to GitHub.
 
+## Read-only validation
+
+After registration or runner maintenance, manually dispatch
+`local-runner-smoke.yml`. It uses the same runner label and concurrency lock as
+the simulation workflows, then verifies:
+
+- Python dependencies and the Rust kernel
+- GitHub secret delivery and Google Sheet service-account access
+- DataGolf API access
+- the Sheet's `course_lat_lon` value and Open-Meteo course-local forecast
+- private scraped-odds access
+- repository push authorization via `git push --dry-run` (no branch is created)
+
+The smoke workflow does not update the Sheet, run a simulation, send email, or
+write to the repository.
+
 ## One-time registration
 
 GitHub requires a repository-owner registration token that expires after one

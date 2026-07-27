@@ -1496,25 +1496,36 @@ def refresh_dew_forecasts():
     from sheets_storage import get_spreadsheet
 
     try:
-        from sim_inputs import course_id as _cid
-    except ImportError:
-        print("  [dew_refresh] Cannot import course_id from sim_inputs")
+        from sheet_config import load_config
+
+        sheet_weather = load_config(verbose=False)
+        _cid = sheet_weather.get("course_id")
+        lat = sheet_weather.get("course_latitude")
+        lon = sheet_weather.get("course_longitude")
+    except Exception as exc:
+        print(f"  [dew_refresh] Could not read Sheet coordinates: {exc}")
         return
 
-    # Get coordinates
-    coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
-    if not os.path.exists(coords_csv):
-        print("  [dew_refresh] course_coordinates.csv not found")
-        return
+    # Sheet coordinates are primary. Fall back to the durable course lookup for
+    # older weeks that have not run the updated humidity.py yet.
+    if lat is None or lon is None:
+        coords_csv = os.path.join(
+            os.path.dirname(__file__),
+            "permanent_data",
+            "course_coordinates.csv",
+        )
+        if not os.path.exists(coords_csv):
+            print("  [dew_refresh] course_coordinates.csv not found")
+            return
 
-    coords_df = pd.read_csv(coords_csv)
-    coords_row = coords_df[coords_df["course_id"] == _cid]
-    if coords_row.empty:
-        print(f"  [dew_refresh] course_id {_cid} not found in coordinates")
-        return
+        coords_df = pd.read_csv(coords_csv)
+        coords_row = coords_df[coords_df["course_id"] == _cid]
+        if coords_row.empty:
+            print(f"  [dew_refresh] course_id {_cid} not found in coordinates")
+            return
 
-    lat = float(coords_row["lat"].iloc[0])
-    lon = float(coords_row["lon"].iloc[0])
+        lat = float(coords_row["lat"].iloc[0])
+        lon = float(coords_row["lon"].iloc[0])
 
     # Get round dates from DataGolf
     round_dates = get_round_dates()
@@ -1532,7 +1543,7 @@ def refresh_dew_forecasts():
         "longitude": lon,
         "hourly": "dewpoint_2m",
         "temperature_unit": "fahrenheit",
-        "timezone": "America/New_York",
+        "timezone": "auto",
         "start_date": start_date,
         "end_date": end_date,
     }

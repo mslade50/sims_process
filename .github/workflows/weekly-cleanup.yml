@@ -1,9 +1,9 @@
 name: Weekly Data Cleanup
 
-# Runs Monday afternoon AFTER the grading pipeline (9/10 AM EST)
+# Runs Monday afternoon AFTER the 14:00/15:00 UTC grading pipeline
 on:
   schedule:
-    - cron: '0 17 * * 1'  # Every Monday at 17:00 UTC = 12:00 PM EST
+    - cron: '0 17 * * 1'  # Monday 17:00 UTC = noon EST / 1 PM EDT
   
   # Also allow manual trigger for testing
   workflow_dispatch:

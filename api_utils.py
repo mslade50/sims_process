@@ -435,8 +435,8 @@ def fetch_multimodel_wind(lat, lon, start_date, end_date, models=None,
         start_date, end_date: YYYY-MM-DD strings (inclusive)
         models: Optional list of Open-Meteo model names (default AI_WIND_MODELS)
         timezone: Open-Meteo timezone param. Pass the SAME timezone as the
-            forecast call whose timestamps you join against (humidity.py
-            uses America/New_York) or hour keys will silently misalign.
+            forecast call whose timestamps you join against. ``auto`` resolves
+            the course-local timezone from latitude/longitude.
 
     Returns:
         DataFrame with 'time' (datetime), one mph column per model, and
@@ -469,8 +469,7 @@ def fetch_multimodel_wind(lat, lon, start_date, end_date, models=None,
         return None
 
 
-def fetch_event_weather_forecast(lat, lon, round_dates,
-                                 timezone="America/New_York"):
+def fetch_event_weather_forecast(lat, lon, round_dates, timezone="auto"):
     """
     Fetch hourly wind and dewpoint arrays for each tournament round.
 
@@ -482,12 +481,14 @@ def fetch_event_weather_forecast(lat, lon, round_dates,
     Args:
         lat, lon: Course coordinates.
         round_dates: Four datetime/date objects ordered R1 through R4.
-        timezone: Timezone used for both forecast calls. It must be identical so
-            the model timestamps align.
+        timezone: Timezone used for both forecast calls. ``auto`` resolves the
+            course-local IANA timezone from latitude/longitude. It must be
+            identical for both calls so model timestamps align.
 
     Returns:
         Dict with:
           rounds: {round_num: {"wind": [...], "dew": [...]}}
+          timezone: resolved course-local IANA timezone
           provider: descriptive provider string
           ai_hours: number of hours supplied by the multi-model blend
 
@@ -574,6 +575,7 @@ def fetch_event_weather_forecast(lat, lon, round_dates,
 
     return {
         "rounds": rounds,
+        "timezone": data.get("timezone") or timezone,
         "provider": (
             "open-meteo:ecmwf_ifs+aifs+aigfs (best_match fallback)"
             if ai_by_time else "open-meteo:best_match (AI blend unavailable)"

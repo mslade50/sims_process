@@ -2,11 +2,11 @@ name: Nightly Round Sim Backup
 
 on:
   schedule:
-    # 9:45 PM EST = 02:45 UTC (next day)
+    # Fixed at 02:45 UTC: 9:45 PM EST / 10:45 PM EDT (previous day)
     # Runs Thu night (after R1), Fri night (after R2), Sat night (after R3)
-    - cron: '45 2 * * 5'   # Friday 02:45 UTC = Thursday 9:45 PM EST
-    - cron: '45 2 * * 6'   # Saturday 02:45 UTC = Friday 9:45 PM EST
-    - cron: '45 2 * * 0'   # Sunday 02:45 UTC = Saturday 9:45 PM EST
+    - cron: '45 2 * * 5'   # Friday UTC = Thursday evening ET
+    - cron: '45 2 * * 6'   # Saturday UTC = Friday evening ET
+    - cron: '45 2 * * 0'   # Sunday UTC = Saturday evening ET
 
   workflow_dispatch:         # Manual trigger
 

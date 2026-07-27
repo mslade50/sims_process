@@ -2,8 +2,8 @@ name: Monday Grading Pipeline
 
 on:
   schedule:
-    - cron: '0 14 * * 1'   # Monday 9 AM EST (14:00 UTC)
-    - cron: '0 15 * * 1'   # Monday 10 AM EST retry (15:00 UTC)
+    - cron: '0 14 * * 1'   # Monday 14:00 UTC = 9 AM EST / 10 AM EDT
+    - cron: '0 15 * * 1'   # Monday 15:00 UTC = 10 AM EST / 11 AM EDT retry
 
   workflow_dispatch:         # Manual trigger
 

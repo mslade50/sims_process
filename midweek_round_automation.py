@@ -199,7 +199,16 @@ def transition_action(
     )
 
 
-def _load_course_coordinates(course_id):
+def _load_course_coordinates(course_id, sheet_lat=None, sheet_lon=None):
+    if sheet_lat is not None and sheet_lon is not None:
+        latitude, longitude = float(sheet_lat), float(sheet_lon)
+        if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+            print(
+                f"  Course coordinates from Sheet: "
+                f"{latitude:.5f},{longitude:.5f}"
+            )
+            return latitude, longitude
+
     try:
         import sim_inputs
 
@@ -442,9 +451,13 @@ def run_pipeline(args) -> int:
 
     from api_utils import fetch_event_weather_forecast, get_round_dates
 
-    lat, lon = _load_course_coordinates(course_id)
+    lat, lon = _load_course_coordinates(
+        course_id,
+        config.get("course_latitude"),
+        config.get("course_longitude"),
+    )
     forecast = fetch_event_weather_forecast(
-        lat, lon, get_round_dates(), timezone="America/New_York"
+        lat, lon, get_round_dates(), timezone="auto"
     )
     if not forecast:
         raise PipelineFailure("Open-Meteo event weather forecast is unavailable")
@@ -464,7 +477,8 @@ def run_pipeline(args) -> int:
             )
     print(
         f"  Weather ready: {forecast['provider']} "
-        f"({forecast['ai_hours']} AI-blended hours)"
+        f"({forecast['ai_hours']} AI-blended hours, "
+        f"timezone={forecast['timezone']})"
     )
 
     if args.dry_run:
@@ -491,6 +505,7 @@ def run_pipeline(args) -> int:
                 "wind": _format_array(target_weather["wind"]),
                 "dew": _format_array(target_weather["dew"]),
                 "weather_provider": forecast["provider"],
+                "course_timezone": forecast["timezone"],
                 "weather_updated_at": now,
                 "automation_target_round": target_round,
                 "automation_event_id": event_id,
@@ -507,6 +522,7 @@ def run_pipeline(args) -> int:
                 "wind": f"Automated R{target_round} AI multi-model forecast",
                 "dew": f"Automated R{target_round} dewpoint forecast",
                 "weather_provider": "Last automated weather source",
+                "course_timezone": "Course-local timezone resolved from lat/lon",
                 "automation_status": "Managed by midweek_round_automation.py",
             },
             spreadsheet=spreadsheet,
