@@ -81,12 +81,11 @@ jobs:
         # addresses); since it self-overwrites it never accumulates stale data.
         echo "ℹ️  Skipping dashboard_data/ (current-week data, overwritten weekly by push_dashboard_data)."
 
-        # Clear PAST-week per-tournament prep under permanent_data/ — keep the CURRENT
-        # tourney and all permanent reference data (correlation matrices, bet_ledger,
-        # sg_diagnostic, wind_test, course_coordinates).
-        echo "🗑️  Clearing past-week per-tournament prep under permanent_data/ (keeping ${TOURNEY})..."
-        find permanent_data -maxdepth 1 -type f -name "avg_expected_cat_sg_*.csv" \
-          ! -name "*${TOURNEY}*" -delete 2>/dev/null || true
+        # permanent_data/ is immutable to this workflow. In particular,
+        # avg_expected_cat_sg_*.csv is the replay source for post-event SG
+        # diagnostics and archetype classification, so it must remain available
+        # for backfills even after the root weekly artifacts are cleaned.
+        echo "ℹ️  permanent_data/ is never modified by weekly cleanup."
 
         echo ""
         echo "✅ Cleanup complete!"
@@ -104,7 +103,7 @@ jobs:
         echo "================================================"
         echo "✅ Deleted only allowlisted PAST-week artifact families"
         echo "ℹ️  Unrecognized root data files were preserved by default"
-        echo "✅ Cleared PAST-week prep from permanent_data/ (kept current tourney)"
+        echo "ℹ️  permanent_data/ left intact for diagnostics and backfills"
         echo "ℹ️  Top-level directories were not touched"
         echo "ℹ️  dashboard_data/ left intact (current-week data, overwritten weekly)"
         echo ""
@@ -175,10 +174,9 @@ jobs:
     - name: Guard — allowlist every tracked deletion
       run: |
         # Fail closed unless every tracked deletion belongs to one of the exact
-        # data scopes this workflow is allowed to clean:
-        #   1) named weekly artifact families directly in the repo root, or
-        #   2) old per-event SG prep files under permanent_data/.
-        # No other directory contents, docs, configs, or extension types may be
+        # data scope this workflow is allowed to clean:
+        #   named weekly artifact families directly in the repo root.
+        # No directory contents, docs, configs, or other filenames may be
         # removed even if an earlier cleanup command is changed incorrectly.
         forbidden=()
         while IFS= read -r path; do
@@ -190,8 +188,6 @@ jobs:
           fi
 
           case "$path" in
-            permanent_data/avg_expected_cat_sg_*.csv)
-              ;;
             */*)
               forbidden+=("$path (directory contents are not allowlisted)")
               ;;
