@@ -82,6 +82,8 @@ jobs:
     runs-on: [self-hosted, Windows, X64, golf-sim]
     permissions:
       contents: write
+    env:
+      RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
 
     steps:
       - name: Checkout repository
@@ -91,26 +93,22 @@ jobs:
           # C:\Users\...\dev\sims_process working tree.
           clean: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.10"
-          cache: pip
-
       - name: Install Python dependencies
         shell: powershell
         run: |
-          python -m pip install -r requirements.txt
+          & $env:RUNNER_PYTHON --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install pytz
+          & $env:RUNNER_PYTHON -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $env:RUNNER_PYTHON -m pip install pytz
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install sims_kernel Rust wheel
         shell: powershell
         run: |
-          python -m pip install --force-reinstall --no-deps `
+          & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
             "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
-          python -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
+          & $env:RUNNER_PYTHON -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
 
       - name: Fetch fresh round-matchup odds
         shell: powershell
@@ -126,7 +124,7 @@ jobs:
             -Headers $headers `
             -OutFile $oddsFile `
             -TimeoutSec 30
-          python -m json.tool $oddsFile | Out-Null
+          & $env:RUNNER_PYTHON -m json.tool $oddsFile | Out-Null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run guarded midweek pipeline
@@ -149,7 +147,7 @@ jobs:
           if ("${{ inputs.dry_run }}" -eq "true") {
             $automationArgs += "--dry-run"
           }
-          python midweek_round_automation.py @automationArgs
+          & $env:RUNNER_PYTHON midweek_round_automation.py @automationArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Telegram on failure

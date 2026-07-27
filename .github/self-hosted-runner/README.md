@@ -8,6 +8,10 @@ The midweek workflow uses a hybrid execution model:
 
 The self-hosted runner uses its own checkout below the runner installation
 directory. It does not run jobs inside the interactive development checkout.
+The simulation workflows use the dedicated Python 3.10 runtime at
+`C:\actions-runner\python310-portable\tools\python.exe`; they deliberately do
+not call `actions/setup-python`, because the runner service account cannot
+perform that action's machine-wide registry setup.
 
 ## Availability
 
@@ -56,6 +60,9 @@ hour:
    to the displayed `config.cmd` command.
 6. Confirm the runner appears online under repository Actions settings with
    labels `self-hosted`, `Windows`, `X64`, and `golf-sim`.
+7. Install the official Python 3.10 NuGet package under
+   `C:\actions-runner\python310-portable` and verify
+   `tools\python.exe -m pip --version`.
 
 Never save or commit the registration token. It is used only during
 registration; normal jobs authenticate through the runner's generated
