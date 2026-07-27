@@ -74,6 +74,7 @@ FULL_TIE_PAYOUT_BOOKS = ("kalshi", "novig", "bovada")
 # Bet sizing assumptions
 FLAT_BET_SIZE = 1.0  # 1 unit for matchups (flat betting)
 UNIT_SIZE = 200.0    # $200 = 1 unit for finish position sizing
+EXCLUDED_RESULT_PREFIX = "excluded_"
 
 # Pred value buckets
 PRED_BUCKETS = [
@@ -84,6 +85,13 @@ PRED_BUCKETS = [
     (-0.25, 0.25, "-0.25-0.25"),
     (float('-inf'), -0.25, "<-0.25"),
 ]
+
+
+def excluded_result_mask(results):
+    """Identify audit-preserved bets that must never be graded or reported."""
+    return results.fillna("").astype(str).str.lower().str.strip().str.startswith(
+        EXCLUDED_RESULT_PREFIX
+    )
 
 
 def categorize_book(book_name):
@@ -327,8 +335,9 @@ def get_ungraded_bets(spreadsheet, tab_name, event_id=None, regrade=False):
         return pd.DataFrame()
 
     if regrade:
-        # Return all bets (skip duplicates from prior grading)
-        ungraded = df[df[result_col].astype(str).str.strip() != "duplicate"].copy()
+        # Return all bets except duplicates and audit-preserved exclusions.
+        result = df[result_col].fillna("").astype(str).str.lower().str.strip()
+        ungraded = df[(result != "duplicate") & ~excluded_result_mask(result)].copy()
     else:
         # Filter to ungraded (empty result)
         ungraded = df[df[result_col].astype(str).str.strip() == ""].copy()
@@ -1200,6 +1209,10 @@ def calculate_performance_metrics(all_graded_bets, event_name, event_id, year):
         return None
 
     df = pd.DataFrame(all_graded_bets)
+    df = df[~excluded_result_mask(df["result"])].copy()
+
+    if df.empty:
+        return None
 
     # Basic counts
     total = len(df)
@@ -1361,7 +1374,10 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
         df["units_won_num"] = pd.to_numeric(df["units_won"], errors="coerce").fillna(0)
         df["units_wagered_num"] = pd.to_numeric(df["units_wagered"], errors="coerce").fillna(1)
         df["pred_num"] = pd.to_numeric(df.get("pred_value", ""), errors="coerce")
-        resolved = df[~df["result"].isin(["no_data", "unknown", "duplicate"])]
+        resolved = df[
+            ~df["result"].isin(["no_data", "unknown", "duplicate"])
+            & ~excluded_result_mask(df["result"])
+        ]
 
         # Calculate aggregate $ PnL: all bet types now in units, multiply by $200/unit
         matchup_types = ["round_matchup", "tournament_matchup"]

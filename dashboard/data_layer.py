@@ -66,6 +66,7 @@ def _read_parquet_safe(path):
 # PointsBet exited the US market (rebranded to Fanatics in 2023); its stale
 # rows should not appear in bet history, ROI-by-book, matchups, or filters.
 EXCLUDED_BOOKMAKERS = ["pointsbet"]
+EXCLUDED_RESULT_PREFIX = "excluded_"
 
 
 def _drop_excluded_books(df):
@@ -74,6 +75,14 @@ def _drop_excluded_books(df):
         return df
     pattern = "|".join(EXCLUDED_BOOKMAKERS)
     return df[~df["bookmaker"].astype(str).str.lower().str.contains(pattern, na=False)]
+
+
+def _drop_excluded_results(df):
+    """Drop audit-preserved bets that were invalidated by a known model/data bug."""
+    if df.empty or "result" not in df.columns:
+        return df
+    result = df["result"].fillna("").astype(str).str.lower().str.strip()
+    return df[~result.str.startswith(EXCLUDED_RESULT_PREFIX)]
 
 
 # ── Tournament Config ────────────────────────────────────────────────────────
@@ -306,6 +315,10 @@ def _load_all_bets_from_sheets():
 
     df = pd.concat(frames, ignore_index=True)
 
+    # Exclusions must be removed before deduplication so an invalidated earlier
+    # snapshot cannot suppress a later valid row with the same bet key.
+    df = _drop_excluded_results(df)
+
     # Dedup: keep FIRST occurrence by (event_id, bet_type, round, bet_on, opponent, bookmaker)
     # Sort by timestamp first to match grade_bets.py's "first write wins" semantics.
     if "run_timestamp" in df.columns:
@@ -347,7 +360,7 @@ def get_bet_ledger(**filters):
 
     Keyword args: event, bet_type, book, min_edge, graded, year, books (list).
     """
-    df = _load_all_bets_from_sheets()
+    df = _drop_excluded_results(_load_all_bets_from_sheets())
     if df.empty:
         return df
 
