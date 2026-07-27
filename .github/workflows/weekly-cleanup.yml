@@ -21,9 +21,6 @@ jobs:
     
     - name: Run cleanup script
       run: |
-        # Create backup of any files we're about to delete (just in case)
-        mkdir -p cleanup_backup
-        
         echo "🗑️  Starting weekly data cleanup..."
         echo "================================================"
         
@@ -37,6 +34,7 @@ jobs:
           exit 1
         fi
         echo "📅 Current tournament (PRESERVED): $TOURNEY"
+        echo "TOURNEY=$TOURNEY" >> "$GITHUB_ENV"
         echo ""
 
         # Exclusions applied to every data sweep: the current tourney slug plus the
@@ -75,17 +73,6 @@ jobs:
         find . -maxdepth 1 -name "*.xlsx" "${KEEP[@]}" -type f
         echo ""
 
-        echo "📋 Past-week tournament folders to be removed:"
-        find . -maxdepth 1 -type d \
-          ! -name "." ! -name ".." \
-          ! -name ".git" ! -name ".github" ! -name ".githooks" ! -name ".claude" \
-          ! -name "__pycache__" \
-          ! -name "permanent_data" ! -name "backups" \
-          ! -name "dashboard" ! -name "dashboard_data" ! -name "maker_dashboard" \
-          ! -name "archive" ! -name "rust" ! -name "kalshi_exec" \
-          ! -name "*${TOURNEY}*"
-        echo ""
-        
         # Delete CSV files (except permanent_data/ and current-week files)
         echo "🗑️  Deleting past-week CSV files..."
         find . -maxdepth 1 -name "*.csv" "${KEEP[@]}" ! -path "./permanent_data/*" -type f -delete
@@ -109,30 +96,11 @@ jobs:
         # Delete stale artifacts (Windows nul file, etc.)
         rm -f ./nul 2>/dev/null || true
 
-        # Delete tournament folders (but preserve system folders).
-        # IMPORTANT: This is a denylist — anything NOT in the exclude list
-        # gets nuked. New top-level prod directories MUST be added here or
-        # they'll be deleted on the next run. Safety check below catches
-        # accidental deletions before commit.
-        echo "🗑️  Deleting tournament folders..."
-        find . -maxdepth 1 -type d \
-          ! -name "." \
-          ! -name ".." \
-          ! -name ".git" \
-          ! -name ".github" \
-          ! -name ".githooks" \
-          ! -name ".claude" \
-          ! -name "__pycache__" \
-          ! -name "permanent_data" \
-          ! -name "backups" \
-          ! -name "dashboard" \
-          ! -name "dashboard_data" \
-          ! -name "maker_dashboard" \
-          ! -name "archive" \
-          ! -name "rust" \
-          ! -name "kalshi_exec" \
-          ! -name "*${TOURNEY}*" \
-          -exec rm -rf {} + 2>/dev/null || true
+        # Never recursively delete a top-level directory. Production directories
+        # have expanded over time (deploy/, odds_screen/, runner support, etc.),
+        # making a directory denylist unsafe. Stale event folders are harmless
+        # and must be reviewed/removed deliberately rather than guessed here.
+        echo "ℹ️  Top-level directories are never deleted by weekly cleanup."
 
         # dashboard_data/ is intentionally NOT cleared: it holds the CURRENT week's
         # data under generic filenames (model_predictions_*, sg_dist_player, etc.),
@@ -165,8 +133,8 @@ jobs:
         echo "✅ Deleted PAST-week CSV files (kept current week + permanent_data/)"
         echo "✅ Deleted PAST-week Excel workbooks"
         echo "✅ Deleted all text files (except requirements.txt)"
-        echo "✅ Deleted PAST-week tournament folders (kept current week's folder)"
         echo "✅ Cleared PAST-week prep from permanent_data/ (kept current tourney)"
+        echo "ℹ️  Top-level directories were not touched"
         echo "ℹ️  dashboard_data/ left intact (current-week data, overwritten weekly)"
         echo ""
         echo "📁 Protected (always kept):"
@@ -174,11 +142,10 @@ jobs:
         echo "  - permanent_data/ (correlation matrices, reference data)"
         echo "  - dashboard/ (dashboard app code)"
         echo "  - dashboard_data/ (current-week data for Render)"
+        echo "  - deploy/ (maker service scripts)"
         echo "  - backups/ (code backups)"
         echo "  - .github/ (workflows)"
         echo "  - .git/ (version control)"
-        echo ""
-        echo "💡 Tip: Historical data should now be in Google Drive"
         echo "================================================"
 
     - name: Safety check — abort if critical files missing
@@ -191,6 +158,7 @@ jobs:
           "maker_dashboard/server.py"
           "maker_dashboard/static/app.js"
           "maker_dashboard/index.html"
+          "deploy/run_maker.sh"
           ".githooks/pre-commit"
           "dashboard/app.py"
           "kalshi_maker.py"
@@ -235,6 +203,45 @@ jobs:
           exit 1
         fi
         echo "✅ Guard passed — no tracked code/build files were deleted."
+
+    - name: Guard — allowlist every tracked deletion
+      run: |
+        # Fail closed unless every tracked deletion belongs to one of the exact
+        # data scopes this workflow is allowed to clean:
+        #   1) transient data files directly in the repo root, or
+        #   2) old per-event SG prep files under permanent_data/.
+        # No other directory contents, docs, configs, or extension types may be
+        # removed even if an earlier cleanup command is changed incorrectly.
+        forbidden=()
+        while IFS= read -r path; do
+          [ -z "$path" ] && continue
+
+          if [[ "$path" == *"$TOURNEY"* ]]; then
+            forbidden+=("$path (current tournament)")
+            continue
+          fi
+
+          case "$path" in
+            permanent_data/avg_expected_cat_sg_*.csv)
+              ;;
+            */*)
+              forbidden+=("$path (directory contents are not allowlisted)")
+              ;;
+            *.csv|*.xlsx|*.txt|*.parquet|*.pdf)
+              ;;
+            *)
+              forbidden+=("$path (extension is not allowlisted)")
+              ;;
+          esac
+        done < <(git ls-files --deleted)
+
+        if [ ${#forbidden[@]} -ne 0 ]; then
+          echo "❌ ABORT — weekly cleanup attempted non-allowlisted deletions:"
+          printf '   - %s\n' "${forbidden[@]}"
+          exit 1
+        fi
+
+        echo "✅ Allowlist guard passed — every tracked deletion is approved transient data."
 
     - name: Commit and push cleanup
       run: |
