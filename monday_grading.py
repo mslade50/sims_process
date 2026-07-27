@@ -29,6 +29,7 @@ Scheduled via .github/workflows/monday-grading.yml:
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers — reuse grade_bets functions without triggering argparse
@@ -42,6 +43,44 @@ def _setup_env():
     from dotenv import load_dotenv
     load_dotenv()
     return project_root
+
+
+def _diagnostic_tourney_slug(project_root, event_id, event_name):
+    """Resolve the artifact slug for a completed event without using sim_inputs.
+
+    push_dashboard_data.py archives finish distributions under
+    ``permanent_data/historical_dists/{event_id}_{tourney}`` during the event,
+    making that directory the authoritative bridge between DataGolf's event
+    name and the short artifact slug (for example 525 -> ``3m_open``).
+    """
+    archive_root = Path(project_root) / "permanent_data" / "historical_dists"
+    matches = sorted(
+        path for path in archive_root.glob(f"{event_id}_*") if path.is_dir()
+    )
+    if len(matches) == 1:
+        return matches[0].name.split("_", 1)[1]
+    if len(matches) > 1:
+        names = ", ".join(path.name for path in matches)
+        print(
+            f"  [warn] Multiple diagnostic archive slugs for event {event_id}: "
+            f"{names}; skipping diagnostic rather than guessing."
+        )
+        return None
+
+    fallback = str(event_name or "").lower().strip().replace(" ", "_")
+    source = (
+        Path(project_root)
+        / "permanent_data"
+        / f"avg_expected_cat_sg_{fallback}.csv"
+    )
+    if fallback and source.exists():
+        return fallback
+
+    print(
+        f"  [warn] No diagnostic artifact slug/source found for "
+        f"{event_name} (ID {event_id}); skipping."
+    )
+    return None
 
 
 def _detect_week():
@@ -236,18 +275,34 @@ def main():
     # otherwise be silently skipped forever: surface them loudly.
     _alert_orphan_ungraded(spreadsheet, [e for e, _, _ in week_events])
 
+    if args.dry_run:
+        if to_grade:
+            for event_id, event_name, n in to_grade:
+                print(
+                    f"\n  [DRY RUN] Would grade {n} bets for "
+                    f"{event_name} (ID {event_id})."
+                )
+        else:
+            label = ", ".join(name for _, name, _ in week_events)
+            print(f"\n  [DRY RUN] Already graded: {label}.")
+        for event_id, event_name, year in week_events:
+            slug = _diagnostic_tourney_slug(
+                project_root, event_id, event_name
+            )
+            if slug:
+                print(
+                    f"  [DRY RUN] Would diagnose {event_name} "
+                    f"(ID {event_id}, slug {slug})."
+                )
+        print("  [DRY RUN] No grading, diagnostics, or dashboard push executed.")
+        print("=" * 60 + "\n")
+        sys.exit(0)
+
     if not to_grade:
         label = ", ".join(name for _, name, _ in week_events)
         print(f"\n  Already graded: 0 ungraded bets for {label}.")
         print("  Skipping grade_bets.py — nothing to grade.")
     else:
-        if args.dry_run:
-            for event_id, event_name, n in to_grade:
-                print(f"\n  [DRY RUN] Would grade {n} bets for {event_name} (ID {event_id}).")
-            print("\n  [DRY RUN] Would then run: sg_diagnostic.py, push_dashboard_data.py")
-            print("=" * 60 + "\n")
-            sys.exit(0)
-
         # ------------------------------------------------------------------
         # Step 3: Grade each event that has bets.
         #   Single-event weeks keep the original bare invocation (grade_bets
@@ -285,11 +340,22 @@ def main():
     # ------------------------------------------------------------------
     # Step 5: Run sg_diagnostic.py --no-email (always runs)
     # ------------------------------------------------------------------
-    _run_subprocess(
-        [python, "sg_diagnostic.py", "--no-email"],
-        "sg_diagnostic.py --no-email",
-        ignore_failure=True,
-    )
+    for event_id, event_name, year in week_events:
+        slug = _diagnostic_tourney_slug(project_root, event_id, event_name)
+        if not slug:
+            continue
+        _run_subprocess(
+            [
+                python,
+                "sg_diagnostic.py",
+                "--event-id", str(event_id),
+                "--tourney", slug,
+                "--year", str(year),
+                "--no-email",
+            ],
+            f"sg_diagnostic.py ({event_name})",
+            ignore_failure=True,
+        )
 
     # ------------------------------------------------------------------
     # Step 6: Run push_dashboard_data.py (always runs)
