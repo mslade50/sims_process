@@ -57,6 +57,7 @@ DATAGOLF_BASE = "https://feeds.datagolf.com"
 TAB_TOURNAMENT_MU = "Tournament Matchups"
 TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
+TAB_ROUND_3BALL = "Round 3-Balls"
 TAB_LIVE = "Live"  # live in-tournament finish positions (bet_type=finish_position_live)
 
 # Tab names - results output
@@ -66,9 +67,14 @@ TAB_RESULTS_SUMMARY = "Bet Results Summary"
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris", "bet online", "bookmaker"]
 RETAIL_BOOKS = ["fanduel", "draftkings", "caesars", "dk", "fd", "czr", "betmgm", "mgm"]
 
+# Books that pay ties IN FULL on finish positions (no dead-heat reduction):
+# the exchanges settle top-N as a binary, and Bovada pays ties in full by rule.
+FULL_TIE_PAYOUT_BOOKS = ("kalshi", "novig", "bovada")
+
 # Bet sizing assumptions
 FLAT_BET_SIZE = 1.0  # 1 unit for matchups (flat betting)
 UNIT_SIZE = 200.0    # $200 = 1 unit for finish position sizing
+EXCLUDED_RESULT_PREFIX = "excluded_"
 
 # Pred value buckets
 PRED_BUCKETS = [
@@ -79,6 +85,13 @@ PRED_BUCKETS = [
     (-0.25, 0.25, "-0.25-0.25"),
     (float('-inf'), -0.25, "<-0.25"),
 ]
+
+
+def excluded_result_mask(results):
+    """Identify audit-preserved bets that must never be graded or reported."""
+    return results.fillna("").astype(str).str.lower().str.strip().str.startswith(
+        EXCLUDED_RESULT_PREFIX
+    )
 
 
 def categorize_book(book_name):
@@ -322,8 +335,9 @@ def get_ungraded_bets(spreadsheet, tab_name, event_id=None, regrade=False):
         return pd.DataFrame()
 
     if regrade:
-        # Return all bets (skip duplicates from prior grading)
-        ungraded = df[df[result_col].astype(str).str.strip() != "duplicate"].copy()
+        # Return all bets except duplicates and audit-preserved exclusions.
+        result = df[result_col].fillna("").astype(str).str.lower().str.strip()
+        ungraded = df[(result != "duplicate") & ~excluded_result_mask(result)].copy()
     else:
         # Filter to ungraded (empty result)
         ungraded = df[df[result_col].astype(str).str.strip() == ""].copy()
@@ -381,6 +395,8 @@ def deduplicate_bets(df, bet_type):
     # Define key columns based on bet type
     if bet_type == "round_matchup":
         key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker", "round"]
+    elif bet_type == "round_3ball":
+        key_cols = ["event_id", "player_1", "player_2", "player_3", "bet_on", "bookmaker", "round"]
     elif bet_type == "tournament_matchup":
         key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker"]
     elif bet_type.startswith("finish_position"):
@@ -622,6 +638,89 @@ def grade_round_matchup(row, results_df):
         "margin": margin,
         **sg_fields,
         "notes": ""
+    }
+
+
+def grade_round_3ball(row, results_df):
+    """Grade a round 3-ball bet (bet_on to have the lowest score in the threesome).
+
+    3-balls settle by DEAD HEAT: if bet_on ties for the low with N players, the bet
+    is a 1/N fractional win at full odds (the rest of the stake loses) —
+    units_won = units_wagered * (decimal_odds * (1/N) - 1). A sole low is a full win
+    (N=1); not the low is a full loss. Mirrors grade_round_matchup for score lookup.
+    """
+    players = [str(row.get(f"player_{i}", "")).lower().strip() for i in (1, 2, 3)]
+    bet_on = str(row.get("bet_on", "")).lower().strip()
+    round_num = str(row.get("round", "1")).strip()
+    try:
+        round_num = int(round_num)
+    except Exception:
+        round_num = 1
+
+    score_col = None
+    for col_format in [f"round_{round_num}", f"r{round_num}", f"rd{round_num}", f"round{round_num}"]:
+        if col_format in results_df.columns:
+            score_col = col_format
+            break
+
+    base = {"result": "no_data", "p1_score": "", "p2_score": "", "p3_score": "",
+            "units_wagered": FLAT_BET_SIZE, "units_won": 0,
+            "num_tied": "", "dead_heat_factor": "", "margin": None}
+    if score_col is None:
+        return {**base, "notes": f"No round {round_num} column found"}
+
+    scores = []
+    for p in players:
+        pdata = results_df[results_df["player_name"] == p]
+        if pdata.empty or pd.isna(pdata[score_col].iloc[0]):
+            return {**base, "notes": f"Missing round score for {p}"}
+        try:
+            scores.append(float(pdata[score_col].iloc[0]))
+        except Exception:
+            return {**base, "notes": "Could not parse scores"}
+
+    if bet_on not in players:
+        return {**base, "notes": f"bet_on {bet_on} not in threesome"}
+
+    # Book odds on the bet_on side -> unit sizing + decimal odds for dead-heat math
+    si = players.index(bet_on) + 1
+    book_odds = row.get(f"p{si}_odds")
+    units_wagered, units_to_win, decimal_odds = 1.0, 1.0, 2.0
+    if book_odds is not None and str(book_odds).strip():
+        try:
+            odds = float(book_odds)
+            if odds >= 100:
+                units_wagered, units_to_win, decimal_odds = 1.0, odds / 100, odds / 100 + 1
+            elif odds <= -100:
+                units_wagered, units_to_win, decimal_odds = abs(odds) / 100, 1.0, 100 / abs(odds) + 1
+        except Exception:
+            pass
+
+    low = min(scores)
+    num_tied = sum(1 for s in scores if s == low)
+    bet_score = scores[si - 1]
+
+    if bet_score > low:
+        result, units_won, dh_factor = "loss", -units_wagered, 0.0
+    elif num_tied == 1:
+        result, units_won, dh_factor = "win", units_to_win, 1.0
+    else:
+        dh_factor = 1.0 / num_tied
+        units_won = units_wagered * (decimal_odds * dh_factor - 1)
+        result = "dead_heat"
+
+    opp_scores = [scores[i] for i in range(3) if players[i] != bet_on]
+    margin = min(opp_scores) - bet_score  # positive = bet_on ahead of the best opponent
+
+    return {
+        "result": result,
+        "p1_score": int(scores[0]), "p2_score": int(scores[1]), "p3_score": int(scores[2]),
+        "units_wagered": round(units_wagered, 3),
+        "units_won": round(units_won, 3),
+        "num_tied": num_tied,
+        "dead_heat_factor": round(dh_factor, 4),
+        "margin": margin,
+        "notes": "",
     }
 
 
@@ -884,13 +983,15 @@ def grade_finish_position(row, results_df):
         except:
             decimal_odds = 2.0
 
-    # Settlement. Exchange (Kalshi/NoVig) markets — and every NO-side bet, which
-    # only exists on exchanges — settle with NO dead-heat: a tie at the threshold
-    # counts as finishing INSIDE. YES wins inside the threshold, NO wins outside.
-    # Sportsbook YES bets keep standard dead-heat settlement (unchanged).
-    is_exchange = str(row.get("sportsbook", row.get("bookmaker", ""))).lower().strip() in ("kalshi", "novig")
+    # Settlement. Books that pay ties IN FULL — exchanges (Kalshi/NoVig) and
+    # Bovada — and every NO-side bet, which only exists on exchanges, settle
+    # with NO dead-heat: a tie at the threshold counts as finishing INSIDE.
+    # YES wins inside the threshold, NO wins outside.
+    # All other sportsbook YES bets keep standard dead-heat settlement.
+    book = str(row.get("sportsbook", row.get("bookmaker", ""))).lower().strip()
+    pays_ties_full = book in FULL_TIE_PAYOUT_BOOKS
 
-    if side == "no" or is_exchange:
+    if side == "no" or pays_ties_full:
         inside = actual_pos <= threshold
         won = inside if side == "yes" else not inside
         result = "win" if won else "loss"
@@ -1049,6 +1150,10 @@ def write_grades_to_sheet(spreadsheet, tab_name, grades, headers_list):
                 col = headers.index("p2_round_score") + 1
                 cells_to_update.append(gspread.Cell(row, col, str(grade["p2_score"])))
 
+            if "p3_round_score" in headers and "p3_score" in grade:
+                col = headers.index("p3_round_score") + 1
+                cells_to_update.append(gspread.Cell(row, col, str(grade["p3_score"])))
+
             if "actual_finish" in headers and "actual_finish" in grade:
                 col = headers.index("actual_finish") + 1
                 cells_to_update.append(gspread.Cell(row, col, str(grade["actual_finish"])))
@@ -1104,6 +1209,10 @@ def calculate_performance_metrics(all_graded_bets, event_name, event_id, year):
         return None
 
     df = pd.DataFrame(all_graded_bets)
+    df = df[~excluded_result_mask(df["result"])].copy()
+
+    if df.empty:
+        return None
 
     # Basic counts
     total = len(df)
@@ -1265,7 +1374,10 @@ def build_results_email_html(metrics, graded_bets, event_name, filter_label=None
         df["units_won_num"] = pd.to_numeric(df["units_won"], errors="coerce").fillna(0)
         df["units_wagered_num"] = pd.to_numeric(df["units_wagered"], errors="coerce").fillna(1)
         df["pred_num"] = pd.to_numeric(df.get("pred_value", ""), errors="coerce")
-        resolved = df[~df["result"].isin(["no_data", "unknown", "duplicate"])]
+        resolved = df[
+            ~df["result"].isin(["no_data", "unknown", "duplicate"])
+            & ~excluded_result_mask(df["result"])
+        ]
 
         # Calculate aggregate $ PnL: all bet types now in units, multiply by $200/unit
         matchup_types = ["round_matchup", "tournament_matchup"]
@@ -1889,6 +2001,7 @@ def main():
         # Process each bet tab
         tabs_to_process = [
             (TAB_ROUND_MU, "round_matchup", grade_round_matchup),
+            (TAB_ROUND_3BALL, "round_3ball", grade_round_3ball),
             (TAB_TOURNAMENT_MU, "tournament_matchup", grade_tournament_matchup),
             (TAB_FINISH_POS, "finish_position", grade_finish_position),
             ("Test Sim", "finish_position_v2", grade_finish_position),
@@ -1966,6 +2079,25 @@ def main():
                     grade["player_1"] = row_dict.get("player_1", "")
                     grade["player_2"] = row_dict.get("player_2", "")
                     grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
+
+                elif bet_type == "round_3ball":
+                    grade["round"] = row_dict.get("round", "")
+                    grade["p1_score"] = grade_result.get("p1_score", "")
+                    grade["p2_score"] = grade_result.get("p2_score", "")
+                    grade["p3_score"] = grade_result.get("p3_score", "")
+                    grade["num_tied"] = grade_result.get("num_tied", "")
+                    grade["dead_heat_factor"] = grade_result.get("dead_heat_factor", "")
+                    _p3b = [str(row_dict.get(f"player_{i}", "")).lower().strip() for i in (1, 2, 3)]
+                    _beton3 = str(row_dict.get("bet_on", "")).lower().strip()
+                    grade["bet_on"] = row_dict.get("bet_on", "")
+                    grade["player_1"] = row_dict.get("player_1", "")
+                    grade["player_2"] = row_dict.get("player_2", "")
+                    grade["player_3"] = row_dict.get("player_3", "")
+                    # Must match the ledger's opponent encoding ("oppA + oppB", sorted),
+                    # else update_ledger_grades won't find the row.
+                    grade["opponent"] = " + ".join(sorted(p for p in _p3b if p != _beton3))
+                    _si3 = _p3b.index(_beton3) + 1 if _beton3 in _p3b else 1
+                    grade["book_odds"] = row_dict.get(f"p{_si3}_odds", "")
 
                 elif bet_type == "tournament_matchup":
                     grade["round"] = "tournament"

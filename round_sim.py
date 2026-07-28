@@ -779,7 +779,11 @@ def simulate_remaining_rounds(
 
     tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
     mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-    tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
+    # Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
+    # live_stats_engine _totals_r1 / Rust kernel
+    floor_r1 = np.where((resid_r1 >= -8.0) & (resid_r1 < -6.0), -0.75, -0.5)
+    tot_resid_adj_r1 = np.maximum(
+        np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), floor_r1)
 
     ott_adj_r1 = ott_r1 * C[:, [0]]
     putt_adj_r1 = putt_r1 * C[:, [3]]
@@ -825,8 +829,10 @@ def simulate_remaining_rounds(
         # the all-True mask is correct. The Rust kernel assumes the same.
         pass
 
-    # R2 -> R3 skill update
-    resid_r2 = sg_r2 - updated_skill_r2
+    # R2 -> R3 skill update. Residual capped at +6 before the cubic: beyond
+    # training support it explodes positive (parity: live_stats_engine.py
+    # RESID_FIX_CAP and the Rust kernel).
+    resid_r2 = np.minimum(sg_r2 - updated_skill_r2, 6.0)
     resid2_r2 = resid_r2 ** 2
     resid3_r2 = resid_r2 ** 3
 
@@ -885,10 +891,12 @@ def simulate_remaining_rounds(
         adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
 
     shape2 = (n_players, num_sims)
-    tot_resid_adj_r2 = (
+    # -0.5 lower clip: parity with live_stats_engine tot_resid_adj / Rust kernel
+    tot_resid_adj_r2 = np.maximum(
         ensure_array(adj_sum.get('residual_adj', 0.0), shape2) +
         ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
-        ensure_array(adj_sum.get('residual3_adj', 0.0), shape2)
+        ensure_array(adj_sum.get('residual3_adj', 0.0), shape2),
+        -0.5,
     )
     tot_sg_adj_r2 = (
         ensure_array(adj_sum.get('avg_ott_adj', 0.0), shape2) +
@@ -4533,6 +4541,8 @@ def main():
     parser.add_argument("--use-python", action="store_true",
                         help="Use the legacy Python sim draws instead of the Rust sims_kernel "
                              "(the Rust cascade + score-card draws are the production default)")
+    parser.add_argument("--no-skew-cal", action="store_true",
+                        help="Skip the round-score skew calibration top-up (skew_calibration.py)")
     parser.add_argument("--sim-only", action="store_true",
                         help="Run round score sim, save sim_cache parquet, then exit (no pricing/email)")
     parser.add_argument("--price-only", action="store_true",
@@ -4706,6 +4716,13 @@ def main():
             sim_dict = sim_dict_legacy
         else:
             sim_dict = sim_dict_cf
+            # Top up within-player score skew to the empirical target (+0.26):
+            # the category sum CLT-washes skew to ~+0.12, leaving the sim's
+            # median ~0.05 too pessimistic vs reality. Applied before the
+            # cache save so --price-only / --reprice inherit calibrated draws.
+            if not args.no_skew_cal:
+                from skew_calibration import calibrate_round_skew
+                sim_dict = calibrate_round_skew(sim_dict)
 
         # Persist sim_dict so future --price-only / --reprice runs can skip the sim
         save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)

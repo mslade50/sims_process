@@ -11,8 +11,8 @@ try:
 except ImportError:
     lat_override = None
     lon_override = None
-from sheets_storage import get_spreadsheet
-from api_utils import fetch_historical_hourly_wind
+from sheets_storage import get_spreadsheet, update_round_config_params
+from api_utils import fetch_historical_hourly_wind, compute_dew_factor
 
 load_dotenv()
 
@@ -126,8 +126,12 @@ month = tournament_dates[0].month
 # Adjust dewpoint wave factor
 dewpoint_wave = dewpoint_wave * 0.6 + baseline_dew * 0.4
 
-# Blended dew coefficient: same formula as sim_inputs.dew_calculation
-dew_factor = 0.6 * baseline_dew + 0.4 * dewpoint_wave
+# Baseline blended dew coefficient: same formula as sim_inputs.dew_calculation
+baseline_dew_factor = 0.6 * baseline_dew + 0.4 * dewpoint_wave
+# Course-specific coefficient from permanent_data/dew_test.csv (EB-shrunk
+# per-course slope, built by archive/dew_course_effects.py). Falls back to
+# the baseline blend for courses with no weather history.
+dew_factor = compute_dew_factor(course_id, round(baseline_dew_factor, 4))
 print(f"Dew factor (for sheet): {dew_factor:.4f}  (baseline_dew={baseline_dew}, dewpoint_wave={dewpoint_wave:.4f})")
 
 # Create dictionaries to store weather data dynamically
@@ -174,7 +178,7 @@ params = {
     "longitude": LONGITUDE,
     "hourly": ["dewpoint_2m", "wind_speed_10m"],
     "temperature_unit": "fahrenheit",
-    "timezone": "America/New_York",
+    "timezone": "auto",
     "start_date": START_DATE,
     "end_date": END_DATE,
 }
@@ -186,10 +190,30 @@ dewpoint_values = data["hourly"]["dewpoint_2m"]
 wind_values = data["hourly"]["wind_speed_10m"]
 timestamps = data["hourly"]["time"]
 
+# Multi-model wind blend (ECMWF IFS + AIFS + NOAA AIGFS via Open-Meteo).
+# AIFS is the model behind Windy's "AI" layer. Where the blend is available
+# for an hour it overrides the default (best_match) wind; per-hour fallback
+# to best_match otherwise. Dew stays on best_match.
+from api_utils import fetch_multimodel_wind
+# ``auto`` resolves the course-local timezone from lat/lon. Both calls use
+# the same value so their local-hour keys align.
+_mm = fetch_multimodel_wind(LATITUDE, LONGITUDE, START_DATE, END_DATE,
+                            timezone="auto")
+_blend_by_time = {}
+if _mm is not None:
+    _blend_by_time = {
+        t.to_pydatetime(): w
+        for t, w in zip(_mm["time"], _mm["wind_blend"]) if pd.notna(w)
+    }
+    print(f"Multi-model wind blend loaded ({len(_blend_by_time)} hours)")
+else:
+    print("WARNING: multi-model wind unavailable — using best_match only")
+
 # Store hourly values per round (6 AM - 8 PM = 15 hours)
 # Also build rounded integer arrays for sheet writing
 dew_by_round = {i: [] for i in range(1, 5)}   # {1: [...], 2: [...], ...}
 wind_by_round = {i: [] for i in range(1, 5)}
+wind_bm_by_round = {i: [] for i in range(1, 5)}  # best_match, for comparison print
 
 for time_str, dewpoint, wind in zip(timestamps, dewpoint_values, wind_values):
     dt_obj = datetime.datetime.fromisoformat(time_str)
@@ -200,10 +224,21 @@ for time_str, dewpoint, wind in zip(timestamps, dewpoint_values, wind_values):
             index = date_strs.index(date_str)
             rd = index + 1
             dewpoint_data[f"dewpoint_{rd}"].append(dewpoint)
-            wind_mph = round(wind * 0.621371, 1)
+            bm_mph = round(wind * 0.621371, 1)   # best_match (km/h -> mph)
+            blend = _blend_by_time.get(dt_obj)
+            wind_mph = round(blend, 1) if blend is not None else bm_mph
             wind_data[f"wind_{rd}"].append(wind_mph)
             dew_by_round[rd].append(round(dewpoint))
             wind_by_round[rd].append(round(wind_mph))
+            wind_bm_by_round[rd].append(bm_mph)
+
+# Model comparison (golf-window averages)
+if _blend_by_time:
+    print("\n*** Wind: best_match vs multi-model blend (6 AM - 8 PM avg) ***")
+    for rd in range(1, 5):
+        bm, bl = wind_bm_by_round.get(rd, []), wind_by_round.get(rd, [])
+        if bm and bl:
+            print(f"  R{rd}: best_match {sum(bm)/len(bm):.1f} mph -> blend {sum(bl)/len(bl):.1f} mph")
 
 # Print raw values
 print("\n*** Raw Dewpoint Values ***")
@@ -390,44 +425,32 @@ def write_weather_to_sheet():
     else:
         print("  No cells to update")
 
-    # Write course_codes and dew_calculation to column B
-    all_values = ws.get("A:B")
-    param_rows = {}
-    for i, row in enumerate(all_values):
-        if row and row[0].strip():
-            param_rows[row[0].strip().lower()] = i + 1
-
-    if course_codes:
-        row_idx = param_rows.get("course_codes")
-        if row_idx:
-            ws.update_cell(row_idx, 2, ",".join(course_codes))
-            print(f"  course_codes -> {','.join(course_codes)}")
-
-    row_idx = param_rows.get("dew_calculation")
-    if row_idx:
-        ws.update_cell(row_idx, 2, str(round(dew_factor, 4)))
-        print(f"  dew_calculation -> {dew_factor:.4f}")
-
-    # Write course lat/lon so it's easy to copy into Windy
+    # Persist course metadata and weather coefficients in one batch. The Sheet's
+    # lat/lon is the live automation's primary coordinate source; Open-Meteo's
+    # resolved IANA timezone makes the 6 AM-8 PM arrays course-local.
     coord_str = f"{LATITUDE},{LONGITUDE}"
-    row_idx = param_rows.get("course_lat_lon")
-    if row_idx:
-        ws.update_cell(row_idx, 2, coord_str)
-    else:
-        next_row = len(all_values) + 1
-        ws.update_cell(next_row, 1, "course_lat_lon")
-        ws.update_cell(next_row, 2, coord_str)
+    course_timezone = data.get("timezone") or "auto"
+    param_updates = {
+        "dew_calculation": round(dew_factor, 4),
+        "course_lat_lon": coord_str,
+        "course_timezone": course_timezone,
+        "dewpoint_base": round(dewpoint_base, 1),
+    }
+    if course_codes:
+        param_updates["course_codes"] = ",".join(course_codes)
+    update_round_config_params(
+        param_updates,
+        notes={
+            "course_lat_lon": "Course coordinates used for weather/timezone",
+            "course_timezone": "Resolved by Open-Meteo from course_lat_lon",
+        },
+        spreadsheet=spreadsheet,
+    )
+    if course_codes:
+        print(f"  course_codes -> {','.join(course_codes)}")
+    print(f"  dew_calculation -> {dew_factor:.4f}")
     print(f"  course_lat_lon -> {coord_str}")
-
-    # Write dewpoint_base to config tab (used by live_stats_engine for actuals)
-    row_idx = param_rows.get("dewpoint_base")
-    if row_idx:
-        ws.update_cell(row_idx, 2, str(round(dewpoint_base, 1)))
-    else:
-        next_row = len(all_values) + 1
-        ws.update_cell(next_row, 1, "dewpoint_base")
-        ws.update_cell(next_row, 2, str(round(dewpoint_base, 1)))
-        all_values.append(["dewpoint_base", str(round(dewpoint_base, 1))])
+    print(f"  course_timezone -> {course_timezone}")
     print(f"  dewpoint_base -> {dewpoint_base:.1f}")
 
     # NOTE: wind_r1..wind_r4 and dew_r1..dew_r4 in the A:B params area are

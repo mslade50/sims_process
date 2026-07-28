@@ -2,7 +2,7 @@ name: Morning CLV Alert
 
 on:
   schedule:
-    # 6:30 AM EST = 11:30 UTC
+    # Fixed at 11:30 UTC: 6:30 AM EST / 7:30 AM EDT
     # Fri morning (R1 bets), Sat morning (R2 bets), Sun morning (R3 bets)
     - cron: '30 11 * * 5'   # Friday
     - cron: '30 11 * * 6'   # Saturday

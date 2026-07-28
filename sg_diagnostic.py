@@ -39,6 +39,9 @@ DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 DIAGNOSTIC_PATH = os.path.join(
     os.path.dirname(__file__), "permanent_data", "sg_diagnostic.parquet"
 )
+DASHBOARD_DIAGNOSTIC_PATH = os.path.join(
+    os.path.dirname(__file__), "dashboard_data", "sg_diagnostic.parquet"
+)
 DIAGNOSTIC_DEDUP_COLS = ["event_id", "player_name", "round", "category"]
 SG_CATS = ["ott", "app", "arg", "putt", "total"]
 
@@ -57,12 +60,19 @@ def load_predictions(tourney_name):
     Input cols:  player_name, r1_ott_mean, r1_app_mean, ..., r4_total_mean
     Output cols: player_name, round (1-4), category, predicted_sg
     """
-    path = os.path.join(
-        os.path.dirname(__file__), f"avg_expected_cat_sg_{tourney_name}.csv"
-    )
-    if not os.path.exists(path):
-        print(f"  Prediction file not found: {path}")
+    filename = f"avg_expected_cat_sg_{tourney_name}.csv"
+    candidates = [
+        os.path.join(os.path.dirname(__file__), filename),
+        os.path.join(os.path.dirname(__file__), "permanent_data", filename),
+    ]
+    path = next((candidate for candidate in candidates if os.path.exists(candidate)), None)
+    if path is None:
+        print("  Prediction file not found in either supported location:")
+        for candidate in candidates:
+            print(f"    - {candidate}")
         return pd.DataFrame()
+    if path == candidates[1]:
+        print(f"  Using archived diagnostic source: {path}")
 
     df = pd.read_csv(path)
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
@@ -843,9 +853,17 @@ def append_to_diagnostic(records):
     diag_dir = os.path.dirname(DIAGNOSTIC_PATH)
     os.makedirs(diag_dir, exist_ok=True)
 
-    if os.path.exists(DIAGNOSTIC_PATH):
+    existing_path = DIAGNOSTIC_PATH
+    if not os.path.exists(existing_path) and os.path.exists(DASHBOARD_DIAGNOSTIC_PATH):
+        existing_path = DASHBOARD_DIAGNOSTIC_PATH
+        print(
+            "  [diagnostic] Seeding persistent history from "
+            "dashboard_data/sg_diagnostic.parquet"
+        )
+
+    if os.path.exists(existing_path):
         try:
-            existing = pd.read_parquet(DIAGNOSTIC_PATH)
+            existing = pd.read_parquet(existing_path)
         except Exception:
             existing = pd.DataFrame()
     else:
@@ -1528,6 +1546,11 @@ def print_console_summary(analysis, recurring, is_adjusted=True):
 def main():
     parser = argparse.ArgumentParser(description="Post-event SG prediction diagnostic")
     parser.add_argument("--event-id", type=str, help="Override event ID")
+    parser.add_argument(
+        "--tourney",
+        type=str,
+        help="Override tournament slug for archived prediction replay",
+    )
     parser.add_argument("--year", type=int, help="Override year")
     parser.add_argument("--no-email", action="store_true", help="Skip email")
     parser.add_argument(
@@ -1655,7 +1678,7 @@ def main():
     # --- Normal mode: run diagnostic for an event ---
     eid = args.event_id or str(event_ids[0])
     year = args.year or datetime.now().year
-    event_name = tourney
+    event_name = args.tourney or tourney
 
     print("\n" + "=" * 60)
     print("  SG PREDICTION DIAGNOSTIC")

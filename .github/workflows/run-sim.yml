@@ -20,36 +20,69 @@ on:
   #   - cron: '0 12 * * 4'  # Thursdays at noon UTC (after R1 typically)
   #   - cron: '0 12 * * 5'  # Fridays at noon UTC (after R2 typically)
 
+permissions:
+  contents: write
+
+concurrency:
+  group: round-sim
+  cancel-in-progress: false
+
 jobs:
   run-simulation:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, golf-sim]
+    env:
+      RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
-    
-    - name: Set up Python
-      uses: actions/setup-python@v6
       with:
-        python-version: '3.10'
+        clean: true
     
     - name: Install dependencies
+      shell: powershell
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth xlsxwriter
+        & $env:RUNNER_PYTHON --version
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $env:RUNNER_PYTHON -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $env:RUNNER_PYTHON -m pip install pytz
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Install sims_kernel Rust wheel
+      shell: powershell
+      run: |
+        & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
+          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warning "sims_kernel unavailable; round_sim will use the Python fallback"
+          exit 0
+        }
+        & $env:RUNNER_PYTHON -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
     
     - name: Fetch scraped odds from golf_scraping repo
+      shell: powershell
       env:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
-        mkdir -p permanent_data/scraped_odds
-        for MARKET in tournament_matchups round_matchups; do
-          curl -sL -H "Authorization: token $GH_TOKEN" \
-            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
-            -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
-        done
-        ls -la permanent_data/scraped_odds/ || true
+        $oddsDir = Join-Path $PWD "permanent_data\scraped_odds"
+        New-Item -ItemType Directory -Path $oddsDir -Force | Out-Null
+        $headers = @{ Authorization = "token $env:GH_TOKEN" }
+        foreach ($market in @("tournament_matchups", "round_matchups")) {
+          try {
+            Invoke-WebRequest `
+              -Uri "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/$($market)_latest.json" `
+              -Headers $headers `
+              -OutFile (Join-Path $oddsDir "$($market)_latest.json") `
+              -TimeoutSec 30
+          } catch {
+            Write-Warning "Could not fetch $market odds: $($_.Exception.Message)"
+          }
+        }
+        Get-ChildItem $oddsDir
 
     - name: Run simulation
+      shell: powershell
       env:
         # GH_TOKEN: round_sim's publish hook dispatches a board build after a
         # successful push — absent token = silent no-op from CI.
@@ -59,17 +92,22 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        GIT_AUTHOR_NAME: github-actions[bot]
+        GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        GIT_COMMITTER_NAME: github-actions[bot]
+        GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
       run: |
-        if [ -n "${{ github.event.inputs.expected_avg }}" ]; then
-          # CLI mode with manual inputs
-          python round_sim.py --cli --sim-round ${{ github.event.inputs.sim_round }} --expected-avg ${{ github.event.inputs.expected_avg }}
-        elif [ -n "${{ github.event.inputs.sim_round }}" ]; then
-          # CLI mode with just round number
-          python round_sim.py --cli --sim-round ${{ github.event.inputs.sim_round }}
-        else
-          # Sheet mode (default)
-          python round_sim.py
-        fi
+        $simRound = "${{ github.event.inputs.sim_round }}"
+        $expectedAvg = "${{ github.event.inputs.expected_avg }}"
+        $simArgs = @()
+        if ($simRound) {
+          $simArgs += @("--cli", "--sim-round", $simRound)
+        }
+        if ($expectedAvg) {
+          $simArgs += @("--expected-avg", $expectedAvg)
+        }
+        & $env:RUNNER_PYTHON round_sim.py @simArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     
     - name: Upload simulation results
       uses: actions/upload-artifact@v7
@@ -83,12 +121,23 @@ jobs:
     
     - name: Telegram on failure
       if: failure()
+      shell: powershell
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
-          "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-          -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="FAILED: run-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          >/dev/null || true
+        if ($env:TELEGRAM_BOT_TOKEN -and $env:TELEGRAM_CHAT_ID) {
+          $body = @{
+            chat_id = $env:TELEGRAM_CHAT_ID
+            text = "FAILED: run-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          try {
+            Invoke-RestMethod `
+              -Uri "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/sendMessage" `
+              -Method Post `
+              -Body $body `
+              -TimeoutSec 15 | Out-Null
+          } catch {
+            Write-Warning "Telegram failure notification could not be sent: $($_.Exception.Message)"
+          }
+        }

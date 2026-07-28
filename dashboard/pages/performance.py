@@ -110,7 +110,7 @@ layout = dbc.Container([
                           value=None, min=0, step=1,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
-        ], md=4),
+        ], md=2),
         dbc.Col([
             html.Label("Pred (Skill Estimate)", className="form-label small text-muted"),
             dbc.InputGroup([
@@ -123,7 +123,36 @@ layout = dbc.Container([
                           value=None, min=0, step=0.1,
                           className="bg-dark text-light border-secondary"),
             ], size="sm"),
-        ], md=4),
+        ], md=2),
+        dbc.Col([
+            html.Label("Market (Finish Pos)", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-market-filter",
+                options=[
+                    {"label": "Win", "value": "win"},
+                    {"label": "Top 5", "value": "top_5"},
+                    {"label": "Top 10", "value": "top_10"},
+                    {"label": "Top 20", "value": "top_20"},
+                ],
+                value=None,
+                multi=True,
+                placeholder="All markets",
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
+        dbc.Col([
+            html.Label("Side (Finish Pos)", className="form-label small text-muted"),
+            dcc.Dropdown(
+                id="perf-side-filter",
+                options=[
+                    {"label": "YES side", "value": "yes"},
+                    {"label": "NO side (fades)", "value": "no"},
+                ],
+                value=None,
+                placeholder="All sides",
+                className="dash-dropdown-dark",
+            ),
+        ], md=2),
     ], className="mb-2"),
 
     # Filters — Row 3: Analysis mode, Raw Edge, Decimal Odds, Archetype, Player
@@ -320,13 +349,15 @@ def _convert_to_units(df):
     Input("perf-archetype-against-filter", "value"),
     Input("perf-player-filter", "value"),
     Input("perf-include-live", "value"),
+    Input("perf-side-filter", "value"),
+    Input("perf-market-filter", "value"),
 )
 def update_performance(event, bet_type, books, min_edge, round_filter, dow_filter,
                        sample_min, sample_max, pred_min, pred_max,
                        analysis_mode,
                        raw_edge_min, raw_edge_max, dec_odds_min, dec_odds_max,
                        archetype_filter, archetype_against_filter, player_filter,
-                       include_live):
+                       include_live, side_filter, market_filter):
     empty_fig = go.Figure(layout={**PLOT_LAYOUT, "title": "No data"})
     alert = dbc.Alert("No bet data found. Run the simulation pipeline first.", color="warning")
     empty_return = (alert, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, alert, "", [], [], [])
@@ -359,14 +390,36 @@ def update_performance(event, bet_type, books, min_edge, round_filter, dow_filte
 
     # Hide Kalshi/NoVig results until scraped prices are validated. Rows stay in the
     # ledger; we just don't render them on this page — EXCEPT the live finish positions
-    # the user opted into above (those are exchange books, so they'd be hidden here).
-    if "bookmaker" in df.columns:
-        is_exch = df["bookmaker"].astype(str).str.lower().str.contains("kalshi|novig", na=False)
+    # the user opted into above (those are exchange books, so they'd be hidden here),
+    # and EXCEPT exchange books explicitly picked in the Sportsbook filter.
+    _book_list = [str(b).lower() for b in (books if isinstance(books, list) else [books])] if books else []
+    _hidden_exch = [b for b in ("kalshi", "novig") if b not in _book_list]
+    if _hidden_exch and "bookmaker" in df.columns:
+        is_exch = df["bookmaker"].astype(str).str.lower().str.contains("|".join(_hidden_exch), na=False)
         if show_live and "bet_type" in df.columns:
             keep_live = df["bet_type"].astype(str) == "finish_position_live"
         else:
             keep_live = pd.Series(False, index=df.index)
         df = df[~is_exch | keep_live]
+
+    # Side filter (finish positions only). NO-side fades carry a "_no" suffix on
+    # market_type, which the ledger normalization stores in `opponent`. Both
+    # options restrict to finish bets — matchups have no YES/NO side.
+    if side_filter and "opponent" in df.columns and "bet_type" in df.columns:
+        is_no = df["opponent"].astype(str).str.strip().str.lower().str.endswith("_no")
+        is_finish = df["bet_type"].astype(str).str.startswith("finish_position")
+        df = df[is_finish & (is_no if side_filter == "no" else ~is_no)]
+
+    # Market filter (finish positions only): match the base market on `opponent`,
+    # ignoring any NO-side suffix. "win" also matches the exchange "winner" market.
+    if market_filter and "opponent" in df.columns and "bet_type" in df.columns:
+        mkts = set(market_filter if isinstance(market_filter, list) else [market_filter])
+        if "win" in mkts:
+            mkts.add("winner")
+        base_mkt = (df["opponent"].astype(str).str.strip().str.lower()
+                    .str.replace(r"_no$", "", regex=True))
+        is_finish = df["bet_type"].astype(str).str.startswith("finish_position")
+        df = df[is_finish & base_mkt.isin(mkts)]
 
     # Apply round filter
     if round_filter and "round" in df.columns:

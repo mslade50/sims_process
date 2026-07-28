@@ -2,60 +2,89 @@ name: Nightly Round Sim Backup
 
 on:
   schedule:
-    # 9:45 PM EST = 02:45 UTC (next day)
+    # Fixed at 02:45 UTC: 9:45 PM EST / 10:45 PM EDT (previous day)
     # Runs Thu night (after R1), Fri night (after R2), Sat night (after R3)
-    - cron: '45 2 * * 5'   # Friday 02:45 UTC = Thursday 9:45 PM EST
-    - cron: '45 2 * * 6'   # Saturday 02:45 UTC = Friday 9:45 PM EST
-    - cron: '45 2 * * 0'   # Sunday 02:45 UTC = Saturday 9:45 PM EST
+    - cron: '45 2 * * 5'   # Friday UTC = Thursday evening ET
+    - cron: '45 2 * * 6'   # Saturday UTC = Friday evening ET
+    - cron: '45 2 * * 0'   # Sunday UTC = Saturday evening ET
 
   workflow_dispatch:         # Manual trigger
 
+concurrency:
+  group: round-sim
+  cancel-in-progress: false
+
 jobs:
   round-sim:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, golf-sim]
     permissions:
       contents: write   # publish_sim_fairs pushes round_h2h_r{N} to main
+    env:
+      RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
       with:
-        python-version: '3.10'
+        clean: true
 
     - name: Install dependencies
+      shell: powershell
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter pytz
+        & $env:RUNNER_PYTHON --version
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $env:RUNNER_PYTHON -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $env:RUNNER_PYTHON -m pip install pytz
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Install sims_kernel Rust wheel (falls back to Python if unavailable)
+      shell: powershell
       run: |
-        pip install --force-reinstall --no-deps \
-          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" \
-          && python -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())" \
-          || echo "sims_kernel wheel unavailable — round_sim will use the Python fallback"
+        & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
+          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warning "sims_kernel wheel unavailable; round_sim will use the Python fallback"
+          exit 0
+        }
+        & $env:RUNNER_PYTHON -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warning "sims_kernel self-test failed; round_sim will use the Python fallback"
+          exit 0
+        }
 
     - name: Fetch scraped odds from golf_scraping repo
+      shell: powershell
       env:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
-        mkdir -p permanent_data/scraped_odds
-        for MARKET in tournament_matchups round_matchups; do
-          curl -sL -H "Authorization: token $GH_TOKEN" \
-            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
-            -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
-        done
-        ls -la permanent_data/scraped_odds/ || true
+        $oddsDir = Join-Path $PWD "permanent_data\scraped_odds"
+        New-Item -ItemType Directory -Path $oddsDir -Force | Out-Null
+        $headers = @{ Authorization = "token $env:GH_TOKEN" }
+        foreach ($market in @("tournament_matchups", "round_matchups")) {
+          try {
+            Invoke-WebRequest `
+              -Uri "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/$($market)_latest.json" `
+              -Headers $headers `
+              -OutFile (Join-Path $oddsDir "$($market)_latest.json") `
+              -TimeoutSec 30
+          } catch {
+            Write-Warning "Could not fetch $market odds: $($_.Exception.Message)"
+          }
+        }
+        Get-ChildItem $oddsDir
 
     - name: Run nightly round sim backup
+      shell: powershell
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
-      run: python nightly_round_sim.py
+      run: |
+        & $env:RUNNER_PYTHON nightly_round_sim.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     # ── Publish the compact round-H2H fair table to the repo so reprice.py can
     # price matchups WITHOUT restoring the 60 MB sim cache. nightly_round_sim.py
@@ -64,6 +93,7 @@ jobs:
     # local sim_cache_r{N}.parquet; pushes round_h2h_r{N}.parquet (+ _meta.json)
     # to main via git plumbing (needs contents: write above).
     - name: Publish round H2H fair table
+      shell: powershell
       env:
         # GH_TOKEN lets _dispatch_board_build fire the sim-fairs-published
         # repository_dispatch at golf_scraping from CI (without it the dispatch
@@ -72,15 +102,40 @@ jobs:
         # _tee_groups needs DataGolf for real tee-time threesomes; without it the
         # 3-ball publish silently returns no groups.
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
-      run: python publish_sim_fairs.py --round-h2h-only
+        # publish_sim_fairs imports sim_inputs -> coeff_loader, which needs sheet
+        # credentials; without this env it falls back to credentials.json (absent
+        # in CI) and the whole publish step dies (broke every run 7/17-7/24).
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        # CI runners have no git user.name/email, so publish's `git commit-tree`
+        # dies ('Committer identity unknown') and the push is silently skipped —
+        # every CI publish before 7/24 no-opped this way. Identity via env keeps
+        # the plumbing path working without touching runner git config.
+        GIT_AUTHOR_NAME: github-actions[bot]
+        GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        GIT_COMMITTER_NAME: github-actions[bot]
+        GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      run: |
+        & $env:RUNNER_PYTHON publish_sim_fairs.py --round-h2h-only
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Telegram on failure
       if: failure()
+      shell: powershell
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
-          "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-          -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="FAILED: nightly-round-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          >/dev/null || true
+        if ($env:TELEGRAM_BOT_TOKEN -and $env:TELEGRAM_CHAT_ID) {
+          $body = @{
+            chat_id = $env:TELEGRAM_CHAT_ID
+            text = "FAILED: nightly-round-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          try {
+            Invoke-RestMethod `
+              -Uri "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/sendMessage" `
+              -Method Post `
+              -Body $body `
+              -TimeoutSec 15 | Out-Null
+          } catch {
+            Write-Warning "Telegram failure notification could not be sent: $($_.Exception.Message)"
+          }
+        }

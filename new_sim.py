@@ -708,7 +708,11 @@ if not args.price_only:
 
         tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
         mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-        tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
+        # Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
+        # live_stats_engine _totals_r1 / Rust kernel
+        floor_r1 = np.where((resid_r1 >= -8.0) & (resid_r1 < -6.0), -0.75, -0.5)
+        tot_resid_adj_r1 = np.maximum(
+            np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), floor_r1)
 
         ott_adj_r1  = ott_r1  * C[:, [0]]
         putt_adj_r1 = putt_r1 * C[:, [3]]
@@ -777,7 +781,10 @@ if not args.price_only:
         # ======================
         # R2 -> R3 skill update (position buckets; uses R1+R2 stats)
         # ======================
-        resid_r2  = sg_r2 - sg_r2_mean
+        # Residual capped at +6 before the cubic: beyond training support it
+        # explodes positive (parity: live_stats_engine.py RESID_FIX_CAP and
+        # the Rust kernel).
+        resid_r2  = np.minimum(sg_r2 - sg_r2_mean, 6.0)
         resid2_r2 = resid_r2**2
         resid3_r2 = resid_r2**3
 
@@ -830,10 +837,12 @@ if not args.price_only:
             adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
 
         shape2 = resid_r2.shape
-        tot_resid_adj_r2 = (
+        # -0.5 lower clip: parity with live_stats_engine tot_resid_adj / Rust kernel
+        tot_resid_adj_r2 = np.maximum(
             ensure_array(adj_sum.get('residual_adj', 0.0),  shape2) +
             ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
-            ensure_array(adj_sum.get('residual3_adj', 0.0), shape2)
+            ensure_array(adj_sum.get('residual3_adj', 0.0), shape2),
+            -0.5,
         )
         tot_sg_adj_r2 = (
             ensure_array(adj_sum.get('avg_ott_adj', 0.0),   shape2) +

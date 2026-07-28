@@ -27,6 +27,8 @@ Sheet layout (tab: "round_config"):
         course_codes      Comma-separated course codes from API (e.g. "TS" or "PB,SG").
                           Auto-populated by update_sheet_courses.py.
         course_pars       Comma-separated par values matching course_codes order.
+        course_lat_lon    Course latitude/longitude as "lat,lon".
+        course_timezone   IANA timezone resolved from the course coordinates.
         expected_score_r1 Expected scoring avg for R1. Pre-tourney estimate (backup fallback).
         expected_score_r2 Expected scoring avg for R2. Multi-course: comma-separated.
         expected_score_r3 Expected scoring avg for R3.
@@ -181,6 +183,22 @@ def _parse_multi_numeric(value_str):
         return []
 
 
+def _parse_course_lat_lon(value_str):
+    """Parse and range-check a ``lat,lon`` Sheet value."""
+    if not value_str or str(value_str).strip() == "":
+        return None, None
+    try:
+        parts = [float(part.strip()) for part in str(value_str).split(",")]
+    except (TypeError, ValueError):
+        return None, None
+    if len(parts) != 2:
+        return None, None
+    latitude, longitude = parts
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return None, None
+    return latitude, longitude
+
+
 _SUMMARY_PRINTED = False  # full config block prints once per process; one-liner after
 
 
@@ -293,6 +311,10 @@ def load_config(verbose=True):
     # --- NEW fields for tournament sim ---
     course_codes = _parse_string_array(params.get("course_codes", ""))
     course_pars = _parse_multi_numeric(params.get("course_pars", ""))
+    course_latitude, course_longitude = _parse_course_lat_lon(
+        params.get("course_lat_lon", "")
+    )
+    course_timezone = params.get("course_timezone", "").strip() or None
 
     # Per-round expected scoring averages (can be multi-value for multi-course)
     expected_score_r1 = _parse_multi_numeric(params.get("expected_score_r1", ""))
@@ -368,6 +390,9 @@ def load_config(verbose=True):
         # Course / tournament fields
         "course_codes": course_codes,
         "course_pars": course_pars,
+        "course_latitude": course_latitude,
+        "course_longitude": course_longitude,
+        "course_timezone": course_timezone,
         "expected_score_r1": expected_score_r1,
         "expected_score_r2": expected_score_r2,
         "expected_score_r3": expected_score_r3,

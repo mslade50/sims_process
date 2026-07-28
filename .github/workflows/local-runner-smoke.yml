@@ -1,0 +1,76 @@
+name: Local Runner Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: round-sim
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, Windows, X64, golf-sim]
+    env:
+      RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          clean: true
+
+      - name: Install Python dependencies
+        shell: powershell
+        run: |
+          & $env:RUNNER_PYTHON --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $env:RUNNER_PYTHON -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $env:RUNNER_PYTHON -m pip install pytz
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install and test sims_kernel
+        shell: powershell
+        run: |
+          & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
+            "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $env:RUNNER_PYTHON -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Fetch private odds payload
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        run: |
+          if (-not $env:GH_TOKEN) {
+            throw "GOLF_SCRAPING_PAT is unavailable"
+          }
+          $oddsDir = Join-Path $PWD "permanent_data\scraped_odds"
+          $oddsFile = Join-Path $oddsDir "round_matchups_latest.json"
+          New-Item -ItemType Directory -Path $oddsDir -Force | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/round_matchups_latest.json" `
+            -Headers @{ Authorization = "token $env:GH_TOKEN" } `
+            -OutFile $oddsFile `
+            -TimeoutSec 30
+          & $env:RUNNER_PYTHON -m json.tool $oddsFile | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run read-only service-account smoke
+        shell: powershell
+        env:
+          DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: |
+          & $env:RUNNER_PYTHON runner_smoke.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify repository push authorization without writing
+        shell: powershell
+        run: |
+          git push --dry-run origin HEAD:refs/heads/local-runner-smoke-auth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

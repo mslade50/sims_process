@@ -41,6 +41,9 @@ import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend for PDF generation
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def _resolve_csv(filename):
     """Find a CSV in root first, then dashboard_data/ fallback."""
@@ -79,7 +82,12 @@ from api_utils import (
 # Configuration
 # ══════════════════════════════════════════════════════════════════════════════
 
-API_KEY = "c05ee5fd8f2f3b14baab409bd83c"
+API_KEY = os.getenv("DATAGOLF_API_KEY", "").strip()
+
+# Upper cap on the R2 residual fed into the R2->R3 fix-layer cubic.
+# Must match round_sim.py / new_sim.py and the Rust kernel (round_cascade.rs,
+# cascade.rs).
+RESID_FIX_CAP = 6.0
 
 # Wind/dewpoint arrays indexed by round (1-based; index 0 unused)
 # Populated at runtime from Google Sheet config (_apply_sheet_overrides)
@@ -166,7 +174,7 @@ ROUND_BUCKETS = {1: R1_BUCKETS, 2: R2_BUCKETS, 3: R3_BUCKETS, 4: R4_BUCKETS}
 # Column mapping: coefficient key → actual DataFrame column name
 _R1_COL_MAP = {"residual": "residual", "residual2": "residual2", "ott": "sg_ott", "putt": "sg_putt"}
 _R2_COL_MAP = {
-    "residual": "residual", "residual2": "residual2", "residual3": "residual3",
+    "residual": "residual_capped", "residual2": "residual2", "residual3": "residual3",
     "avg_ott": "sg_ott_avg", "avg_putt": "sg_putt_avg", "avg_app": "sg_app_avg",
     "avg_arg": "sg_arg_avg", "delta_app": "sg_app_delta",
 }
@@ -444,8 +452,13 @@ def _residuals_r2(df):
         df["sg_total_adj"] - df["updated_pred"]
         + df["player_wind_benefit"] + df["player_dew_benefit"]
     )
-    df["residual2"] = df["residual"] ** 2
-    df["residual3"] = df["residual"] ** 3
+    # Cap the fix-layer input at +6: beyond the training support the cubic
+    # explodes positive (a +9.7 residual otherwise earns ~+0.9 SG), while
+    # empirically leaders at resid >= 6 keep mean-reverting ~-0.25 (2026-07-25
+    # PGA backtest, n=382). Raw residual is kept for the weather spline/exports.
+    df["residual_capped"] = df["residual"].clip(upper=RESID_FIX_CAP)
+    df["residual2"] = df["residual_capped"] ** 2
+    df["residual3"] = df["residual_capped"] ** 3
     return df
 
 
@@ -569,15 +582,26 @@ def _totals_r1(df):
     df["ott_adj"] = df.get("ott_adj", 0)
     df["putt_adj"] = df.get("putt_adj", 0)
 
-    # Residual cap logic (from live_stats.py)
+    # Residual cap logic (from live_stats.py), plus a floor: the concave
+    # quadratics run away negative on blow-up rounds (low bucket at resid -10
+    # would give -1.5). Floor is -0.75 for resid in [-8,-6) and -0.5 elsewhere
+    # per the PGA 2019-2026 backtest: that band mean-reverts ~-0.64 pooled
+    # (low bucket -0.82, n=424) while the more extreme tail flattens back
+    # toward -0.5 (resid < -6 overall: -0.507, n=578). Non-monotonic by design.
     df["tot_resid_adj"] = df["residual_adj"] + df["residual2_adj"]
-    df["tot_resid_adj"] = np.minimum(
-        np.where(
-            (df["tot_resid_adj"] > 0.2) & (df["residual"] < 0),
-            0.2,
-            df["tot_resid_adj"],
+    resid_floor = np.where(
+        (df["residual"] >= -8) & (df["residual"] < -6), -0.75, -0.5
+    )
+    df["tot_resid_adj"] = np.maximum(
+        np.minimum(
+            np.where(
+                (df["tot_resid_adj"] > 0.2) & (df["residual"] < 0),
+                0.2,
+                df["tot_resid_adj"],
+            ),
+            0.5,
         ),
-        0.5,
+        resid_floor,
     )
 
     # Persist R1's category-SG piece so the R2 run can undo it when the
@@ -623,10 +647,12 @@ def _totals_r2(df):
     else:
         df["r1_sg_adj_undo"] = 0.0
 
-    # Total adjustment = residual components + SG components + R1 undo
-    # Explicitly listed to avoid catching sg_total_adj (which is raw data, not an adjustment)
+    # Total adjustment = clipped residual total + SG components + R1 undo.
+    # Uses tot_resid_adj (not the raw residual components) so the -0.5 lower
+    # clip actually reaches updated_pred_r3 — the raw components previously
+    # bypassed it.
     adj_components = [
-        "residual_adj", "residual2_adj", "residual3_adj",
+        "tot_resid_adj",
         "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj", "delta_app_adj",
         "r1_sg_adj_undo",
     ]
@@ -1470,25 +1496,36 @@ def refresh_dew_forecasts():
     from sheets_storage import get_spreadsheet
 
     try:
-        from sim_inputs import course_id as _cid
-    except ImportError:
-        print("  [dew_refresh] Cannot import course_id from sim_inputs")
+        from sheet_config import load_config
+
+        sheet_weather = load_config(verbose=False)
+        _cid = sheet_weather.get("course_id")
+        lat = sheet_weather.get("course_latitude")
+        lon = sheet_weather.get("course_longitude")
+    except Exception as exc:
+        print(f"  [dew_refresh] Could not read Sheet coordinates: {exc}")
         return
 
-    # Get coordinates
-    coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
-    if not os.path.exists(coords_csv):
-        print("  [dew_refresh] course_coordinates.csv not found")
-        return
+    # Sheet coordinates are primary. Fall back to the durable course lookup for
+    # older weeks that have not run the updated humidity.py yet.
+    if lat is None or lon is None:
+        coords_csv = os.path.join(
+            os.path.dirname(__file__),
+            "permanent_data",
+            "course_coordinates.csv",
+        )
+        if not os.path.exists(coords_csv):
+            print("  [dew_refresh] course_coordinates.csv not found")
+            return
 
-    coords_df = pd.read_csv(coords_csv)
-    coords_row = coords_df[coords_df["course_id"] == _cid]
-    if coords_row.empty:
-        print(f"  [dew_refresh] course_id {_cid} not found in coordinates")
-        return
+        coords_df = pd.read_csv(coords_csv)
+        coords_row = coords_df[coords_df["course_id"] == _cid]
+        if coords_row.empty:
+            print(f"  [dew_refresh] course_id {_cid} not found in coordinates")
+            return
 
-    lat = float(coords_row["lat"].iloc[0])
-    lon = float(coords_row["lon"].iloc[0])
+        lat = float(coords_row["lat"].iloc[0])
+        lon = float(coords_row["lon"].iloc[0])
 
     # Get round dates from DataGolf
     round_dates = get_round_dates()
@@ -1506,7 +1543,7 @@ def refresh_dew_forecasts():
         "longitude": lon,
         "hourly": "dewpoint_2m",
         "temperature_unit": "fahrenheit",
-        "timezone": "America/New_York",
+        "timezone": "auto",
         "start_date": start_date,
         "end_date": end_date,
     }
@@ -1869,6 +1906,14 @@ def main():
                         help="Round that just completed (0 = pre-event)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip email sending (skill update still runs)")
+    parser.add_argument(
+        "--automation",
+        action="store_true",
+        help=(
+            "Update and synchronize the next-round scoring expectation before "
+            "building predictions"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1905,6 +1950,22 @@ def main():
     except Exception as e:
         print(f"\n[warn] Actuals write failed: {e}")
 
+    # Automation mode updates the target-round scoring expectation before
+    # predictions. Reload twice: first to pick up the orchestrator's fresh
+    # weather, then to pick up the synchronized primary expected score.
+    if round_num < 4 and args.automation:
+        try:
+            from sheet_config import load_config
+            refreshed_config = load_config()
+            _apply_sheet_overrides(refreshed_config)
+            update_expected_scores(round_num, sync_primary=True)
+            refreshed_config = load_config()
+            _apply_sheet_overrides(refreshed_config)
+        except Exception as e:
+            print(f"\n[error] Automated expected score update failed: {e}")
+            import traceback; traceback.print_exc()
+            raise
+
     # Step 2: Attempt weather/predictions for next round
     if round_num < 4:
         print(f"\n  Attempting to create R{round_num + 1} predictions...")
@@ -1913,11 +1974,13 @@ def main():
         except Exception as e:
             print(f"\n[warn] Weather update could not complete: {e}")
             print(f"   Skill update is saved. Run again once R{round_num + 1} tee times are available.")
+            if args.automation:
+                raise
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")
 
     # Step 3: Update expected scoring averages for remaining rounds
-    if round_num < 4:
+    if round_num < 4 and not args.automation:
         try:
             update_expected_scores(round_num)
         except Exception as e:
@@ -1925,18 +1988,22 @@ def main():
             import traceback; traceback.print_exc()
 
 
-def update_expected_scores(completed_round):
+def update_expected_scores(completed_round, sync_primary=False):
     """
     Recompute expected scoring averages for future rounds using current
     wind forecasts from the Sheet, and write them back to expected_score_r{N}.
 
-    Formula: expected_score = baseline - field_strength + avg_wind * wind_factor
+    Formula:
+      expected_score = baseline + field_adjustment
+                       + avg_wind * wind_factor
+                       + (avg_dew - dewpoint_base) * dew_calculation
 
     Uses:
-      - Baselines from scoring_baseline_{tourney}.csv (FINAL rows)
+      - Baselines from scoring_baseline_{tourney}.csv (FINAL rows), falling
+        back to the Sheet's durable pre-tournament breakdown
       - Field strength from final_predictions or pre_course_fit CSV
-      - Wind factor from compute_wind_factor()
-      - Per-round wind arrays from WIND_ARRAYS (already loaded from Sheet)
+      - Wind factor and dewpoint coefficient
+      - Per-round wind/dew arrays already loaded from the Sheet
     """
     import os
     from api_utils import compute_wind_factor
@@ -1948,25 +2015,50 @@ def update_expected_scores(completed_round):
 
     api_key = os.getenv("DATAGOLF_API_KEY")
 
-    # 1. Load baselines from scoring_baseline CSV
+    # 1. Load weather-free baselines. CI does not retain the weekly baseline
+    # CSV, so fall back to the durable pre-tournament breakdown in Sheet
+    # columns V/W (base score + already-computed field adjustment).
     baseline_file = f"scoring_baseline_{tourney}.csv"
-    if not os.path.exists(baseline_file):
-        print(f"  {baseline_file} not found — cannot update expected scores")
-        return
-
-    baseline_df = pd.read_csv(baseline_file)
-    finals = baseline_df[baseline_df["year"] == "FINAL"]
-    if finals.empty:
-        print(f"  No FINAL rows in {baseline_file}")
-        return
-
     baselines = {}
-    for _, row in finals.iterrows():
-        rnd = int(row["round_num"])
-        baselines[rnd] = float(row["baseline"])
-    print(f"  Baselines: {baselines}")
+    sheet_field_adjustments = {}
+    spreadsheet = None
+    if os.path.exists(baseline_file):
+        baseline_df = pd.read_csv(baseline_file)
+        finals = baseline_df[baseline_df["year"] == "FINAL"]
+        for _, row in finals.iterrows():
+            rnd = int(row["round_num"])
+            baselines[rnd] = float(row["baseline"])
+        print(f"  Baselines from {baseline_file}: {baselines}")
+    if not baselines:
+        try:
+            from sheets_storage import get_spreadsheet
 
-    # 2. Field strength from predictions
+            spreadsheet = get_spreadsheet()
+            ws = spreadsheet.worksheet("round_config")
+            grid = ws.get_all_values()
+            for rnd in range(1, 5):
+                row_idx = rnd + 1  # R1 is Sheet row 3 (zero-based index 2)
+                baselines[rnd] = float(grid[row_idx][21])  # col V
+                sheet_field_adjustments[rnd] = float(grid[row_idx][22])  # col W
+            print(f"  Baselines from Sheet pre-tourney breakdown: {baselines}")
+        except Exception as exc:
+            message = (
+                f"{baseline_file} is unavailable/incomplete and the Sheet pre-tourney "
+                f"breakdown could not be read: {exc}"
+            )
+            print(f"  {message}")
+            if sync_primary:
+                raise RuntimeError(message) from exc
+            return
+
+    if not baselines:
+        message = "No expected-score baselines are available"
+        print(f"  {message}")
+        if sync_primary:
+            raise RuntimeError(message)
+        return
+
+    # 2. Field strength from predictions (used when the CSV path is present).
     field_strength = 0.0
     for pred_file in [f"final_predictions_{tourney}.csv", f"pre_course_fit_{tourney}.csv"]:
         path = _resolve_csv(pred_file)
@@ -1977,7 +2069,7 @@ def update_expected_scores(completed_round):
                 field_strength = pred_df[col].mean()
                 print(f"  Field strength: {field_strength:+.4f} (from {path})")
             break
-    if field_strength == 0.0:
+    if field_strength == 0.0 and not sheet_field_adjustments:
         print(f"  WARNING: No prediction file found — field_strength = 0.0")
 
     # 3. Wind factor
@@ -1991,12 +2083,25 @@ def update_expected_scores(completed_round):
     except ImportError:
         cut_adj = 0.25
 
+    # Dewpoint base is persisted by humidity.py. Include the fresh dew forecast
+    # in the same score-space formula used by the pre-tournament breakdown.
+    dewpoint_base = 0.0
+    try:
+        from sheets_storage import get_round_config_params, get_spreadsheet
+
+        if spreadsheet is None:
+            spreadsheet = get_spreadsheet()
+        raw_params = get_round_config_params(spreadsheet=spreadsheet)
+        dewpoint_base = float(raw_params.get("dewpoint_base") or 0.0)
+    except Exception as exc:
+        print(f"  WARNING: Could not read dewpoint_base — dew effect disabled ({exc})")
+
     # 5. Compute for future rounds
     future_rounds = range(completed_round + 1, 5)
     adjusted = {}
 
-    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind Avg':>8} | {'Wind Eff':>8} | {'Field':>8} | {'Expected':>8}")
-    print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
+    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'Expected':>8}")
+    print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
 
     for rnd in future_rounds:
         base = baselines.get(rnd)
@@ -2008,44 +2113,69 @@ def update_expected_scores(completed_round):
         avg_wind = _compute_field_avg_wind(wind_arr, api_key, rnd) if wind_arr else 0.0
         wind_effect = avg_wind * wf
 
-        fld = -field_strength
-        if rnd >= 3:
-            fld -= cut_adj
+        dew_arr = DEW_ARRAYS.get(rnd, [])
+        avg_dew = _compute_field_avg_wind(dew_arr, api_key, rnd) if dew_arr else 0.0
+        dew_effect = (
+            (avg_dew - dewpoint_base) * dew_calculation
+            if dewpoint_base and dew_arr else 0.0
+        )
 
-        expected = base + fld + wind_effect
+        if rnd in sheet_field_adjustments:
+            fld = sheet_field_adjustments[rnd]
+        else:
+            fld = -field_strength
+            if rnd >= 3:
+                fld -= cut_adj
+
+        expected = base + fld + wind_effect + dew_effect
         adjusted[rnd] = round(expected, 1)
 
-        print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>8.1f} | {wind_effect:>+8.3f} | {fld:>+8.3f} | {adjusted[rnd]:>8.1f}")
+        print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>6.1f} | {wind_effect:>+8.3f} | {dew_effect:>+8.3f} | {fld:>+8.3f} | {adjusted[rnd]:>8.1f}")
 
     if not adjusted:
         print("  No rounds to update.")
+        if sync_primary:
+            raise RuntimeError("No future-round expected scores were computed")
         return
+    target_round = completed_round + 1
+    if sync_primary and target_round not in adjusted:
+        raise RuntimeError(
+            f"No expected score was computed for target R{target_round}"
+        )
 
     # 6. Write to Sheet
     try:
-        from sheets_storage import get_spreadsheet
+        from sheets_storage import (
+            get_spreadsheet,
+            update_round_config_params,
+        )
         spreadsheet = get_spreadsheet()
-        ws = spreadsheet.worksheet("round_config")
-
-        all_values = ws.get("A:C")
-        param_rows = {}
-        for i, row in enumerate(all_values):
-            if row and row[0].strip():
-                param_rows[row[0].strip().lower()] = i + 1
-
+        updates = {}
+        notes = {}
         for rnd, value in adjusted.items():
             param_name = f"expected_score_r{rnd}"
-            row_idx = param_rows.get(param_name)
-            if row_idx:
-                ws.update_cell(row_idx, 2, str(value))
-                ws.update_cell(row_idx, 3, f"Updated by live_stats_engine (after R{completed_round})")
-                print(f"  Wrote {param_name} = {value}")
-            else:
-                print(f"  WARNING: {param_name} row not found in Sheet")
+            updates[param_name] = value
+            notes[param_name] = (
+                f"Updated by live_stats_engine (after R{completed_round})"
+            )
+
+        if sync_primary and target_round in adjusted:
+            updates["expected_score_1"] = adjusted[target_round]
+            notes["expected_score_1"] = (
+                f"Automated R{target_round} scoring expectation"
+            )
+
+        update_round_config_params(
+            updates, notes=notes, spreadsheet=spreadsheet
+        )
+        for param_name, value in updates.items():
+            print(f"  Wrote {param_name} = {value}")
 
         print(f"  Expected scores updated in Sheet.")
     except Exception as e:
         print(f"  WARNING: Could not write to Sheet: {e}")
+        if sync_primary:
+            raise
 
 
 if __name__ == "__main__":

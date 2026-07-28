@@ -273,6 +273,12 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             if tot_resid_adj > 0.5 {
                 tot_resid_adj = 0.5;
             }
+            // Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
+            // live_stats_engine _totals_r1.
+            let floor = if resid >= -8.0 && resid < -6.0 { -0.75 } else { -0.5 };
+            if tot_resid_adj < floor {
+                tot_resid_adj = floor;
+            }
             let ott_adj = cats_r1[k][0] * c.ott;
             let putt_adj = cats_r1[k][3] * c.putt;
             let sg_adj = ott_adj + putt_adj;
@@ -363,7 +369,8 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
                 } else {
                     inp.r2_30up
                 };
-                let resid = sg_r2[k] - sg_r2_mean[k];
+                // Cap at +6 before the cubic (parity: Python RESID_FIX_CAP).
+                let resid = (sg_r2[k] - sg_r2_mean[k]).min(6.0);
                 let resid2 = resid * resid;
                 let resid3 = resid2 * resid;
                 let avg_ott = 0.5 * (cats_r1[k][0] + cats_r2[k][0]);
@@ -371,7 +378,9 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
                 let avg_arg = 0.5 * (cats_r1[k][2] + cats_r2[k][2]);
                 let avg_putt = 0.5 * (cats_r1[k][3] + cats_r2[k][3]);
                 let delta_app = cats_r2[k][1] - cats_r1[k][1];
-                let tr = resid * c.residual + resid2 * c.residual2 + resid3 * c.residual3;
+                // -0.5 lower clip: parity with live_stats_engine tot_resid_adj.
+                let tr = (resid * c.residual + resid2 * c.residual2 + resid3 * c.residual3)
+                    .max(-0.5);
                 let ts = avg_ott * c.avg_ott
                     + avg_putt * c.avg_putt
                     + avg_app * c.avg_app

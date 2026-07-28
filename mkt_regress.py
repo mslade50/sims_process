@@ -246,3 +246,18 @@ print(f"[ok] Saved {slim_path} ({len(slim)} players, cols: {list(slim.columns)})
 _onedrive_path = os.path.join(os.path.expanduser("~"), "OneDrive", f"final_predictions_{tourney}.csv")
 slim.to_csv(_onedrive_path, index=False)
 print(f"[ok] Copied to {_onedrive_path}")
+
+# ---------------------------------------------------------------------------
+# Chain skill_merge: tee times + DG 50/50 blend -> final_predictions_{tourney}_combined.csv
+# -> etr-golf-sims (the Rust sim's pred input)
+# ---------------------------------------------------------------------------
+import subprocess
+import sys
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_result = subprocess.run([sys.executable, os.path.join(_here, "skill_merge.py")], cwd=_here)
+if _result.returncode:
+    print(f"[skill_merge] FAILED (exit {_result.returncode}) — "
+          f"final_predictions_{tourney}_combined.csv NOT delivered to etr-golf-sims")
+else:
+    print(f"[skill_merge] final_predictions_{tourney}_combined.csv delivered to etr-golf-sims")
