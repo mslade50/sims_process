@@ -206,6 +206,11 @@ OneDrive root, and etr-golf-sims.
 the sim_prep prep run for the current week. If they're stale, the prep didn't
 run (or its fan-out failed) — rerun `cat_dists_player.py` in sim_prep.
 
+The guarded sim_prep pipeline also (2026-07-28) refreshes `field_updates.csv`
+here post-publish and runs `dists_thiswk_team.py` as its final stage, which
+builds `this_week_dists_adjusted.csv` and syncs it to `~/OneDrive/etr-golf-sims`
+along with `field_updates.csv`, `sg_dist_player.csv`, and `this_week_dists_v2.csv`.
+
 ---
 
 ## Phase 2: Wednesday Pre-Tournament Simulation
@@ -337,6 +342,11 @@ python mkt_regress.py
    - **c_adj_regress** (up to 30% of c_adj): extra regression when course-fit drives the edge
 4. Asymmetric dampening: upward adjustments dampened to 35% (UP ~40% accurate vs DOWN ~67%)
 5. Outputs: `final_predictions_{tourney}.csv` (slim) and `final_predictions_{tourney}_details.csv` (full detail)
+6. **Chains `skill_merge.py`** (local port of `~/OneDrive/skill_merge.py`, 2026-07-28): merges fresh
+   tee times, 50/50 blends `my_pred` with DataGolf's `dg_final_pred`, writes
+   `final_predictions_{tourney}_combined.csv` and copies it to `~/OneDrive/etr-golf-sims`
+   (the Rust sim's `pred` input — update `sim_config.yaml` over there to point at the new week's file).
+   Re-run `mkt_regress.py` (or `skill_merge.py` standalone) after tee times post to refresh it.
 
 **Requires**: matchup odds CSV (`betcris_{tourney}.csv` or `betonline_odds_with_my_odds_tu.csv`)
 

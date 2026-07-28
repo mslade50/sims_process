@@ -48,7 +48,7 @@ OUT_WEEK_TEAM          = "this_week_team_dists.csv"
 OUT_ADJUSTED_TEAM      = "this_week_team_dists_adjusted.csv"
 OUT_MISSING            = "this_week_missing_players.csv"
 
-SYNC_TARGETS = [r"C:\Users\mckin\OneDrive\etr-golf-sims"]
+SYNC_TARGETS = [os.path.join(os.path.expanduser("~"), "OneDrive", "etr-golf-sims")]
 
 # Sanity thresholds
 MAX_ABS_MEAN_SHIFT = 0.5
