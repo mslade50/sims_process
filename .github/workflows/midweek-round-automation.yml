@@ -84,6 +84,8 @@ jobs:
       contents: write
     env:
       RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
+      # Runner service account has no OneDrive; point at the synced db directly
+      DG_HISTORICAL_DB: 'C:\Users\McKinley Slade\OneDrive\dg_historical.db'
 
     steps:
       - name: Checkout repository

@@ -39,7 +39,8 @@ from sheet_config import load_config as _load_sheet_config
 _cfg = _load_sheet_config()
 tourney          = _cfg["tourney"]
 STD_DEV          = _cfg["std_dev"]
-PAR              = 72  # constant
+_sheet_pars      = _cfg.get("course_pars") or []
+PAR              = int(_sheet_pars[0]) if _sheet_pars else 72  # sheet course_pars wins; 72 fallback
 CUT_LINE         = _cfg["cut_line"]   # from golf_sims sheet (per event); 0 or >= field = NO CUT
 USE_10_SHOT_RULE = _cfg["use_10_shot_rule"]
 SIMULATIONS      = _cfg["simulations"]

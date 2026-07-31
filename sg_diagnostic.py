@@ -35,7 +35,23 @@ from api_utils import fetch_historical_rounds, clean_names
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
+def _resolve_db_path():
+    # DG_HISTORICAL_DB env var wins; otherwise ~/OneDrive. The self-hosted
+    # Actions runner runs as NetworkService, whose home has no OneDrive, so
+    # fall back to scanning real user profiles for the synced db.
+    env_path = os.getenv("DG_HISTORICAL_DB")
+    if env_path:
+        return env_path
+    default = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
+    if os.path.exists(default):
+        return default
+    import glob
+    for candidate in sorted(glob.glob(os.path.join("C:\\Users", "*", "OneDrive", "dg_historical.db"))):
+        return candidate
+    return default
+
+
+DB_PATH = _resolve_db_path()
 DIAGNOSTIC_PATH = os.path.join(
     os.path.dirname(__file__), "permanent_data", "sg_diagnostic.parquet"
 )
@@ -48,6 +64,15 @@ SG_CATS = ["ott", "app", "arg", "putt", "total"]
 EMAIL_FROM = os.getenv("EMAIL_USER")
 EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+
+def _normalize_db_names(df):
+    """dg_historical.db stores 'Last, First' — lowercase + name_replacements
+    matches the sims' lowercase 'last, first' contract. Do NOT flip to
+    'first last'; the whole pipeline keys on last-first."""
+    df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
+    df["player_name"] = df["player_name"].replace(name_replacements)
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +167,7 @@ def _fetch_actuals_from_db(event_id, year=None):
         return pd.DataFrame(), False
 
     # Normalize names
-    df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
-    df["player_name"] = df["player_name"].replace(name_replacements)
+    df = _normalize_db_names(df)
 
     # Melt to long format
     rows = []
@@ -364,11 +388,8 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None, year=No
         print("  No historical data found in database")
         return _unknown_archetypes(field_players)
 
-    # Normalize DB names to lowercase + apply name_replacements
-    db_df["player_name"] = (
-        db_df["player_name"].astype(str).str.lower().str.strip()
-    )
-    db_df["player_name"] = db_df["player_name"].replace(name_replacements)
+    # Normalize DB names ('Last, First' -> 'first last' + name_replacements)
+    db_df = _normalize_db_names(db_df)
 
     # Also normalize dg_id for matching
     if "dg_id" in db_df.columns:
@@ -523,9 +544,7 @@ def _compute_tour_population(cutoff_date):
             conn.close()
             return pd.DataFrame()
 
-        eligible_players = set(
-            eligible["player_name"].astype(str).str.lower().str.strip().tolist()
-        )
+        eligible_players = set(_normalize_db_names(eligible)["player_name"].tolist())
 
         # Pull all rounds for eligible players
         db_df = pd.read_sql_query(
@@ -548,8 +567,7 @@ def _compute_tour_population(cutoff_date):
     if db_df.empty:
         return pd.DataFrame()
 
-    db_df["player_name"] = db_df["player_name"].astype(str).str.lower().str.strip()
-    db_df["player_name"] = db_df["player_name"].replace(name_replacements)
+    db_df = _normalize_db_names(db_df)
     db_df = db_df[db_df["player_name"].isin(eligible_players)]
 
     records = []
