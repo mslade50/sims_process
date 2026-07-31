@@ -103,6 +103,17 @@ def build_archetype_file(event_id=None, field_players=None):
                 print(f"  Field from {fname}: {len(field_players)} players")
                 break
     if not field_players:
+        # CI has no local prediction CSVs — fall back to the DataGolf field API
+        try:
+            from api_utils import fetch_field_updates
+
+            fdf = fetch_field_updates(os.getenv("DATAGOLF_API_KEY"))
+            if fdf is not None and not fdf.empty:
+                field_players = fdf["player_name"].dropna().unique().tolist()
+                print(f"  Field from DataGolf field-updates API: {len(field_players)} players")
+        except Exception as exc:
+            print(f"  Field API fallback failed: {exc}")
+    if not field_players:
         print("  No field source found — cannot build archetype file")
         return None
 

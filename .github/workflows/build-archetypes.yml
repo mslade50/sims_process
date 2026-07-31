@@ -1,0 +1,68 @@
+name: Build Weekly Archetypes
+
+# Builds permanent_data/player_archetypes.csv from the latest dg_historical
+# snapshot in Cloudflare R2 (sim_prep's dgdata bucket) and commits it. The
+# sims read this CSV at runtime instead of needing db access on any runner.
+#
+# Triggers: a push that changes sim_inputs.py (the new week's config landing),
+# a Wednesday-morning refresh, or manual dispatch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [sim_inputs.py]
+  schedule:
+    - cron: '0 14 * * 3'
+
+concurrency:
+  group: build-archetypes
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install "pandas>=2.1,<2.3" "numpy>=1.24,<2.0" boto3 zstandard \
+            "python-dotenv>=1.0,<2.0" requests "gspread>=5.10,<6.0" \
+            "google-auth>=2.23,<3.0"
+
+      - name: Fetch dg_historical snapshot from R2
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python dgdata_fetch.py --out dg_snapshot.db
+
+      - name: Build archetype file
+        env:
+          DG_HISTORICAL_DB: ${{ github.workspace }}/dg_snapshot.db
+          DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: python sg_diagnostic.py --build-archetypes
+
+      - name: Commit artifact
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add permanent_data/player_archetypes.csv
+          if git diff --cached --quiet; then
+            echo "Archetypes unchanged — nothing to commit"
+            exit 0
+          fi
+          git commit -m "Weekly archetypes: rebuild from R2 dg_historical snapshot"
+          git pull --rebase origin main
+          git push origin main
