@@ -2096,12 +2096,46 @@ def update_expected_scores(completed_round, sync_primary=False):
     except Exception as exc:
         print(f"  WARNING: Could not read dewpoint_base — dew effect disabled ({exc})")
 
+    # 4b. In-week difficulty feedback: shift future-round expectations by a
+    # fraction of the mean realized delta (actual - expected, from the actuals
+    # rows this engine writes to cols U-AC). Realized wind/dew sit on the
+    # expected side of that delta, so it isolates course-difficulty surprise.
+    # Weight grows with evidence: 50% after R1, 60% after R2, 70% after R3.
+    DELTA_WEIGHTS = {1: 0.5, 2: 0.6, 3: 0.7}
+    delta_adj = 0.0
+    try:
+        from sheets_storage import get_spreadsheet as _get_ss
+
+        if spreadsheet is None:
+            spreadsheet = _get_ss()
+        actual_rows = spreadsheet.worksheet("round_config").get("U11:AC14")
+        deltas = []
+        for rnd in range(1, completed_round + 1):
+            row = actual_rows[rnd - 1] if len(actual_rows) >= rnd else []
+            try:
+                d = float(row[8])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if abs(d) > 5:
+                print(f"  WARNING: ignoring implausible R{rnd} delta {d:+.2f}")
+                continue
+            deltas.append(d)
+        if deltas:
+            weight = DELTA_WEIGHTS.get(completed_round, 0.7)
+            delta_adj = round(weight * (sum(deltas) / len(deltas)), 3)
+            print(f"  Difficulty feedback: deltas {['%+.2f' % d for d in deltas]} "
+                  f"-> {weight:.0%} x mean = {delta_adj:+.3f}")
+        else:
+            print("  Difficulty feedback: no realized deltas yet")
+    except Exception as exc:
+        print(f"  WARNING: difficulty feedback skipped ({exc})")
+
     # 5. Compute for future rounds
     future_rounds = range(completed_round + 1, 5)
     adjusted = {}
 
-    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'Expected':>8}")
-    print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
+    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'DeltaFb':>8} | {'Expected':>8}")
+    print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
 
     for rnd in future_rounds:
         base = baselines.get(rnd)
@@ -2127,10 +2161,10 @@ def update_expected_scores(completed_round, sync_primary=False):
             if rnd >= 3:
                 fld -= cut_adj
 
-        expected = base + fld + wind_effect + dew_effect
+        expected = base + fld + wind_effect + dew_effect + delta_adj
         adjusted[rnd] = round(expected, 1)
 
-        print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>6.1f} | {wind_effect:>+8.3f} | {dew_effect:>+8.3f} | {fld:>+8.3f} | {adjusted[rnd]:>8.1f}")
+        print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>6.1f} | {wind_effect:>+8.3f} | {dew_effect:>+8.3f} | {fld:>+8.3f} | {delta_adj:>+8.3f} | {adjusted[rnd]:>8.1f}")
 
     if not adjusted:
         print("  No rounds to update.")
