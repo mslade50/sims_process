@@ -46,11 +46,11 @@
     "residual3": 0.0076
   },
   "coefficients_r2_30_up": {
-    "avg_app": 0.015,
-    "avg_arg": -0.06,
-    "avg_ott": 0.166,
-    "avg_putt": 0.0,
-    "delta_app": 0.004,
+    "avg_app": -0.08447550272624664,
+    "avg_arg": -0.1441279933004482,
+    "avg_ott": 0.005761107513317058,
+    "avg_putt": -0.07368530337389416,
+    "delta_app": 0.0,
     "residual": 0.0603,
     "residual2": -0.001,
     "residual3": 0.0015

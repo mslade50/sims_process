@@ -57,7 +57,7 @@ def _resolve_csv(filename):
 
 
 from sim_inputs import (
-    tourney, course_par, event_ids, wind_override, baseline_wind,
+    tourney, tour, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
@@ -69,13 +69,14 @@ from sim_inputs import (
 )
 
 from api_utils import (
-    fetch_live_stats, fetch_field_updates,
+    fetch_live_stats, fetch_field_updates, fetch_img_player_rounds,
     calculate_average_wind, compute_wind_factor, clean_names,
     fetch_player_decompositions,
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
     fetch_realized_wind,
 )
+from img_shot_local import write_player_crosswalk
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -199,6 +200,88 @@ def _map_key_to_column(key, round_num):
 # Step 1: Data Loading & Merging
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _merge_img_round_summary(df, round_num):
+    """Attach read-only local IMG SG diagnostics to DataGolf rows when present."""
+    explicit_key = os.getenv("IMG_SHOT_EVENT_KEY", "").strip()
+    event_value = (
+        explicit_key
+        or os.getenv("IMG_SHOT_EVENT_ID", "").strip()
+        or (str(event_ids[0]) if len(event_ids) == 1 else "")
+    )
+    if not event_value:
+        return df
+    try:
+        event_id = event_value if ":" in event_value else int(event_value)
+    except ValueError:
+        print(f"Skipping IMG shot-data merge: invalid event id {event_value!r}")
+        return df
+    img = fetch_img_player_rounds(
+        event_id,
+        round_num,
+        tour=tour,
+        season=datetime.now().year,
+        event_key=explicit_key or None,
+    )
+    event_label = img.attrs.get("event_key", event_value) if img is not None else event_value
+    if img is None or img.empty:
+        print(f"  [IMG] no archive rows for event={event_label} round={round_num}")
+        return df
+    if "player_name" not in img.columns:
+        print("  [IMG] archive response has no player_name; skipping merge")
+        return df
+
+    duplicates = int(img["player_name"].duplicated(keep=False).sum())
+    if duplicates:
+        print(f"  [IMG] warning: {duplicates} duplicate player keys; keeping last")
+        img = img.drop_duplicates("player_name", keep="last")
+
+    rename = {
+        column: column if column == "player_name" or column.startswith("img_")
+        else f"img_{column}"
+        for column in img.columns
+    }
+    img = img.rename(columns=rename)
+    merged = df.merge(img, on="player_name", how="left", validate="many_to_one")
+    crosswalk_rows = []
+    player_ids = merged.get(
+        "img_player_id",
+        pd.Series(index=merged.index, dtype=object),
+    )
+    for _, row in merged[player_ids.notna()].iterrows():
+        crosswalk_rows.append({
+            "source_player_id": str(row["img_player_id"]),
+            "source_player_name": row.get("img_source_player_name", ""),
+            "datagolf_player_name": row["player_name"],
+            "canonical_name": row["player_name"],
+            "event_key": row.get("img_event_key", event_label),
+        })
+    try:
+        write_player_crosswalk(crosswalk_rows)
+    except Exception as exc:  # noqa: BLE001 - telemetry must never kill the update
+        print(f"  [IMG] crosswalk update failed: {exc}")
+    eligible = (
+        merged["sg_total"].notna()
+        if "sg_total" in merged.columns
+        else pd.Series(True, index=merged.index)
+    )
+    eligible_count = int(eligible.sum())
+    matched_mask = merged.get(
+        "img_player_id", pd.Series(index=merged.index, dtype=object)
+    ).notna()
+    complete_mask = merged.get(
+        "img_complete", pd.Series(False, index=merged.index)
+    ).eq(True)
+    matched = int((eligible & matched_mask).sum())
+    complete = int((eligible & complete_mask).sum())
+    print(
+        f"  [IMG] event={event_label} round={round_num}: "
+        f"matched={matched}/{eligible_count} active players complete={complete}"
+    )
+    if eligible_count and matched / eligible_count < 0.9:
+        print("  [IMG] warning: player overlap is below 90%; IMG fields are diagnostic only")
+    return merged
+
+
 def load_and_merge(round_num):
     """
     Fetch live stats, field updates, and merge with prior predictions.
@@ -214,6 +297,7 @@ def load_and_merge(round_num):
     df = fetch_live_stats(round_num, API_KEY, include_score=include_score)
     if df is None:
         raise RuntimeError(f"Failed to fetch live stats for round {round_num}")
+    df = _merge_img_round_summary(df, round_num)
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
     if field is not None:
