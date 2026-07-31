@@ -35,23 +35,39 @@ from api_utils import fetch_historical_rounds, clean_names
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-def _resolve_db_path():
-    # DG_HISTORICAL_DB env var wins; otherwise ~/OneDrive. The self-hosted
-    # Actions runner runs as NetworkService, whose home has no OneDrive, so
-    # fall back to scanning real user profiles for the synced db.
+_db_path_cache = None
+
+
+def _db_path():
+    """Resolve dg_historical.db lazily: DG_HISTORICAL_DB env override first,
+    then the latest R2 snapshot (via dgdata_fetch's shared local cache — the
+    canonical, freshest source), then the OneDrive copy as offline fallback.
+    Lazy so importing this module never triggers a download (round_sim usually
+    reads the committed archetype CSV and never touches the db)."""
+    global _db_path_cache
+    if _db_path_cache is not None:
+        return _db_path_cache
     env_path = os.getenv("DG_HISTORICAL_DB")
     if env_path:
-        return env_path
+        _db_path_cache = env_path
+        return _db_path_cache
+    try:
+        from dgdata_fetch import cached_snapshot_path
+
+        _db_path_cache = str(cached_snapshot_path("dg_historical"))
+        return _db_path_cache
+    except Exception as exc:
+        print(f"  [dgdata] R2 snapshot unavailable ({exc}) — falling back to local db")
     default = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
-    if os.path.exists(default):
-        return default
-    import glob
-    for candidate in sorted(glob.glob(os.path.join("C:\\Users", "*", "OneDrive", "dg_historical.db"))):
-        return candidate
+    if not os.path.exists(default):
+        import glob
+        for candidate in sorted(
+            glob.glob(os.path.join("C:\\Users", "*", "OneDrive", "dg_historical.db"))
+        ):
+            _db_path_cache = candidate
+            return candidate
+    _db_path_cache = default
     return default
-
-
-DB_PATH = _resolve_db_path()
 DIAGNOSTIC_PATH = os.path.join(
     os.path.dirname(__file__), "permanent_data", "sg_diagnostic.parquet"
 )
@@ -207,14 +223,15 @@ def _fetch_actuals_from_db(event_id, year=None):
 
     Returns long-format DataFrame or empty DataFrame if event not in DB.
     """
-    if not os.path.exists(DB_PATH):
+    db_path = _db_path()
+    if not os.path.exists(db_path):
         return pd.DataFrame(), False
 
     if year is None:
         year = datetime.now().year
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
         df = pd.read_sql_query(
             """
             SELECT player_name, dg_id, round_num,
@@ -399,12 +416,13 @@ def compute_rolling_archetypes(event_id, field_players, actuals_df=None, year=No
     Returns DataFrame with: player_name, dg_id, archetype, sg_*_rolling,
                             driving_dist_rolling, driving_acc_rolling
     """
-    if not os.path.exists(DB_PATH):
-        print(f"  Database not found at {DB_PATH} -- skipping archetypes")
+    db_path = _db_path()
+    if not os.path.exists(db_path):
+        print(f"  Database not found at {db_path} -- skipping archetypes")
         return _unknown_archetypes(field_players)
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
     except Exception as e:
         print(f"  Database connection error: {e} -- skipping archetypes")
         return _unknown_archetypes(field_players)
@@ -580,11 +598,12 @@ def _compute_tour_population(cutoff_date):
     trailing 12 months. Returns DataFrame with same rolling stat columns
     as compute_rolling_archetypes.
     """
-    if not os.path.exists(DB_PATH):
+    db_path = _db_path()
+    if not os.path.exists(db_path):
         return pd.DataFrame()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
     except Exception:
         return pd.DataFrame()
 

@@ -21,8 +21,6 @@ jobs:
       contents: write   # publish_sim_fairs pushes round_h2h_r{N} to main
     env:
       RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
-      # Runner service account has no OneDrive; point at the synced db directly
-      DG_HISTORICAL_DB: 'C:\Users\McKinley Slade\OneDrive\dg_historical.db'
 
     steps:
     - name: Checkout repository

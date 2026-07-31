@@ -22,11 +22,16 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter
+        pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter boto3 zstandard
 
     - name: Run grading pipeline
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        # R2 access lets sg_diagnostic read the latest dg_historical snapshot
+        # (adjusted SG actuals + archetypes) instead of degrading gracefully
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}

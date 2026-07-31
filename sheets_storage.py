@@ -99,6 +99,8 @@ TOURNAMENT_MU_HEADERS = [
     "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
 ]
 
+CLV_COLS = ["open_odds", "close_odds", "tot_clv", "clv", "clv_book"]
+
 FINISH_POS_HEADERS = [
     "run_timestamp", "event_name", "year", "event_id",
     "player_name", "dg_id",
@@ -730,7 +732,12 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
 
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
-    ws = _get_or_create_tab(spreadsheet, tab, FINISH_POS_HEADERS)
+    # Live bets have no closing line, so the Live tab carries no CLV columns
+    # (CLV scope is matchups + pre-tourney finish bets — see clv.py).
+    expected_headers = FINISH_POS_HEADERS
+    if tab == TAB_LIVE:
+        expected_headers = [h for h in FINISH_POS_HEADERS if h not in CLV_COLS]
+    ws = _get_or_create_tab(spreadsheet, tab, expected_headers)
     written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["finish_pos"])
     print(f"  [storage] Wrote {written} finish position rows to '{tab}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
