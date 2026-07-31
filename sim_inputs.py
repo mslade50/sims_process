@@ -53,7 +53,7 @@ category_profile_shrinkage_enabled = False
 ingest_event_ids = [525]
 ingest_tour = 'pga'
 ingest_years = [2026]
-course_par = 72
+course_par = 70
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
