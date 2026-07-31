@@ -38,6 +38,17 @@ TRANSIENT_PATTERNS = [
     "standings_r*_live_*.npy",
     "made_cut_live_*.npy",
     "player_names_live_*.json",
+    "r*_live_model_*.csv",
+]
+# Generic (unsuffixed) round files carry no tourney slug, so they can't be
+# slug-checked — but init_weekly runs before anything this week creates them,
+# so any that exist are prior-week leftovers. live_stats_engine PREFERS
+# model_predictions_r1.csv over rebuilding from final_predictions when it
+# exists, so a stale one silently poisons the whole live pipeline (2026-07-30).
+UNCONDITIONAL_TRANSIENTS = [
+    "model_predictions_r*.csv",
+    "r*_live_model.csv",
+    "r*_live_summary.csv",
 ]
 # Archive-gated: source files for historical_dists — pattern -> archived name.
 ARCHIVED_PATTERNS = {
@@ -76,6 +87,15 @@ def sweep_stale_transients():
             fname = os.path.basename(path)
             if tourney in fname:
                 continue
+            try:
+                os.remove(path)
+                removed.append(fname)
+            except OSError as exc:
+                print(f"  [init] could not remove {fname}: {exc}")
+
+    for pattern in UNCONDITIONAL_TRANSIENTS:
+        for path in glob.glob(os.path.join(ROOT, pattern)):
+            fname = os.path.basename(path)
             try:
                 os.remove(path)
                 removed.append(fname)
