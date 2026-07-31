@@ -80,8 +80,10 @@ def _latest_manifest(client, name: str) -> dict:
 def _download_verified(client, manifest: dict, out_path: Path) -> None:
     import zstandard as zstd
 
-    compressed = out_path.with_suffix(".zst.part")
-    staged = out_path.with_suffix(".part")
+    # PID-suffixed staging so two processes cold-caching the same snapshot
+    # can't corrupt each other's staged bytes (last replace() wins, both valid)
+    compressed = out_path.with_suffix(f".zst.part{os.getpid()}")
+    staged = out_path.with_suffix(f".part{os.getpid()}")
     try:
         client.download_file(_bucket(), manifest["object_key"], str(compressed))
         with compressed.open("rb") as src, staged.open("wb") as dst:
@@ -132,6 +134,17 @@ def cached_snapshot_path(name: str = "dg_historical") -> Path:
             print(f"[dgdata] downloading {name} snapshot {manifest['snapshot_id']}...")
             _download_verified(client, manifest, db_path)
             sha_path.write_text(manifest["sha256"], encoding="ascii")
+            # Prune superseded snapshots (~570 MB each, weekly) — skip any a
+            # concurrent reader still holds open (Windows lock -> OSError)
+            for old in cache_dir.glob("*.db"):
+                if old.name == db_path.name:
+                    continue
+                try:
+                    old.unlink()
+                    old.with_suffix(".sha256").unlink(missing_ok=True)
+                    print(f"[dgdata] pruned old snapshot {old.name}")
+                except OSError:
+                    pass
         return db_path
     except Exception as exc:
         cached = sorted(cache_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)

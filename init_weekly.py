@@ -74,7 +74,7 @@ def _slug_from(fname, pattern):
     return fname[len(prefix):len(fname) - len(suffix)]
 
 
-def sweep_stale_transients():
+def sweep_stale_transients(mid_tournament=False):
     """Delete prior-week per-tournament outputs from the repo root."""
     tourney = _current_tourney()
     if not tourney:
@@ -93,14 +93,22 @@ def sweep_stale_transients():
             except OSError as exc:
                 print(f"  [init] could not remove {fname}: {exc}")
 
-    for pattern in UNCONDITIONAL_TRANSIENTS:
-        for path in glob.glob(os.path.join(ROOT, pattern)):
-            fname = os.path.basename(path)
-            try:
-                os.remove(path)
-                removed.append(fname)
-            except OSError as exc:
-                print(f"  [init] could not remove {fname}: {exc}")
+    if mid_tournament:
+        # Re-running init_weekly during a live event (e.g. to push a corrected
+        # cut_line/course_pars) must not destroy the event's own round files —
+        # they are unrecoverable and _resolve_csv would silently fall back to
+        # older dashboard_data copies.
+        print("  [init] mid-tournament rerun — keeping current round files "
+              "(model_predictions_r*, r*_live_model*)")
+    else:
+        for pattern in UNCONDITIONAL_TRANSIENTS:
+            for path in glob.glob(os.path.join(ROOT, pattern)):
+                fname = os.path.basename(path)
+                try:
+                    os.remove(path)
+                    removed.append(fname)
+                except OSError as exc:
+                    print(f"  [init] could not remove {fname}: {exc}")
 
     for pattern, archive_name in ARCHIVED_PATTERNS.items():
         for path in glob.glob(os.path.join(ROOT, pattern)):
@@ -127,6 +135,25 @@ def sweep_stale_transients():
         print("  [init] no stale per-tournament files to sweep")
 
 
+def _is_mid_tournament_rerun():
+    """True when the sheet (pre-reset) is mid-round on the SAME event that
+    sim_inputs currently configures — i.e. this is a config touch-up, not a
+    new week."""
+    try:
+        with open(os.path.join(ROOT, "sim_inputs.py"), encoding="utf-8") as f:
+            match = re.search(r"^event_ids\s*=\s*\[\s*(\d+)", f.read(), re.MULTILINE)
+        current_event = match.group(1) if match else None
+        from sheet_config import get_param
+
+        prior_round = int(float(get_param("round") or 0))
+        prior_event = str(get_param("event_id") or "").strip()
+        return bool(current_event) and prior_round >= 1 and prior_event == current_event
+    except Exception as exc:
+        print(f"  [init] could not check mid-tournament state ({exc}) — assuming new week")
+        return False
+
+
 if __name__ == "__main__":
+    mid_tournament = _is_mid_tournament_rerun()
     reset_for_new_week()
-    sweep_stale_transients()
+    sweep_stale_transients(mid_tournament=mid_tournament)

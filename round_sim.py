@@ -5221,7 +5221,11 @@ def main():
     try:
         from sg_diagnostic import compute_rolling_archetypes, load_archetype_map
         _field = model_preds['player_name'].unique().tolist() if model_preds is not None else []
-        _arch_map = load_archetype_map(_event_id)
+        try:
+            _arch_map = load_archetype_map(_event_id)
+        except Exception as _csv_err:
+            print(f"  Archetype CSV load failed ({_csv_err}) — trying live db")
+            _arch_map = {}
         if _arch_map:
             print(f"  Loaded {len(_arch_map)} archetypes from weekly CSV")
         else:

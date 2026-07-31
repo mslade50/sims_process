@@ -17,7 +17,7 @@ from datetime import datetime
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
-PAR           = 72
+PAR           = 70  # keep in sync with course_par below
 CUT_LINE      = 65
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script

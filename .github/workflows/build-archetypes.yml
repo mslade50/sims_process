@@ -58,11 +58,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # importing sim_inputs rewrote the tracked coeffs_cache.json in this
+          # workspace — discard it (and anything else) so the rebase can run
           git add permanent_data/player_archetypes.csv
           if git diff --cached --quiet; then
             echo "Archetypes unchanged — nothing to commit"
             exit 0
           fi
+          git stash --include-untracked -- ':!permanent_data/player_archetypes.csv' || true
           git commit -m "Weekly archetypes: rebuild from R2 dg_historical snapshot"
-          git pull --rebase origin main
-          git push origin main
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin main && exit 0
+            echo "push attempt $i failed — retrying"
+            sleep 5
+          done
+          exit 1

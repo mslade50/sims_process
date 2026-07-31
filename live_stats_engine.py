@@ -1688,7 +1688,14 @@ def write_actuals_to_sheet(round_num):
     config = load_config()
     realized_wind = config.get(f"realized_wind_r{round_num}")
     dewpoint_base = config.get("dewpoint_base", 0.0) or 0.0
-    wind_factor = config.get("wind_override", 0.0) or 0.0
+    # wind_override == 0 means "use the computed blend" — the raw value is NOT
+    # the factor. Using it directly zeroed wind_impact on blend-mode weeks, so
+    # realized wind leaked into the delta and the difficulty feedback would
+    # re-apply it on top of future rounds' own wind terms (double count).
+    from api_utils import compute_wind_factor
+    wind_factor = compute_wind_factor(
+        event_ids, config.get("wind_override", 0.0) or 0.0, baseline_wind
+    )
     dew_calc = config.get("dew_calculation", 0.0) or 0.0
 
     all_data = ws.get_all_values()
@@ -2115,13 +2122,16 @@ def update_expected_scores(completed_round, sync_primary=False):
             try:
                 d = float(row[8])
             except (IndexError, TypeError, ValueError):
+                print(f"  WARNING: no usable R{rnd} delta in actuals row — skipping it")
                 continue
             if abs(d) > 5:
                 print(f"  WARNING: ignoring implausible R{rnd} delta {d:+.2f}")
                 continue
             deltas.append(d)
         if deltas:
-            weight = DELTA_WEIGHTS.get(completed_round, 0.7)
+            # weight by deltas actually available, not rounds elapsed — after R3
+            # with only one usable delta, one noisy number shouldn't get 70%
+            weight = DELTA_WEIGHTS.get(len(deltas), 0.7)
             delta_adj = round(weight * (sum(deltas) / len(deltas)), 3)
             print(f"  Difficulty feedback: deltas {['%+.2f' % d for d in deltas]} "
                   f"-> {weight:.0%} x mean = {delta_adj:+.3f}")

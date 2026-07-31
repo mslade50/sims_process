@@ -135,6 +135,7 @@ def build_archetype_file(event_id=None, field_players=None):
 
     df = compute_rolling_archetypes(eid, field_players)
     df.insert(0, "event_id", int(eid))
+    df.insert(1, "built_at", datetime.now().strftime("%Y-%m-%d"))
     df.to_csv(ARCHETYPE_CSV, index=False)
     print(f"  Wrote {ARCHETYPE_CSV} ({len(df)} players, event {eid})")
     return df
@@ -155,8 +156,21 @@ def load_archetype_map(event_id=None):
     if df.empty or "player_name" not in df.columns or "archetype" not in df.columns:
         return {}
     if event_id is not None and "event_id" in df.columns:
-        if str(df["event_id"].iloc[0]) != str(int(event_id)):
+        try:
+            if int(float(df["event_id"].iloc[0])) != int(float(event_id)):
+                return {}
+        except (TypeError, ValueError):
             return {}
+    # event_ids recur annually — a CSV that survived a broken build workflow
+    # for months would pass the event check, so also require recency
+    if "built_at" in df.columns:
+        try:
+            age = (datetime.now() - datetime.strptime(str(df["built_at"].iloc[0]), "%Y-%m-%d")).days
+            if age > 12:
+                print(f"  Archetype CSV is {age} days old — treating as stale")
+                return {}
+        except (TypeError, ValueError):
+            pass
     return dict(zip(df["player_name"], df["archetype"].fillna("")))
 
 

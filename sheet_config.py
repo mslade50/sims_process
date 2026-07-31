@@ -561,6 +561,14 @@ def reset_for_new_week():
     except ImportError:
         pass
 
+    # Prior-week realized weather must not survive the reset: a leftover
+    # realized_wind_r{N} skips the fresh Open-Meteo fetch, corrupting the
+    # actuals delta the expected-score difficulty feedback consumes.
+    for rnd in range(1, 5):
+        for prefix in ("realized_wind_r", "realized_dew_r"):
+            if f"{prefix}{rnd}" in param_rows:
+                updates[f"{prefix}{rnd}"] = ""
+
     cells_updated = []
     for param, value in updates.items():
         row_idx = param_rows.get(param)
@@ -573,6 +581,32 @@ def reset_for_new_week():
         else:
             ws.update_cell(row_idx, 2, value)
             cells_updated.append(param)
+
+    # Clear the per-round actuals block (rows 11-14, cols U-AC): the new
+    # week's rows are written round by round, and the difficulty feedback
+    # reads deltas from here — stale rows from last week must never be
+    # readable as this week's evidence. Skipped on a mid-tournament rerun of
+    # the SAME event (config touch-up), where the rows are current evidence.
+    prior = {
+        row[0].strip().lower(): (row[1] if len(row) > 1 else "")
+        for row in all_values
+        if row and row[0].strip()
+    }
+    try:
+        same_event_mid_round = (
+            str(prior.get("event_id", "")).strip() == str(event_ids[0])
+            and float(prior.get("round") or 0) >= 1
+        )
+    except (TypeError, ValueError):
+        same_event_mid_round = False
+    if same_event_mid_round:
+        print("  [reset] mid-tournament rerun — keeping this week's actuals block")
+    else:
+        try:
+            ws.batch_clear(["U11:AC14"])
+            cells_updated.append("actuals block (U11:AC14)")
+        except Exception as exc:
+            print(f"  WARNING: could not clear actuals block: {exc}")
 
     print(f"  [reset] Sheet updated for new week: {', '.join(cells_updated)}")
     summary_extra = []
