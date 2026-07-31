@@ -76,6 +76,64 @@ def _normalize_db_names(df):
 
 
 # ---------------------------------------------------------------------------
+# Weekly archetype artifact
+# ---------------------------------------------------------------------------
+# Archetypes use a pre-event cutoff, so they can be built once at the start of
+# the week and committed. Runners (cloud gate, self-hosted NetworkService)
+# then read the CSV without needing dg_historical.db access at sim time.
+ARCHETYPE_CSV = os.path.join(
+    os.path.dirname(__file__), "permanent_data", "player_archetypes.csv"
+)
+
+
+def build_archetype_file(event_id=None, field_players=None):
+    """Compute archetypes for this week's field and write the committed CSV."""
+    eid = event_id or event_ids[0]
+    if field_players is None:
+        for fname in (f"final_predictions_{tourney}.csv",
+                      f"pre_course_fit_{tourney}.csv"):
+            path = os.path.join(os.path.dirname(__file__), fname)
+            if os.path.exists(path):
+                fdf = pd.read_csv(path)
+                fdf["player_name"] = (
+                    fdf["player_name"].astype(str).str.lower().str.strip()
+                )
+                fdf["player_name"] = fdf["player_name"].replace(name_replacements)
+                field_players = fdf["player_name"].dropna().unique().tolist()
+                print(f"  Field from {fname}: {len(field_players)} players")
+                break
+    if not field_players:
+        print("  No field source found — cannot build archetype file")
+        return None
+
+    df = compute_rolling_archetypes(eid, field_players)
+    df.insert(0, "event_id", int(eid))
+    df.to_csv(ARCHETYPE_CSV, index=False)
+    print(f"  Wrote {ARCHETYPE_CSV} ({len(df)} players, event {eid})")
+    return df
+
+
+def load_archetype_map(event_id=None):
+    """Read the committed weekly archetype CSV -> {player_name: archetype}.
+
+    Returns {} when the file is missing or belongs to a different event, so
+    callers can fall back to a live compute_rolling_archetypes() call.
+    """
+    if not os.path.exists(ARCHETYPE_CSV):
+        return {}
+    try:
+        df = pd.read_csv(ARCHETYPE_CSV)
+    except Exception:
+        return {}
+    if df.empty or "player_name" not in df.columns or "archetype" not in df.columns:
+        return {}
+    if event_id is not None and "event_id" in df.columns:
+        if str(df["event_id"].iloc[0]) != str(int(event_id)):
+            return {}
+    return dict(zip(df["player_name"], df["archetype"].fillna("")))
+
+
+# ---------------------------------------------------------------------------
 # 2b. load_predictions
 # ---------------------------------------------------------------------------
 def load_predictions(tourney_name):
@@ -1587,7 +1645,20 @@ def main():
         help="Re-fetch DB adjusted SG actuals for non-adjusted events and "
         "replace stale raw/unlabeled actuals (archetypes/predictions untouched)",
     )
+    parser.add_argument(
+        "--build-archetypes",
+        action="store_true",
+        help="Build permanent_data/player_archetypes.csv for this week's field "
+        "(weekly pre-tournament step; sims read the CSV instead of the db)",
+    )
     args = parser.parse_args()
+
+    # --- Weekly archetype artifact build ---
+    if args.build_archetypes:
+        print("\n  Building weekly archetype file")
+        print("  " + "=" * 40)
+        build_archetype_file(event_id=args.event_id)
+        return
 
     # --- Backfill mode: upgrade stale raw/unlabeled events to adjusted SG ---
     if args.backfill_adjusted:

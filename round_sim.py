@@ -5219,11 +5219,15 @@ def main():
 
     # ── Compute archetypes (before export + email so type_on appears everywhere) ──
     try:
-        from sg_diagnostic import compute_rolling_archetypes
+        from sg_diagnostic import compute_rolling_archetypes, load_archetype_map
         _field = model_preds['player_name'].unique().tolist() if model_preds is not None else []
-        _arch_df = compute_rolling_archetypes(_event_id, _field)
-        _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
-        print(f"  Computed archetypes for {len(_arch_map)} players")
+        _arch_map = load_archetype_map(_event_id)
+        if _arch_map:
+            print(f"  Loaded {len(_arch_map)} archetypes from weekly CSV")
+        else:
+            _arch_df = compute_rolling_archetypes(_event_id, _field)
+            _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+            print(f"  Computed archetypes for {len(_arch_map)} players (live db)")
         if not combined.empty:
             combined['type_on'] = (
                 combined['bet_on'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
