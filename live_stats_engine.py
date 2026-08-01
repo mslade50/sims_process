@@ -678,9 +678,8 @@ def _totals_r1(df):
     # (low bucket -0.82, n=424) while the more extreme tail flattens back
     # toward -0.5 (resid < -6 overall: -0.507, n=578). Non-monotonic by design.
     df["tot_resid_adj"] = df["residual_adj"] + df["residual2_adj"]
-    resid_floor = np.where(
-        (df["residual"] >= -8) & (df["residual"] < -6), -0.75, -0.5
-    )
+    # User risk rule 2026-08: residual-based adjustments capped at +/-0.5
+    # everywhere (the former -0.75 band for resid [-8,-6) is retired).
     df["tot_resid_adj"] = np.maximum(
         np.minimum(
             np.where(
@@ -690,7 +689,7 @@ def _totals_r1(df):
             ),
             0.5,
         ),
-        resid_floor,
+        -0.5,
     )
 
     # Persist R1's category-SG piece so the R2 run can undo it when the
@@ -716,7 +715,7 @@ def _totals_r2(df):
     # Residual total, clipped at -0.5
     df["tot_resid_adj"] = (
         df["residual_adj"] + df["residual2_adj"] + df["residual3_adj"]
-    ).clip(lower=-0.5)
+    ).clip(lower=-0.5, upper=0.5)
 
     # SG adjustment total (fillna handles multi-course ShotLink gaps
     # where delta_app may be NaN if a player lacks SG data from both courses)

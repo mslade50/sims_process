@@ -780,11 +780,10 @@ def simulate_remaining_rounds(
 
     tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
     mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-    # Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
-    # live_stats_engine _totals_r1 / Rust kernel
-    floor_r1 = np.where((resid_r1 >= -8.0) & (resid_r1 < -6.0), -0.75, -0.5)
+    # User risk rule 2026-08: residual adjustments capped at +/-0.5 everywhere
+    # (former -0.75 band retired); parity with live_stats_engine / Rust kernel.
     tot_resid_adj_r1 = np.maximum(
-        np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), floor_r1)
+        np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), -0.5)
 
     ott_adj_r1 = ott_r1 * C[:, [0]]
     putt_adj_r1 = putt_r1 * C[:, [3]]
@@ -892,13 +891,13 @@ def simulate_remaining_rounds(
         adj_sum[k] = adj_lt6.get(k, 0.0) + adj_6_30.get(k, 0.0) + adj_30up.get(k, 0.0)
 
     shape2 = (n_players, num_sims)
-    # -0.5 lower clip: parity with live_stats_engine tot_resid_adj / Rust kernel
-    tot_resid_adj_r2 = np.maximum(
+    # +/-0.5 clip (user risk rule 2026-08): parity with live_stats_engine / Rust
+    tot_resid_adj_r2 = np.minimum(np.maximum(
         ensure_array(adj_sum.get('residual_adj', 0.0), shape2) +
         ensure_array(adj_sum.get('residual2_adj', 0.0), shape2) +
         ensure_array(adj_sum.get('residual3_adj', 0.0), shape2),
         -0.5,
-    )
+    ), 0.5)
     tot_sg_adj_r2 = (
         ensure_array(adj_sum.get('avg_ott_adj', 0.0), shape2) +
         ensure_array(adj_sum.get('avg_putt_adj', 0.0), shape2) +

@@ -275,7 +275,8 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             }
             // Floor -0.75 for resid [-8,-6), -0.5 elsewhere: parity with
             // live_stats_engine _totals_r1.
-            let floor = if resid >= -8.0 && resid < -6.0 { -0.75 } else { -0.5 };
+            // User risk rule 2026-08: +/-0.5 everywhere (former -0.75 band retired).
+            let floor = -0.5;
             if tot_resid_adj < floor {
                 tot_resid_adj = floor;
             }
@@ -378,9 +379,10 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
                 let avg_arg = 0.5 * (cats_r1[k][2] + cats_r2[k][2]);
                 let avg_putt = 0.5 * (cats_r1[k][3] + cats_r2[k][3]);
                 let delta_app = cats_r2[k][1] - cats_r1[k][1];
-                // -0.5 lower clip: parity with live_stats_engine tot_resid_adj.
+                // +/-0.5 clip (user risk rule 2026-08): parity with live_stats_engine.
                 let tr = (resid * c.residual + resid2 * c.residual2 + resid3 * c.residual3)
-                    .max(-0.5);
+                    .max(-0.5)
+                    .min(0.5);
                 let ts = avg_ott * c.avg_ott
                     + avg_putt * c.avg_putt
                     + avg_app * c.avg_app
