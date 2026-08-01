@@ -58,6 +58,7 @@ Usage:
 
 import os
 import json
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv  
@@ -87,6 +88,11 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive',
 ]
 
+_RETRYABLE_SHEET_STATUS_CODES = {429, 500, 502, 503, 504}
+# Four retries wait 75 seconds in total, long enough to cross the Sheets
+# per-user, per-minute quota window that can be exhausted by the live pipeline.
+_SHEET_RETRY_DELAYS_SECONDS = (5, 10, 20, 40)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Sheet Reader
@@ -103,6 +109,50 @@ def _find_credentials():
     )
 
 
+def _sheet_error_code(exc):
+    """Return an HTTP-like status code from a gspread/requests exception."""
+    code = getattr(exc, "code", None)
+    if code is None:
+        error = getattr(exc, "error", None)
+        if isinstance(error, dict):
+            code = error.get("code")
+    if code is None:
+        response = getattr(exc, "response", None)
+        code = getattr(response, "status_code", None)
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_sheet_request(operation, label, delays=_SHEET_RETRY_DELAYS_SECONDS):
+    """Retry transient Sheets API failures, honoring Retry-After when present."""
+    attempts = len(delays) + 1
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except Exception as exc:
+            code = _sheet_error_code(exc)
+            if code not in _RETRYABLE_SHEET_STATUS_CODES or attempt == attempts - 1:
+                raise
+
+            wait = float(delays[attempt])
+            response = getattr(exc, "response", None)
+            headers = getattr(response, "headers", None)
+            if headers:
+                try:
+                    retry_after = float(headers.get("Retry-After", 0))
+                    wait = min(max(wait, retry_after), 120.0)
+                except (TypeError, ValueError):
+                    pass
+
+            print(
+                f"[sheet_config] {label} failed with HTTP {code}; "
+                f"retry in {wait:g}s ({attempt + 2}/{attempts})"
+            )
+            time.sleep(wait)
+
+
 def _connect_sheet():
     """Authenticate and return the worksheet."""
     # Try environment variable first (GitHub Actions or .env file)
@@ -117,22 +167,12 @@ def _connect_sheet():
         creds_path = _find_credentials()
         creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     
-    # 3-attempt backoff: a transient Sheets 429/503 here crashes every consumer
-    # of load_config (sim, publish, CLV, grading) — retry before giving up.
-    import time as _time
-    last = None
-    for attempt in range(3):
-        try:
-            client = gspread.authorize(creds)
-            spreadsheet = client.open(SHEET_NAME)
-            return spreadsheet.worksheet(TAB_NAME)
-        except Exception as exc:
-            last = exc
-            if attempt < 2:
-                wait = 5 * (attempt + 1)
-                print(f"[sheet_config] connect failed ({exc}); retry in {wait}s ({attempt + 2}/3)")
-                _time.sleep(wait)
-    raise last
+    def open_worksheet():
+        client = gspread.authorize(creds)
+        spreadsheet = client.open(SHEET_NAME)
+        return spreadsheet.worksheet(TAB_NAME)
+
+    return _retry_sheet_request(open_worksheet, "connect")
 
 
 def _parse_array(value_str):
@@ -256,7 +296,10 @@ def load_config(verbose=True):
 
     # Read all rows from columns A and B
     # Returns list of lists: [['Parameter', 'Value'], ['round', '1'], ...]
-    all_values = ws.get("A:B")
+    all_values = _retry_sheet_request(
+        lambda: ws.get("A:B"),
+        "read round_config",
+    )
 
     # Build param → value dict (skip header row)
     params = {}
