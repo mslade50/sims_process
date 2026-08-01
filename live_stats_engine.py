@@ -57,7 +57,7 @@ def _resolve_csv(filename):
 
 
 from sim_inputs import (
-    tourney, course_par, event_ids, wind_override, baseline_wind,
+    tourney, tour, course_par, event_ids, wind_override, baseline_wind,
     dew_calculation,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
@@ -69,13 +69,14 @@ from sim_inputs import (
 )
 
 from api_utils import (
-    fetch_live_stats, fetch_field_updates,
+    fetch_live_stats, fetch_field_updates, fetch_img_player_rounds,
     calculate_average_wind, compute_wind_factor, clean_names,
     fetch_player_decompositions,
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
     fetch_realized_wind,
 )
+from img_shot_local import write_player_crosswalk
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -199,6 +200,88 @@ def _map_key_to_column(key, round_num):
 # Step 1: Data Loading & Merging
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _merge_img_round_summary(df, round_num):
+    """Attach read-only local IMG SG diagnostics to DataGolf rows when present."""
+    explicit_key = os.getenv("IMG_SHOT_EVENT_KEY", "").strip()
+    event_value = (
+        explicit_key
+        or os.getenv("IMG_SHOT_EVENT_ID", "").strip()
+        or (str(event_ids[0]) if len(event_ids) == 1 else "")
+    )
+    if not event_value:
+        return df
+    try:
+        event_id = event_value if ":" in event_value else int(event_value)
+    except ValueError:
+        print(f"Skipping IMG shot-data merge: invalid event id {event_value!r}")
+        return df
+    img = fetch_img_player_rounds(
+        event_id,
+        round_num,
+        tour=tour,
+        season=datetime.now().year,
+        event_key=explicit_key or None,
+    )
+    event_label = img.attrs.get("event_key", event_value) if img is not None else event_value
+    if img is None or img.empty:
+        print(f"  [IMG] no archive rows for event={event_label} round={round_num}")
+        return df
+    if "player_name" not in img.columns:
+        print("  [IMG] archive response has no player_name; skipping merge")
+        return df
+
+    duplicates = int(img["player_name"].duplicated(keep=False).sum())
+    if duplicates:
+        print(f"  [IMG] warning: {duplicates} duplicate player keys; keeping last")
+        img = img.drop_duplicates("player_name", keep="last")
+
+    rename = {
+        column: column if column == "player_name" or column.startswith("img_")
+        else f"img_{column}"
+        for column in img.columns
+    }
+    img = img.rename(columns=rename)
+    merged = df.merge(img, on="player_name", how="left", validate="many_to_one")
+    crosswalk_rows = []
+    player_ids = merged.get(
+        "img_player_id",
+        pd.Series(index=merged.index, dtype=object),
+    )
+    for _, row in merged[player_ids.notna()].iterrows():
+        crosswalk_rows.append({
+            "source_player_id": str(row["img_player_id"]),
+            "source_player_name": row.get("img_source_player_name", ""),
+            "datagolf_player_name": row["player_name"],
+            "canonical_name": row["player_name"],
+            "event_key": row.get("img_event_key", event_label),
+        })
+    try:
+        write_player_crosswalk(crosswalk_rows)
+    except Exception as exc:  # noqa: BLE001 - telemetry must never kill the update
+        print(f"  [IMG] crosswalk update failed: {exc}")
+    eligible = (
+        merged["sg_total"].notna()
+        if "sg_total" in merged.columns
+        else pd.Series(True, index=merged.index)
+    )
+    eligible_count = int(eligible.sum())
+    matched_mask = merged.get(
+        "img_player_id", pd.Series(index=merged.index, dtype=object)
+    ).notna()
+    complete_mask = merged.get(
+        "img_complete", pd.Series(False, index=merged.index)
+    ).eq(True)
+    matched = int((eligible & matched_mask).sum())
+    complete = int((eligible & complete_mask).sum())
+    print(
+        f"  [IMG] event={event_label} round={round_num}: "
+        f"matched={matched}/{eligible_count} active players complete={complete}"
+    )
+    if eligible_count and matched / eligible_count < 0.9:
+        print("  [IMG] warning: player overlap is below 90%; IMG fields are diagnostic only")
+    return merged
+
+
 def load_and_merge(round_num):
     """
     Fetch live stats, field updates, and merge with prior predictions.
@@ -214,6 +297,7 @@ def load_and_merge(round_num):
     df = fetch_live_stats(round_num, API_KEY, include_score=include_score)
     if df is None:
         raise RuntimeError(f"Failed to fetch live stats for round {round_num}")
+    df = _merge_img_round_summary(df, round_num)
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
     if field is not None:
@@ -286,10 +370,15 @@ def _merge_r2(df):
     r1_model = pd.read_csv(_resolve_csv("r1_live_model.csv"))
     r1_model = clean_names(r1_model)
     r1_stats = ["great_shots", "poor_shots", "sg_app", "sg_arg", "sg_ott", "sg_putt"]
-    # sg_adj_r1 (R1's ott/putt adjustment) comes along so _totals_r2 can undo it
-    r1_keep = ["player_name"] + r1_stats + ["sg_adj_r1"]
+    # sg_adj_r1 (R1's ott/putt adjustment) comes along so _totals_r2 can undo
+    # it; tot_resid_adj comes along (renamed) so the residual piece can be
+    # undone the same way - R1's residual carries no information beyond R2
+    # (horizon regression 2026-08: R3 coef -0.000, R4 coef negative).
+    r1_keep = ["player_name"] + r1_stats + ["sg_adj_r1", "tot_resid_adj"]
     r1_keep = [c for c in r1_keep if c in r1_model.columns]
     r1_renamed = r1_model[r1_keep].copy()
+    if "tot_resid_adj" in r1_renamed.columns:
+        r1_renamed = r1_renamed.rename(columns={"tot_resid_adj": "r1_tot_resid_adj"})
     for c in r1_stats:
         if c in r1_renamed.columns:
             r1_renamed = r1_renamed.rename(columns={c: f"{c}_r1"})
@@ -341,7 +430,7 @@ def _merge_r3r4(df, round_num):
         "player_name", f"updated_pred_r{round_num}",
         "sg_app_avg", "sg_ott_avg", "sg_arg_avg", "sg_putt_avg",
         "great_shots_avg",
-        "tot_resid_adj", "tot_sg_adj",
+        "tot_resid_adj", "tot_sg_adj", "r1_resid_undo",
     ]
     prior_cols = [c for c in prior_cols if c in prior.columns]
     df = df.merge(prior[prior_cols], on="player_name", how="left")
@@ -647,6 +736,14 @@ def _totals_r2(df):
     else:
         df["r1_sg_adj_undo"] = 0.0
 
+    # Undo R1's residual adjustment as well: it predicts nothing beyond R2
+    # (R3-horizon coef ~0.000) and mildly inverts by R4, so carrying it
+    # forward is stale noise under the fresh residual/category terms.
+    if "r1_tot_resid_adj" in df.columns:
+        df["r1_resid_undo"] = -df["r1_tot_resid_adj"].fillna(0)
+    else:
+        df["r1_resid_undo"] = 0.0
+
     # Total adjustment = clipped residual total + SG components + R1 undo.
     # Uses tot_resid_adj (not the raw residual components) so the -0.5 lower
     # clip actually reaches updated_pred_r3 — the raw components previously
@@ -654,7 +751,7 @@ def _totals_r2(df):
     adj_components = [
         "tot_resid_adj",
         "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj", "delta_app_adj",
-        "r1_sg_adj_undo",
+        "r1_sg_adj_undo", "r1_resid_undo",
     ]
     adj_components = [c for c in adj_components if c in df.columns]
     df["total_adjustment"] = df[adj_components].sum(axis=1)
@@ -694,8 +791,33 @@ def _totals_r3r4(df, round_num):
     prior_sg = df.get("tot_sg_adj", pd.Series(0, index=df.index)).fillna(0)
     prior_resid = df.get("tot_resid_adj", pd.Series(0, index=df.index)).fillna(0)
 
+    # Fallback strip of R1's residual adjustment for events whose R2 stage
+    # ran before the r1_resid_undo change landed (detected via the carried
+    # column): without it the stale R1 residual persists into R4. Fail-open.
+    r1_resid_carry = pd.Series(0.0, index=df.index)
+    already_stripped = (
+        "r1_resid_undo" in df.columns
+        and df["r1_resid_undo"].fillna(0).abs().sum() > 0
+    )
+    if round_num == 3 and not already_stripped:
+        try:
+            r1 = clean_names(pd.read_csv(_resolve_csv("r1_live_model.csv")))
+            carry = r1[["player_name", "tot_resid_adj"]].drop_duplicates(
+                "player_name"
+            ).rename(columns={"tot_resid_adj": "r1_tot_resid_adj_fb"})
+            df = df.merge(carry, on="player_name", how="left")
+            r1_resid_carry = df["r1_tot_resid_adj_fb"].fillna(0.0)
+            print(
+                f"  [R1-resid strip] fallback removed from "
+                f"{int((r1_resid_carry != 0).sum())} players, "
+                f"mean |adj| {r1_resid_carry.abs().mean():.3f}"
+            )
+        except Exception as exc:
+            print(f"  [R1-resid strip] fallback skipped (fail-open): {exc}")
+    df["r1_resid_removed"] = r1_resid_carry
+
     # Net total adjustment = fresh - prior (so Post = Pre + total_adjustment)
-    df["total_adjustment"] = fresh_adj - prior_sg - prior_resid
+    df["total_adjustment"] = fresh_adj - prior_sg - prior_resid - r1_resid_carry
 
     pred_col = f"updated_pred_r{round_num}"
     next_pred_col = f"updated_pred_r{round_num + 1}" if round_num < 4 else "updated_pred_final"
@@ -1232,6 +1354,8 @@ def _get_component_columns(df, round_num):
             ("avg_app_adj", "Avg APP Adj"),
             ("avg_arg_adj", "Avg ARG Adj"),
             ("delta_app_adj", "Δ APP Adj"),
+            ("r1_sg_adj_undo", "R1 SG Undo"),
+            ("r1_resid_undo", "R1 Resid Undo"),
         ]
     else:  # R3/R4
         adj_cols = [
@@ -1367,6 +1491,71 @@ def build_email_html(df, round_num):
     return html
 
 
+def _attribution_components(df, round_num):
+    """(column, label, sign) triples: sign is how the column enters
+    total_adjustment. Prior-stage undo columns at R3/R4 enter negatively."""
+    if round_num == 1:
+        spec = [("tot_resid_adj", "residual", 1),
+                ("ott_adj", "ott", 1), ("putt_adj", "putt", 1)]
+    elif round_num == 2:
+        spec = [("tot_resid_adj", "residual", 1),
+                ("avg_ott_adj", "avg_ott", 1), ("avg_putt_adj", "avg_putt", 1),
+                ("avg_app_adj", "avg_app", 1), ("avg_arg_adj", "avg_arg", 1),
+                ("delta_app_adj", "delta_app", 1),
+                ("r1_sg_adj_undo", "r1_sg_undo", 1),
+                ("r1_resid_undo", "r1_resid_undo", 1)]
+    else:
+        spec = [("sg_ott_avg_adj", "avg_ott", 1),
+                ("sg_putt_avg_adj", "avg_putt", 1),
+                ("sg_app_avg_adj", "avg_app", 1),
+                ("sg_arg_avg_adj", "avg_arg", 1),
+                ("avg_great_shots_adj", "great_shots", 1),
+                ("pos_6_10_adj", "pos_6_10", 1),
+                ("tot_sg_adj", "prior_sg_undo", -1),
+                ("tot_resid_adj", "prior_resid_undo", -1),
+                ("r1_resid_removed", "r1_resid_strip", -1)]
+    return [(c, lbl, s) for c, lbl, s in spec if c in df.columns]
+
+
+def build_attribution_csv(df, round_num):
+    """Full-field per-player skill-change attribution: pre/post prediction,
+    every signed component, the primary driver, and a plain-text explanation.
+    Written to r{N}_skill_attribution.csv; returns the path (or None)."""
+    try:
+        pre_col, post_col = _get_pred_columns(df, round_num)
+        if "total_adjustment" not in df.columns or pre_col not in df.columns:
+            return None
+        spec = _attribution_components(df, round_num)
+        out = df[["player_name"]].copy()
+        out["pre_pred"] = df[pre_col].round(3)
+        out["post_pred"] = df.get(post_col, df[pre_col] + df["total_adjustment"]).round(3)
+        out["total_adjustment"] = df["total_adjustment"].round(3)
+        contrib = {}
+        for col, label, sign in spec:
+            contrib[label] = (sign * df[col].fillna(0)).round(3)
+            out[label] = contrib[label]
+        contrib_frame = pd.DataFrame(contrib, index=df.index)
+        if not contrib_frame.empty:
+            out["primary_driver"] = contrib_frame.abs().idxmax(axis=1)
+
+            def _explain(idx):
+                row = contrib_frame.loc[idx]
+                top = row.abs().sort_values(ascending=False).head(3)
+                parts = [f"{name} {row[name]:+.2f}" for name in top.index
+                         if abs(row[name]) >= 0.005]
+                return "; ".join(parts) if parts else "no material components"
+
+            out["explanation"] = [_explain(i) for i in out.index]
+        out = out.sort_values("total_adjustment", ascending=False)
+        path = f"r{round_num}_skill_attribution.csv"
+        out.to_csv(path, index=False)
+        print(f"  [ok] Wrote {path} ({len(out)} players)")
+        return path
+    except Exception as e:
+        print(f"  [warn] Attribution CSV failed (non-blocking): {e}")
+        return None
+
+
 def send_summary_email(df, round_num, spline_pdf_path=None):
     """
     Send skill update summary email via Gmail SMTP.
@@ -1391,6 +1580,17 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
 
         # HTML body
         msg.attach(MIMEText(html, "html"))
+
+        # Attach the full-field attribution CSV (why every skill number moved)
+        attribution_path = build_attribution_csv(df, round_num)
+        if attribution_path and os.path.exists(attribution_path):
+            with open(attribution_path, "rb") as f:
+                csv_attachment = MIMEApplication(f.read(), _subtype="csv")
+                csv_attachment.add_header(
+                    "Content-Disposition", "attachment",
+                    filename=os.path.basename(attribution_path),
+                )
+                msg.attach(csv_attachment)
 
         # Attach spline PDF if it exists
         if spline_pdf_path and os.path.exists(spline_pdf_path):
