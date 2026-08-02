@@ -43,6 +43,13 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from dotenv import load_dotenv
 
+from score_centering import (
+    CENTERING_VERSION,
+    center_player_advantages,
+    expected_field_score,
+    validate_field_relative_predictions,
+)
+
 load_dotenv()
 
 def _resolve_csv(filename):
@@ -1007,7 +1014,12 @@ def create_next_round_predictions(round_num):
                 before = len(preds)
                 preds = preds[~preds["player_name"].isin(out_players)].copy()
                 print(f"  Dropped {before - len(preds)} cut/WD players (no live position)")
-        preds[f"scores_r{next_round}"] = preds[pred_name]  # Skill only, no weather
+        preds = center_player_advantages(
+            preds,
+            skill_col=pred_name,
+            score_col=f"scores_r{next_round}",
+            weather_col=f"weather_sg_r{next_round}",
+        )
         _save_predictions(preds, next_round)
         return
 
@@ -1036,14 +1048,8 @@ def create_next_round_predictions(round_num):
 
     avg_wind = preds[wind_col].mean()
 
-    # Expected SG: skill + field wind level - player wind cost - player dew cost.
-    # Both wind_adj and dew_adj are SCORE-space (positive = costs strokes;
-    # dew_calculation is negative so humid windows are a benefit), so both
-    # subtract. round_sim's wx_lookup mirrors this weather term — lockstep.
-    preds[f"scores_r{next_round}"] = (
-        preds[pred_name] + avg_wind - preds[wind_col] - preds[dew_col]
-    )
-
+    # wind_adj/dew_adj remain score-space costs. They are converted below to
+    # a zero-mean player weather advantage around the Sheet's field average.
     # --- Diagnostics ---
     avg_wind_speed = preds[f"wind_r{next_round}"].mean()
     print(f"  Avg wind speed R{next_round}: {avg_wind_speed:.2f} mph")
@@ -1062,9 +1068,7 @@ def create_next_round_predictions(round_num):
             n = mask.sum()
             if n > 0:
                 course_skill = preds.loc[mask, pred_name].mean()
-                course_wind = preds.loc[mask, wind_col].mean()
-                exp_score = round(adj - course_skill + course_wind, 2)
-                print(f"    {code} -> adj={adj}, players={n}, avg_skill={course_skill:.3f}, expected scoring={exp_score}")
+                print(f"    {code} -> field avg={adj}, players={n}, avg_skill={course_skill:.3f}")
                 preds.loc[mask, "course_score_adj"] = adj
         # Warn about unmapped players
         unmapped = preds[course_col].notna() & preds["course_score_adj"].isna()
@@ -1092,9 +1096,7 @@ def create_next_round_predictions(round_num):
                     preds.loc[mask, "course_score_adj"] = adj
             print(f"  Warning: No next-round course from API — flipped R{round_num} assignments for R{next_round}")
         else:
-            score_adj = SCORE_ADJS.get(next_round, 0)
-            expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
-            print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
+            print(f"  Sheet field avg R{next_round}: {SCORE_ADJS.get(next_round, 0):.1f}")
 
     # Legacy fallback: positional COURSE_SCORE_ADJS (no COURSE_SCORE_MAP)
     elif (course_col and preds[course_col].nunique() > 1
@@ -1105,15 +1107,35 @@ def create_next_round_predictions(round_num):
             adj = COURSE_SCORE_ADJS[i] if i < len(COURSE_SCORE_ADJS) else COURSE_SCORE_ADJS[0]
             course_players = preds[preds[course_col] == cid]
             course_skill = course_players[pred_name].mean()
-            course_wind = course_players[wind_col].mean()
-            exp_score = round(adj - course_skill + course_wind, 2)
-            print(f"    expected_score_{i+1} -> {cid}: adj={adj}, expected scoring={exp_score}")
+            print(f"    expected_score_{i+1} -> {cid}: field avg={adj}, avg_skill={course_skill:.3f}")
             preds.loc[preds[course_col] == cid, "course_score_adj"] = adj
 
     else:
-        score_adj = SCORE_ADJS.get(next_round, 0)
-        expected_scoring = round(score_adj - preds[pred_name].mean() + avg_wind, 2)
-        print(f"  Expected scoring avg R{next_round}: {expected_scoring}")
+        print(f"  Sheet field avg R{next_round}: {SCORE_ADJS.get(next_round, 0):.1f}")
+
+    # The Sheet stores the absolute field scoring average. Player files store
+    # only deviations around it, centered within the active field/course.
+    centering_group = None
+    if ("course_score_adj" in preds.columns
+            and preds["course_score_adj"].nunique(dropna=True) > 1):
+        centering_group = "course_score_adj"
+    elif course_col and preds[course_col].nunique(dropna=True) > 1:
+        centering_group = course_col
+
+    preds = center_player_advantages(
+        preds,
+        skill_col=pred_name,
+        score_col=f"scores_r{next_round}",
+        weather_col=f"weather_sg_r{next_round}",
+        wind_cost_col=wind_col,
+        dew_cost_col=dew_col,
+        group_col=centering_group,
+    )
+    print(
+        f"  Centered R{next_round} player adjustments: "
+        f"mean={preds[f'scores_r{next_round}'].mean():+.8f}, "
+        f"weather mean={preds[f'weather_sg_r{next_round}'].mean():+.8f}"
+    )
 
     _save_predictions(preds, next_round)
 
@@ -1123,6 +1145,62 @@ def _save_predictions(preds, next_round):
     filename = f"model_predictions_r{next_round}.csv"
     preds.to_csv(filename, index=False)
     print(f"  [ok] Saved {filename} ({len(preds)} players)")
+
+
+def _load_active_field_context(round_num, require_centered=False):
+    """Load the exact active field used by the target-round simulation."""
+    path = _resolve_csv(f"model_predictions_r{round_num}.csv")
+    if not os.path.exists(path):
+        if require_centered:
+            raise RuntimeError(f"Active-field predictions are missing: {path}")
+        return None
+
+    frame = pd.read_csv(path)
+    skill_col = "my_pred" if round_num == 1 else f"my_pred{round_num}"
+    score_col = f"scores_r{round_num}"
+    required = [skill_col, score_col, f"wind_r{round_num}",
+                f"wind_adj{round_num}", f"dew_r{round_num}"]
+    missing = [col for col in required if col not in frame.columns]
+    versions = set(frame.get("centering_version", pd.Series(dtype=str)).dropna())
+    if missing or versions != {CENTERING_VERSION}:
+        message = (
+            f"{path} is not a complete {CENTERING_VERSION} active-field file"
+            f" (missing={missing}, versions={sorted(versions)})"
+        )
+        if require_centered:
+            raise RuntimeError(message)
+        print(f"  WARNING: {message}")
+        return None
+
+    group_labels = set(frame.get("centering_group", pd.Series(["field"])).dropna())
+    if len(group_labels) != 1:
+        raise RuntimeError(f"{path} has inconsistent centering groups: {group_labels}")
+    group_col = next(iter(group_labels))
+    if group_col == "field":
+        group_col = None
+    validate_field_relative_predictions(
+        frame,
+        skill_col=skill_col,
+        score_col=score_col,
+        weather_col=f"weather_sg_r{round_num}",
+        group_col=group_col,
+    )
+
+    numeric_skill = pd.to_numeric(frame[skill_col], errors="coerce")
+    if numeric_skill.isna().any() or frame.empty:
+        raise RuntimeError(f"{path} has missing active-field skills")
+
+    return {
+        "path": path,
+        "players": len(frame),
+        "field_mean_skill": float(numeric_skill.mean()),
+        "avg_wind": float(pd.to_numeric(
+            frame[f"wind_r{round_num}"], errors="coerce").mean()),
+        "wind_effect": float(pd.to_numeric(
+            frame[f"wind_adj{round_num}"], errors="coerce").mean()),
+        "avg_dew": float(pd.to_numeric(
+            frame[f"dew_r{round_num}"], errors="coerce").mean()),
+    }
 
 
 def create_pre_event_predictions():
@@ -1195,21 +1273,27 @@ def create_pre_event_predictions():
     avg_wind = preds["wind_adj1"].mean()
     avg_skill = preds["my_pred"].mean()
 
-    # Expected scoring
-    expected_scoring = round(SCORE_ADJS[1] - avg_skill + avg_wind, 2)
-    # dew_adj is SCORE-space like wind_adj (dew_calculation comes from
-    # humidity.py's score regression: negative coef -> humid = lower scores
-    # = easier), so it must be SUBTRACTED like wind: a player in the more
-    # humid window gains expected SG. round_sim's wx_lookup mirrors this
-    # exact weather term — keep them in lockstep.
-    preds["scores_r1"] = preds["my_pred"] + avg_wind - preds["wind_adj1"] - preds["dew_adj1"]
+    # Center skill and tee-time weather around the active R1 field.
+    centering_group = None
+    if "course" in preds.columns and preds["course"].nunique(dropna=True) > 1:
+        centering_group = "course"
+    preds = center_player_advantages(
+        preds,
+        skill_col="my_pred",
+        score_col="scores_r1",
+        weather_col="weather_sg_r1",
+        wind_cost_col="wind_adj1",
+        dew_cost_col="dew_adj1",
+        group_col=centering_group,
+    )
 
     # --- Diagnostics ---
     print(f"  Players: {len(preds)}")
     print(f"  Avg wind speed: {preds['wind_r1'].mean():.2f} mph")
     print(f"  Avg wind impact (SG): {avg_wind:.4f}")
     print(f"  Avg skill: {avg_skill:.4f}")
-    print(f"  Expected R1 scoring avg: {expected_scoring}")
+    print(f"  Sheet field avg R1: {SCORE_ADJS[1]:.1f}")
+    print(f"  Centered player adjustment mean: {preds['scores_r1'].mean():+.8f}")
 
     hi = preds.loc[preds["wind_adj1"].idxmax()]
     lo = preds.loc[preds["wind_adj1"].idxmin()]
@@ -2129,8 +2213,8 @@ def main():
         "--automation",
         action="store_true",
         help=(
-            "Update and synchronize the next-round scoring expectation before "
-            "building predictions"
+            "Build active-field predictions, then synchronize their absolute "
+            "scoring expectation"
         ),
     )
 
@@ -2169,22 +2253,6 @@ def main():
     except Exception as e:
         print(f"\n[warn] Actuals write failed: {e}")
 
-    # Automation mode updates the target-round scoring expectation before
-    # predictions. Reload twice: first to pick up the orchestrator's fresh
-    # weather, then to pick up the synchronized primary expected score.
-    if round_num < 4 and args.automation:
-        try:
-            from sheet_config import load_config
-            refreshed_config = load_config()
-            _apply_sheet_overrides(refreshed_config)
-            update_expected_scores(round_num, sync_primary=True)
-            refreshed_config = load_config()
-            _apply_sheet_overrides(refreshed_config)
-        except Exception as e:
-            print(f"\n[error] Automated expected score update failed: {e}")
-            import traceback; traceback.print_exc()
-            raise
-
     # Step 2: Attempt weather/predictions for next round
     if round_num < 4:
         print(f"\n  Attempting to create R{round_num + 1} predictions...")
@@ -2198,13 +2266,18 @@ def main():
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")
 
-    # Step 3: Update expected scoring averages for remaining rounds
-    if round_num < 4 and not args.automation:
+    # Step 3: Build the Sheet expectation from the exact active-field file
+    # just created above. In automation mode, also synchronize the primary
+    # expected_score_1 consumed by round_sim.
+    if round_num < 4:
         try:
-            update_expected_scores(round_num)
+            update_expected_scores(round_num, sync_primary=args.automation)
         except Exception as e:
-            print(f"\n[warn] Expected score update failed: {e}")
+            level = "error" if args.automation else "warn"
+            print(f"\n[{level}] Expected score update failed: {e}")
             import traceback; traceback.print_exc()
+            if args.automation:
+                raise
 
 
 def update_expected_scores(completed_round, sync_primary=False):
@@ -2212,15 +2285,16 @@ def update_expected_scores(completed_round, sync_primary=False):
     Recompute expected scoring averages for future rounds using current
     wind forecasts from the Sheet, and write them back to expected_score_r{N}.
 
-    Formula:
-      expected_score = baseline + field_adjustment
-                       + avg_wind * wind_factor
-                       + (avg_dew - dewpoint_base) * dew_calculation
+    Formula for the target round:
+      expected_score = baseline - active_field_mean_skill
+                       + active_field_mean_wind_cost
+                       + (active_field_mean_dew - dewpoint_base) * dew_calculation
+                       + difficulty_feedback
 
     Uses:
       - Baselines from scoring_baseline_{tourney}.csv (FINAL rows), falling
         back to the Sheet's durable pre-tournament breakdown
-      - Field strength from final_predictions or pre_course_fit CSV
+      - Active-field strength and tee-time weather from model_predictions_rN
       - Wind factor and dewpoint coefficient
       - Per-round wind/dew arrays already loaded from the Sheet
     """
@@ -2276,6 +2350,17 @@ def update_expected_scores(completed_round, sync_primary=False):
         if sync_primary:
             raise RuntimeError(message)
         return
+
+    target_round = completed_round + 1
+    active_context = _load_active_field_context(
+        target_round, require_centered=sync_primary
+    )
+    if active_context:
+        print(
+            f"  Active R{target_round} field: {active_context['players']} players, "
+            f"mean skill={active_context['field_mean_skill']:+.4f} "
+            f"(from {active_context['path']})"
+        )
 
     # 2. Field strength from predictions (used when the CSV path is present).
     field_strength = 0.0
@@ -2365,25 +2450,43 @@ def update_expected_scores(completed_round, sync_primary=False):
             print(f"  R{rnd}: no baseline — skipping")
             continue
 
-        wind_arr = WIND_ARRAYS.get(rnd, [])
-        avg_wind = _compute_field_avg_wind(wind_arr, api_key, rnd) if wind_arr else 0.0
-        wind_effect = avg_wind * wf
-
-        dew_arr = DEW_ARRAYS.get(rnd, [])
-        avg_dew = _compute_field_avg_wind(dew_arr, api_key, rnd) if dew_arr else 0.0
+        if rnd == target_round and active_context:
+            avg_wind = active_context["avg_wind"]
+            wind_effect = active_context["wind_effect"]
+            avg_dew = active_context["avg_dew"]
+        else:
+            wind_arr = WIND_ARRAYS.get(rnd, [])
+            avg_wind = (
+                _compute_field_avg_wind(wind_arr, api_key, rnd)
+                if wind_arr else 0.0
+            )
+            wind_effect = avg_wind * wf
+            dew_arr = DEW_ARRAYS.get(rnd, [])
+            avg_dew = (
+                _compute_field_avg_wind(dew_arr, api_key, rnd)
+                if dew_arr else 0.0
+            )
         dew_effect = (
             (avg_dew - dewpoint_base) * dew_calculation
-            if dewpoint_base and dew_arr else 0.0
+            if dewpoint_base and avg_dew else 0.0
         )
 
-        if rnd in sheet_field_adjustments:
+        if rnd == target_round and active_context:
+            fld = -active_context["field_mean_skill"]
+        elif rnd in sheet_field_adjustments:
             fld = sheet_field_adjustments[rnd]
         else:
             fld = -field_strength
             if rnd >= 3:
                 fld -= cut_adj
 
-        expected = base + fld + wind_effect + dew_effect + delta_adj
+        expected = expected_field_score(
+            base_score=base,
+            field_mean_skill=-fld,
+            wind_effect=wind_effect,
+            dew_effect=dew_effect,
+            difficulty_feedback=delta_adj,
+        )
         adjusted[rnd] = round(expected, 1)
 
         print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>6.1f} | {wind_effect:>+8.3f} | {dew_effect:>+8.3f} | {fld:>+8.3f} | {delta_adj:>+8.3f} | {adjusted[rnd]:>8.1f}")
@@ -2393,7 +2496,6 @@ def update_expected_scores(completed_round, sync_primary=False):
         if sync_primary:
             raise RuntimeError("No future-round expected scores were computed")
         return
-    target_round = completed_round + 1
     if sync_primary and target_round not in adjusted:
         raise RuntimeError(
             f"No expected score was computed for target R{target_round}"

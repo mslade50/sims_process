@@ -34,6 +34,11 @@ from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
 
+from score_centering import (
+    CENTERING_VERSION,
+    validate_field_relative_predictions,
+)
+
 # --- Weekly-changing config from Google Sheet ---
 from sheet_config import load_config as _load_sheet_config
 _cfg = _load_sheet_config()
@@ -652,6 +657,74 @@ def simulate_remaining_rounds(
     """
     n_players = len(player_names)
     default_par = tournament_config["default_par"]
+    centered_live_r4 = False
+    live_r4_advantage = None
+    live_r4_weather = None
+    player_expected_r4 = None
+
+    # After R3, the live prediction file is authoritative for R4. It contains
+    # zero-mean player advantages (skill + relative tee-time weather), while
+    # the Sheet supplies the absolute active-field scoring expectation.
+    if (completed_round == 3 and model_preds is not None
+            and "scores_r4" in model_preds.columns
+            and "centering_version" in model_preds.columns):
+        versions = set(model_preds["centering_version"].dropna())
+        if versions != {CENTERING_VERSION}:
+            raise ValueError(f"Unsupported R4 centering versions: {versions}")
+        groups = set(
+            model_preds.get("centering_group", pd.Series(["field"])).dropna()
+        )
+        if len(groups) != 1:
+            raise ValueError(f"Inconsistent R4 centering groups: {groups}")
+        group_col = next(iter(groups))
+        if group_col == "field":
+            group_col = None
+        validate_field_relative_predictions(
+            model_preds,
+            skill_col="my_pred4",
+            score_col="scores_r4",
+            weather_col="weather_sg_r4",
+            group_col=group_col,
+        )
+        if model_preds["player_name"].duplicated().any():
+            raise ValueError("R4 predictions contain duplicate player names")
+
+        indexed_r4 = model_preds.set_index("player_name")
+        missing_r4 = [p for p in player_names if p not in indexed_r4.index]
+        if missing_r4:
+            raise ValueError(
+                f"R4 predictions are missing {len(missing_r4)} active players: "
+                f"{missing_r4[:5]}"
+            )
+        live_r4_advantage = pd.to_numeric(
+            indexed_r4.loc[player_names, "scores_r4"], errors="coerce"
+        ).to_numpy(dtype=float)
+        if np.isnan(live_r4_advantage).any():
+            raise ValueError("R4 predictions contain missing centered advantages")
+
+        if "weather_sg_r4" in indexed_r4.columns:
+            live_r4_weather = pd.to_numeric(
+                indexed_r4.loc[player_names, "weather_sg_r4"], errors="coerce"
+            ).fillna(0.0).to_numpy(dtype=float)
+        else:
+            live_r4_weather = np.zeros(n_players, dtype=float)
+
+        player_expected_r4 = np.full(
+            n_players, tournament_config["default_expected"], dtype=float
+        )
+        if "course_score_adj" in indexed_r4.columns:
+            course_expected = pd.to_numeric(
+                indexed_r4.loc[player_names, "course_score_adj"], errors="coerce"
+            ).to_numpy(dtype=float)
+            available = ~np.isnan(course_expected)
+            player_expected_r4[available] = course_expected[available]
+
+        centered_live_r4 = True
+        print(
+            f"    Centered live R4 input: player mean="
+            f"{live_r4_advantage.mean():+.8f}, field avg="
+            f"{player_expected_r4.mean():.3f}"
+        )
 
     # Get base predictions for each player
     my_pred_base = np.array([player_preds_base.get(p, 0.0) for p in player_names])
@@ -696,7 +769,7 @@ def simulate_remaining_rounds(
     # All inputs are assembled above; sims_kernel.run_remaining_rounds (seed 42)
     # returns the same (final_scores, made_cut_mask). On --use-python or any Rust
     # error we fall through to the Python cascade below.
-    if not _USE_PYTHON:
+    if not _USE_PYTHON and not centered_live_r4:
         try:
             import sims_kernel as _sk
             _A = np.ascontiguousarray
@@ -734,6 +807,8 @@ def simulate_remaining_rounds(
         except Exception as _rust_err:
             print(f"  [rust] WARNING: run_remaining_rounds failed ({_rust_err!r}); "
                   f"falling back to Python cascade. Pass --use-python to silence.")
+    elif centered_live_r4 and not _USE_PYTHON:
+        print("  [rust] Bypassing legacy cascade so centered live R4 inputs are honored")
 
     # Initialize accumulators
     if completed_round >= 1 and 1 in known_strokes:
@@ -987,12 +1062,35 @@ def simulate_remaining_rounds(
     # R4 simulation — category-first draws, per-sim-path skill mean
     cats_r4 = np.empty((n_players, num_sims, 4), dtype=float)
     sg_r4 = np.empty((n_players, num_sims), dtype=float)
-    for i, (mu, std_c) in enumerate(player_cf_params):
-        cats_r4[i], sg_r4[i] = _catfirst_draw(
-            mu, std_c, effective_skew[i], updated_skill_r4[i],
-            L_corr, RNG, num_sims
-        )
-    strokes_r4 = np.clip(np.rint(default_par - sg_r4), default_par - 12, default_par + 12).astype(int)
+    if centered_live_r4:
+        for i, (mu, std_c) in enumerate(player_cf_params):
+            pure_skill = live_r4_advantage[i] - live_r4_weather[i]
+            shift = (pure_skill - mu.sum()) / 4.0
+            cat_mu = mu + shift + live_r4_weather[i] * WEATHER_CAT_SPLIT
+            Z = RNG_CF.standard_normal(size=(num_sims, 4))
+            corr_z = Z @ L_corr.T
+            for j in range(4):
+                corr_z[:, j] = _apply_skew(
+                    corr_z[:, j], effective_skew[i, j]
+                )
+            cats_r4[i] = np.clip(
+                cat_mu + corr_z * std_c, CLIP_CAT[0], CLIP_CAT[1]
+            )
+            sg_r4[i] = cats_r4[i].sum(axis=1)
+        strokes_r4 = np.clip(
+            np.rint(player_expected_r4[:, None] - sg_r4),
+            (player_expected_r4 - 12)[:, None],
+            (player_expected_r4 + 12)[:, None],
+        ).astype(int)
+    else:
+        for i, (mu, std_c) in enumerate(player_cf_params):
+            cats_r4[i], sg_r4[i] = _catfirst_draw(
+                mu, std_c, effective_skew[i], updated_skill_r4[i],
+                L_corr, RNG, num_sims
+            )
+        strokes_r4 = np.clip(
+            np.rint(default_par - sg_r4), default_par - 12, default_par + 12
+        ).astype(int)
 
     # Missed-cut penalty
     r3_r4 = strokes_r3 + strokes_r4
@@ -4644,6 +4742,39 @@ def main():
         model_preds["player_name"] = (
             model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
         )
+        if "centering_version" in model_preds.columns:
+            versions = set(model_preds["centering_version"].dropna())
+            if versions != {CENTERING_VERSION}:
+                raise ValueError(
+                    f"Unsupported score centering in {pred_file_path}: {versions}"
+                )
+            groups = set(
+                model_preds.get("centering_group", pd.Series(["field"])).dropna()
+            )
+            if len(groups) != 1:
+                raise ValueError(
+                    f"Inconsistent centering groups in {pred_file_path}: {groups}"
+                )
+            group_col = next(iter(groups))
+            if group_col == "field":
+                group_col = None
+            skill_col = "my_pred" if sim_round == 1 else f"my_pred{sim_round}"
+            validate_field_relative_predictions(
+                model_preds,
+                skill_col=skill_col,
+                score_col=f"scores_r{sim_round}",
+                weather_col=f"weather_sg_r{sim_round}",
+                group_col=group_col,
+            )
+            print(
+                f"  Verified {CENTERING_VERSION}: scores_r{sim_round} "
+                f"is zero-mean by {group_col or 'field'}"
+            )
+        else:
+            print(
+                f"  WARNING: {pred_file_path} is a legacy uncentered file; "
+                "rebuild it with live_stats_engine.py"
+            )
         pred_col = find_pred_col(model_preds, sim_round)
         pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
     elif args.price_only and cached_meta and cached_meta.get("pred_lookup"):
@@ -4671,8 +4802,18 @@ def main():
     # ── Build weather lookup from model predictions ─────────────────────
     _wind_col = f"wind_adj{sim_round}"
     _dew_col = f"dew_adj{sim_round}"
+    _weather_col = f"weather_sg_r{sim_round}"
     _wx_lookup = {}
-    if (not model_preds.empty
+    if not model_preds.empty and _weather_col in model_preds.columns:
+        _wx_lookup = dict(zip(
+            model_preds["player_name"],
+            pd.to_numeric(model_preds[_weather_col], errors="coerce").fillna(0.0),
+        ))
+        print(
+            f"  Weather lookup: {len(_wx_lookup)} players "
+            f"(explicit centered column={_weather_col})"
+        )
+    elif (not model_preds.empty
             and _wind_col in model_preds.columns
             and _dew_col in model_preds.columns):
         # Must mirror live_stats_engine's scores_rN weather term EXACTLY
@@ -4684,7 +4825,10 @@ def main():
             model_preds["player_name"],
             _avg_wind - model_preds[_wind_col] - model_preds[_dew_col],
         ))
-        print(f"  Weather lookup: {len(_wx_lookup)} players (wind col={_wind_col}, dew col={_dew_col})")
+        print(
+            f"  Weather lookup: {len(_wx_lookup)} players "
+            f"(legacy wind col={_wind_col}, dew col={_dew_col})"
+        )
     elif args.price_only and cached_meta and cached_meta.get("wx_lookup"):
         _wx_lookup = {k: float(v) for k, v in cached_meta["wx_lookup"].items()}
         print(f"  Weather lookup: {len(_wx_lookup)} players (from cache meta)")

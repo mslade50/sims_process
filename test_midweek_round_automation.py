@@ -1,7 +1,11 @@
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+
+import midweek_round_automation as automation
 
 from midweek_round_automation import (
     NotReady,
@@ -214,6 +218,39 @@ class CourseCoordinateTests(unittest.TestCase):
             _load_course_coordinates(999999, 45.16, -93.235),
             (45.16, -93.235),
         )
+
+
+class PredictionVerificationTests(unittest.TestCase):
+    @staticmethod
+    def _prediction_frame(scores):
+        return pd.DataFrame({
+            "my_pred4": [0.4, 0.0],
+            "scores_r4": scores,
+            "weather_sg_r4": [0.0, 0.0],
+            "wind_adj4": [1.0, 1.2],
+            "dew_adj4": [-0.1, 0.1],
+            "field_skill_mean": [0.2, 0.2],
+            "centering_version": ["field_relative_v1"] * 2,
+            "centering_group": ["field"] * 2,
+        })
+
+    def _run_verification(self, frame):
+        prediction = MagicMock()
+        prediction.exists.return_value = True
+        prediction.stat.return_value.st_size = 100
+        prediction.name = "model_predictions_r4.csv"
+        root = MagicMock()
+        root.__truediv__.return_value = prediction
+        with patch.object(automation, "ROOT", root):
+            with patch.object(automation.pd, "read_csv", return_value=frame):
+                automation._verify_predictions(4)
+
+    def test_accepts_centered_prediction_file(self):
+        self._run_verification(self._prediction_frame([0.2, -0.2]))
+
+    def test_rejects_uncentered_prediction_file(self):
+        with self.assertRaisesRegex(PipelineFailure, "not field-centered"):
+            self._run_verification(self._prediction_frame([0.2, 0.1]))
 
 
 class WeatherForecastTests(unittest.TestCase):

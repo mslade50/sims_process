@@ -30,7 +30,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
+
+from score_centering import (
+    CENTERING_VERSION,
+    validate_field_relative_predictions,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -303,18 +309,47 @@ def _verify_predictions(target_round: int):
     prediction = ROOT / f"model_predictions_r{target_round}.csv"
     if not prediction.exists() or prediction.stat().st_size == 0:
         raise PipelineFailure(f"{prediction.name} was not created")
-    with prediction.open(newline="", encoding="utf-8-sig") as handle:
-        header = set(next(csv.reader(handle), []))
+    frame = pd.read_csv(prediction)
+    header = set(frame.columns)
     required = {
+        "my_pred" if target_round == 1 else f"my_pred{target_round}",
         f"scores_r{target_round}",
+        f"weather_sg_r{target_round}",
         f"wind_adj{target_round}",
         f"dew_adj{target_round}",
+        "field_skill_mean",
+        "centering_version",
+        "centering_group",
     }
     missing = sorted(required - header)
     if missing:
         raise PipelineFailure(
             f"{prediction.name} is skill-only or incomplete; missing {missing}"
         )
+    versions = set(frame["centering_version"].dropna())
+    if versions != {CENTERING_VERSION}:
+        raise PipelineFailure(
+            f"{prediction.name} has unsupported centering: {versions}"
+        )
+    groups = set(frame["centering_group"].dropna())
+    if len(groups) != 1:
+        raise PipelineFailure(
+            f"{prediction.name} has inconsistent centering groups: {groups}"
+        )
+    group_col = next(iter(groups))
+    if group_col == "field":
+        group_col = None
+    try:
+        skill_col = "my_pred" if target_round == 1 else f"my_pred{target_round}"
+        validate_field_relative_predictions(
+            frame,
+            skill_col=skill_col,
+            score_col=f"scores_r{target_round}",
+            weather_col=f"weather_sg_r{target_round}",
+            group_col=group_col,
+        )
+    except ValueError as exc:
+        raise PipelineFailure(str(exc)) from exc
 
 
 def _verify_outputs(target_round: int, tourney: str, started_at: float | None = None):
