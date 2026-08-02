@@ -1697,6 +1697,62 @@ def build_attribution_csv(df, round_num):
         return None
 
 
+def build_pin_high_note(df):
+    """TEMPORARY (2026-08): pin-high go-live verification block for the R1
+    email. Cross-checks the correction file against what the frame actually
+    carries so ingestion problems are visible in real time. Remove once the
+    feature has a few clean weeks. Fail-open."""
+    try:
+        rows = ["<hr><h3 style='color:#555'>Pin-high verification (temporary)</h3>"]
+        flag_on = os.environ.get("LIVE_PIN_HIGH_ADJ") == "1"
+        path = _resolve_csv("pin_high_r1.csv")
+        if not os.path.exists(path):
+            rows.append("<p><b>STATUS: NO CORRECTION FILE</b> - pin_high_r1.csv "
+                        "not found; adjustments were zero.</p>")
+            return "".join(rows)
+        csv = clean_names(pd.read_csv(path))
+        gen_at = pd.to_datetime(csv["generated_at"].iloc[0], utc=True)
+        age_h = (pd.Timestamp.now(tz="UTC") - gen_at).total_seconds() / 3600
+        field_mean = float(csv["field_mean"].iloc[0])
+        med_n = float(csv["n_approaches"].median())
+        applied = None
+        if "pin_high_adj" in df.columns:
+            applied = df[df["pin_high_adj"].fillna(0) != 0]
+        csv_nonzero = int((csv["pin_high_adj"].abs() > 1e-9).sum())
+        checks = []
+        checks.append(("flag LIVE_PIN_HIGH_ADJ", "ON" if flag_on else
+                       "<b>OFF - adjustments not applied</b>"))
+        checks.append(("file age", f"{age_h:.1f}h" +
+                       (" <b>(STALE >48h - auto-disarmed)</b>" if age_h > 48 else " (fresh)")))
+        checks.append(("field pin-high mean", f"{field_mean:.1%}" +
+                       ("" if 0.35 <= field_mean <= 0.55 else " <b>(OUTSIDE SANE BAND 35-55%)</b>")))
+        checks.append(("median approaches/player", f"{med_n:.0f}" +
+                       ("" if med_n >= 10 else " <b>(THIN - check archive R1 ingest)</b>")))
+        checks.append(("players in file", f"{len(csv)} ({csv_nonzero} nonzero)"))
+        if applied is not None:
+            match = ("<b>MISMATCH</b>"
+                     if abs(len(applied) - csv_nonzero) > 5 else "consistent")
+            checks.append(("applied in engine frame",
+                           f"{len(applied)} players - {match} with file"))
+            checks.append(("adjustment size",
+                           f"mean |adj| {applied['pin_high_adj'].abs().mean():.3f}, "
+                           f"max {applied['pin_high_adj'].abs().max():.3f}"))
+        else:
+            checks.append(("applied in engine frame",
+                           "<b>pin_high_adj column ABSENT - hook did not run</b>"))
+        rows.append("<table cellpadding='3' style='font-size:12px'>")
+        for label, value in checks:
+            rows.append(f"<tr><td style='color:#777'>{label}</td><td>{value}</td></tr>")
+        rows.append("</table>")
+        top = csv.reindex(csv["pin_high_adj"].abs().sort_values(ascending=False).index).head(3)
+        fades = "; ".join(f"{r.player_name} {r.pin_high_adj:+.3f} ({r.pin_high_rate:.0%})"
+                          for r in top.itertuples())
+        rows.append(f"<p style='font-size:12px;color:#777'>largest: {fades}</p>")
+        return "".join(rows)
+    except Exception as e:
+        return f"<p>[pin-high verification block failed: {e}]</p>"
+
+
 def send_summary_email(df, round_num, spline_pdf_path=None):
     """
     Send skill update summary email via Gmail SMTP.
@@ -1719,7 +1775,9 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
 
-        # HTML body
+        # HTML body (+ temporary pin-high verification block on the R1 email)
+        if round_num == 1:
+            html = html + build_pin_high_note(df)
         msg.attach(MIMEText(html, "html"))
 
         # Attach the full-field attribution CSV (why every skill number moved)
