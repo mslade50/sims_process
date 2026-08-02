@@ -681,6 +681,48 @@ def compute_totals(df, round_num):
         return _totals_r3r4(df, round_num)
 
 
+def _apply_pin_high_adj(df):
+    """
+    Additive pin-high fade/bump from pin_high_r1.csv (shot-archive R1
+    pin-high rates, field-centered, blended per-bucket coefficient,
+    capped +/-0.15 at generation). Gated by LIVE_PIN_HIGH_ADJ=1.
+    Fail-open by design: any problem -> zero adjustments + warning,
+    never crash the update. The audit column pin_high_adj persists into
+    r1_live_model.csv via export_results.
+    """
+    df["pin_high_adj"] = 0.0
+    if os.environ.get("LIVE_PIN_HIGH_ADJ") != "1":
+        return df
+    try:
+        adj = pd.read_csv(_resolve_csv("pin_high_r1.csv"))
+        generated = pd.to_datetime(adj["generated_at"].iloc[0], utc=True)
+        age = pd.Timestamp.now(tz="UTC") - generated
+        if age > pd.Timedelta(hours=48):
+            print(f"  [pin_high] pin_high_r1.csv is stale ({age}) — skipping")
+            return df
+        adj = clean_names(adj)
+        adj = adj[["player_name", "pin_high_adj"]].rename(
+            columns={"pin_high_adj": "_pin_high_adj"}
+        )
+        df = df.merge(adj, on="player_name", how="left")
+        df["pin_high_adj"] = df["_pin_high_adj"].fillna(0.0)
+        df = df.drop(columns=["_pin_high_adj"])
+        df["updated_pred"] = df["updated_pred"] + df["pin_high_adj"]
+        applied = df["pin_high_adj"] != 0
+        if applied.any():
+            print(
+                f"  [pin_high] adjusted {int(applied.sum())} players, "
+                f"mean|adj| {df.loc[applied, 'pin_high_adj'].abs().mean():.3f}, "
+                f"max |adj| {df['pin_high_adj'].abs().max():.3f}"
+            )
+        else:
+            print("  [pin_high] no players matched — zero adjustments")
+    except Exception as exc:
+        df["pin_high_adj"] = 0.0
+        print(f"  [pin_high] skipped ({exc})")
+    return df
+
+
 def _totals_r1(df):
     """
     R1 totals and caps.
@@ -719,6 +761,8 @@ def _totals_r1(df):
 
     df["total_adjustment"] = df["ott_adj"] + df["putt_adj"] + df["tot_resid_adj"]
     df["updated_pred"] = df["pred"] + df["total_adjustment"]
+
+    df = _apply_pin_high_adj(df)
 
     return df
 
@@ -1321,7 +1365,8 @@ def export_results(df, round_num):
     if round_num == 1:
         summary_cols = [
             "player_name", "residual", "weather_signal", "residual_w_adj",
-            "tot_resid_adj", "total_adjustment", "updated_pred",
+            "tot_resid_adj", "total_adjustment", "pin_high_adj",
+            "updated_pred",
         ]
         # Include course_x if multi-course
         course_col = "course" if "course" in df.columns else "course_x" if "course_x" in df.columns else None
