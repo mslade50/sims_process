@@ -177,6 +177,7 @@ def transition_action(
     automation_status: str,
     automation_event=None,
     event_id=None,
+    force=False,
 ) -> str:
     """Return advance, resume, complete, or raise for an unsafe pointer gap."""
     same_event = (
@@ -190,6 +191,8 @@ def transition_action(
     status = str(automation_status or "").strip().lower() if same_event else ""
 
     if prior_target == target_round and status == "complete":
+        if force and sheet_round == target_round - 1:
+            return "resume"
         return "complete"
     if sheet_round == target_round - 2:
         return "advance"
@@ -438,6 +441,7 @@ def _load_gate_context(args):
         raw_params.get("automation_status", ""),
         raw_params.get("automation_event_id"),
         event_id,
+        force=args.force,
     )
     return {
         "action": action,
@@ -636,6 +640,11 @@ def main():
             "Run only the cheap odds/Sheet gate; exit 0 when a full run is "
             "needed and 78 when this dispatch is a normal no-op"
         ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild the current completed target round during a manual repair run",
     )
     args = parser.parse_args()
 

@@ -9,6 +9,10 @@ on:
         description: "Preflight only: do not update Sheets or run simulations"
         type: boolean
         default: true
+      force_rebuild:
+        description: "Force rebuild the completed target round (manual repairs only)"
+        type: boolean
+        default: false
 
 concurrency:
   group: round-sim
@@ -51,7 +55,11 @@ jobs:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
           set +e
-          python midweek_round_automation.py --gate-only
+          FORCE_ARG=""
+          if [ "${{ inputs.force_rebuild }}" = "true" ]; then
+            FORCE_ARG="--force"
+          fi
+          python midweek_round_automation.py --gate-only $FORCE_ARG
           RC=$?
           set -e
           if [ "$RC" -eq 0 ]; then
@@ -146,6 +154,9 @@ jobs:
           $automationArgs = @()
           if ("${{ inputs.dry_run }}" -eq "true") {
             $automationArgs += "--dry-run"
+          }
+          if ("${{ inputs.force_rebuild }}" -eq "true") {
+            $automationArgs += "--force"
           }
           & $env:RUNNER_PYTHON midweek_round_automation.py @automationArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

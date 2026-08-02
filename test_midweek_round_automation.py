@@ -131,6 +131,12 @@ class TransitionActionTests(unittest.TestCase):
     def test_skips_completed_transition(self):
         self.assertEqual(transition_action(1, 2, 2, "complete"), "complete")
 
+    def test_force_rebuilds_completed_transition(self):
+        self.assertEqual(
+            transition_action(3, 4, 4, "complete", force=True),
+            "resume",
+        )
+
     def test_prior_event_completion_does_not_block_new_event(self):
         self.assertEqual(
             transition_action(0, 2, 2, "complete", 111, 222),
