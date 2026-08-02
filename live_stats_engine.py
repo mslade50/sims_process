@@ -69,14 +69,23 @@ from sim_inputs import (
 )
 
 from api_utils import (
-    fetch_live_stats, fetch_field_updates, fetch_img_player_rounds,
+    fetch_live_stats, fetch_field_updates,
     calculate_average_wind, compute_wind_factor, clean_names,
     fetch_player_decompositions,
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
     fetch_realized_wind,
 )
-from img_shot_local import write_player_crosswalk
+
+# IMG shot data is diagnostic-only.  Keep the live pipeline runnable when the
+# optional archive adapter has not been deployed with the production checkout.
+try:
+    from api_utils import fetch_img_player_rounds
+    from img_shot_local import write_player_crosswalk
+except ImportError as exc:
+    fetch_img_player_rounds = None
+    write_player_crosswalk = None
+    print(f"[IMG] optional archive adapter unavailable: {exc}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -202,6 +211,9 @@ def _map_key_to_column(key, round_num):
 
 def _merge_img_round_summary(df, round_num):
     """Attach read-only local IMG SG diagnostics to DataGolf rows when present."""
+    if fetch_img_player_rounds is None:
+        return df
+
     explicit_key = os.getenv("IMG_SHOT_EVENT_KEY", "").strip()
     event_value = (
         explicit_key
@@ -255,10 +267,11 @@ def _merge_img_round_summary(df, round_num):
             "canonical_name": row["player_name"],
             "event_key": row.get("img_event_key", event_label),
         })
-    try:
-        write_player_crosswalk(crosswalk_rows)
-    except Exception as exc:  # noqa: BLE001 - telemetry must never kill the update
-        print(f"  [IMG] crosswalk update failed: {exc}")
+    if write_player_crosswalk is not None:
+        try:
+            write_player_crosswalk(crosswalk_rows)
+        except Exception as exc:  # noqa: BLE001 - telemetry must never kill the update
+            print(f"  [IMG] crosswalk update failed: {exc}")
     eligible = (
         merged["sg_total"].notna()
         if "sg_total" in merged.columns
