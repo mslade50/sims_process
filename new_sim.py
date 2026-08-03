@@ -4216,120 +4216,129 @@ if not df_match.empty:
             sharp_df.to_csv(sharp_filename, index=False)
             print(f"[ok] sharp filtered -> {sharp_filename}")
 
-        # --- Compute archetypes (before email so type_on appears in tables) ---
-        if _precomputed_arch_map:
-            _arch_map = _precomputed_arch_map
-            print(f"[archetypes] Reusing precomputed map ({len(_arch_map)} players)")
-        else:
-            _arch_map = {}
-            try:
-                from sg_diagnostic import compute_rolling_archetypes
-                field_players = model_preds['player_name'].unique().tolist()
-                _arch_df = compute_rolling_archetypes(_event_id, field_players)
-                _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
-                print(f"[archetypes] Computed for {len(_arch_map)} players")
-            except Exception as _arch_err:
-                print(f"[archetypes] Computation skipped: {_arch_err}")
-
-        # --- Send tournament email ---
-        print("\n[email] Building tournament sim email...")
-        _finish_for_email = combined_finish_df if ('combined_finish_df' in dir() and not combined_finish_df.empty) else None
-        _attachments = []
-        # Weather lookup for finish position context: total SG shift R1+R2
-        _wx_fp_lookup = dict(zip(
-            wx['player_name'].str.lower(),
-            wx['wind_adv_r1_2'] + wx['dew_adv_r1_2'],
-        ))
-        # Price exchange outrights + matchups for email
-        _kalshi_df = pd.DataFrame()
-        _novig_df = pd.DataFrame()
-        _kalshi_mu_df = pd.DataFrame()
-        _novig_mu_df = pd.DataFrame()
-        try:
-            _kalshi_df = price_kalshi_outrights_tourney(finish_equity_df, my_pred_lookup, sample_lookup)
-        except Exception as _ke:
-            print(f"  [warn] Kalshi outright pricing failed: {_ke}")
-        try:
-            _novig_df = price_novig_outrights_tourney(finish_equity_df, my_pred_lookup, sample_lookup)
-        except Exception as _ke:
-            print(f"  [warn] NoVig outright pricing failed: {_ke}")
-        try:
-            _kalshi_mu_df = price_kalshi_matchups_tourney(model_preds, final_scores, player_names)
-        except Exception as _ke:
-            print(f"  [warn] Kalshi matchup pricing failed: {_ke}")
-        try:
-            _novig_mu_df = price_novig_matchups_tourney(model_preds, final_scores, player_names)
-        except Exception as _ke:
-            print(f"  [warn] NoVig matchup pricing failed: {_ke}")
-
-        # Email 1: bettable edges (sportsbooks + best exchange rows)
-        send_tournament_email(
-            sharp_mu_df=sharp_df,
-            finish_df=_finish_for_email,
-            sample_lookup=sample_lookup,
-            my_pred_lookup=my_pred_lookup,
-            attachment_paths=_attachments,
-            wx_lookup=_wx_fp_lookup,
-            kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
-            novig_df=_novig_df if not _novig_df.empty else None,
-            kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
-            novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
-            arch_map=_arch_map,
-            sb_lines_lookup=_all_sb_lines_lookup,
-        )
-
-        # Email 2: exchange-only opportunities — pre-compute the sportsbook
-        # priority key set so we can suppress players whose YES bet is "better"
-        # at sportsbooks (= already covered by Email 3).
-        try:
-            _sb_priority_keys = _compute_sb_priority_keys(
-                combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
-                _kalshi_df if not _kalshi_df.empty else None,
-                _novig_df if not _novig_df.empty else None,
-            )
-        except Exception as _ke:
-            print(f"  [warn] sb_priority_keys compute failed: {_ke}")
-            _sb_priority_keys = set()
-
-        send_exchange_email(
-            kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
-            novig_df=_novig_df if not _novig_df.empty else None,
-            kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
-            novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
-            sb_priority_keys=_sb_priority_keys,
-        )
-
-        # Email 4: Outrights — every outright edge (down to 0%) at the sharp
-        # sportsbooks + Kalshi/NoVig YES, plus a Kalshi/NoVig NO-edge table.
-        try:
-            _sb_outright_perbook = (_outright_sb_perbook
-                                    if '_outright_sb_perbook' in dir() and not _outright_sb_perbook.empty
-                                    else None)
-            send_outrights_email(
-                sb_outrights_df=_sb_outright_perbook,
-                kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
-                novig_df=_novig_df if not _novig_df.empty else None,
-            )
-        except Exception as _oe:
-            print(f"  [warn] Outrights email failed: {_oe}")
-
-        # Email 3: sportsbook priority (capital-deployment guide)
-        try:
-            send_sportsbook_priority_email(
-                combined_finish_df=combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
-                kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
-                novig_df=_novig_df if not _novig_df.empty else None,
-                arch_map=_arch_map,
-                wx_lookup=_wx_fp_lookup,
-            )
-        except Exception as _spe:
-            print(f"  [warn] Sportsbook priority email failed: {_spe}")
-
     else:
         print("[note] no bookmaker CSVs found to combine.")
 
 else:
     print("[warn] No valid tournament matchups found.")
+
+# --- Emails: always send. Finish positions, outrights, and exchange edges do
+# not depend on matchup markets, and Monday runs typically have no matchup
+# boards posted yet — the sharp-matchup table is simply omitted when empty.
+_sharp_for_email = (
+    sharp_df
+    if ('sharp_df' in dir() and isinstance(sharp_df, pd.DataFrame) and not sharp_df.empty)
+    else None
+)
+
+# --- Compute archetypes (before email so type_on appears in tables) ---
+if _precomputed_arch_map:
+    _arch_map = _precomputed_arch_map
+    print(f"[archetypes] Reusing precomputed map ({len(_arch_map)} players)")
+else:
+    _arch_map = {}
+    try:
+        from sg_diagnostic import compute_rolling_archetypes
+        field_players = model_preds['player_name'].unique().tolist()
+        _arch_df = compute_rolling_archetypes(_event_id, field_players)
+        _arch_map = dict(zip(_arch_df['player_name'], _arch_df['archetype']))
+        print(f"[archetypes] Computed for {len(_arch_map)} players")
+    except Exception as _arch_err:
+        print(f"[archetypes] Computation skipped: {_arch_err}")
+
+# --- Send tournament email ---
+print("\n[email] Building tournament sim email...")
+_finish_for_email = combined_finish_df if ('combined_finish_df' in dir() and not combined_finish_df.empty) else None
+_attachments = []
+# Weather lookup for finish position context: total SG shift R1+R2
+_wx_fp_lookup = dict(zip(
+    wx['player_name'].str.lower(),
+    wx['wind_adv_r1_2'] + wx['dew_adv_r1_2'],
+))
+# Price exchange outrights + matchups for email
+_kalshi_df = pd.DataFrame()
+_novig_df = pd.DataFrame()
+_kalshi_mu_df = pd.DataFrame()
+_novig_mu_df = pd.DataFrame()
+try:
+    _kalshi_df = price_kalshi_outrights_tourney(finish_equity_df, my_pred_lookup, sample_lookup)
+except Exception as _ke:
+    print(f"  [warn] Kalshi outright pricing failed: {_ke}")
+try:
+    _novig_df = price_novig_outrights_tourney(finish_equity_df, my_pred_lookup, sample_lookup)
+except Exception as _ke:
+    print(f"  [warn] NoVig outright pricing failed: {_ke}")
+try:
+    _kalshi_mu_df = price_kalshi_matchups_tourney(model_preds, final_scores, player_names)
+except Exception as _ke:
+    print(f"  [warn] Kalshi matchup pricing failed: {_ke}")
+try:
+    _novig_mu_df = price_novig_matchups_tourney(model_preds, final_scores, player_names)
+except Exception as _ke:
+    print(f"  [warn] NoVig matchup pricing failed: {_ke}")
+
+# Email 1: bettable edges (sportsbooks + best exchange rows)
+send_tournament_email(
+    sharp_mu_df=_sharp_for_email,
+    finish_df=_finish_for_email,
+    sample_lookup=sample_lookup,
+    my_pred_lookup=my_pred_lookup,
+    attachment_paths=_attachments,
+    wx_lookup=_wx_fp_lookup,
+    kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+    novig_df=_novig_df if not _novig_df.empty else None,
+    kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
+    novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
+    arch_map=_arch_map,
+    sb_lines_lookup=_all_sb_lines_lookup,
+)
+
+# Email 2: exchange-only opportunities — pre-compute the sportsbook
+# priority key set so we can suppress players whose YES bet is "better"
+# at sportsbooks (= already covered by Email 3).
+try:
+    _sb_priority_keys = _compute_sb_priority_keys(
+        combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
+        _kalshi_df if not _kalshi_df.empty else None,
+        _novig_df if not _novig_df.empty else None,
+    )
+except Exception as _ke:
+    print(f"  [warn] sb_priority_keys compute failed: {_ke}")
+    _sb_priority_keys = set()
+
+send_exchange_email(
+    kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+    novig_df=_novig_df if not _novig_df.empty else None,
+    kalshi_mu_df=_kalshi_mu_df if not _kalshi_mu_df.empty else None,
+    novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
+    sb_priority_keys=_sb_priority_keys,
+)
+
+# Email 4: Outrights — every outright edge (down to 0%) at the sharp
+# sportsbooks + Kalshi/NoVig YES, plus a Kalshi/NoVig NO-edge table.
+try:
+    _sb_outright_perbook = (_outright_sb_perbook
+                            if '_outright_sb_perbook' in dir() and not _outright_sb_perbook.empty
+                            else None)
+    send_outrights_email(
+        sb_outrights_df=_sb_outright_perbook,
+        kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+        novig_df=_novig_df if not _novig_df.empty else None,
+    )
+except Exception as _oe:
+    print(f"  [warn] Outrights email failed: {_oe}")
+
+# Email 3: sportsbook priority (capital-deployment guide)
+try:
+    send_sportsbook_priority_email(
+        combined_finish_df=combined_finish_df if 'combined_finish_df' in dir() and not combined_finish_df.empty else None,
+        kalshi_df=_kalshi_df if not _kalshi_df.empty else None,
+        novig_df=_novig_df if not _novig_df.empty else None,
+        arch_map=_arch_map,
+        wx_lookup=_wx_fp_lookup,
+    )
+except Exception as _spe:
+    print(f"  [warn] Sportsbook priority email failed: {_spe}")
 
 # --- Storage: always attempt (finish positions don't depend on matchups) ---
 # In --reprice mode, skip Sheets storage entirely. Pricing + emails still run
