@@ -17,10 +17,10 @@ from datetime import datetime
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
-PAR           = 70  # keep in sync with course_par below
+PAR           = 70
 CUT_LINE      = 65
 USE_10_SHOT_RULE = False
-WIND_FACTOR_SIM  = 0.12  # must match your main script
+WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
 
 # One simulation-count contract for both round- and hole-level consumers.
@@ -28,6 +28,7 @@ num_sims = SIMULATIONS
 
 ###basic information for the week
 wind_override = 0.0
+# 0.155 re-estimated 2026-08 (scratch_weather_reanalysis/REPORT.md section 2)
 baseline_wind = 0.155
 
 baseline_dew = -0.018
@@ -37,9 +38,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [524]
-course_id = 876
-tourney = 'rocket'
+event_ids = [13]
+course_id = 752
+tourney = 'wyndham'
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -50,7 +51,7 @@ category_profile_shrinkage_enabled = False
 
 # Completed events to ingest before the weekly model run. Keep these separate
 # from event_ids, which identifies the upcoming simulation slate.
-ingest_event_ids = [525]
+ingest_event_ids = [524]
 ingest_tour = 'pga'
 ingest_years = [2026]
 course_par = 70
