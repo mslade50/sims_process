@@ -10,7 +10,6 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "brown, blades",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "campbell, brian",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "campos, rafael",0.0,0.0,-0.0,-0.0,-0.0,-0.0
-"cantlay, patrick",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "castillo, ricky",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "cauley, bud",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "chatfield, davis",0.0,0.0,-0.0,-0.0,-0.0,-0.0
@@ -112,12 +111,14 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "schenk, adam",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "schmid, matthias",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "shipley, neal",0.0,0.0,-0.0,-0.0,-0.0,-0.0
+"silverman, ben",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "simpson, webb",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "smalley, alex",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "smith, jordan",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "smotherman, austin",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "snedeker, brandt",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "spieth, jordan",0.0,0.0,-0.0,-0.0,-0.0,-0.0
+"springer, hayden",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "stevens, samuel",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "straka, sepp",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "streelman, kevin",0.0,0.0,-0.0,-0.0,-0.0,-0.0
@@ -133,6 +134,7 @@ player_name,dew_adj_r1,wind_adj_r1,dew_adj_r2,wind_adj_r2,dew_adv_r1_2,wind_adv_
 "vanderlaan, john",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "ventura, kristoffer",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "vilips, karl",0.0,0.0,-0.0,-0.0,-0.0,-0.0
+"villegas, camilo",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "walker, danny",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "wallace, matt",0.0,0.0,-0.0,-0.0,-0.0,-0.0
 "whaley, vince",0.0,0.0,-0.0,-0.0,-0.0,-0.0
