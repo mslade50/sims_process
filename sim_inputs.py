@@ -28,7 +28,7 @@ num_sims = SIMULATIONS
 
 ###basic information for the week
 wind_override = 0.0
-baseline_wind = 0.12
+baseline_wind = 0.155
 
 baseline_dew = -0.018
 dewpoint_wave = -0.035
