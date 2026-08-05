@@ -67,6 +67,7 @@ jobs:
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_ROUND_BETS_CHAT_ID: ${{ secrets.TELEGRAM_ROUND_BETS_CHAT_ID }}
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: python reprice.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
