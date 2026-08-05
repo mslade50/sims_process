@@ -342,10 +342,10 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
 
 
 # ── Telegram (mirror of round_sim._send_telegram + matchup section) ─────────────
-def send_telegram(text):
+def send_telegram(text, chat_id=None):
     """Send a Telegram message. Non-blocking — logs warning on failure."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return
     try:
@@ -399,4 +399,5 @@ def send_matchup_alert(new_mu, sim_round, tourney_name, seen_alert_keys=None):
         lines.append(f"  {bet} vs {opp}")
         lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
 
-    send_telegram("\n".join(lines))
+    round_bets_chat_id = os.getenv("TELEGRAM_ROUND_BETS_CHAT_ID", "")
+    send_telegram("\n".join(lines), chat_id=round_bets_chat_id or None)
