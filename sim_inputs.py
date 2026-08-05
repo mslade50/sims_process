@@ -51,6 +51,16 @@ category_profile_shrinkage_enabled = False
 
 # Completed events to ingest before the weekly model run. Keep these separate
 # from event_ids, which identifies the upcoming simulation slate.
+#
+# Precedence in db_updates.py: a fresh work/ingest_manifest.json written by
+# tools/discover_ingest_events.py (the guarded pipeline's discover stage) wins;
+# otherwise a non-empty ingest_events below; otherwise the legacy single-tour
+# trio. Populate ingest_events only for deliberate manual/backfill ingests.
+ingest_events = []
+# ingest_events = [
+#     {"tour": "pga", "event_ids": [524], "years": [2026]},
+#     {"tour": "kft", "event_ids": [26], "years": [2026]},
+# ]
 ingest_event_ids = [524]
 ingest_tour = 'pga'
 ingest_years = [2026]
