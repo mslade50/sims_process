@@ -28,6 +28,7 @@ Hook: new_sim.py calls publish_sim_fairs.publish() at the end of a run
 import argparse
 import json
 import logging
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,33 @@ FULL_TAPE_ASSET = "tournament_samples_full.parquet"
 MATCHUP_TAPE_ASSET = "matchup_scores_live.parquet"
 MATCHUP_TAPE_DRAWS = 25000  # H2H prob SE ~0.3pp at 25k draws vs the maker's 5pp gate
 MADE_CUT_ASSET = "tournament_made_cut_full.parquet"
+
+
+def sync_r1_prediction_artifact(source=None, destination=None):
+    """Persist the complete R1 skill/weather artifact beside dashboard data."""
+    source = Path(source or (PROJECT_ROOT / "model_predictions_r1.csv"))
+    destination = Path(
+        destination
+        or (PROJECT_ROOT / "dashboard_data" / "model_predictions_r1.csv")
+    )
+    if not source.is_file():
+        return None
+    try:
+        frame = pd.read_csv(source)
+        required = ["player_name", "my_pred", "wind_adj1", "dew_adj1"]
+        if len(frame) < 10 or any(column not in frame for column in required):
+            raise ValueError("required columns or active field are incomplete")
+        if frame[required].isna().any().any():
+            raise ValueError("prediction/weather values are missing")
+    except Exception as exc:
+        logger.warning(f"R1 prediction snapshot skipped: {exc}")
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    logger.info(
+        f"Synced {len(frame)}-player R1 prediction artifact to {destination}"
+    )
+    return destination
 
 
 # ─── config from sim_inputs ───────────────────────────────────────────────────
@@ -1358,6 +1386,9 @@ def publish(push: bool = True) -> dict:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
     files = ["sim_fairs.json"]
+    prediction_snapshot = sync_r1_prediction_artifact()
+    if prediction_snapshot is not None:
+        files.append(str(prediction_snapshot.relative_to(PROJECT_ROOT)))
     samples = _build_round_samples(payload["tourney"], payload.get("round"), _name_replacements())
     if samples is not None:
         # Stamp round/event/sim_run_at into the parquet metadata — the board's
