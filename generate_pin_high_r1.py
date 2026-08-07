@@ -114,6 +114,8 @@ def generate(args):
         "--output",
         str(Path(args.output).resolve()),
     ]
+    if args.allow_regression:
+        command.append("--allow-regression")
     subprocess.run(command, cwd=collector_root, check=True)
     print(
         f"Generated {Path(args.output).name} for {event_key} "
@@ -141,6 +143,14 @@ def parser():
         ),
     )
     root.add_argument("--season", type=int, default=datetime.now().year)
+    root.add_argument(
+        "--allow-regression",
+        action="store_true",
+        help=(
+            "Publish a confirmed source-data correction even when it contains "
+            "fewer archived approaches than the existing artifact"
+        ),
+    )
     return root
 
 
