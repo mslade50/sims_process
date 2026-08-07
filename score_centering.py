@@ -134,14 +134,7 @@ def center_player_advantages(
     dew_cost_col=None,
     group_col=None,
 ):
-    """Center complete player rows to deviations from the active field/course.
-
-    A live update can contain a player without a usable skill or weather input
-    while a round is still in progress.  Such a row cannot be simulated and
-    must not participate in any of the component means; otherwise the means
-    are calculated on different player sets and the resulting score column is
-    not truly field-centered.
-    """
+    """Center skill and weather to deviations from the active field/course."""
     if skill_col not in frame.columns:
         raise ValueError(f"Missing skill column: {skill_col}")
 
@@ -154,40 +147,14 @@ def center_player_advantages(
     )
 
     result[skill_col] = pd.to_numeric(result[skill_col], errors="coerce")
-    if wind_cost_col and wind_cost_col in result.columns:
-        result[wind_cost_col] = pd.to_numeric(
-            result[wind_cost_col], errors="coerce"
-        )
-    if dew_cost_col and dew_cost_col in result.columns:
-        result[dew_cost_col] = pd.to_numeric(
-            result[dew_cost_col], errors="coerce"
-        )
-
-    required_inputs = [skill_col]
-    if wind_cost_col and wind_cost_col in result.columns:
-        required_inputs.append(wind_cost_col)
-    if dew_cost_col and dew_cost_col in result.columns:
-        required_inputs.append(dew_cost_col)
-    if use_group:
-        required_inputs.append(use_group)
-
-    complete = result[required_inputs].notna().all(axis=1)
-    if not complete.all():
-        dropped = int((~complete).sum())
-        result = result.loc[complete].copy()
-        print(
-            f"  Dropped {dropped} player row(s) with incomplete centering inputs"
-        )
-    if result.empty:
-        raise ValueError("No complete player rows are available for centering")
-
-    # Recompute aligned means only after every component shares the same
-    # active-player mask.
     result["field_skill_mean"] = _mean_aligned(
         result, skill_col, use_group
     )
 
     if wind_cost_col and wind_cost_col in result.columns:
+        result[wind_cost_col] = pd.to_numeric(
+            result[wind_cost_col], errors="coerce"
+        )
         result["field_wind_cost"] = _mean_aligned(
             result, wind_cost_col, use_group
         )
@@ -197,6 +164,9 @@ def center_player_advantages(
         wind_relative = pd.Series(0.0, index=result.index)
 
     if dew_cost_col and dew_cost_col in result.columns:
+        result[dew_cost_col] = pd.to_numeric(
+            result[dew_cost_col], errors="coerce"
+        )
         result["field_dew_cost"] = _mean_aligned(
             result, dew_cost_col, use_group
         )

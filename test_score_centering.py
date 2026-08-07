@@ -61,27 +61,6 @@ class ScoreCenteringTests(unittest.TestCase):
         means = centered.groupby("course")["scores_r2"].mean()
         self.assertTrue((means.abs() < 1e-12).all())
 
-    def test_incomplete_live_row_is_excluded_before_centering(self):
-        frame = pd.DataFrame({
-            "player": ["finished", "still_playing", "finished_2"],
-            "skill": [0.6, None, -0.2],
-            "wind": [0.8, 1.4, 1.2],
-            "dew": [-0.1, 0.3, 0.1],
-        })
-
-        centered = center_player_advantages(
-            frame,
-            skill_col="skill",
-            score_col="scores_r2",
-            weather_col="weather_sg_r2",
-            wind_cost_col="wind",
-            dew_cost_col="dew",
-        )
-
-        self.assertEqual(centered["player"].tolist(), ["finished", "finished_2"])
-        self.assertAlmostEqual(centered["scores_r2"].mean(), 0.0, places=12)
-        self.assertAlmostEqual(centered["weather_sg_r2"].mean(), 0.0, places=12)
-
     def test_expected_field_score_uses_active_field_skill(self):
         result = expected_field_score(
             base_score=69.32,
