@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "event_id": "13",
+  "tourney": "wyndham",
+  "sim_run_at": "2026-08-07 00:55:04 UTC",
+  "prediction_count": 147,
+  "active_field_count": 146,
+  "prediction_field_sha256": "1a2646e9a01e79bc439b8ca323c34ad061eb4721a6da22844ac2e9793ce14357",
+  "active_field_sha256": "b102bc1eb004dd17d334d48326f602be50feb2c351ea0d7622cd79b8fbadeae8",
+  "withdrawn_or_extra_players": [
+    "coody, pierceson"
+  ]
+}

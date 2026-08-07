@@ -49,7 +49,7 @@ from score_centering import (
     expected_field_score,
     validate_field_relative_predictions,
 )
-from prediction_backfill import backfill_missing_predictions
+from r1_prediction_artifact import load_matching_r1_predictions
 
 load_dotenv()
 
@@ -367,28 +367,27 @@ def _merge_r1(df):
     R1 merge: load model_predictions_r1.csv (created pre-event).
     Source: live_stats.py lines 148-162
     """
-    preds = pd.read_csv(_resolve_csv("model_predictions_r1.csv"))
+    preds, prediction_path, field_details = load_matching_r1_predictions(
+        (
+            "model_predictions_r1.csv",
+            os.path.join("dashboard_data", "model_predictions_r1.csv"),
+        ),
+        active_players=df["player_name"],
+        expected_event_ids=event_ids,
+        expected_tourney=tourney,
+    )
+    print(f"  [skill] Using complete R1 prediction snapshot: {prediction_path}")
+    if field_details["extra_players"]:
+        print(
+            "  [skill] Prediction-only withdrawn/extra player(s): "
+            + ", ".join(field_details["extra_players"])
+        )
     preds = clean_names(preds)
     preds["pred"] = preds["my_pred"]
 
     merge_cols = ["player_name", "wind_adj1", "dew_adj1", "pred"]
     merge_cols = [c for c in merge_cols if c in preds.columns]
     df = df.merge(preds[merge_cols], on="player_name", how="left")
-
-    df, filled_players = backfill_missing_predictions(
-        df,
-        player_col="player_name",
-        prediction_col="pred",
-        artifact_path="sim_fairs.json",
-        expected_event_ids=event_ids,
-        expected_tourney=tourney,
-    )
-    if filled_players:
-        print(
-            "  [skill] Backfilled "
-            f"{len(filled_players)} missing R1 prediction(s) from the last sim: "
-            f"{', '.join(filled_players)}"
-        )
 
     # Datetime conversion for spline
     df["r1_teetime"] = pd.to_datetime(df["r1_teetime"], errors="coerce")
@@ -707,6 +706,7 @@ def _apply_pin_high_adj(df):
     r1_live_model.csv via export_results.
     """
     df["pin_high_adj"] = 0.0
+    base_total_adjustment = df["total_adjustment"].copy()
     if os.environ.get("LIVE_PIN_HIGH_ADJ") != "1":
         return df
     try:
@@ -723,7 +723,11 @@ def _apply_pin_high_adj(df):
         df = df.merge(adj, on="player_name", how="left")
         df["pin_high_adj"] = df["_pin_high_adj"].fillna(0.0)
         df = df.drop(columns=["_pin_high_adj"])
-        df["updated_pred"] = df["updated_pred"] + df["pin_high_adj"]
+        # Keep the core skill-update invariant true after the optional layer:
+        # Post = Pre + total_adjustment.  The pin-high value is a first-class
+        # attribution component, not a hidden post-processing nudge.
+        df["total_adjustment"] = df["total_adjustment"] + df["pin_high_adj"]
+        df["updated_pred"] = df["pred"] + df["total_adjustment"]
         applied = df["pin_high_adj"] != 0
         if applied.any():
             print(
@@ -735,6 +739,8 @@ def _apply_pin_high_adj(df):
             print("  [pin_high] no players matched — zero adjustments")
     except Exception as exc:
         df["pin_high_adj"] = 0.0
+        df["total_adjustment"] = base_total_adjustment
+        df["updated_pred"] = df["pred"] + df["total_adjustment"]
         print(f"  [pin_high] skipped ({exc})")
     return df
 
@@ -1502,6 +1508,7 @@ def _get_component_columns(df, round_num):
             ("tot_resid_adj", "Residual"),
             ("ott_adj", "OTT Adj"),
             ("putt_adj", "Putt Adj"),
+            ("pin_high_adj", "Pin High Adj"),
         ]
     elif round_num == 2:
         adj_cols = [
@@ -1653,7 +1660,8 @@ def _attribution_components(df, round_num):
     total_adjustment. Prior-stage undo columns at R3/R4 enter negatively."""
     if round_num == 1:
         spec = [("tot_resid_adj", "residual", 1),
-                ("ott_adj", "ott", 1), ("putt_adj", "putt", 1)]
+                ("ott_adj", "ott", 1), ("putt_adj", "putt", 1),
+                ("pin_high_adj", "pin_high", 1)]
     elif round_num == 2:
         spec = [("tot_resid_adj", "residual", 1),
                 ("avg_ott_adj", "avg_ott", 1), ("avg_putt_adj", "avg_putt", 1),

@@ -10,6 +10,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from r1_prediction_artifact import validate_r1_prediction_frame
+
 ROOT = Path(__file__).resolve().parent
 DEFAULT_ARTIFACT = ROOT / "sim_fairs.json"
 DEFAULT_PREDS = ROOT / "dashboard_data" / "model_predictions_r1.csv"
@@ -64,27 +66,17 @@ def validate_matching_predictions(
     check_columns = ["player_name", pred_column, "wind_adj1", "dew_adj1"]
     if predictions[check_columns].isna().any().any():
         raise ValueError("R1 prediction artifact contains missing prediction/weather values")
+    if pred_column != "my_pred":
+        predictions = predictions.copy()
+        predictions["my_pred"] = predictions[pred_column]
 
-    players = {
-        str(player).strip().lower()
-        for player in predictions["player_name"]
-        if str(player).strip()
-    }
     field = {
         str(player).strip().lower()
         for player in payload.get("field", [])
         if str(player).strip()
     }
-    if len(players) < 10 or len(field) < 10:
-        raise ValueError(
-            f"R1 prediction/field artifact is too small ({len(players)}/{len(field)})"
-        )
-    overlap = len(players & field) / len(field)
-    if overlap < 0.95:
-        raise ValueError(
-            f"R1 prediction artifact overlaps only {overlap:.1%} of the active field"
-        )
-    return len(players)
+    details = validate_r1_prediction_frame(predictions, active_players=field)
+    return len(details["prediction_players"])
 
 
 def generate(args):
