@@ -27,6 +27,7 @@ class LiveSkillPinHighTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             adjustment_path = Path(directory) / "pin_high_r1.csv"
             pd.DataFrame({
+                "event_key": ["pga:R2026013"] * 2,
                 "player_name": frame["player_name"],
                 "pin_high_adj": [0.06, -0.04],
                 "generated_at": [pd.Timestamp.now(tz="UTC").isoformat()] * 2,
@@ -36,7 +37,7 @@ class LiveSkillPinHighTests(unittest.TestCase):
                 engine,
                 "_resolve_csv",
                 return_value=str(adjustment_path),
-            ):
+            ), patch.object(engine, "event_ids", [13]):
                 result = engine._apply_pin_high_adj(frame.copy())
 
             pd.testing.assert_series_equal(
@@ -59,6 +60,57 @@ class LiveSkillPinHighTests(unittest.TestCase):
         self.assertAlmostEqual(attribution.loc[0, "pin_high"], -0.04)
         merritt = attribution[attribution["player_name"] == "merritt, troy"].iloc[0]
         self.assertAlmostEqual(merritt["pin_high"], 0.06)
+
+    def test_pin_high_note_reports_progressive_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            adjustment_path = Path(directory) / "pin_high_r1.csv"
+            pd.DataFrame({
+                "player_name": ["player, full", "player, partial", "player, none"],
+                "pin_high_adj": [0.06, -0.02, 0.0],
+                "pin_high_rate": [0.40, 0.75, float("nan")],
+                "n_approaches": [8, 3, 0],
+                "coverage_status": ["full", "partial", "no_data"],
+                "field_mean": [0.50, 0.50, 0.50],
+                "generated_at": [pd.Timestamp.now(tz="UTC").isoformat()] * 3,
+            }).to_csv(adjustment_path, index=False)
+            applied = pd.DataFrame({
+                "player_name": ["player, full", "player, partial", "player, none"],
+                "pin_high_adj": [0.06, -0.02, 0.0],
+            })
+
+            with patch.dict(os.environ, {"LIVE_PIN_HIGH_ADJ": "1"}), patch.object(
+                engine,
+                "_resolve_csv",
+                return_value=str(adjustment_path),
+            ):
+                note = engine.build_pin_high_note(applied)
+
+        self.assertIn("1 full / 1 partial / 1 no data", note)
+        self.assertIn("n=3", note)
+
+    def test_pin_high_event_mismatch_fails_open_to_zero_adjustments(self):
+        frame = self._frame()
+        with tempfile.TemporaryDirectory() as directory:
+            adjustment_path = Path(directory) / "pin_high_r1.csv"
+            pd.DataFrame({
+                "event_key": ["pga:R2026099"] * 2,
+                "player_name": frame["player_name"],
+                "pin_high_adj": [0.06, -0.04],
+                "generated_at": [pd.Timestamp.now(tz="UTC").isoformat()] * 2,
+            }).to_csv(adjustment_path, index=False)
+
+            with patch.dict(os.environ, {"LIVE_PIN_HIGH_ADJ": "1"}), patch.object(
+                engine,
+                "_resolve_csv",
+                return_value=str(adjustment_path),
+            ), patch.object(engine, "event_ids", [13]):
+                result = engine._apply_pin_high_adj(frame.copy())
+
+        self.assertTrue((result["pin_high_adj"] == 0).all())
+        pd.testing.assert_series_equal(
+            result["total_adjustment"],
+            frame["total_adjustment"],
+        )
 
 
 if __name__ == "__main__":

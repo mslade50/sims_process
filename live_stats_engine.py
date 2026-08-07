@@ -711,12 +711,32 @@ def _apply_pin_high_adj(df):
         return df
     try:
         adj = pd.read_csv(_resolve_csv("pin_high_r1.csv"))
+        if "event_key" in adj.columns:
+            artifact_events = {
+                str(value).strip() for value in adj["event_key"].dropna().unique()
+            }
+            expected_ids = {int(float(value)) for value in event_ids}
+            artifact_ids = {
+                int(value.split(":R")[-1][-3:]) for value in artifact_events
+            }
+            if len(artifact_events) != 1 or artifact_ids != expected_ids:
+                raise ValueError(
+                    f"pin-high event mismatch: artifact={sorted(artifact_events)}, "
+                    f"expected event_ids={sorted(expected_ids)}"
+                )
         generated = pd.to_datetime(adj["generated_at"].iloc[0], utc=True)
         age = pd.Timestamp.now(tz="UTC") - generated
         if age > pd.Timedelta(hours=48):
             print(f"  [pin_high] pin_high_r1.csv is stale ({age}) — skipping")
             return df
         adj = clean_names(adj)
+        if adj["player_name"].duplicated().any():
+            raise ValueError("pin-high artifact contains duplicate player names")
+        adj["pin_high_adj"] = pd.to_numeric(adj["pin_high_adj"], errors="coerce")
+        if adj["pin_high_adj"].isna().any():
+            raise ValueError("pin-high artifact contains non-numeric adjustments")
+        if (adj["pin_high_adj"].abs() > 0.150001).any():
+            raise ValueError("pin-high artifact contains an adjustment beyond the cap")
         adj = adj[["player_name", "pin_high_adj"]].rename(
             columns={"pin_high_adj": "_pin_high_adj"}
         )
@@ -1738,7 +1758,21 @@ def build_pin_high_note(df):
         gen_at = pd.to_datetime(csv["generated_at"].iloc[0], utc=True)
         age_h = (pd.Timestamp.now(tz="UTC") - gen_at).total_seconds() / 3600
         field_mean = float(csv["field_mean"].iloc[0])
-        med_n = float(csv["n_approaches"].median())
+        observed_csv = csv[csv["n_approaches"].fillna(0) > 0]
+        med_n = (
+            float(observed_csv["n_approaches"].median())
+            if len(observed_csv)
+            else 0.0
+        )
+        if "coverage_status" in csv.columns:
+            coverage = csv["coverage_status"].value_counts()
+            coverage_text = (
+                f"{int(coverage.get('full', 0))} full / "
+                f"{int(coverage.get('partial', 0))} partial / "
+                f"{int(coverage.get('no_data', 0))} no data"
+            )
+        else:
+            coverage_text = f"{len(csv)} legacy eligible rows"
         applied = None
         if "pin_high_adj" in df.columns:
             applied = df[df["pin_high_adj"].fillna(0) != 0]
@@ -1748,9 +1782,16 @@ def build_pin_high_note(df):
                        "<b>OFF - adjustments not applied</b>"))
         checks.append(("file age", f"{age_h:.1f}h" +
                        (" <b>(STALE >48h - auto-disarmed)</b>" if age_h > 48 else " (fresh)")))
-        checks.append(("field pin-high mean", f"{field_mean:.1%}" +
-                       ("" if 0.35 <= field_mean <= 0.55 else " <b>(OUTSIDE SANE BAND 35-55%)</b>")))
-        checks.append(("median approaches/player", f"{med_n:.0f}" +
+        if np.isfinite(field_mean):
+            field_mean_text = f"{field_mean:.1%}" + (
+                "" if 0.35 <= field_mean <= 0.55
+                else " <b>(OUTSIDE SANE BAND 35-55%)</b>"
+            )
+        else:
+            field_mean_text = "<b>NO OBSERVED SHOTS</b>"
+        checks.append(("field pin-high mean", field_mean_text))
+        checks.append(("coverage", coverage_text))
+        checks.append(("median approaches/observed player", f"{med_n:.0f}" +
                        ("" if med_n >= 10 else " <b>(THIN - check archive R1 ingest)</b>")))
         checks.append(("players in file", f"{len(csv)} ({csv_nonzero} nonzero)"))
         if applied is not None:
@@ -1768,9 +1809,14 @@ def build_pin_high_note(df):
         for label, value in checks:
             rows.append(f"<tr><td style='color:#777'>{label}</td><td>{value}</td></tr>")
         rows.append("</table>")
-        top = csv.reindex(csv["pin_high_adj"].abs().sort_values(ascending=False).index).head(3)
-        fades = "; ".join(f"{r.player_name} {r.pin_high_adj:+.3f} ({r.pin_high_rate:.0%})"
-                          for r in top.itertuples())
+        top = observed_csv.reindex(
+            observed_csv["pin_high_adj"].abs().sort_values(ascending=False).index
+        ).head(3)
+        fades = "; ".join(
+            f"{r.player_name} {r.pin_high_adj:+.3f} ({r.pin_high_rate:.0%}, "
+            f"n={int(r.n_approaches)})"
+            for r in top.itertuples()
+        ) or "none yet"
         rows.append(f"<p style='font-size:12px;color:#777'>largest: {fades}</p>")
         return "".join(rows)
     except Exception as e:
