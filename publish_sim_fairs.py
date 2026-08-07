@@ -35,6 +35,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from r1_prediction_artifact import (
+    build_r1_prediction_manifest,
+    manifest_path_for,
+    validate_r1_prediction_frame,
+)
+
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -62,8 +68,13 @@ MATCHUP_TAPE_DRAWS = 25000  # H2H prob SE ~0.3pp at 25k draws vs the maker's 5pp
 MADE_CUT_ASSET = "tournament_made_cut_full.parquet"
 
 
-def sync_r1_prediction_artifact(source=None, destination=None):
-    """Persist the complete R1 skill/weather artifact beside dashboard data."""
+def sync_r1_prediction_artifact(source=None, destination=None, payload=None):
+    """Persist the complete R1 skill/weather artifact beside dashboard data.
+
+    When the current sim payload is available, require the CSV to cover every
+    active player and write an event-stamped field manifest beside it.  The CSV
+    and manifest are then included in the same atomic git publish as sim_fairs.
+    """
     source = Path(source or (PROJECT_ROOT / "model_predictions_r1.csv"))
     destination = Path(
         destination
@@ -73,16 +84,24 @@ def sync_r1_prediction_artifact(source=None, destination=None):
         return None
     try:
         frame = pd.read_csv(source)
-        required = ["player_name", "my_pred", "wind_adj1", "dew_adj1"]
-        if len(frame) < 10 or any(column not in frame for column in required):
-            raise ValueError("required columns or active field are incomplete")
-        if frame[required].isna().any().any():
-            raise ValueError("prediction/weather values are missing")
+        active_field = payload.get("field", []) if payload else None
+        validate_r1_prediction_frame(frame, active_players=active_field)
+    except ValueError as exc:
+        if payload is not None:
+            raise ValueError(f"R1 prediction snapshot cannot be published: {exc}") from exc
+        logger.warning(f"R1 prediction snapshot skipped: {exc}")
+        return None
     except Exception as exc:
         logger.warning(f"R1 prediction snapshot skipped: {exc}")
         return None
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    if payload is not None:
+        manifest = build_r1_prediction_manifest(frame, payload)
+        manifest_path_for(destination).write_text(
+            json.dumps(manifest, indent=2) + "\n",
+            encoding="utf-8",
+        )
     logger.info(
         f"Synced {len(frame)}-player R1 prediction artifact to {destination}"
     )
@@ -1386,9 +1405,12 @@ def publish(push: bool = True) -> dict:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
     files = ["sim_fairs.json"]
-    prediction_snapshot = sync_r1_prediction_artifact()
+    prediction_snapshot = sync_r1_prediction_artifact(payload=payload)
     if prediction_snapshot is not None:
         files.append(str(prediction_snapshot.relative_to(PROJECT_ROOT)))
+        prediction_manifest = manifest_path_for(prediction_snapshot)
+        if prediction_manifest.is_file():
+            files.append(str(prediction_manifest.relative_to(PROJECT_ROOT)))
     samples = _build_round_samples(payload["tourney"], payload.get("round"), _name_replacements())
     if samples is not None:
         # Stamp round/event/sim_run_at into the parquet metadata — the board's
