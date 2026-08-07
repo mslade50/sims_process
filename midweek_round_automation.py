@@ -571,6 +571,15 @@ def run_pipeline(args) -> int:
             f"target sim R{target_round}"
         )
 
+        if (
+            completed_round == 1
+            and os.environ.get("LIVE_PIN_HIGH_ADJ") == "1"
+        ):
+            _run(
+                [sys.executable, "generate_pin_high_r1.py"],
+                "R1 pin-high adjustment generation",
+            )
+
         _run(
             [sys.executable, "live_stats_engine.py", "--automation"],
             "live_stats_engine.py --automation",
