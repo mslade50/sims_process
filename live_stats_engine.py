@@ -49,6 +49,7 @@ from score_centering import (
     expected_field_score,
     validate_field_relative_predictions,
 )
+from prediction_backfill import backfill_missing_predictions
 
 load_dotenv()
 
@@ -373,6 +374,21 @@ def _merge_r1(df):
     merge_cols = ["player_name", "wind_adj1", "dew_adj1", "pred"]
     merge_cols = [c for c in merge_cols if c in preds.columns]
     df = df.merge(preds[merge_cols], on="player_name", how="left")
+
+    df, filled_players = backfill_missing_predictions(
+        df,
+        player_col="player_name",
+        prediction_col="pred",
+        artifact_path="sim_fairs.json",
+        expected_event_ids=event_ids,
+        expected_tourney=tourney,
+    )
+    if filled_players:
+        print(
+            "  [skill] Backfilled "
+            f"{len(filled_players)} missing R1 prediction(s) from the last sim: "
+            f"{', '.join(filled_players)}"
+        )
 
     # Datetime conversion for spline
     df["r1_teetime"] = pd.to_datetime(df["r1_teetime"], errors="coerce")
