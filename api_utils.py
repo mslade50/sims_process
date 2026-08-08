@@ -11,17 +11,25 @@ This module centralizes:
 """
 
 import os
+import sqlite3
+import unicodedata
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
 from sim_inputs import name_replacements
+from img_shot_local import (
+    read_player_rounds as read_local_img_player_rounds,
+    read_player_shots as read_local_img_player_shots,
+    resolve_db_path as resolve_img_shot_db_path,
+)
 
 # --------------------------------------------------------------------------
 # Constants
 # --------------------------------------------------------------------------
 DATAGOLF_BASE = "https://feeds.datagolf.com"
+IMG_SHOT_DEFAULT_URL = "https://golf-shot-ingest.mckinleyslade.workers.dev"
 
 ALL_STATS = [
     "sg_putt", "sg_arg", "sg_app", "sg_ott", "sg_t2g", "sg_bs", "sg_total",
@@ -91,6 +99,167 @@ def fetch_live_stats(round_num, api_key, include_score=False):
             df[c] = pd.to_numeric(df[c], errors="coerce").round(2)
 
     return df
+
+# --------------------------------------------------------------------------
+# IMG shot archive API
+# --------------------------------------------------------------------------
+
+def _img_shot_api_config(base_url=None, read_token=None):
+    """Resolve the read-only IMG archive endpoint without exposing write auth."""
+    url = (
+        base_url
+        or os.getenv("IMG_SHOT_API_URL")
+        or os.getenv("IMG_SHOT_INGEST_URL")
+        or IMG_SHOT_DEFAULT_URL
+    ).strip().rstrip("/")
+    if url.endswith("/v1/ingest"):
+        url = url[:-len("/v1/ingest")]
+    token = (read_token or os.getenv("IMG_SHOT_READ_TOKEN") or "").strip()
+    return url, token
+
+
+def _fetch_img_archive_json(path, params, base_url=None, read_token=None, timeout=30):
+    url, token = _img_shot_api_config(base_url, read_token)
+    if not token:
+        print("  IMG shot archive disabled: set IMG_SHOT_READ_TOKEN")
+        return None
+    try:
+        response = requests.get(
+            f"{url}{path}",
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        print(f"  IMG shot archive request failed: {exc}")
+        return None
+    if response.status_code != 200:
+        print(f"  IMG shot archive error: HTTP {response.status_code}")
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        print("  IMG shot archive returned invalid JSON")
+        return None
+    if not payload.get("ok") or not isinstance(payload.get("rows"), list):
+        print(f"  IMG shot archive returned an invalid payload: {payload.get('error', 'missing rows')}")
+        return None
+    return payload
+
+
+def _canonical_img_name(value):
+    """Match PGA first-last names to the sims' lowercase last-first contract."""
+    text = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", str(value or ""))
+        if not unicodedata.combining(character)
+    )
+    text = " ".join(text.lower().strip().split())
+    if not text:
+        return text
+    if "," in text:
+        surname, given = text.split(",", 1)
+        canonical = f"{surname.strip()}, {' '.join(given.split())}"
+    else:
+        parts = text.split()
+        canonical = text if len(parts) < 2 else f"{parts[-1]}, {' '.join(parts[:-1])}"
+    return name_replacements.get(canonical, canonical)
+
+
+def _use_local_img_archive(base_url=None, read_token=None, db_path=None):
+    source = os.getenv("IMG_SHOT_SOURCE", "auto").strip().lower()
+    if source == "api" or base_url is not None or read_token is not None:
+        return False
+    return resolve_img_shot_db_path(db_path).is_file()
+
+
+def _img_rows_frame(rows):
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    if "player_name" in frame.columns:
+        frame["player_name"] = frame["player_name"].map(_canonical_img_name)
+    numeric = [
+        "tournament_id", "round_no", "hole_no", "shot_no", "round_strokes",
+        "holes_with_data", "holes_completed", "shot_events", "numbered_shots",
+        "tee_shots", "green_origin_shots", "penalty_events", "ball_drop_events",
+        "eagles_or_better", "birdies", "pars", "bogeys",
+        "double_bogeys_or_worse", "sequence_gap_holes",
+        "shot_distance_m", "shot_distance_yd", "distance_to_pin_m",
+        "distance_to_pin_yd", "distance_to_pin_ft",
+        "avg_tee_shot_distance_m", "avg_tee_shot_distance_yd",
+    ]
+    for column in numeric:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def fetch_img_player_rounds(event_id, round_num, base_url=None, read_token=None,
+                            timeout=30, db_path=None, tour="pga", season=None,
+                            event_key=None):
+    """Fetch current player-round SG locally, with the Worker as a fallback."""
+    if _use_local_img_archive(base_url, read_token, db_path):
+        try:
+            resolved, rows = read_local_img_player_rounds(
+                event_id, round_num, db_path=db_path, tour=tour,
+                season=season or datetime.now().year,
+                event_key=event_key or os.getenv("IMG_SHOT_EVENT_KEY"),
+            )
+            frame = _img_rows_frame(rows)
+            frame.attrs.update(event_key=resolved, source="local_sqlite")
+            return frame
+        except (FileNotFoundError, LookupError, OSError, sqlite3.Error) as exc:
+            print(f"  IMG local archive unavailable: {exc}")
+            if os.getenv("IMG_SHOT_SOURCE", "auto").strip().lower() == "local":
+                return None
+    payload = _fetch_img_archive_json(
+        "/v1/player-rounds",
+        {"event_id": int(event_id), "round": int(round_num)},
+        base_url=base_url,
+        read_token=read_token,
+        timeout=timeout,
+    )
+    return None if payload is None else _img_rows_frame(payload["rows"])
+
+
+def fetch_img_player_shots(event_id, round_num, base_url=None, read_token=None,
+                           page_size=1000, max_pages=100, timeout=30,
+                           db_path=None, tour="pga", season=None, event_key=None):
+    """Fetch current shot-level SG locally, with Worker pagination as fallback."""
+    if _use_local_img_archive(base_url, read_token, db_path):
+        try:
+            resolved, rows = read_local_img_player_shots(
+                event_id, round_num, db_path=db_path, tour=tour,
+                season=season or datetime.now().year,
+                event_key=event_key or os.getenv("IMG_SHOT_EVENT_KEY"),
+            )
+            frame = _img_rows_frame(rows)
+            frame.attrs.update(event_key=resolved, source="local_sqlite")
+            return frame
+        except (FileNotFoundError, LookupError, OSError, sqlite3.Error) as exc:
+            print(f"  IMG local archive unavailable: {exc}")
+            if os.getenv("IMG_SHOT_SOURCE", "auto").strip().lower() == "local":
+                return None
+    rows = []
+    cursor = None
+    for _ in range(max_pages):
+        params = {"event_id": int(event_id), "round": int(round_num),
+                  "limit": min(max(1, int(page_size)), 1000)}
+        if cursor:
+            params["cursor"] = cursor
+        payload = _fetch_img_archive_json(
+            "/v1/player-shots", params, base_url=base_url,
+            read_token=read_token, timeout=timeout,
+        )
+        if payload is None:
+            return None
+        rows.extend(payload["rows"])
+        cursor = payload.get("next_cursor")
+        if not cursor:
+            return _img_rows_frame(rows)
+    print(f"  IMG shot archive exceeded {max_pages} pages; refusing partial data")
+    return None
 
 
 def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,

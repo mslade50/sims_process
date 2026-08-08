@@ -26,7 +26,6 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 - Weather delta distributed as 0.35 OTT, 0.35 APP, 0.15 ARG, 0.15 PUTT
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
 - Per-category course multipliers come from `sg_category_event_profiles.csv` — computed for each new course via `scoring_baseline.py` variance analysis
-- **Round-score skew calibration** (`skew_calibration.py`): summing 4 category draws CLT-washes skew to ~+0.12 vs the empirical within-player +0.26 (score space; blowups drag the mean UP — a player's median round is ~0.11 better than his mean). `round_sim.py` tops up the catfirst draws post-sim (dither → CF reshape → stochastic rounding; monotone, preserves per-player mean/std and the copula). Applied before the cache save so `--price-only`/`--reprice` inherit it; disable with `--no-skew-cal`. Do NOT instead inflate `course_cat_skew` inputs — the needed OTT ≈ −1.9 puts Cornish–Fisher past its monotone fold. Mean-calibration (expected_avg) stays the anchor; the median falls out of the shape.
 
 **Supporting analysis files** (in `archive/`, not part of weekly pipeline):
 - `archive/sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events
@@ -85,17 +84,13 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 
 ## Traps That Have Caused Bugs
 
-- **Course par lives in TWO places and both must match**: the sheet's `course_pars` row (used by `round_sim.py` — its `PAR` derives from `course_pars[0]`, falling back to 72) and `sim_inputs.course_par` (used by `live_stats_engine.py` for score/SG conversion and by `scoring_baseline.py`). A par change (e.g. rocket 2026 went 72→70) with a stale value shifts every absolute score line by the difference (2026-07 bug: R1 actuals and score cards ran 2 strokes high).
-- **The sims' name contract is lowercase `'last, first'`** (e.g. `'scheffler, scottie'`) — dg_historical.db's `'Last, First'` just needs lowercasing + `name_replacements` (`_normalize_db_names()` in `sg_diagnostic.py`). Do NOT flip to `'first last'`; a well-meaning flip broke archetype matching entirely (2026-07). `clv.py` is the exception — DataGolf archive odds use first-last there. Also: `sg_diagnostic` resolves the db lazily — `DG_HISTORICAL_DB` env override, then the latest R2 snapshot via `dgdata_fetch.cached_snapshot_path()` (canonical, freshest; shares sim_prep's `%LOCALAPPDATA%\etr-golf\cache`), then the OneDrive copy offline. The OneDrive copy can silently stop syncing (went stale 2026-07); R2 is the source of truth.
 - **Matchup API returns string when no odds available**: Check `isinstance(match_list, list)` before iterating. The API returns a message string like `"No tournament_matchups being offered right now."` instead of a list.
 - **DataGolf field-updates tee times are nested**: The API returns `teetimes` as a list of dicts (with `round_num`, `teetime`, `course_code`), NOT flat `r1_teetime` columns. `fetch_field_updates()` in `api_utils.py` handles parsing.
 - **Multi-course ShotLink gaps**: Not all courses have ShotLink data. Use `.fillna(0)` for adjustment columns.
 - **Wind array index 0 = 6 AM**. Wind calculation uses 5-hour window average with minute-level interpolation.
 - **Wind coefficient blending** (when `wind_override == 0`): `course_wind_effect * 0.4 + baseline_wind * 0.6`. Course effect from `permanent_data/wind_test.csv`.
-- **Dew coefficient is per-course**: `humidity.py` writes `dew_calculation` to the sheet via `compute_dew_factor()` (`api_utils.py`) — an EB-shrunk course slope from `permanent_data/dew_test.csv` (clamped [−0.06, 0]; tropical venues land at 0 = dew off), falling back to the sim_inputs blend (−0.0221) for uncovered courses. Regenerate the CSV yearly with `archive/dew_course_effects.py` (needs `dg_historical.db`).
 - **Bayesian wind blending**: Forecast wind arrays are blended with a climatological prior (monthly hourly avg from Open-Meteo archive, 2019-2025). Climo weight = `lead_days / 12`, clamped [5%, 50%]. Round dates are Thu–Sun of current week via `get_round_dates()`. Applied in `new_sim.py` and `live_stats_engine.py`. Functions in `api_utils.py`.
-- **Multi-model AI wind blend**: `humidity.py` wind values (written to the sheet's R1-R4 wind cols) are a mean of ECMWF IFS + AIFS + NOAA AIGFS via `fetch_multimodel_wind()` in `api_utils.py`, with per-hour fallback to best_match. AIFS = the model behind Windy's "AI" layer. The blend fetch MUST use the same `timezone` param as the joined forecast call (`America/New_York`) or hour keys silently misalign. Climo prior blending still applies downstream.
-- **Fix-layer residual caps (2026-07)**: R1 layer — capped at 0.2 if raw residual is negative, hard cap 0.5, floored at -0.75 for residual in [-8,-6) and -0.5 elsewhere (banded floor is intentionally non-monotonic; backtest-driven). R2 layer — residual INPUT capped at +6 before the cubic terms, and `tot_resid_adj` floored at -0.5 (which must reach `total_adjustment` — summing raw components bypasses it; that was a bug). Same caps live in FOUR places and must stay in sync: `live_stats_engine.py`, `round_sim.py`, `new_sim.py`, and the Rust kernel (`rust/src/cascade.rs` + `round_cascade.rs`).
+- **R1 residual cap**: Capped at 0.2 if raw residual is negative; hard cap at 0.5 regardless.
 - **Tee time parsing**: Multiple formats in the wild (`%Y-%m-%d %H:%M`, `%I:%M%p`, `%m/%d/%Y %H:%M`). New formats cause `ValueError`.
 - **Scraped odds loading**: `odds_loader.py`, `price_kalshi_outrights()`, and `load_score_lines()` all fetch from `mslade50/golf_scraping` GitHub API first, fall back to `permanent_data/scraped_odds/` local files. Any new scraped odds loader must follow this pattern — local-only paths break on machines without the scraping repo cloned.
 - **Kalshi bid=0 lines are phantom**: Kalshi markets with `bid=0` have no real liquidity. These are filtered out in `price_kalshi_outrights()`. Without this filter, 1-cent ask prices generate fake 30%+ edges.
@@ -123,27 +118,6 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - **Performance data**: Read from individual tabs (Tournament MU, Round MU, Finish Pos), NEVER filtered tabs.
 - **ID prefixes**: Outrights pre `outpre-`, outrights live `outlive-`, fragility `frag-`.
 - **All pages must handle empty data gracefully** (show alerts, not crash).
-
-## Rust Kernel (sims_kernel) Updates
-
-The sims default to a compiled Rust kernel installed as
-`site-packages/sims_kernel/sims_kernel.pyd`. **`git pull` does NOT update it** —
-after pulling any change to `rust/src/`, the kernel must be rebuilt or the sims
-silently keep running old logic while the Python fallbacks run new logic
-(this exact drift shipped a stale 0.1.0 kernel once).
-
-Update ritual (maturin is typically NOT installed; use cargo directly):
-1. `cd rust && cargo test --release` (expect all green)
-2. `cargo build --release --features pyo3/extension-module`
-3. Back up then overwrite: copy `rust/target/release/sims_kernel.dll` over
-   `<python site-packages>/sims_kernel/sims_kernel.pyd`
-   (find it via `python -c "import sims_kernel; print(sims_kernel.__file__)"`)
-4. Verify: `python -c "import sims_kernel; print(sims_kernel.selftest())"` → True
-
-No Rust toolchain on this machine? The `.pyd` is an abi3 Windows-x64 binary —
-copying the freshly built dll/pyd from a machine that has built it is equivalent.
-Frozen parity fixtures predate code changes by definition; regenerate them after
-kernel changes instead of chasing phantom diffs.
 
 ## Local Setup Quirks
 

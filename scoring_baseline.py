@@ -1907,7 +1907,8 @@ def _write_details_tab(spreadsheet, table_rows, regression, sg_result,
 def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None):
     """
     Write per-round expected scoring averages to the round_config tab as
-    expected_score_r1 through expected_score_r4.
+    expected_score_r1 through expected_score_r4. On a single-course pre-event
+    slate, also synchronize expected_score_1 to the new R1 estimate.
 
     Adjusts the de-skilled/de-weathered baselines for THIS WEEK by adding back:
       - Field strength: mean of our model's 'my_pred' values
@@ -2070,6 +2071,38 @@ def write_estimates_to_round_config(final_estimates, wind_factor, detail_df=None
                 ws.update_cell(next_row, 1, param_name)
                 ws.update_cell(next_row, 2, value)
                 ws.update_cell(next_row, 3, _score_note)
+                all_values.append([param_name, value])
+                updated_params.append(f"{param_name}={value} (new row)")
+            else:
+                ws.update_cell(row_idx, 2, value)
+                updated_params.append(f"{param_name}={value}")
+
+        # On a single-course pre-event slate, expected_score_1 is the live
+        # absolute scoring average consumed by live_stats_engine/round_sim.
+        # Keep it synchronized with the newly fitted R1 estimate. For a
+        # multi-course slate expected_score_1 remains course-specific, so the
+        # operator-managed course values must be preserved.
+        course_pars_value = ""
+        course_pars_row = param_rows.get("course_pars")
+        if course_pars_row:
+            course_pars_value = str(ws.cell(course_pars_row, 2).value or "")
+        course_par_values = [
+            value.strip() for value in course_pars_value.split(",") if value.strip()
+        ]
+        is_single_course = len(course_par_values) <= 1
+        if is_single_course and 1 in scores_to_write:
+            param_name = "expected_score_1"
+            value = str(scores_to_write[1])
+            row_idx = param_rows.get(param_name)
+            if row_idx is None:
+                next_row = len(all_values) + 1
+                ws.update_cell(next_row, 1, param_name)
+                ws.update_cell(next_row, 2, value)
+                ws.update_cell(
+                    next_row,
+                    3,
+                    "Live pre-R1 score synchronized by scoring_baseline.py",
+                )
                 all_values.append([param_name, value])
                 updated_params.append(f"{param_name}={value} (new row)")
             else:
