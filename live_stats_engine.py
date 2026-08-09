@@ -907,11 +907,13 @@ def _totals_r3r4(df, round_num):
     if round_num == 3 and not already_stripped:
         try:
             r1 = clean_names(pd.read_csv(_resolve_csv("r1_live_model.csv")))
-            carry = r1[["player_name", "tot_resid_adj"]].drop_duplicates(
+            # .map (not merge) so df keeps its index — a merge here resets to a
+            # RangeIndex and silently misaligns against fresh_adj/prior_sg,
+            # which carry the pre-filter gapped index.
+            carry_map = r1.drop_duplicates("player_name").set_index(
                 "player_name"
-            ).rename(columns={"tot_resid_adj": "r1_tot_resid_adj_fb"})
-            df = df.merge(carry, on="player_name", how="left")
-            r1_resid_carry = df["r1_tot_resid_adj_fb"].fillna(0.0)
+            )["tot_resid_adj"]
+            r1_resid_carry = df["player_name"].map(carry_map).fillna(0.0)
             print(
                 f"  [R1-resid strip] fallback removed from "
                 f"{int((r1_resid_carry != 0).sum())} players, "
@@ -923,6 +925,15 @@ def _totals_r3r4(df, round_num):
 
     # Net total adjustment = fresh - prior (so Post = Pre + total_adjustment)
     df["total_adjustment"] = fresh_adj - prior_sg - prior_resid - r1_resid_carry
+
+    # Keep the values actually undone (for attribution), then persist THIS
+    # round's fresh adjustment as the carried tot_* columns. Without this the
+    # R2 values ride through r3_live_model untouched, so the R4 run undoes R2
+    # a second time and never undoes R3. R3/R4 have no residual layer, hence 0.
+    df["prior_tot_sg_adj"] = prior_sg
+    df["prior_tot_resid_adj"] = prior_resid
+    df["tot_sg_adj"] = fresh_adj
+    df["tot_resid_adj"] = 0.0
 
     pred_col = f"updated_pred_r{round_num}"
     next_pred_col = f"updated_pred_r{round_num + 1}" if round_num < 4 else "updated_pred_final"
@@ -1696,8 +1707,8 @@ def _attribution_components(df, round_num):
                 ("sg_arg_avg_adj", "avg_arg", 1),
                 ("avg_great_shots_adj", "great_shots", 1),
                 ("pos_6_10_adj", "pos_6_10", 1),
-                ("tot_sg_adj", "prior_sg_undo", -1),
-                ("tot_resid_adj", "prior_resid_undo", -1),
+                ("prior_tot_sg_adj", "prior_sg_undo", -1),
+                ("prior_tot_resid_adj", "prior_resid_undo", -1),
                 ("r1_resid_removed", "r1_resid_strip", -1)]
     return [(c, lbl, s) for c, lbl, s in spec if c in df.columns]
 

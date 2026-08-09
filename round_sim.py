@@ -3436,14 +3436,20 @@ def _format_matchup_sheet(writer, workbook, sheet_name, df):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def find_pred_col(model_preds, sim_round):
-    """Find the best prediction column for display/filtering."""
+    """Find the best prediction column for display/filtering.
+
+    Absolute skill (my_pred{N}) first: the pred_on/my_pred bet gates were
+    calibrated on absolute SG. scores_r{N} is the FIELD-RELATIVE centered
+    advantage post-ba777c2 (skill - field mean + relative weather) — serving
+    it here loosened every >0/>0.75/>1 gate by the field-mean offset.
+    """
     candidates = [
-        f"scores_r{sim_round}",              # always exists
         f"my_pred{sim_round}" if sim_round > 1 else "my_pred",
         f"updated_pred_r{sim_round}",
         "updated_pred",
         "pred",
         "my_pred",
+        f"scores_r{sim_round}",              # last resort: centered advantage
     ]
     for col in candidates:
         if col in model_preds.columns:

@@ -42,7 +42,7 @@ jobs:
       shell: powershell
       run: |
         & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
-          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.1.0-cp310-abi3-win_amd64.whl"
+          "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.2.0-cp310-abi3-win_amd64.whl"
         if ($LASTEXITCODE -ne 0) {
           Write-Warning "sims_kernel wheel unavailable; round_sim will use the Python fallback"
           exit 0

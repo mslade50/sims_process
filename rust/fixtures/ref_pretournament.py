@@ -89,7 +89,8 @@ def run(inp, seed=456):
     C[low_m] = coeff_vec_r1(inp["r1_low"])
     tot_resid_adj_r1 = resid_r1 * C[:, [4]] + resid2_r1 * C[:, [5]]
     mask_bad = (resid_r1 < 0) & (tot_resid_adj_r1 > 0.2)
-    tot_resid_adj_r1 = np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5)
+    tot_resid_adj_r1 = np.maximum(
+        np.minimum(np.where(mask_bad, 0.2, tot_resid_adj_r1), 0.5), -0.5)
     sg_adj_r1 = cats_r1[:, :, 0] * C[:, [0]] + cats_r1[:, :, 3] * C[:, [3]]
     total_adjustment_r1 = tot_resid_adj_r1 + sg_adj_r1
     updated_skill_r2 = my_pred[:, None] + total_adjustment_r1
@@ -123,7 +124,7 @@ def run(inp, seed=456):
             made_cut[:, s] = (top_cut | (sc <= sc.min() + 10)) if USE_10 else top_cut
 
     # ---- R2 -> R3 update ----
-    resid_r2 = sg_r2 - sg_r2_mean
+    resid_r2 = np.minimum(sg_r2 - sg_r2_mean, 6.0)
     resid2_r2 = resid_r2 ** 2
     resid3_r2 = resid_r2 ** 3
     avg_ott = 0.5 * (cats_r1[:, :, 0] + cats_r2[:, :, 0])
@@ -149,7 +150,7 @@ def run(inp, seed=456):
     tr1, ts1 = r2_adj(inp["r2_lt6"], m_lt6)
     tr2, ts2 = r2_adj(inp["r2_6_30"], m_6_30)
     tr3, ts3 = r2_adj(inp["r2_30up"], m_30up)
-    tot_resid_adj_r2 = tr1 + tr2 + tr3
+    tot_resid_adj_r2 = np.clip(tr1 + tr2 + tr3, -0.5, 0.5)
     tot_sg_adj_r2 = ts1 + ts2 + ts3
     total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
     updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
