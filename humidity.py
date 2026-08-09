@@ -361,17 +361,16 @@ print(f"sigma_dewpt (F)  = {sigma_dewpt}")
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Column mapping (1-indexed for gspread):
-#   R1: Dew = col 7  (G)
-#   R2: Dew = col 11 (K)
+#   R1: Wind = col 6  (F), Dew = col 7  (G)
+#   R2: Wind = col 10 (J), Dew = col 11 (K)
 #   R3: Wind = col 14 (N), Dew = col 15 (O)
 #   R4: Wind = col 18 (R), Dew = col 19 (S)
 #
-# R1/R2 wind columns (F, J) are manually populated in the Sheet.
 # Rows 3-17 = 15 hours (6 AM - 8 PM)
 # Rows 18-21: formula-generated comma-separated summaries (do NOT overwrite)
 
 DEW_COLS = {1: 7, 2: 11, 3: 15, 4: 19}   # round -> column for dew
-WIND_COLS = {3: 14, 4: 18}                 # round -> column for wind (R3/R4 only)
+WIND_COLS = {1: 6, 2: 10, 3: 14, 4: 18}   # round -> column for wind
 DATA_START_ROW = 3
 DATA_END_ROW = 17   # 15 rows total
 
@@ -401,8 +400,8 @@ def write_weather_to_sheet():
             cells_to_update.append(gspread.Cell(row=row, col=col, value=val))
         print(f"  R{rd} dew -> col {col} ({len([v for v in values if v != ''])} values)")
 
-    # Write wind values for R3 and R4 only (R1/R2 wind is manual)
-    for rd in [3, 4]:
+    # Write wind values for all 4 rounds so every forecast refresh is atomic.
+    for rd in range(1, 5):
         col = WIND_COLS[rd]
         values = wind_by_round.get(rd, [])
         if not values:

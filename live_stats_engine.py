@@ -1316,14 +1316,25 @@ def create_pre_event_predictions():
     preds = pd.read_csv(f"final_predictions_{tourney}.csv")
     preds = clean_names(preds)
 
-    # Optionally merge pre_sim_summary pred (overrides my_pred)
-    summary_file = f"pre_sim_summary_{tourney}.csv"
-    if os.path.exists(summary_file):
-        summary = pd.read_csv(summary_file, usecols=["player_name", "pred"])
-        summary = clean_names(summary)
-        preds = preds.drop(columns=["my_pred"], errors="ignore")
-        preds = preds.merge(summary, on="player_name", how="left")
-        preds = preds.rename(columns={"pred": "my_pred"})
+    # final_predictions is the post-market-regression source of truth. Only
+    # fall back to the pre-sim summary when an older final file does not carry
+    # a usable my_pred column; never overwrite a valid regressed prediction.
+    if "my_pred" not in preds.columns:
+        summary_file = f"pre_sim_summary_{tourney}.csv"
+        if os.path.exists(summary_file):
+            summary = pd.read_csv(summary_file, usecols=["player_name", "pred"])
+            summary = clean_names(summary)
+            preds = preds.merge(summary, on="player_name", how="left")
+            preds = preds.rename(columns={"pred": "my_pred"})
+            print(f"  [skill] {summary_file} used as fallback (final file had no my_pred)")
+        elif "pred" in preds.columns:
+            preds = preds.rename(columns={"pred": "my_pred"})
+        else:
+            raise RuntimeError(
+                f"final_predictions_{tourney}.csv has no my_pred and no pre-sim fallback"
+            )
+    else:
+        print("  [skill] Using market-regressed my_pred from final_predictions")
 
     # Replace low-confidence predictions with DG decomposition
     dg_decomp = fetch_player_decompositions(API_KEY)

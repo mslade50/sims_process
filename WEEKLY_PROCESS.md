@@ -228,7 +228,7 @@ python humidity.py
 3. Fetches hourly forecast from Open-Meteo (dewpoint + wind, 6 AM - 8 PM = 15 values per round)
 4. Writes directly to the `round_config` tab in Google Sheets:
    - Dew columns (G, K, O, S) rows 3-17 for all 4 rounds
-   - Wind columns (N, R) rows 3-17 for R3/R4 only (R1/R2 wind is manual)
+   - Wind columns (F, J, N, R) rows 3-17 for all four rounds
    - Rows 18-21 contain formula-generated comma-separated summaries (not overwritten)
 5. Prints score adjustments, average wind speeds, rainfall, and historical variance
 
@@ -253,7 +253,9 @@ python scoring_baseline.py
 3. Computes weather-free, tour-average-field baseline per round (de-skilled, de-winded)
 4. Applies recency weighting across years
 5. Adjusts baselines for THIS WEEK's field strength (from `pre_course_fit_{tourney}.csv`) and tee-time-weighted wind exposure
-6. Writes `expected_score_r1` through `expected_score_r4` to the `round_config` tab
+6. Writes `expected_score_r1` through `expected_score_r4` to the `round_config` tab;
+   on single-course pre-event slates it also synchronizes `expected_score_1`
+   from the new R1 estimate
 7. Writes a visible breakdown table to the Sheet (cols E-J, rows 23+)
 8. Saves detail CSV (`scoring_baseline_{tourney}.csv`) and Sheets tab (`Scoring Baseline`)
 
@@ -390,6 +392,34 @@ python live_stats_engine.py
 - No skill adjustments applied (pre-event baseline)
 
 > **IMPORTANT: `round=0` is used for ALL R1 operations** — both `live_stats_engine.py` (creates `model_predictions_r1.csv`) and `round_sim.py` (prices R1 matchups + score cards). The `expected_score_1` field in the sheet is the R1 expected scoring average. Do NOT change round to 1 until R1 is complete and you're ready to run the R2 pipeline.
+
+### IMG shot archive diagnostics (optional)
+
+The cleaned IMG archive can be joined into `live_stats_engine.py` after a round
+by setting the current IMG event ID in the process environment:
+
+```powershell
+$env:IMG_SHOT_EVENT_ID = "<current IMG event id>"
+python live_stats_engine.py
+```
+
+`IMG_SHOT_READ_TOKEN` and `IMG_SHOT_API_URL` are stored in the local user
+environment. The event ID is deliberately not persisted: set it for the current
+event so a prior week's archive can never be merged by accident. The integration
+adds `img_*` diagnostic and completeness fields only; DataGolf remains the
+source for strokes-gained inputs.
+
+For direct use from `round_sim.py`, a notebook, or another analysis process:
+
+```python
+from api_utils import fetch_img_player_rounds, fetch_img_player_shots
+
+player_rounds = fetch_img_player_rounds(1400, 4)
+round_shots = fetch_img_player_shots(1400, 4)
+```
+
+For a remote runner such as GitHub Actions, configure `IMG_SHOT_READ_TOKEN`,
+`IMG_SHOT_API_URL`, and the current `IMG_SHOT_EVENT_ID` in that environment.
 
 ### 4.2 Post-Round 1: Update Sheet & Run Skill Update
 
