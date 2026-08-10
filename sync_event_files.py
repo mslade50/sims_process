@@ -14,6 +14,16 @@ from the freshly-pulled dashboard_data/ copies. On the very first run it just
 records the current event (assumes existing local files belong to it) so it never
 wipes a generating machine's fresh work.
 
+Every resync (both the event-change and mid-event paths) is gated by
+dashboard_data/.sync_manifest.json, written by push_dashboard_data.py: a file is
+only copied to root when the manifest attributes that exact file to the current
+event. dashboard_data/ holds mixed vintages mid-week — files the new event hasn't
+produced yet are still the previous event's — and the pre-manifest hook once
+reinstalled the very files it had just cleared (2026-08-10: a stale wyndham
+model_predictions_r1.csv silently aborted the sim-fairs publish). With no
+manifest (or one for another event/year) the hook clears and resyncs nothing;
+the weekly pipeline regenerates and the next push restamps.
+
 Invoked automatically by .githooks/post-merge after every `git pull`/merge. It is
 designed to NEVER block a pull: any failure (no network, no credentials, sheet
 unreachable) is caught and the process exits 0 without touching files.
@@ -24,13 +34,16 @@ pushed to dashboard_data/ during the event — so the two stay in lockstep.
 The field-filter 90% match guard in round_sim.py is the backstop: if a stale file
 ever slips through, the sim aborts rather than storing garbage.
 """
+import json
 import os
 import sys
 import shutil
+from datetime import date
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 MARKER = os.path.join(PROJECT_ROOT, ".synced_event")
 DASHBOARD_DATA = os.path.join(PROJECT_ROOT, "dashboard_data")
+SYNC_MANIFEST = os.path.join(DASHBOARD_DATA, ".sync_manifest.json")
 
 # Fallback list if push_dashboard_data can't be imported. Kept minimal — just the
 # files whose staleness corrupts the sim (load_known_rounds + predictions).
@@ -73,9 +86,27 @@ def _managed_files():
         return list(_FALLBACK_FILES)
 
 
-def _resync_newer():
-    """Mid-event refresh: copy any dashboard_data/ pred file that is newer than
-    (or missing in) its root counterpart.
+def _manifest_allowed(current):
+    """Files the dashboard_data/ manifest attributes to the CURRENT event.
+
+    Matches on event slug + calendar year (slugs recur annually). Missing,
+    unreadable, or other-event manifest -> empty set: resync nothing."""
+    try:
+        with open(SYNC_MANIFEST) as f:
+            manifest = json.load(f)
+        if str(manifest.get("event", "")).strip().lower() != current:
+            return set()
+        year = manifest.get("year")
+        if year is not None and int(year) != date.today().year:
+            return set()
+        return {str(name) for name in manifest.get("files", [])}
+    except Exception:
+        return set()
+
+
+def _resync_newer(allowed):
+    """Mid-event refresh: copy any manifest-verified dashboard_data/ pred file
+    that is newer than (or missing in) its root counterpart.
 
     The original event-change-only sync missed the case where a SECOND push of the
     *same* event lands in dashboard_data/ after the marker already flipped — a
@@ -89,6 +120,8 @@ def _resync_newer():
     """
     resynced = 0
     for name in _managed_files():
+        if name not in allowed:
+            continue
         src = os.path.join(DASHBOARD_DATA, name)
         if not os.path.exists(src):
             continue
@@ -118,11 +151,13 @@ def sync():
         print(f"[sync-event] initialized marker to '{current}' (no cleanup on first run)")
         return
 
+    allowed = _manifest_allowed(current)
+
     if previous == current:
         # Same event — never wipe, but DO pull in any newer same-event copies that a
         # later push deposited in dashboard_data/ (the gap that left R3 reading a
         # previous event's root files).
-        _resync_newer()
+        _resync_newer(allowed)
         return
 
     print(f"[sync-event] event changed: '{previous}' -> '{current}'")
@@ -132,12 +167,19 @@ def sync():
         if os.path.exists(root_path):
             os.remove(root_path)
             removed += 1
+        if name not in allowed:
+            continue
         src = os.path.join(DASHBOARD_DATA, name)
         if os.path.exists(src):
             shutil.copy2(src, root_path)
             resynced += 1
-    print(f"[sync-event] cleared {removed} stale pred file(s); "
-          f"resynced {resynced} from dashboard_data/ for '{current}'")
+    if resynced:
+        print(f"[sync-event] cleared {removed} stale pred file(s); "
+              f"resynced {resynced} manifest-verified file(s) for '{current}'")
+    else:
+        print(f"[sync-event] cleared {removed} stale pred file(s); no manifest-verified "
+              f"files for '{current}' in dashboard_data/ — resynced nothing "
+              f"(pipeline regenerates)")
     _write_marker(current)
 
 

@@ -7,11 +7,14 @@ Usage:
 
 import os
 import sys
+import json
 import shutil
 import argparse
+from datetime import date
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_DATA = os.path.join(PROJECT_ROOT, "dashboard_data")
+SYNC_MANIFEST = os.path.join(DASHBOARD_DATA, ".sync_manifest.json")
 
 # Files to copy: (source_pattern, dest_name_or_None)
 # source_pattern is relative to PROJECT_ROOT; {tourney} gets substituted
@@ -90,11 +93,46 @@ def get_event_id():
         return None
 
 
+def _write_sync_manifest(root_files, tourney, event_id, dry_run=False):
+    """Record which ROOT_FILES vintages dashboard_data/ holds for which event.
+
+    sync_event_files.py (the post-merge hook) only resyncs a root pred file
+    from dashboard_data/ when this manifest attributes that exact file to the
+    current event — so a pull can never reinstall a previous week's files
+    (2026-08-10: a stale wyndham model_predictions_r1.csv resurrected by the
+    hook silently aborted the sim-fairs publish). Same-event pushes union
+    their file lists — later pushes add files as they start existing; an
+    event change resets the manifest.
+    """
+    if dry_run or not tourney or not root_files:
+        return
+    manifest = {
+        "event": str(tourney).lower(),
+        "event_id": event_id,
+        "year": date.today().year,
+        "files": [],
+    }
+    try:
+        with open(SYNC_MANIFEST) as f:
+            prior = json.load(f)
+        if (
+            str(prior.get("event", "")).strip().lower() == manifest["event"]
+            and prior.get("year") == manifest["year"]
+        ):
+            manifest["files"] = [str(name) for name in prior.get("files", [])]
+    except (OSError, ValueError):
+        pass
+    manifest["files"] = sorted(set(manifest["files"]) | set(root_files))
+    with open(SYNC_MANIFEST, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+
 def copy_files(dry_run=False):
     """Copy pipeline outputs into dashboard_data/."""
     tourney = get_tourney()
     copied = []
     skipped = []
+    root_copied = []
 
     os.makedirs(DASHBOARD_DATA, exist_ok=True)
 
@@ -115,6 +153,7 @@ def copy_files(dry_run=False):
         if not dry_run:
             shutil.copy2(src, dst)
         copied.append(label)
+        root_copied.append(fname)
 
     # Tournament folder files
     if tourney:
@@ -199,6 +238,8 @@ def copy_files(dry_run=False):
             copied.append(f"{src_rel} -> {dst_name}")
         else:
             skipped.append(src_rel)
+
+    _write_sync_manifest(root_copied, tourney, event_id, dry_run=dry_run)
 
     return copied, skipped
 

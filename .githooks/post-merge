@@ -5,7 +5,9 @@
 # The working pred files (r*_live_model.csv, model_predictions_r*.csv) are
 # gitignored and never refreshed by a pull, so a prior event's files can linger and
 # corrupt round_sim.py. sync_event_files.py keys off the current event (golf_sims
-# sheet cell B20) and only acts when the event actually changed.
+# sheet cell B20) and only acts when the event actually changed. Resyncs are gated
+# by dashboard_data/.sync_manifest.json (written by push_dashboard_data.py): only
+# files stamped for the current event are ever copied back to root.
 #
 # This must never block a pull — sync_event_files.py always exits 0.
 
