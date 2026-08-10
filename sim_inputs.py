@@ -18,7 +18,7 @@ from datetime import datetime
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 70
-CUT_LINE      = 65
+CUT_LINE      = 100  # no-cut playoff event; >= field size triggers no-cut handling in new_sim
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -38,9 +38,9 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [13]
-course_id = 752
-tourney = 'wyndham'
+event_ids = [27]
+course_id = 513
+tourney = 'st_jude'
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -51,7 +51,17 @@ category_profile_shrinkage_enabled = False
 
 # Completed events to ingest before the weekly model run. Keep these separate
 # from event_ids, which identifies the upcoming simulation slate.
-ingest_event_ids = [524]
+#
+# Precedence in db_updates.py: a fresh work/ingest_manifest.json written by
+# tools/discover_ingest_events.py (the guarded pipeline's discover stage) wins;
+# otherwise a non-empty ingest_events below; otherwise the legacy single-tour
+# trio. Populate ingest_events only for deliberate manual/backfill ingests.
+ingest_events = []
+# ingest_events = [
+#     {"tour": "pga", "event_ids": [524], "years": [2026]},
+#     {"tour": "kft", "event_ids": [26], "years": [2026]},
+# ]
+ingest_event_ids = [13]
 ingest_tour = 'pga'
 ingest_years = [2026]
 course_par = 70
