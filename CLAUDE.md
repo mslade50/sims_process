@@ -64,7 +64,7 @@ Dewpoint is mean-centered; wind is NOT centered. Wind is absolute: `avg_wind * c
 ### 2. Skill update formula
 `Post = Pre + total_adjustment` must hold across ALL rounds.
 
-**R3/R4 must UNDO prior adjustments**: `total_adjustment = fresh_adj - prior_sg - prior_resid`
+**Reset-to-base form (2026-08)**: R2/R3/R4 rebuild `Post = base_pred + fresh_adj`, where `base_pred = pred + pin_high_adj + gravity_adj` (the only adjustments that persist across rounds) is written at R1 and carried through every live model. `total_adjustment = Post − Pre` is DERIVED, so the invariant holds by construction — there is no carried-column undo to go stale. If a prior live model lacks `base_pred` (pre-refactor file), the engine reconstructs it via the old undo identity (`Pre − tot_sg_adj − tot_resid_adj`). The sim cascades (round_sim/new_sim/Rust kernel) still replay the algebraically-equivalent incremental form internally.
 
 **Prediction column flow**:
 | Round | Pre | Post |

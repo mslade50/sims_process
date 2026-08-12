@@ -18,6 +18,14 @@ Each round updates a prediction column that feeds the next:
 
 Invariant: `Post = Pre + total_adjustment` for every round.
 
+**Reset-to-base form (2026-08)**: R2/R3/R4 rebuild the prediction from
+`base_pred = pred + pin_high_adj + gravity_adj` (the only adjustments that
+persist across rounds) plus this round's fresh adjustments; `total_adjustment`
+is *derived* as `Post − Pre`, so the invariant holds by construction. There is
+no carried-column undo to go stale. `base_pred` is written to every live model
+and carried forward; if a prior file lacks it (pre-refactor), the engine
+reconstructs it via the old undo identity.
+
 ---
 
 ## Pre-Event (round=0)
@@ -68,7 +76,7 @@ Invariant: `Post = Pre + total_adjustment` for every round.
 
 **Residual floor**: Clipped at -0.5 (no hard ceiling like R1).
 
-**Formula**: `total_adjustment = sum of all 8 components`
+**Formula**: `updated_pred_r3 = base_pred + tot_resid_adj + tot_sg_adj` (fresh components only — R1's adjustments drop out via the base reset; `total_adjustment` = Post − Pre)
 
 **You update**: `round=2`, `expected_score_1` = actual R2 scoring avg, R3 wind/dew arrays, `realized_wind_r2`.
 
@@ -80,11 +88,12 @@ Invariant: `Post = Pre + total_adjustment` for every round.
 
 **Bucketing**: 3 position-based buckets (top 5, 6-20, 20+) — tighter mid-range than R2.
 
-**The undo logic**: R3 must UNDO R2's adjustments before applying fresh ones. The prediction (`updated_pred_r3`) already has R2's adjustments baked in — applying R3 on top would double-count.
+**The base reset**: R3's fresh adjustments REPLACE R2's — the prediction is rebuilt from `base_pred` rather than undoing R2's components term-by-term (`updated_pred_r3` has R2's adjustments baked in; applying R3 on top would double-count).
 
 ```
 fresh_adj = sg_ott_avg_adj + sg_putt_avg_adj + sg_app_avg_adj + sg_arg_avg_adj
-total_adjustment = fresh_adj - prior_tot_sg_adj - prior_tot_resid_adj
+updated_pred_r4 = base_pred + fresh_adj
+total_adjustment = updated_pred_r4 - updated_pred_r3   (derived)
 ```
 
 **Key difference**: SG-only. No residual terms. Coefficients are applied to cumulative SG category averages, not single-round values.
@@ -95,7 +104,7 @@ total_adjustment = fresh_adj - prior_tot_sg_adj - prior_tot_resid_adj
 
 ## R4 Skill Update (round=4) — Optional
 
-Same undo logic as R3. Reuses R3 coefficients. Outputs `updated_pred_final`. No next-round predictions. Mainly for backtesting and diagnostics.
+Same base-reset logic as R3. Reuses R3 coefficients. Outputs `updated_pred_final`. No next-round predictions. Mainly for backtesting and diagnostics.
 
 **You update**: `round=4`, `realized_wind_r4`.
 
@@ -138,7 +147,7 @@ Everything else is automatic: skill updates, weather spline, actuals comparison,
 | Issue | Cause |
 |-------|-------|
 | No tee time data for spline | DataGolf hasn't published next-round times yet. Re-run later; skill update is already saved. |
-| R3/R4 predictions look wild | Undo logic depends on `tot_sg_adj` and `tot_resid_adj` from prior round's live model. If those are missing/NaN, undo defaults to 0. |
+| R3/R4 predictions look wild | The base reset needs `base_pred` from the prior round's live model. If it's missing, the engine falls back to reconstructing it from `tot_sg_adj`/`tot_resid_adj`; if those are also missing/NaN, the base degrades to the Pre prediction (fresh adj stacks on top). |
 | Actuals row skipped | You didn't enter `realized_wind_r{N}` in the Sheet. |
 | Prediction chain breaks | Prior round's `live_stats_engine.py` didn't complete. Re-run it first. |
 | Non-ShotLink event | OTT/putt adjustments auto-skipped in R1; R2+ uses averaged SG which may also be empty. Engine handles gracefully. |

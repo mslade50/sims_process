@@ -405,11 +405,12 @@ def _merge_r2(df):
     r1_model = pd.read_csv(_resolve_csv("r1_live_model.csv"))
     r1_model = clean_names(r1_model)
     r1_stats = ["great_shots", "poor_shots", "sg_app", "sg_arg", "sg_ott", "sg_putt"]
-    # sg_adj_r1 (R1's ott/putt adjustment) comes along so _totals_r2 can undo
-    # it; tot_resid_adj comes along (renamed) so the residual piece can be
-    # undone the same way - R1's residual carries no information beyond R2
-    # (horizon regression 2026-08: R3 coef -0.000, R4 coef negative).
-    r1_keep = ["player_name"] + r1_stats + ["sg_adj_r1", "tot_resid_adj"]
+    # base_pred (pred + pin_high + gravity) is the anchor _totals_r2 rebuilds
+    # from — R1's fresh adjustments do not persist (R1's residual carries no
+    # information beyond R2; horizon regression 2026-08: R3 coef -0.000).
+    # sg_adj_r1 / tot_resid_adj come along only as the base_pred fallback for
+    # pre-refactor r1 files (old undo identity).
+    r1_keep = ["player_name"] + r1_stats + ["sg_adj_r1", "tot_resid_adj", "base_pred"]
     r1_keep = [c for c in r1_keep if c in r1_model.columns]
     r1_renamed = r1_model[r1_keep].copy()
     if "tot_resid_adj" in r1_renamed.columns:
@@ -465,7 +466,9 @@ def _merge_r3r4(df, round_num):
         "player_name", f"updated_pred_r{round_num}",
         "sg_app_avg", "sg_ott_avg", "sg_arg_avg", "sg_putt_avg",
         "great_shots_avg",
-        "tot_resid_adj", "tot_sg_adj", "r1_resid_undo",
+        # base_pred is the reset anchor; tot_* only feed its fallback
+        # reconstruction for pre-refactor prior files
+        "tot_resid_adj", "tot_sg_adj", "base_pred",
     ]
     prior_cols = [c for c in prior_cols if c in prior.columns]
     df = df.merge(prior[prior_cols], on="player_name", how="left")
@@ -830,41 +833,41 @@ def _totals_r2(df):
         df[c] = df.get(c, 0)
     df["tot_sg_adj"] = df[sg_cols].fillna(0).sum(axis=1)
 
-    # Undo R1's OTT/PUTT adjustment: the avg-based category terms above
-    # re-price the same signal from two rounds of data, so the R1-only
-    # estimate must be replaced, not stacked on top. Original behavior
-    # (live_stats_r2.py: `total_adjustment = sum(adj) - sg_adj_r1`) that was
-    # lost in the engine consolidation; matches round_sim.py:750 /
-    # new_sim.py:831 ("avoid double counting R1 part").
-    if "sg_adj_r1" in df.columns:
-        df["r1_sg_adj_undo"] = -df["sg_adj_r1"].fillna(0)
+    # Reset-to-base: this round's fresh adjustments REPLACE R1's — the
+    # avg-based category terms re-price the same signal from two rounds of
+    # data, and R1's residual predicts nothing beyond R2 (R3-horizon coef
+    # ~0.000, horizon regression 2026-08). Instead of undoing R1's components
+    # term-by-term, rebuild from base_pred = pred + pin_high_adj + gravity_adj
+    # (the only adjustments that persist across rounds), carried from
+    # r1_live_model. Matches round_sim.py:984 / new_sim.py:831 algebra
+    # ("avoid double counting R1 part").
+    if "base_pred" in df.columns:
+        base = df["base_pred"].copy()
     else:
-        df["r1_sg_adj_undo"] = 0.0
+        base = pd.Series(np.nan, index=df.index)
+    # Fallback (pre-refactor r1_live_model files, or players absent from R1):
+    # reconstruct via the old undo identity.
+    fallback = (
+        df["updated_pred"]
+        - df.get("sg_adj_r1", pd.Series(0, index=df.index)).fillna(0)
+        - df.get("r1_tot_resid_adj", pd.Series(0, index=df.index)).fillna(0)
+    )
+    base = base.fillna(fallback)
+    df["base_pred"] = base
 
-    # Undo R1's residual adjustment as well: it predicts nothing beyond R2
-    # (R3-horizon coef ~0.000) and mildly inverts by R4, so carrying it
-    # forward is stale noise under the fresh residual/category terms.
-    if "r1_tot_resid_adj" in df.columns:
-        df["r1_resid_undo"] = -df["r1_tot_resid_adj"].fillna(0)
-    else:
-        df["r1_resid_undo"] = 0.0
-
-    # Total adjustment = clipped residual total + SG components + R1 undo.
-    # Uses tot_resid_adj (not the raw residual components) so the -0.5 lower
-    # clip actually reaches updated_pred_r3 — the raw components previously
+    # Fresh adjustment = clipped residual total + SG components. Uses
+    # tot_resid_adj (not the raw residual components) so the -0.5 lower clip
+    # actually reaches updated_pred_r3 — the raw components previously
     # bypassed it.
-    adj_components = [
-        "tot_resid_adj",
-        "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj", "delta_app_adj",
-        "r1_sg_adj_undo", "r1_resid_undo",
-    ]
-    adj_components = [c for c in adj_components if c in df.columns]
-    df["total_adjustment"] = df[adj_components].sum(axis=1)
+    df["updated_pred_r3"] = base + df["tot_resid_adj"] + df["tot_sg_adj"]
+
+    # Derived so Post = Pre + total_adjustment holds by construction.
+    # prior_reset_adj (= base - Pre = minus R1's fresh adjustments) is kept
+    # for attribution/email breakdowns.
+    df["prior_reset_adj"] = base - df["updated_pred"]
+    df["total_adjustment"] = df["updated_pred_r3"] - df["updated_pred"]
 
     df["Score"] = df["round"] + course_par
-
-    # Updated prediction for next round
-    df["updated_pred_r3"] = df["updated_pred"] + df["total_adjustment"]
 
     if "r3_teetime" in df.columns:
         skill_avg = df.loc[df["r3_teetime"].notna(), "updated_pred_r3"].mean()
@@ -877,14 +880,15 @@ def _totals_r2(df):
 
 def _totals_r3r4(df, round_num):
     """
-    R3/R4 totals: SG-only adjustments.
-    Source: live_stats_r3.py lines 95-115
-    
-    Key logic: We UNDO the prior round's SG and residual adjustments,
-    then apply this round's fresh adjustments.
-    
-    total_adjustment = fresh_adj - prior_sg - prior_resid
-    so that Post = Pre + total_adjustment (consistent with R1/R2).
+    R3/R4 totals: SG-only adjustments, reset-to-base form.
+
+    This round's fresh SG adjustments REPLACE the prior round's: the new
+    prediction is rebuilt from base_pred (pred + pin_high_adj + gravity_adj,
+    the only adjustments that persist across rounds) plus this round's fresh
+    adjustments. total_adjustment is derived so Post = Pre + total_adjustment
+    holds by construction — there is no carried-column undo to go stale
+    (the old form double-undid R2 at R4 when the carried columns weren't
+    refreshed; see 2026-08-09 audit).
     """
     # This round's fresh SG adjustments
     adj_cols = ["sg_ott_avg_adj", "sg_putt_avg_adj", "sg_app_avg_adj", "sg_arg_avg_adj",
@@ -892,53 +896,32 @@ def _totals_r3r4(df, round_num):
     adj_cols = [c for c in adj_cols if c in df.columns]
     fresh_adj = df[adj_cols].sum(axis=1) if adj_cols else 0
 
-    # Prior round's adjustments to undo
-    prior_sg = df.get("tot_sg_adj", pd.Series(0, index=df.index)).fillna(0)
-    prior_resid = df.get("tot_resid_adj", pd.Series(0, index=df.index)).fillna(0)
-
-    # Fallback strip of R1's residual adjustment for events whose R2 stage
-    # ran before the r1_resid_undo change landed (detected via the carried
-    # column): without it the stale R1 residual persists into R4. Fail-open.
-    r1_resid_carry = pd.Series(0.0, index=df.index)
-    already_stripped = (
-        "r1_resid_undo" in df.columns
-        and df["r1_resid_undo"].fillna(0).abs().sum() > 0
-    )
-    if round_num == 3 and not already_stripped:
-        try:
-            r1 = clean_names(pd.read_csv(_resolve_csv("r1_live_model.csv")))
-            # .map (not merge) so df keeps its index — a merge here resets to a
-            # RangeIndex and silently misaligns against fresh_adj/prior_sg,
-            # which carry the pre-filter gapped index.
-            carry_map = r1.drop_duplicates("player_name").set_index(
-                "player_name"
-            )["tot_resid_adj"]
-            r1_resid_carry = df["player_name"].map(carry_map).fillna(0.0)
-            print(
-                f"  [R1-resid strip] fallback removed from "
-                f"{int((r1_resid_carry != 0).sum())} players, "
-                f"mean |adj| {r1_resid_carry.abs().mean():.3f}"
-            )
-        except Exception as exc:
-            print(f"  [R1-resid strip] fallback skipped (fail-open): {exc}")
-    df["r1_resid_removed"] = r1_resid_carry
-
-    # Net total adjustment = fresh - prior (so Post = Pre + total_adjustment)
-    df["total_adjustment"] = fresh_adj - prior_sg - prior_resid - r1_resid_carry
-
-    # Keep the values actually undone (for attribution), then persist THIS
-    # round's fresh adjustment as the carried tot_* columns. Without this the
-    # R2 values ride through r3_live_model untouched, so the R4 run undoes R2
-    # a second time and never undoes R3. R3/R4 have no residual layer, hence 0.
-    df["prior_tot_sg_adj"] = prior_sg
-    df["prior_tot_resid_adj"] = prior_resid
-    df["tot_sg_adj"] = fresh_adj
-    df["tot_resid_adj"] = 0.0
-
     pred_col = f"updated_pred_r{round_num}"
     next_pred_col = f"updated_pred_r{round_num + 1}" if round_num < 4 else "updated_pred_final"
 
-    df[next_pred_col] = df[pred_col] + df["total_adjustment"]
+    if "base_pred" in df.columns:
+        base = df["base_pred"].copy()
+    else:
+        base = pd.Series(np.nan, index=df.index)
+    # Fallback (pre-refactor prior live model, or players absent from it):
+    # reconstruct via the old undo identity from the carried fresh columns.
+    fallback = (
+        df[pred_col]
+        - df.get("tot_sg_adj", pd.Series(0, index=df.index)).fillna(0)
+        - df.get("tot_resid_adj", pd.Series(0, index=df.index)).fillna(0)
+    )
+    base = base.fillna(fallback)
+    df["base_pred"] = base
+
+    df[next_pred_col] = base + fresh_adj
+    df["prior_reset_adj"] = base - df[pred_col]
+    df["total_adjustment"] = df[next_pred_col] - df[pred_col]
+
+    # Carried columns: THIS round's fresh adjustment (the health check asserts
+    # tot_sg_adj in r3_live_model equals R3's own fresh adj). R3/R4 have no
+    # residual layer, hence 0.
+    df["tot_sg_adj"] = fresh_adj
+    df["tot_resid_adj"] = 0.0
 
     df["Score"] = df["round"] + course_par
     return df
@@ -1017,13 +1000,26 @@ def apply_leaderboard_gravity(df):
     """
     R1-only: Small negative bumps for top-5 players with low predictions.
     Source: live_stats.py lines 285-288
-    
+
     Only applies if updated_pred < 0.5 (strong players).
     Rationale: Top of leaderboard after R1 tends to regress slightly.
+
+    The bump is recorded in gravity_adj and folded into total_adjustment so
+    Post = Pre + total_adjustment reconciles at R1 (it used to mutate
+    updated_pred outside the audit trail). Like pin_high_adj, it persists
+    across rounds via base_pred — the anchor the R2/R3/R4 stages rebuild
+    their predictions from.
     """
     gravity = {1: -0.07, 2: -0.03, 3: -0.02, 4: -0.01, 5: -0.01}
+    df["gravity_adj"] = 0.0
     mask = df["updated_pred"] < 0.5
-    df.loc[mask, "updated_pred"] += df.loc[mask, "position"].map(gravity).fillna(0)
+    df.loc[mask, "gravity_adj"] = df.loc[mask, "position"].map(gravity).fillna(0)
+    df["updated_pred"] = df["updated_pred"] + df["gravity_adj"]
+    df["total_adjustment"] = df["total_adjustment"] + df["gravity_adj"]
+
+    # The only adjustments that persist beyond the round they were made in.
+    pin = df["pin_high_adj"].fillna(0) if "pin_high_adj" in df.columns else 0.0
+    df["base_pred"] = df["pred"] + pin + df["gravity_adj"]
     return df
 
 
@@ -1430,7 +1426,7 @@ def export_results(df, round_num):
         summary_cols = [
             "player_name", "residual", "weather_signal", "residual_w_adj",
             "tot_resid_adj", "total_adjustment", "pin_high_adj",
-            "updated_pred",
+            "gravity_adj", "updated_pred",
         ]
         # Include course_x if multi-course
         course_col = "course" if "course" in df.columns else "course_x" if "course_x" in df.columns else None
@@ -1440,7 +1436,7 @@ def export_results(df, round_num):
         summary_cols = [
             "player_name", "tot_resid_adj", "total_adjustment",
             "avg_ott_adj", "avg_putt_adj", "avg_app_adj", "avg_arg_adj",
-            "delta_app_adj", "r1_sg_adj_undo", "updated_pred_r3",
+            "delta_app_adj", "prior_reset_adj", "updated_pred_r3",
         ]
     else:
         adj_cols = [f"{c}_adj_r{round_num}" for c in
@@ -1551,6 +1547,7 @@ def _get_component_columns(df, round_num):
             ("ott_adj", "OTT Adj"),
             ("putt_adj", "Putt Adj"),
             ("pin_high_adj", "Pin High Adj"),
+            ("gravity_adj", "Gravity"),
         ]
     elif round_num == 2:
         adj_cols = [
@@ -1560,8 +1557,7 @@ def _get_component_columns(df, round_num):
             ("avg_app_adj", "Avg APP Adj"),
             ("avg_arg_adj", "Avg ARG Adj"),
             ("delta_app_adj", "Δ APP Adj"),
-            ("r1_sg_adj_undo", "R1 SG Undo"),
-            ("r1_resid_undo", "R1 Resid Undo"),
+            ("prior_reset_adj", "Base Reset"),
         ]
     else:  # R3/R4
         adj_cols = [
@@ -1571,6 +1567,7 @@ def _get_component_columns(df, round_num):
             ("sg_arg_avg_adj", "Avg ARG Adj"),
             ("avg_great_shots_adj", "Avg Great Shots Adj"),
             ("pos_6_10_adj", "Pos 6-10 Level Adj"),
+            ("prior_reset_adj", "Base Reset"),
         ]
 
     # Only return columns that actually exist in the DataFrame
@@ -1703,14 +1700,14 @@ def _attribution_components(df, round_num):
     if round_num == 1:
         spec = [("tot_resid_adj", "residual", 1),
                 ("ott_adj", "ott", 1), ("putt_adj", "putt", 1),
-                ("pin_high_adj", "pin_high", 1)]
+                ("pin_high_adj", "pin_high", 1),
+                ("gravity_adj", "gravity", 1)]
     elif round_num == 2:
         spec = [("tot_resid_adj", "residual", 1),
                 ("avg_ott_adj", "avg_ott", 1), ("avg_putt_adj", "avg_putt", 1),
                 ("avg_app_adj", "avg_app", 1), ("avg_arg_adj", "avg_arg", 1),
                 ("delta_app_adj", "delta_app", 1),
-                ("r1_sg_adj_undo", "r1_sg_undo", 1),
-                ("r1_resid_undo", "r1_resid_undo", 1)]
+                ("prior_reset_adj", "base_reset", 1)]
     else:
         spec = [("sg_ott_avg_adj", "avg_ott", 1),
                 ("sg_putt_avg_adj", "avg_putt", 1),
@@ -1718,9 +1715,7 @@ def _attribution_components(df, round_num):
                 ("sg_arg_avg_adj", "avg_arg", 1),
                 ("avg_great_shots_adj", "great_shots", 1),
                 ("pos_6_10_adj", "pos_6_10", 1),
-                ("prior_tot_sg_adj", "prior_sg_undo", -1),
-                ("prior_tot_resid_adj", "prior_resid_undo", -1),
-                ("r1_resid_removed", "r1_resid_strip", -1)]
+                ("prior_reset_adj", "base_reset", 1)]
     return [(c, lbl, s) for c, lbl, s in spec if c in df.columns]
 
 

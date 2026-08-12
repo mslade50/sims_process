@@ -64,31 +64,56 @@ def check_post_pre_invariant() -> None:
 
 
 def check_r4_undo_semantics() -> None:
-    """Post-b0f1058: r3_live_model must carry R3's OWN fresh adj in tot_sg_adj
-    (tot_resid_adj == 0), so the R4 run undoes R3 rather than R2 twice."""
+    """r3_live_model must carry R3's OWN fresh adj in tot_sg_adj
+    (tot_resid_adj == 0). Under the reset-to-base form these columns only
+    feed the base_pred fallback, but a stale value there still poisons any
+    pre-refactor-file reconstruction — keep them honest."""
     df = from_main("r3_live_model.csv")
     if df is None:
-        report("SKIP", "R4 undo semantics", "r3_live_model unavailable")
+        report("SKIP", "R3 carried fresh adj", "r3_live_model unavailable")
         return
     fresh_cols = [c for c in ["sg_ott_avg_adj", "sg_putt_avg_adj", "sg_app_avg_adj",
                               "sg_arg_avg_adj", "avg_great_shots_adj", "pos_6_10_adj"]
                   if c in df.columns]
     if not fresh_cols:
-        report("FAIL", "R4 undo semantics", "no fresh sg_*_avg_adj columns in r3_live_model "
-               "(R3 became a pure undo of R2 - check r2_live_model columns)")
+        report("FAIL", "R3 carried fresh adj", "no fresh sg_*_avg_adj columns in r3_live_model "
+               "(R3 became a pure base reset - check r2_live_model columns)")
         return
     if "tot_sg_adj" not in df.columns:
-        report("SKIP", "R4 undo semantics", "no tot_sg_adj column")
+        report("SKIP", "R3 carried fresh adj", "no tot_sg_adj column")
         return
     fresh = df[fresh_cols].sum(axis=1)
     gap = (df["tot_sg_adj"].fillna(0) - fresh).abs().max()
     resid_ok = ("tot_resid_adj" not in df.columns) or (df["tot_resid_adj"].fillna(0).abs().max() < 1e-12)
     if gap < 1e-9 and resid_ok:
-        report("PASS", "R4 undo semantics", "tot_sg_adj == R3 fresh adj; tot_resid_adj == 0")
+        report("PASS", "R3 carried fresh adj", "tot_sg_adj == R3 fresh adj; tot_resid_adj == 0")
     else:
-        report("FAIL", "R4 undo semantics",
-               f"tot_sg_adj vs fresh gap {gap:.3g}, tot_resid_adj zero: {resid_ok} "
-               "(stale-undo regression - R4 would double-undo R2)")
+        report("FAIL", "R3 carried fresh adj",
+               f"tot_sg_adj vs fresh gap {gap:.3g}, tot_resid_adj zero: {resid_ok}")
+
+
+def check_base_pred_carry() -> None:
+    """Reset-to-base form (2026-08): every live model must carry base_pred,
+    and on r1 it must equal pred + pin_high_adj + gravity_adj."""
+    r1 = from_main("r1_live_model.csv")
+    if r1 is None:
+        report("SKIP", "base_pred carry", "r1_live_model unavailable")
+        return
+    if "base_pred" not in r1.columns:
+        report("FAIL", "base_pred carry", "r1_live_model has no base_pred "
+               "(R2+ degrade to the undo-identity fallback)")
+        return
+    import pandas as _pd
+    pin = r1["pin_high_adj"].fillna(0) if "pin_high_adj" in r1.columns else 0.0
+    grav = r1["gravity_adj"].fillna(0) if "gravity_adj" in r1.columns else 0.0
+    gap = (r1["base_pred"] - (r1["pred"] + pin + grav)).abs().max()
+    missing = [f for f in ("r2_live_model.csv", "r3_live_model.csv")
+               if (d := from_main(f)) is not None and "base_pred" not in d.columns]
+    if gap < 1e-9 and not missing:
+        report("PASS", "base_pred carry", "base_pred == pred + pin_high + gravity; carried r1->r3")
+    else:
+        report("FAIL", "base_pred carry",
+               f"r1 identity gap {gap:.3g}; missing base_pred in {missing or 'none'}")
 
 
 def check_nan_skills() -> None:
@@ -140,7 +165,7 @@ def check_live_model_completeness() -> None:
                    if c not in df.columns]
         if missing:
             report("FAIL", "r2 sg_*_avg columns",
-                   f"missing {missing} - next R3 run degrades to a pure undo of R2")
+                   f"missing {missing} - next R3 run degrades to a pure base reset")
         else:
             report("PASS", "r2 sg_*_avg columns")
 
@@ -266,6 +291,7 @@ def main() -> int:
     print("== sim health: numeric invariants ==")
     check_post_pre_invariant()
     check_r4_undo_semantics()
+    check_base_pred_carry()
     check_nan_skills()
     check_weather_centering()
     check_live_model_completeness()
