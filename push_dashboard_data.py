@@ -35,6 +35,17 @@ ROOT_FILES = [
     "this_week_dists_v2.csv",
 ]
 
+# Files only produced DURING an event (Thu-Sun). A copy whose mtime predates
+# the current event's pre-event sim is a previous week's leftover: copying it
+# would attribute it to the new event in the sync manifest, and the post-merge
+# hook would then reinstall last week's live state as this week's on every
+# consuming machine (2026-08-12: wyndham live models stamped as st_jude).
+LIVE_ROUND_PREFIXES = (
+    "model_predictions_r",
+    "r1_live_model", "r2_live_model", "r3_live_model", "r4_live_model",
+    "simulated_probs_live",
+)
+
 # Files in the tournament folder → flattened into dashboard_data/
 TOURNEY_FILES = [
     "outright_win_edges.csv",
@@ -136,6 +147,11 @@ def copy_files(dry_run=False):
 
     os.makedirs(DASHBOARD_DATA, exist_ok=True)
 
+    # Staleness anchor for live-round files: the current event's pre-event sim
+    # output. Fail-open (no guard) if it doesn't exist yet.
+    anchor = os.path.join(PROJECT_ROOT, f"final_predictions_{tourney}.csv") if tourney else None
+    anchor_mtime = os.path.getmtime(anchor) if anchor and os.path.exists(anchor) else None
+
     # Root-level files (prefer v2 output if available)
     for fname in ROOT_FILES:
         v2_src = os.path.join(PROJECT_ROOT, tourney, "v2", fname) if tourney else None
@@ -148,6 +164,13 @@ def copy_files(dry_run=False):
             label = fname
         else:
             skipped.append(fname)
+            continue
+        if (
+            anchor_mtime is not None
+            and fname.startswith(LIVE_ROUND_PREFIXES)
+            and os.path.getmtime(src) < anchor_mtime
+        ):
+            skipped.append(f"{fname} (stale: predates {tourney} pre-event sim)")
             continue
         dst = os.path.join(DASHBOARD_DATA, fname)
         if not dry_run:
@@ -297,10 +320,14 @@ def git_push(dry_run=False):
         print(f"  ERROR: {msg}")
         try:
             from maker_alerts import send_telegram
-            send_telegram(f"[push_dashboard_data] {msg} — dashboard_data on origin "
-                          f"is STALE; next-round sims elsewhere will use old state")
+            if not send_telegram(f"[push_dashboard_data] {msg} — dashboard_data on origin "
+                                 f"is STALE; next-round sims elsewhere will use old state"):
+                print("  (telegram alert not sent: TELEGRAM_* env missing or send failed)")
         except Exception as e:
             print(f"  (telegram alert failed: {e})")
+        # A swallowed push failure kept monday-grading green while two weeks of
+        # diagnostics were silently lost (2026-08). Fail the process.
+        sys.exit(1)
 
     for attempt in range(3):
         result = _run(["git", "push"])

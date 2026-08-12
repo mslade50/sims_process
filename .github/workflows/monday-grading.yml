@@ -11,6 +11,13 @@ jobs:
   grade:
     runs-on: ubuntu-latest
 
+    # Without contents: write the checkout token is read-only and the final
+    # push_dashboard_data push fails as github-actions[bot] (silently lost the
+    # Rocket + Wyndham diagnostics, 2026-08). nightly-round-sim.yml has the
+    # same block for the same reason.
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -36,6 +43,10 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        # In-script alerts (push_dashboard_data._fail) read these directly;
+        # without them send_telegram() returns False silently.
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python monday_grading.py
     - name: Telegram on failure
       if: failure()

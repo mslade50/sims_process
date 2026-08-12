@@ -360,7 +360,7 @@ def main():
     # ------------------------------------------------------------------
     # Step 6: Run push_dashboard_data.py (always runs)
     # ------------------------------------------------------------------
-    _run_subprocess(
+    push_ok = _run_subprocess(
         [python, "push_dashboard_data.py"],
         "push_dashboard_data.py",
         ignore_failure=True,
@@ -374,6 +374,12 @@ def main():
     print("\n" + "=" * 60)
     print(f"  GRADING PIPELINE COMPLETE — {done_label}")
     print("=" * 60 + "\n")
+    # A failed dashboard push means the week's diagnostics/grades never left
+    # the runner — exit nonzero AFTER completing all grading steps so the
+    # workflow's failure() Telegram backstop fires (silent-loss bug, 2026-08).
+    if not push_ok:
+        print("  push_dashboard_data FAILED — dashboard_data on origin is stale.")
+        sys.exit(1)
     sys.exit(0)
 
 
