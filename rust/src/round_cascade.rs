@@ -210,7 +210,9 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
     // live_stats _residuals_r1 (residual = sg_total + pred_avg - pred) and new_sim's
     // run_pretournament baseline. resid = sg_r1 + field_skill - my_pred.
     let field_skill = inp.my_pred_base.iter().sum::<f64>() / n as f64;
-    let mut sg_adj_r1 = vec![0.0f64; ns];
+    // adj_r1 = R1's FULL fresh adjustment (sg + residual); the R2 update
+    // replaces it entirely — parity with live_stats_engine reset-to-base.
+    let mut adj_r1 = vec![0.0f64; ns];
     let mut updated_skill_r2 = vec![0.0f64; ns];
     for i in 0..n {
         let mp = inp.my_pred_base[i];
@@ -243,7 +245,7 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
                 tr = floor;
             }
             let sg_adj = cats_r1[k][0] * c.ott + cats_r1[k][3] * c.putt;
-            sg_adj_r1[k] = sg_adj;
+            adj_r1[k] = tr + sg_adj;
             updated_skill_r2[k] = mp + tr + sg_adj;
         }
     }
@@ -329,7 +331,7 @@ pub fn run_remaining_rounds(inp: &Inputs) -> Output {
                     + delta_app * c.delta_app;
                 tot_resid_adj_r2[k] = tr;
                 tot_sg_adj_r2[k] = ts;
-                updated_skill_r3[k] = updated_skill_r2[k] + (tr + ts) - sg_adj_r1[k];
+                updated_skill_r3[k] = updated_skill_r2[k] + (tr + ts) - adj_r1[k];
             }
         }
     }

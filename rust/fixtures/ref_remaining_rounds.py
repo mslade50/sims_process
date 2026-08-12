@@ -144,7 +144,8 @@ def run(inp, seed=42):
     tr3, ts3 = r2adj(inp["r2_30up"], pos > 30)
     tot_resid_adj_r2 = np.clip(tr1 + tr2 + tr3, -0.5, 0.5)
     tot_sg_adj_r2 = ts1 + ts2 + ts3
-    updated_skill_r3 = updated_skill_r2 + (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
+    # R2 fresh replaces R1's FULL adjustment (sg + residual) — reset-to-base
+    updated_skill_r3 = updated_skill_r2 + (tot_resid_adj_r2 + tot_sg_adj_r2) - (tot_resid_adj_r1 + sg_adj_r1)
 
     # ---- R3 ----
     if completed >= 3 and 3 in known_strokes:

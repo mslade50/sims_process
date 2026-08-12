@@ -243,8 +243,10 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
         None, &mut cats_r1, &mut sg_r1, &mut strokes_r1);
 
     // ---- R1 -> R2 skill update ----
-    // sg_adj_r1, updated_skill_r2, sg_r2_mean (per player-sim).
-    let mut sg_adj_r1 = vec![0.0f64; ns];
+    // adj_r1 (R1's FULL fresh adjustment: sg + residual), updated_skill_r2,
+    // sg_r2_mean (per player-sim). The R2 update replaces R1's adjustment
+    // entirely — parity with live_stats_engine reset-to-base (2026-08).
+    let mut adj_r1 = vec![0.0f64; ns];
     let mut updated_skill_r2 = vec![0.0f64; ns];
     let mut sg_r2_mean = vec![0.0f64; ns];
     // Field-average skill = mean(my_pred) over the field. Added to the R1 residual
@@ -283,8 +285,8 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             let ott_adj = cats_r1[k][0] * c.ott;
             let putt_adj = cats_r1[k][3] * c.putt;
             let sg_adj = ott_adj + putt_adj;
-            sg_adj_r1[k] = sg_adj;
             let total_adj = tot_resid_adj + sg_adj;
+            adj_r1[k] = total_adj;
             let usk2 = mp + total_adj;
             updated_skill_r2[k] = usk2;
             sg_r2_mean[k] = usk2 + r2off;
@@ -390,7 +392,7 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
                     + delta_app * c.delta_app;
                 tot_resid_adj_r2[k] = tr;
                 tot_sg_adj_r2[k] = ts;
-                let total_adj = (tr + ts) - sg_adj_r1[k];
+                let total_adj = (tr + ts) - adj_r1[k];
                 let usk3 = updated_skill_r2[k] + total_adj;
                 updated_skill_r3[k] = usk3;
                 sg_r3_mean[k] = usk3 + (inp.r3_mu[i] - inp.my_pred_base[i]);

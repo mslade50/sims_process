@@ -850,8 +850,11 @@ if not args.price_only:
             ensure_array(adj_sum.get('avg_arg_adj', 0.0),   shape2) +
             ensure_array(adj_sum.get('delta_app_adj', 0.0), shape2)
         )
-        sg_adj_r1 = ensure_array(sg_adj_r1, shape2)
-        total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
+        # R2's fresh adjustments REPLACE R1's entirely — sg AND residual (R1's
+        # residual predicts nothing beyond R2; horizon regression 2026-08).
+        # Parity with live_stats_engine reset-to-base.
+        total_adjustment_r1 = ensure_array(total_adjustment_r1, shape2)
+        total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - total_adjustment_r1
 
         updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
         sg_r3_mean = updated_skill_r3 + (r3_mu - my_pred_base)[:, None]

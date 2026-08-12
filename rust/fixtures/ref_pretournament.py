@@ -152,7 +152,8 @@ def run(inp, seed=456):
     tr3, ts3 = r2_adj(inp["r2_30up"], m_30up)
     tot_resid_adj_r2 = np.clip(tr1 + tr2 + tr3, -0.5, 0.5)
     tot_sg_adj_r2 = ts1 + ts2 + ts3
-    total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - sg_adj_r1
+    # R2 fresh replaces R1's FULL adjustment (sg + residual) — reset-to-base
+    total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - total_adjustment_r1
     updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
     sg_r3_mean = updated_skill_r3 + (r3_mu - my_pred)[:, None]
 

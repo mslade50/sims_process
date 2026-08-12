@@ -981,7 +981,10 @@ def simulate_remaining_rounds(
         ensure_array(adj_sum.get('delta_app_adj', 0.0), shape2)
     )
 
-    total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - ensure_array(sg_adj_r1, shape2)
+    # R2's fresh adjustments REPLACE R1's entirely — sg AND residual (R1's
+    # residual predicts nothing beyond R2; horizon regression 2026-08). Parity
+    # with live_stats_engine reset-to-base: updated_skill_r3 = base + R2 fresh.
+    total_adjustment_r2 = (tot_resid_adj_r2 + tot_sg_adj_r2) - ensure_array(total_adjustment_r1, shape2)
     updated_skill_r3 = updated_skill_r2 + total_adjustment_r2
 
     # R3 simulation or use known
