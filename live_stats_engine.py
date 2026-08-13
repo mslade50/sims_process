@@ -2298,12 +2298,15 @@ def _apply_sheet_overrides(config):
         if config.get(dew_key):
             DEW_ARRAYS[rnd] = config[dew_key]
 
-    # Override with the generic wind/dew for the next round (live-round override)
-    if config.get("wind"):
+    # Override with the generic wind/dew for the next round only during live
+    # play.  At round=0 humidity.py has already populated the authoritative
+    # R1-specific arrays; the generic rows may still contain last week's live
+    # override and must not replace wind_r1/dew_r1.
+    if round_num > 0 and config.get("wind"):
         WIND_ARRAYS[next_round] = config["wind"]
         print(f"  Wind array for R{next_round} loaded from sheet ({len(config['wind'])} hours)")
 
-    if config.get("dew"):
+    if round_num > 0 and config.get("dew"):
         DEW_ARRAYS[next_round] = config["dew"]
         print(f"  Dew array for R{next_round} loaded from sheet ({len(config['dew'])} hours)")
 

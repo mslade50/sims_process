@@ -1407,10 +1407,10 @@ def publish(push: bool = True) -> dict:
     files = ["sim_fairs.json"]
     prediction_snapshot = sync_r1_prediction_artifact(payload=payload)
     if prediction_snapshot is not None:
-        files.append(str(prediction_snapshot.relative_to(PROJECT_ROOT)))
+        files.append(prediction_snapshot.relative_to(PROJECT_ROOT).as_posix())
         prediction_manifest = manifest_path_for(prediction_snapshot)
         if prediction_manifest.is_file():
-            files.append(str(prediction_manifest.relative_to(PROJECT_ROOT)))
+            files.append(prediction_manifest.relative_to(PROJECT_ROOT).as_posix())
     samples = _build_round_samples(payload["tourney"], payload.get("round"), _name_replacements())
     if samples is not None:
         # Stamp round/event/sim_run_at into the parquet metadata — the board's

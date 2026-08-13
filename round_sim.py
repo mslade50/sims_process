@@ -2854,6 +2854,10 @@ def build_3ball_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=Non
     matchups. email = the subset limited to EMAIL_3BALL_BOOKS, deduped per
     threesome by highest edge (FanDuel/DraftKings are tracked but never alerted).
     """
+    if df is None or df.empty:
+        print("  No 3-ball lines matched the active simulation field.")
+        return pd.DataFrame(), pd.DataFrame()
+
     for i in (1, 2, 3):
         df[f"p{i}_pred"] = df[f"Player {i}"].map(pred_lookup)
         df[f"Sample_P{i}"] = df[f"Player {i}"].map(sample_lookup)
