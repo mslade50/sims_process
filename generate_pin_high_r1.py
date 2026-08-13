@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_ARTIFACT = ROOT / "sim_fairs.json"
 DEFAULT_PREDS = ROOT / "dashboard_data" / "model_predictions_r1.csv"
 DEFAULT_OUTPUT = ROOT / "pin_high_r1.csv"
+DEFAULT_CROSSWALK = ROOT / "permanent_data" / "img_player_crosswalk.csv"
 
 
 def build_event_key(tour_name, event_id, season):
@@ -111,6 +112,8 @@ def generate(args):
         event_key,
         "--preds-csv",
         str(Path(args.preds_source).resolve()),
+        "--crosswalk-csv",
+        str(Path(args.crosswalk_csv).resolve()),
         "--output",
         str(Path(args.output).resolve()),
     ]
@@ -127,6 +130,7 @@ def parser():
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT)
     root.add_argument("--preds-source", type=Path, default=DEFAULT_PREDS)
+    root.add_argument("--crosswalk-csv", type=Path, default=DEFAULT_CROSSWALK)
     root.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     root.add_argument(
         "--collector-root",
