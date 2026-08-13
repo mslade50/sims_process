@@ -3,8 +3,11 @@
   "event_id": 27,
   "year": 2026,
   "files": [
+    "model_predictions_r2.csv",
+    "r1_live_model.csv",
     "sg_dist_player.csv",
     "simulated_probs.csv",
+    "simulated_probs_live.csv",
     "this_week_dists_v2.csv"
   ]
 }
