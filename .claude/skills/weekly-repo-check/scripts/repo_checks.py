@@ -284,12 +284,29 @@ def check_stale_root_files() -> None:
                "- pre-event sim not run yet?")
         return
     stale = [f for f in live if (m := _mtime(SIMS / f)) and m < anchor]
+    # mtime alone can't distinguish "predates a re-run that changed skill" from
+    # "predates a re-run that didn't" (2026-08-13: a field-baseline-only re-sim
+    # left model_predictions_r1 older but with byte-identical my_pred). For the
+    # r1 predictions file, resolve by comparing per-player skill content.
+    if "model_predictions_r1.csv" in stale:
+        try:
+            import pandas as pd
+            mp = pd.read_csv(SIMS / "model_predictions_r1.csv")[["player_name", "my_pred"]]
+            fp = pd.read_csv(SIMS / f"final_predictions_{tourney}.csv")[["player_name", "my_pred"]]
+            for d in (mp, fp):
+                d["player_name"] = d["player_name"].str.lower().str.strip()
+            m = mp.merge(fp, on="player_name", suffixes=("_a", "_b"))
+            if len(m) >= 0.9 * len(mp) and (m["my_pred_a"] - m["my_pred_b"]).abs().max() < 1e-9:
+                stale.remove("model_predictions_r1.csv")
+        except Exception:
+            pass  # unresolvable -> keep the mtime verdict
     if stale:
         report("FAIL", "stale root files",
                f"{len(stale)} live file(s) predate the {tourney} pre-event sim: "
                f"{', '.join(stale[:4])} - purge before the live run (known poisoning trap)")
     else:
-        report("PASS", "stale root files", "no live-round files predate the pre-event sim")
+        report("PASS", "stale root files", "no live-round files predate the pre-event sim "
+               "(or content verified current)")
 
 
 def check_dists_fanout() -> None:
