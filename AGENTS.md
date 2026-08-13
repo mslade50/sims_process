@@ -8,6 +8,13 @@ When preparing ETR, run `hole_baselines.py`; it resolves historical editions
 by physical `course_id` and exact `(year, event_id)` pairs rather than assuming
 the current event ID was stable across venues.
 
+## Repository Branch Policy
+
+Commit and push ordinary requested fixes directly to `main`. Do not create a
+separate branch or pull request unless the user explicitly asks for one or the
+requested workflow specifically requires one. Preserve unrelated working-tree
+changes when committing directly to `main`.
+
 **Pre-tournament**: `init_weekly.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`. The SG distribution files (`sg_dist_player.csv`, `this_week_dists_v2.csv`) are NOT built here — sim_prep's `cat_dists_player.py` is the single producer and fans them out to this repo, the OneDrive root, and etr-golf-sims (the local copy is archived).
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
 **Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
