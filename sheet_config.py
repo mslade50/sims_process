@@ -33,14 +33,20 @@ Sheet layout (tab: "round_config"):
         expected_score_r2 Expected scoring avg for R2. Multi-course: comma-separated.
         expected_score_r3 Expected scoring avg for R3.
         expected_score_r4 Expected scoring avg for R4.
-        wind_r1           Hourly wind for R1 (blank = use 'wind'). Set by humidity.py.
-        wind_r2           Hourly wind for R2 (blank = use 'wind').
-        wind_r3           Hourly wind for R3 (blank = use 'wind').
-        wind_r4           Hourly wind for R4 (blank = use 'wind').
-        dew_r1            Hourly dew for R1 (blank = use 'dew'). Set by humidity.py.
-        dew_r2            Hourly dew for R2 (blank = use 'dew').
-        dew_r3            Hourly dew for R3 (blank = use 'dew').
-        dew_r4            Hourly dew for R4 (blank = use 'dew').
+        wind_r1           Hourly wind for R1. Authoritative; set by humidity.py.
+        wind_r2           Hourly wind for R2. Authoritative; set by humidity.py.
+        wind_r3           Hourly wind for R3. Authoritative; set by humidity.py.
+        wind_r4           Hourly wind for R4. Authoritative; set by humidity.py.
+        dew_r1            Hourly dew for R1. Authoritative; set by humidity.py.
+        dew_r2            Hourly dew for R2. Authoritative; set by humidity.py.
+        dew_r3            Hourly dew for R3. Authoritative; set by humidity.py.
+        dew_r4            Hourly dew for R4. Authoritative; set by humidity.py.
+        wind / dew        LIVE-round quick-override channel: during live play
+                          (round > 0) a non-empty value REPLACES the next
+                          round's wind_r{N}/dew_r{N} in the engine. Ignored at
+                          round 0 and blanked by reset_for_new_week() — a
+                          leftover from last week must never reach a new
+                          event's R1 (2026-08-12).
 
 Authentication:
     Place credentials.json (Google service account key) in the project root.
@@ -282,14 +288,17 @@ def load_config(verbose=True):
             expected_score_r2: list[float] — expected scoring avg for R2 (per-course if multi)
             expected_score_r3: list[float] — expected scoring avg for R3
             expected_score_r4: list[float] — expected scoring avg for R4
-            wind_r1:          list[float] — hourly wind for R1 (empty = use 'wind')
-            wind_r2:          list[float] — hourly wind for R2 (empty = use 'wind')
-            wind_r3:          list[float] — hourly wind for R3
-            wind_r4:          list[float] — hourly wind for R4
-            dew_r1:           list[float] — hourly dew for R1 (empty = use 'dew')
-            dew_r2:           list[float] — hourly dew for R2 (empty = use 'dew')
-            dew_r3:           list[float] — hourly dew for R3
-            dew_r4:           list[float] — hourly dew for R4
+            wind_r1:          list[float] — hourly wind for R1 (authoritative, from humidity.py)
+            wind_r2:          list[float] — hourly wind for R2 (authoritative, from humidity.py)
+            wind_r3:          list[float] — hourly wind for R3 (authoritative, from humidity.py)
+            wind_r4:          list[float] — hourly wind for R4 (authoritative, from humidity.py)
+            dew_r1:           list[float] — hourly dew for R1 (authoritative, from humidity.py)
+            dew_r2:           list[float] — hourly dew for R2 (authoritative, from humidity.py)
+            dew_r3:           list[float] — hourly dew for R3 (authoritative, from humidity.py)
+            dew_r4:           list[float] — hourly dew for R4 (authoritative, from humidity.py)
+            wind / dew:       list[float] — live-round override; replaces the NEXT
+                              round's array only when round > 0 (see
+                              live_stats_engine._apply_sheet_overrides)
     """
     print("Reading config from Google Sheet...")
     ws = _connect_sheet()
@@ -611,6 +620,15 @@ def reset_for_new_week():
         for prefix in ("realized_wind_r", "realized_dew_r"):
             if f"{prefix}{rnd}" in param_rows:
                 updates[f"{prefix}{rnd}"] = ""
+
+    # The generic wind/dew rows are the LIVE-round quick-override channel; a
+    # leftover from last week's live play must not survive into the new week
+    # (2026-08-12: a stale ~3-4mph generic row would have replaced the real
+    # 7-9mph R1 forecast at round 0 — belt-and-braces with the round_num > 0
+    # guard in live_stats_engine._apply_sheet_overrides).
+    for key in ("wind", "dew"):
+        if key in param_rows:
+            updates[key] = ""
 
     cells_updated = []
     for param, value in updates.items():
