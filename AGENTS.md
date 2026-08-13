@@ -4,6 +4,10 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Pipeline Execution Order
 
+When preparing ETR, run `hole_baselines.py`; it resolves historical editions
+by physical `course_id` and exact `(year, event_id)` pairs rather than assuming
+the current event ID was stable across venues.
+
 **Pre-tournament**: `init_weekly.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`. The SG distribution files (`sg_dist_player.csv`, `this_week_dists_v2.csv`) are NOT built here — sim_prep's `cat_dists_player.py` is the single producer and fans them out to this repo, the OneDrive root, and etr-golf-sims (the local copy is archived).
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
 **Pre-event (round=0)**: `live_stats_engine.py` → `round_sim.py` (R1 matchups + score cards)
@@ -21,17 +25,15 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 **Status**: Promoted to production (March 2025). The archived total-first sim is `archive/new_sim_v1.py`.
 
 **Key details**:
-- Uses `COURSE_CAT_MULTS` dict in `sim_inputs.py` (per-category variance multipliers from `scoring_baseline.py` analysis)
+- Uses `course_cat_mults` from the Google Sheet `round_config` tab (written by `scoring_baseline.py`)
 - Category means are **re-centered to sum to `my_pred`** so category-first draws only change variance structure, not base predictions
 - Weather delta distributed as 0.35 OTT, 0.35 APP, 0.15 ARG, 0.15 PUTT
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
-- Per-category course multipliers come from `sg_category_event_profiles.csv` — computed for each new course via `scoring_baseline.py` variance analysis
+- Per-category course multipliers and skew are computed for the exact physical course by `scoring_baseline.py`, written to `round_config`, and consumed through `sheet_config.py`
 
 **Supporting analysis files** (in `archive/`, not part of weekly pipeline):
 - `archive/sg_category_variance_test.py` — Tests per-category variance decomposition across 35 PGA events
 - `archive/sg_category_predictive_test.py` — Player-level predictive power test (leave-one-year-out)
-- `sg_category_event_profiles.csv` — Per-event per-category variance profiles
-- `sg_category_variance_results.csv` — Raw variance test results
 
 ## Repository Layout
 
@@ -83,6 +85,12 @@ Convert: `expected_score = course_par - scores_r{N}`. A player with `scores_r2 =
 Both sides of every join/merge must go through `name_replacements`. The `cat_dists_player.py` pattern (now in sim_prep; archived copy in `archive/`) is canonical.
 
 ## Traps That Have Caused Bugs
+
+- **Course identity beats event identity**: historical scoring, variance,
+  wind, AM/PM, weather fallback, and hole baselines must select by
+  `course_id`/`course_num`. Event IDs are reusable labels and can identify
+  multiple venues across years. If `course_id` is unavailable and an event ID
+  is ambiguous, fail instead of selecting the last match.
 
 - **Matchup API returns string when no odds available**: Check `isinstance(match_list, list)` before iterating. The API returns a message string like `"No tournament_matchups being offered right now."` instead of a list.
 - **DataGolf field-updates tee times are nested**: The API returns `teetimes` as a list of dicts (with `round_num`, `teetime`, `course_code`), NOT flat `r1_teetime` columns. `fetch_field_updates()` in `api_utils.py` handles parsing.

@@ -9,6 +9,7 @@ Pipeline position:
   cat_dists_player.py → dists_thiswk.py → humidity.py → scoring_baseline.py → write_base_rates.py
 """
 
+import argparse
 import os
 import sqlite3
 import numpy as np
@@ -17,7 +18,7 @@ import yaml
 from datetime import datetime
 
 import sim_inputs
-from api_utils import calculate_average_wind
+from api_utils import calculate_average_wind, lookup_course_wind_effect
 from sheets_storage import store_base_rates, get_spreadsheet
 from sheet_config import load_config as load_sheet_config
 
@@ -88,19 +89,15 @@ def _parse_hour(tt):
     return None
 
 
-def _lookup_course_wind_effect(event_ids):
+def _lookup_course_wind_effect(event_ids, course_id=None):
     """Look up course wind effect from permanent_data/wind_test.csv."""
     try:
-        df = pd.read_csv(WIND_TEST_PATH)
-        first_id = str(event_ids[0]).strip()
-        match = df[
-            df["event_ids"].apply(
-                lambda x: first_id in [s.strip() for s in str(x).split(",")]
-            )
-        ]
-        if match.empty:
-            return BASE_COURSE_WIND_EFFECT, "default (no match)"
-        return float(match["wind_effect_adj_score"].iloc[-1]), ""
+        return lookup_course_wind_effect(
+            course_id=course_id,
+            event_ids=event_ids,
+            wind_test_path=WIND_TEST_PATH,
+            default=BASE_COURSE_WIND_EFFECT,
+        )
     except FileNotFoundError:
         return BASE_COURSE_WIND_EFFECT, "wind_test.csv not found"
 
@@ -132,7 +129,7 @@ def _compute_am_pm_wind_dew(wind_arr, dew_arr):
     return am_wind, pm_wind, am_dew, pm_dew
 
 
-def _query_historical_am_pm(event_ids):
+def _query_historical_am_pm(event_ids, course_id=None):
     """
     Query dg_historical.db for historical AM/PM scoring splits for R1/R2
     at THIS course.
@@ -140,21 +137,28 @@ def _query_historical_am_pm(event_ids):
     Positive = AM scored higher (worse).
     """
     result = {1: 0.0, 2: 0.0}
+    if course_id is None:
+        raise ValueError("course_id is required for historical AM/PM splits")
     if not os.path.exists(DB_PATH):
         return result, "dg_historical.db not found"
 
     try:
         conn = sqlite3.connect(DB_PATH)
-        first_id = int(event_ids[0])
+        historical_tour = getattr(
+            sim_inputs, "tour_override", getattr(sim_inputs, "tour", "pga")
+        )
+        where, params = "course_num = ? AND tour = ?", (
+            int(course_id), historical_tour,
+        )
         df = pd.read_sql_query(
-            """
+            f"""
             SELECT round_num, teetime, score, course_par
             FROM player_rounds
-            WHERE event_id = ? AND round_num <= 2
+            WHERE {where} AND round_num <= 2
               AND teetime IS NOT NULL AND teetime != ''
             """,
             conn,
-            params=(first_id,),
+            params=params,
         )
         conn.close()
     except Exception as e:
@@ -252,7 +256,7 @@ def _query_tour_wide_scoring_std():
     return round(float(grouped.mean()), 2), ""
 
 
-def _query_variance_attribution(event_ids):
+def _query_variance_attribution(event_ids, course_id=None):
     """
     Compute % of scoring variance attributable to each SG category.
     Returns (tour_wide_pct, course_pct, course_percentiles, note).
@@ -261,6 +265,10 @@ def _query_variance_attribution(event_ids):
     """
     cats = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
     empty = {c: None for c in cats}
+    if course_id is None:
+        raise ValueError(
+            "course_id is required for historical variance attribution"
+        )
     if not os.path.exists(DB_PATH):
         return empty, empty, empty, "db not found"
 
@@ -275,15 +283,20 @@ def _query_variance_attribution(event_ids):
               AND sg_arg IS NOT NULL AND sg_putt IS NOT NULL
             """, conn
         )
-        first_id = int(event_ids[0])
+        historical_tour = getattr(
+            sim_inputs, "tour_override", getattr(sim_inputs, "tour", "pga")
+        )
+        where, course_params = "course_num = ? AND tour = ?", (
+            int(course_id), historical_tour,
+        )
         df_course = pd.read_sql_query(
-            """
+            f"""
             SELECT event_id, year, round_num, sg_ott, sg_app, sg_arg, sg_putt
             FROM player_rounds
-            WHERE year >= 2019 AND event_id = ?
+            WHERE year >= 2019 AND {where}
               AND sg_ott IS NOT NULL AND sg_app IS NOT NULL
               AND sg_arg IS NOT NULL AND sg_putt IS NOT NULL
-            """, conn, params=(first_id,)
+            """, conn, params=course_params
         )
         conn.close()
     except Exception as e:
@@ -357,7 +370,9 @@ def build_rows():
         "dew_test.csv EB-shrunk per-course slope; falls back to sim_inputs blend")
     add("Weather Coeff", "baseline_wind", BASE_BASELINE_WIND, sim_inputs.baseline_wind)
 
-    course_wind_eff, cw_note = _lookup_course_wind_effect(sim_inputs.event_ids)
+    course_wind_eff, cw_note = _lookup_course_wind_effect(
+        sim_inputs.event_ids, sim_inputs.course_id
+    )
     add("Weather Coeff", "course_wind_effect", BASE_COURSE_WIND_EFFECT, course_wind_eff, cw_note)
 
     blended = course_wind_eff * 0.4 + sim_inputs.baseline_wind * 0.6
@@ -388,7 +403,9 @@ def build_rows():
 
     # --- AM/PM Scoring Split ---
     tour_wide_splits, tw_note = _query_tour_wide_am_pm()
-    hist_splits, hist_note = _query_historical_am_pm(sim_inputs.event_ids)
+    hist_splits, hist_note = _query_historical_am_pm(
+        sim_inputs.event_ids, sim_inputs.course_id
+    )
     for rnd in [1, 2]:
         add("AM/PM Split", f"hist_am_pm_diff_r{rnd}", tour_wide_splits[rnd], hist_splits[rnd],
             f"AM-PM strokes (tour avg vs this course){'; ' + hist_note if hist_note else ''}")
@@ -422,7 +439,9 @@ def build_rows():
         add("Cat Skew (V2)", f"cat_skew_{cat.replace('sg_', '')}", base_sk, val)
 
     # --- Variance Attribution (% of scoring variance per category) ---
-    tour_var_pct, course_var_pct, course_ptiles, var_note = _query_variance_attribution(sim_inputs.event_ids)
+    tour_var_pct, course_var_pct, course_ptiles, var_note = (
+        _query_variance_attribution(sim_inputs.event_ids, sim_inputs.course_id)
+    )
     for cat in ["sg_ott", "sg_app", "sg_arg", "sg_putt"]:
         base_v = tour_var_pct.get(cat)
         this_v = course_var_pct.get(cat)
@@ -498,8 +517,8 @@ ETR_SIM_CONFIG = os.path.join(
 )
 
 
-def _update_etr_sim_config(cat_mults, cat_skew):
-    """Update sim_config.yaml with current event info, cat mults/skew, and clear skill docks."""
+def _update_etr_sim_config(cat_mults, cat_skew, reset_skill_docks=False):
+    """Update ETR event/profile values without erasing intentional docks."""
     if not os.path.exists(ETR_SIM_CONFIG):
         print(f"  [warn] {ETR_SIM_CONFIG} not found — skipping YAML update")
         return
@@ -518,26 +537,28 @@ def _update_etr_sim_config(cat_mults, cat_skew):
     cf["course_cat_mults"] = {k: float(v) for k, v in cat_mults.items()}
     cf["course_cat_skew"] = {k: float(v) for k, v in cat_skew.items()}
 
-    # Clear skill docks, keep one commented example
-    cf["skill_docks"] = []
+    if reset_skill_docks:
+        cf["skill_docks"] = []
 
     with open(ETR_SIM_CONFIG, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
-        # Append commented example for reference
-        f.write(
-            '    # - player: "last, first"\n'
-            '    #   sg_dock: 0.5\n'
-            '    #   dock_pct: 0.25\n'
-        )
+        if reset_skill_docks:
+            # Append a commented example only on an explicit weekly reset.
+            f.write(
+                '    # - player: "last, first"\n'
+                '    #   sg_dock: 0.5\n'
+                '    #   dock_pct: 0.25\n'
+            )
 
     print(f"  [ok] Updated {ETR_SIM_CONFIG}")
     print(f"       event: {sim_inputs.tourney} (id={sim_inputs.event_ids}, course={sim_inputs.course_id}, par={sim_inputs.course_par})")
     print(f"       cat_mults: { {k: v for k, v in cat_mults.items()} }")
     print(f"       cat_skew:  { {k: v for k, v in cat_skew.items()} }")
-    print(f"       skill_docks: cleared")
+    dock_status = "cleared (explicit reset)" if reset_skill_docks else "preserved"
+    print(f"       skill_docks: {dock_status}")
 
 
-def main():
+def main(reset_skill_docks=False):
     print(f"\n{'='*70}")
     print(f"  BASE RATES REFERENCE")
     print(f"  Tournament: {sim_inputs.tourney} | Event IDs: {sim_inputs.event_ids}")
@@ -553,10 +574,19 @@ def main():
     sheet_cfg = load_sheet_config()
     cat_mults = sheet_cfg.get("course_cat_mults", {})
     cat_skew = sheet_cfg.get("course_cat_skew", {})
-    _update_etr_sim_config(cat_mults, cat_skew)
+    _update_etr_sim_config(
+        cat_mults, cat_skew, reset_skill_docks=reset_skill_docks
+    )
 
     print(f"\n  Done — check 'Base Rates' tab in Google Sheets")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset-skill-docks",
+        action="store_true",
+        help="Explicitly clear ETR skill_docks during a new-week setup.",
+    )
+    args = parser.parse_args()
+    main(reset_skill_docks=args.reset_skill_docks)

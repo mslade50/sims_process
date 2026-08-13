@@ -65,7 +65,7 @@ def _resolve_csv(filename):
 
 
 from sim_inputs import (
-    tourney, tour, course_par, event_ids, wind_override, baseline_wind,
+    tourney, tour, course_par, course_id, event_ids, wind_override, baseline_wind,
     dew_calculation,
     # R1 coefficients (4 skill-based buckets)
     coefficients_r1_high, coefficients_r1_midh, coefficients_r1_midl, coefficients_r1_low,
@@ -1117,7 +1117,9 @@ def create_next_round_predictions(round_num):
         return
 
     # --- Compute wind/dew adjustments ---
-    wind_factor = compute_wind_factor(event_ids, wind_override, baseline_wind)
+    wind_factor = compute_wind_factor(
+        event_ids, wind_override, baseline_wind, course_id
+    )
     wind_array = WIND_ARRAYS[next_round]
     dew_array = DEW_ARRAYS[next_round]
 
@@ -1356,7 +1358,9 @@ def create_pre_event_predictions():
             preds = preds.merge(field, on="player_name", how="left")
 
     # Compute wind factor
-    wind_factor = compute_wind_factor(event_ids, wind_override, baseline_wind)
+    wind_factor = compute_wind_factor(
+        event_ids, wind_override, baseline_wind, course_id
+    )
 
     # Compute wind/dew
     wind_vals, dew_vals = [], []
@@ -2180,7 +2184,8 @@ def write_actuals_to_sheet(round_num):
     # re-apply it on top of future rounds' own wind terms (double count).
     from api_utils import compute_wind_factor
     wind_factor = compute_wind_factor(
-        event_ids, config.get("wind_override", 0.0) or 0.0, baseline_wind
+        event_ids, config.get("wind_override", 0.0) or 0.0, baseline_wind,
+        config.get("course_id", course_id),
     )
     dew_calc = config.get("dew_calculation", 0.0) or 0.0
 
@@ -2570,7 +2575,7 @@ def update_expected_scores(completed_round, sync_primary=False):
         print(f"  WARNING: No prediction file found — field_strength = 0.0")
 
     # 3. Wind factor
-    wf = compute_wind_factor(event_ids, wind_override, baseline_wind)
+    wf = compute_wind_factor(event_ids, wind_override, baseline_wind, course_id)
     print(f"  Wind factor: {wf:.4f}")
 
     # 4. Cut adjustment for R3/R4

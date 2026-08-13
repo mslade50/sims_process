@@ -40,6 +40,16 @@ from sim_inputs import (
     event_ids, tourney, course_id, tour, wind_override, baseline_wind,
     dew_calculation,
 )
+try:
+    from sim_inputs import historical_event_ids as _historical_event_ids
+except ImportError:
+    _historical_event_ids = []
+try:
+    from sim_inputs import tour_override as _historical_tour
+except ImportError:
+    _historical_tour = tour
+
+from api_utils import lookup_course_wind_effect
 
 ARCHIVE_DB = Path(os.getenv(
     "IMG_INSPECT_DB",
@@ -56,16 +66,96 @@ ETR_REPO = Path.home() / "OneDrive" / "etr-golf-sims"
 
 YEAR_DECAY = float(os.getenv("HOLE_BASELINE_YEAR_DECAY", "0.85"))
 MAX_HOLE_SCORE = 12
+HISTORY_MIN_YEAR = int(os.getenv("HOLE_BASELINE_MIN_YEAR", "2018"))
+# Never learn a pre-event baseline from the in-progress tournament.
+HISTORY_MAX_YEAR = int(os.getenv(
+    "HOLE_BASELINE_MAX_YEAR", str(pd.Timestamp.now().year - 1)
+))
+HISTORICAL_EVENT_IDS = [int(x) for x in (_historical_event_ids or [])]
+HISTORICAL_TOUR = str(_historical_tour or tour)
 
 
 def _ro(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
 
 
-def load_hole_scores() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Per-player hole scores + per-round hole geometry for this event."""
-    keys = [f"{tour}:R{season}{event_id:03d}"
-            for season in range(2018, 2027) for event_id in event_ids]
+def resolve_course_history(
+    min_year: int = HISTORY_MIN_YEAR,
+    max_year: int = HISTORY_MAX_YEAR,
+) -> pd.DataFrame:
+    """Resolve the exact historical tournament at this physical course/year."""
+    clauses = ["course_num = ?", "tour = ?", "year BETWEEN ? AND ?"]
+    params: list[object] = [course_id, HISTORICAL_TOUR, min_year, max_year]
+    if HISTORICAL_EVENT_IDS:
+        marks = ",".join("?" for _ in HISTORICAL_EVENT_IDS)
+        clauses.append(f"event_id IN ({marks})")
+        params.extend(HISTORICAL_EVENT_IDS)
+
+    with _ro(DG_DB) as conn:
+        history = pd.read_sql_query(
+            f"""
+            SELECT year, event_id, event_name, course_num,
+                   MIN(round_date) AS event_start
+            FROM player_rounds
+            WHERE {' AND '.join(clauses)}
+            GROUP BY year, event_id, event_name, course_num
+            ORDER BY year, event_start
+            """,
+            conn, params=params,
+        )
+    if history.empty:
+        override = (f", event_ids={HISTORICAL_EVENT_IDS}"
+                    if HISTORICAL_EVENT_IDS else "")
+        raise RuntimeError(
+            f"no {HISTORICAL_TOUR} history for course_id={course_id}, "
+            f"years={min_year}-{max_year}{override}"
+        )
+
+    duplicates = history.groupby("year").size()
+    ambiguous_years = duplicates[duplicates > 1].index.tolist()
+    if ambiguous_years:
+        details = history.loc[
+            history["year"].isin(ambiguous_years),
+            ["year", "event_id", "event_name", "event_start"],
+        ].to_dict("records")
+        raise RuntimeError(
+            "multiple tournaments at the configured course in one year: "
+            f"{details}. Set historical_event_ids explicitly to disambiguate."
+        )
+
+    history["year"] = history["year"].astype(int)
+    history["event_id"] = history["event_id"].astype(int)
+    history["event_key"] = history.apply(
+        lambda row: f"{HISTORICAL_TOUR}:R{row['year']}{row['event_id']:03d}",
+        axis=1,
+    )
+    print(
+        f"[scope] course_id={course_id}; "
+        + ", ".join(
+            f"{row.year}:{row.event_id}" for row in history.itertuples()
+        )
+    )
+    return history
+
+
+def _pair_filter(history: pd.DataFrame, alias: str = "") -> tuple[str, list[int]]:
+    """SQL filter for the resolved (year, event_id) pairs."""
+    if history.empty:
+        raise RuntimeError("course history is empty")
+    prefix = f"{alias}." if alias else ""
+    clauses = []
+    params: list[int] = []
+    for row in history.itertuples():
+        clauses.append(f"({prefix}year = ? AND {prefix}event_id = ?)")
+        params.extend([int(row.year), int(row.event_id)])
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def load_hole_scores(
+    history: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Per-player hole scores + geometry for resolved same-course events."""
+    keys = history["event_key"].tolist()
     placeholders = ",".join("?" for _ in keys)
     with _ro(ARCHIVE_DB) as conn:
         events = pd.read_sql_query(
@@ -74,9 +164,12 @@ def load_hole_scores() -> tuple[pd.DataFrame, pd.DataFrame]:
         )
         if events.empty:
             raise RuntimeError(
-                f"shot archive has no events for {event_ids} ({tourney}); "
-                f"tried keys like {keys[:2]}"
+                f"shot archive has no events for course_id={course_id} "
+                f"({tourney}); tried {keys}"
             )
+        missing = sorted(set(keys) - set(events["event_key"]))
+        if missing:
+            print(f"[holes] WARNING: archive missing same-course events: {missing}")
         event_keys = tuple(events["event_key"])
         marks = ",".join("?" for _ in event_keys)
         scores = pd.read_sql_query(
@@ -106,61 +199,72 @@ def load_hole_scores() -> tuple[pd.DataFrame, pd.DataFrame]:
           f"{sorted(events['season'].tolist())}")
     seasons = events.set_index("event_key")["season"]
     geometry["season"] = geometry["event_key"].map(seasons)
-    return scores, geometry
+    used_history = history[history["event_key"].isin(event_keys)].copy()
+    return scores, geometry, used_history
 
 
-def load_round_dates() -> pd.DataFrame:
-    """(year, round_num) -> round_date for this event from player_rounds."""
-    ids = ",".join(str(int(e)) for e in event_ids)
+def load_round_dates(history: pd.DataFrame) -> pd.DataFrame:
+    """Round dates for the resolved same-course tournament editions."""
+    pair_where, params = _pair_filter(history)
     with _ro(DG_DB) as conn:
         rounds = pd.read_sql_query(
-            f"SELECT year, round_num, round_date, COUNT(*) n FROM player_rounds "
-            f"WHERE event_id IN ({ids}) AND tour = ? GROUP BY 1,2,3",
-            conn, params=(tour,),
+            f"""
+            SELECT year, event_id, round_num, round_date, COUNT(*) n
+            FROM player_rounds
+            WHERE {pair_where} AND course_num = ? AND tour = ?
+            GROUP BY 1,2,3,4
+            """,
+            conn, params=params + [course_id, HISTORICAL_TOUR],
         )
     rounds["round_date"] = pd.to_datetime(rounds["round_date"])
     # one date per (year, round): keep the row with the most players
     rounds = (rounds.sort_values("n", ascending=False)
               .drop_duplicates(["year", "round_num"], keep="first"))
-    return rounds[["year", "round_num", "round_date"]]
+    return rounds[["year", "event_id", "round_num", "round_date"]]
 
 
 def wind_blend() -> float:
     if wind_override:
         print(f"[wind] using wind_override={wind_override}")
         return float(wind_override)
-    wind_test = pd.read_csv(WIND_TEST)
-    first_id = str(event_ids[0]).strip()
-    match = wind_test[wind_test["event_ids"].apply(
-        lambda x: first_id in [t.strip() for t in str(x).split(",")])]
-    course_effect = float(match["wind_effect_adj_score"].iloc[-1]) if len(match) else 0.08
+    try:
+        course_effect, source = lookup_course_wind_effect(
+            course_id=course_id,
+            event_ids=event_ids,
+            wind_test_path=str(WIND_TEST),
+        )
+    except FileNotFoundError:
+        course_effect, source = 0.08, "default (wind_test.csv missing)"
     course_effect = max(course_effect, 0.06)
     blended = course_effect * 0.4 + baseline_wind * 0.6
-    print(f"[wind] course_effect={course_effect:.3f} baseline={baseline_wind} "
+    print(f"[wind] {source}; course_effect={course_effect:.3f} baseline={baseline_wind} "
           f"-> blend={blended:.4f}")
     return blended
 
 
-def load_weather(round_dates: pd.DataFrame) -> pd.DataFrame:
+def load_weather(history: pd.DataFrame, round_dates: pd.DataFrame) -> pd.DataFrame:
     """Field-average wind/dew per (year, round_num), exclusion-aware."""
-    ids = ",".join(str(int(e)) for e in event_ids)
+    pair_where, params = _pair_filter(history, alias="p")
     with _ro(DG_DB) as conn:
         weather = pd.read_sql_query(
             f"""
-            SELECT p.year, p.round_num, p.round_date,
+            SELECT p.year, p.event_id, p.round_num, p.round_date,
                    AVG(w.wind) AS avg_wind, AVG(w.dew) AS avg_dew,
                    SUM(w.wind IS NOT NULL) AS n_wx, COUNT(*) AS n
             FROM player_rounds p
             LEFT JOIN player_weather_data_test w
               ON p.player_name = w.player_name
              AND p.event_id = w.event_id AND p.round_date = w.round_date
-            WHERE p.event_id IN ({ids}) AND p.tour = ?
-            GROUP BY 1, 2, 3
+            WHERE {pair_where} AND p.course_num = ? AND p.tour = ?
+            GROUP BY 1, 2, 3, 4
             """,
-            conn, params=(tour,),
+            conn, params=params + [course_id, HISTORICAL_TOUR],
         )
     weather["round_date"] = pd.to_datetime(weather["round_date"])
-    weather = weather.merge(round_dates, on=["year", "round_num", "round_date"])
+    weather = weather.merge(
+        round_dates,
+        on=["year", "event_id", "round_num", "round_date"],
+    )
     factor = wind_blend()
     weather["wind_adj"] = weather["avg_wind"] * factor
     weather["dew_adj"] = (
@@ -168,28 +272,44 @@ def load_weather(round_dates: pd.DataFrame) -> pd.DataFrame:
     )
     if EXCLUSIONS.is_file():
         excluded = pd.read_csv(EXCLUSIONS, usecols=["event_id", "round_date"])
-        excluded = excluded[excluded["event_id"].isin([int(e) for e in event_ids])]
+        excluded["event_id"] = pd.to_numeric(
+            excluded["event_id"], errors="coerce"
+        )
         excluded["round_date"] = pd.to_datetime(excluded["round_date"])
-        mask = weather["round_date"].isin(excluded["round_date"]).to_numpy()
+        excluded_pairs = set(
+            zip(excluded["event_id"], excluded["round_date"])
+        )
+        mask = np.array([
+            (row.event_id, row.round_date) in excluded_pairs
+            for row in weather.itertuples()
+        ])
         if mask.any():
             print(f"[weather] zeroing weather strip for {int(mask.sum())} "
                   f"chaotic round(s) (schedule/teetime mismatch)")
             weather.loc[mask, ["wind_adj", "dew_adj"]] = 0.0
     weather["weather_adj"] = weather["wind_adj"] + weather["dew_adj"].fillna(0.0)
-    coverage = weather["n_wx"].sum() / weather["n"].sum()
+    coverage = (weather["n_wx"].sum() / weather["n"].sum()
+                if weather["n"].sum() else 0.0)
     print(f"[weather] panel coverage {coverage:.1%} over "
           f"{len(weather)} event-rounds")
     return weather[["year", "round_num", "wind_adj", "dew_adj", "weather_adj"]]
 
 
-def load_field_skill(round_dates: pd.DataFrame) -> pd.DataFrame:
+def load_field_skill(history: pd.DataFrame, round_dates: pd.DataFrame) -> pd.DataFrame:
     """Mean field skill_est per (year, round_num) via crosswalked players."""
     crosswalk = pd.read_parquet(
         CROSSWALK,
         columns=["event_key", "source_player_id", "round_no", "dg_player_name",
                  "event_id", "year", "round_num", "round_date"],
     )
-    crosswalk = crosswalk[crosswalk["event_id"].isin([int(e) for e in event_ids])].copy()
+    event_keys = set(history["event_key"])
+    crosswalk = crosswalk[crosswalk["event_key"].isin(event_keys)].copy()
+    missing = sorted(event_keys - set(crosswalk["event_key"]))
+    if missing:
+        print(f"[skill] WARNING: crosswalk missing same-course events: {missing}")
+    if crosswalk.empty:
+        print("[skill] WARNING: no crosswalk rows; field neutralization unavailable")
+        return pd.DataFrame(columns=["year", "round_num", "field_adj"])
     crosswalk = crosswalk.rename(columns={"dg_player_name": "player_name"})
     crosswalk["round_date"] = pd.to_datetime(crosswalk["round_date"])
     with _ro(DG_DB) as conn:
@@ -219,13 +339,15 @@ def build(scores: pd.DataFrame, geometry: pd.DataFrame,
     )
 
     par = geometry.rename(columns={"round_no": "round_num"})
-    par_by_round = (par.groupby(["season", "round_num"])["par"].sum()
+    par_by_round = (par.groupby(["event_key", "season", "round_num"])["par"].sum()
                     .reset_index(name="course_par"))
 
     rows = scores.rename(columns={"round_no": "round_num"}).merge(
-        par[["season", "round_num", "hole_no", "par"]],
-        on=["season", "round_num", "hole_no"], how="left",
-    ).merge(par_by_round, on=["season", "round_num"], how="left")
+        par[["event_key", "season", "round_num", "hole_no", "par"]],
+        on=["event_key", "season", "round_num", "hole_no"], how="left",
+    ).merge(
+        par_by_round, on=["event_key", "season", "round_num"], how="left"
+    )
     rows = rows.merge(
         adjustments.rename(columns={"year": "season"}),
         on=["season", "round_num"], how="left",
@@ -300,10 +422,11 @@ def build(scores: pd.DataFrame, geometry: pd.DataFrame,
 
 
 def main() -> None:
-    scores, geometry = load_hole_scores()
-    round_dates = load_round_dates()
-    weather = load_weather(round_dates)
-    field = load_field_skill(round_dates)
+    history = resolve_course_history()
+    scores, geometry, history = load_hole_scores(history)
+    round_dates = load_round_dates(history)
+    weather = load_weather(history, round_dates)
+    field = load_field_skill(history, round_dates)
     final = build(scores, geometry, weather, field)
 
     out_name = f"adj_hole_dist_{tourney}_{course_id}.csv"

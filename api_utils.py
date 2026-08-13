@@ -391,7 +391,77 @@ def calculate_average_wind(teetime, wind_data):
     return float(np.mean(wind_samples))
 
 
-def compute_wind_factor(event_ids, wind_override, baseline_wind):
+def lookup_course_wind_effect(
+    course_id=None, event_ids=None, wind_test_path=None, default=0.08
+):
+    """Return the historical wind slope for one physical course.
+
+    ``course_id`` is the authoritative identity.  Event IDs are accepted only
+    as a backwards-compatible fallback and must resolve to exactly one course;
+    DataGolf reuses event IDs when tournaments move venues.
+    """
+    if wind_test_path is None:
+        wind_test_path = os.path.join("permanent_data", "wind_test.csv")
+        if not os.path.exists(wind_test_path):
+            wind_test_path = "wind_test.csv"
+
+    wind_test_df = pd.read_csv(wind_test_path)
+    required = {"course_num", "course_name", "wind_effect_adj_score", "event_ids"}
+    missing = required - set(wind_test_df.columns)
+    if missing:
+        raise RuntimeError(
+            f"wind_test.csv missing required columns: {sorted(missing)}"
+        )
+
+    if course_id is not None:
+        course_values = pd.to_numeric(
+            wind_test_df["course_num"], errors="coerce"
+        )
+        matches = wind_test_df[course_values == float(course_id)]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"wind_test.csv has {len(matches)} rows for course_id={course_id}; "
+                "refusing an ambiguous wind coefficient"
+            )
+        if matches.empty:
+            return float(default), f"default (course_id={course_id} not found)"
+        row = matches.iloc[0]
+        return float(row["wind_effect_adj_score"]), (
+            f"course_id={course_id} ({row.get('course_name', 'unknown')})"
+        )
+
+    ids = [str(x).strip() for x in (event_ids or [])]
+    if not ids:
+        return float(default), "default (no course_id or event_ids)"
+    matches = wind_test_df[
+        wind_test_df["event_ids"].apply(
+            lambda value: any(
+                event_id in [part.strip() for part in str(value).split(",")]
+                for event_id in ids
+            )
+        )
+    ]
+    if matches.empty:
+        return float(default), f"default (event_ids={ids} not found)"
+
+    unique_courses = pd.to_numeric(
+        matches["course_num"], errors="coerce"
+    ).dropna().unique()
+    if len(unique_courses) != 1:
+        choices = matches[
+            ["course_num", "course_name", "wind_effect_adj_score"]
+        ].to_dict("records")
+        raise RuntimeError(
+            f"event_ids={ids} map to multiple course wind coefficients: "
+            f"{choices}. Supply course_id explicitly."
+        )
+    row = matches.iloc[0]
+    return float(row["wind_effect_adj_score"]), (
+        f"event_ids={ids}, unique course_id={int(unique_courses[0])}"
+    )
+
+
+def compute_wind_factor(event_ids, wind_override, baseline_wind, course_id=None):
     """
     Compute the wind adjustment factor (strokes per MPH) for this course.
     
@@ -401,9 +471,11 @@ def compute_wind_factor(event_ids, wind_override, baseline_wind):
     Override takes precedence if non-zero.
     
     Args:
-        event_ids: List of event IDs for this tournament
+        event_ids: List of event IDs for this tournament (legacy fallback)
         wind_override: Manual override value (0 = use computed)
         baseline_wind: Default wind effect factor
+        course_id: DataGolf physical course ID. Required whenever an event ID
+            has been used at more than one venue.
     
     Returns:
         Float: wind calculation factor (strokes of SG impact per MPH)
@@ -413,30 +485,16 @@ def compute_wind_factor(event_ids, wind_override, baseline_wind):
         return wind_override
 
     try:
-        # Lives in permanent_data/ (survives weekly cleanup); root checked
-        # second for backward compatibility.
-        _wt_path = os.path.join("permanent_data", "wind_test.csv")
-        if not os.path.exists(_wt_path):
-            _wt_path = "wind_test.csv"
-        wind_test_df = pd.read_csv(_wt_path)
-        first_event_id = str(event_ids[0]).strip()
-
-        filtered = wind_test_df[
-            wind_test_df["event_ids"].apply(
-                lambda x: first_event_id in map(str.strip, str(x).split(","))
-            )
-        ]
-
-        if filtered.empty:
-            course_wind_effect = 0.08
-        else:
-            course_wind_effect = filtered["wind_effect_adj_score"].iloc[-1]
+        course_wind_effect, source = lookup_course_wind_effect(
+            course_id=course_id, event_ids=event_ids
+        )
     except FileNotFoundError:
         print("Warning: wind_test.csv not found, using default wind effect 0.08")
         course_wind_effect = 0.08
+        source = "default (wind_test.csv missing)"
 
     wind_calculation = course_wind_effect * 0.4 + baseline_wind * 0.6
-    print(f"Wind effect per MPH: {wind_calculation:.4f}")
+    print(f"Wind effect per MPH: {wind_calculation:.4f} ({source})")
     return wind_calculation
 
 

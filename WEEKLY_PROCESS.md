@@ -83,7 +83,7 @@ python bet_query.py --graded --export
 > lon_override = None
 > baseline_score_adj = 0.0
 > tour_override = 'pga'          # only set to 'liv' (etc.) for one-off events
-> historical_event_ids = []      # only populated when LIV/non-PGA history is being used
+> historical_event_ids = []      # deliberate tour/event override or course-history disambiguation only
 > ```
 > **Two override modes:**
 >
@@ -104,7 +104,10 @@ python bet_query.py --graded --export
 >    set `expected_score_r4` manually in the Sheet.
 >
 > Leaving any of these on for a normal week will pull weather from the wrong
-> location, query the wrong tour's history, or shift expected scores.
+> location, query the wrong tour's history, or shift expected scores. One other
+> valid use of `historical_event_ids` is disambiguating a venue that hosted more
+> than one qualifying tournament in the same year; the baseline guard will stop
+> and tell you when that explicit selection is required.
 
 Open `sim_inputs.py` and update for the new tournament:
 
@@ -248,7 +251,8 @@ python scoring_baseline.py
 ```
 
 **What this does:**
-1. Fetches historical scoring averages from `dg_historical.db` for this event
+1. Fetches historical scoring averages from `dg_historical.db` for the exact
+   `course_id` (event IDs are not stable historical venue identifiers)
 2. Fetches/caches historical weather from Visual Crossing API
 3. Computes weather-free, tour-average-field baseline per round (de-skilled, de-winded)
 4. Applies recency weighting across years
@@ -260,6 +264,13 @@ python scoring_baseline.py
 8. Saves detail CSV (`scoring_baseline_{tourney}.csv`) and Sheets tab (`Scoring Baseline`)
 
 **Formula**: `expected_score = baseline - field_strength + avg_wind * wind_factor`
+
+The baseline run validates that the selected course has at most one qualifying
+tournament per year and stops instead of silently combining ambiguous history.
+Set `historical_event_ids` only for a deliberate tour/history override; even
+then, the configured course filter remains mandatory. Wind coefficients also
+match `course_num` directly and never fall back to a different venue sharing
+the current event ID.
 
 **Requires**: `pre_course_fit_{tourney}.csv` (from pre-tournament pipeline) for field strength. Without it, field strength defaults to 0.
 
@@ -285,7 +296,27 @@ python init_weekly.py
 ```bash
 python write_base_rates.py
 ```
-Writes a "Base Rates" tab to the Google Sheet comparing tour-average defaults vs this week's `sim_inputs` values. Shows weather coefficients, per-round forecasts, AM/PM scoring splits, sim core params, V2 category multipliers/skew, and scoring baselines — all with delta columns for quick deviation spotting.
+
+Writes a "Base Rates" tab to the Google Sheet comparing tour-average defaults
+with this week's values, with delta columns for quick deviation spotting.
+
+The Base Rates diagnostics use physical `course_id` history for wind, AM/PM
+splits, and category variance. The script also refreshes ETR event and category
+profile values. Existing ETR `skill_docks` are preserved on ordinary reruns;
+use `python write_base_rates.py --reset-skill-docks` only during an intentional
+new-week reset.
+
+### 2.1e Rebuild ETR Hole Baseline (when preparing ETR)
+```bash
+python hole_baselines.py
+```
+
+The builder resolves each historical tournament from the physical `course_id`,
+then maps those exact `(year, event_id)` pairs to IMG archive event keys. It
+does not assume the current event ID was stable historically, excludes the
+in-progress season, stops on ambiguous same-course tournaments within a year,
+and warns when a valid course edition is absent from the shot archive. The
+completed file is copied to `~/OneDrive/etr-golf-sims`.
 
 ### 2.2 Verify Google Sheet & Set Remaining Parameters
 After `humidity.py`, `update_sheet_courses.py`, and `scoring_baseline.py` have run, open the `round_config` tab and verify/set:
@@ -699,6 +730,7 @@ python scoring_baseline.py                       # Step 2: Scoring baselines + e
 python init_weekly.py                            # Step 3: Push tourney/event_id/course_id/round=0 to Sheet
 # Step 4: SG distributions arrive from sim_prep's cat_dists_player.py (verify freshness)
 python write_base_rates.py                       # Step 5: Base rates reference tab
+python hole_baselines.py                         # ETR only: exact-course hole profile
 
 # Pre-tournament sim (two-pass)
 python new_sim.py                                # First pass (pre_course_fit preds)

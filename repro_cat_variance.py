@@ -1,7 +1,7 @@
 """
 Independent reproduction of compute_sg_category_variance_analysis.
 Does NOT import scoring_baseline. Recomputes category_mults & category_skew
-from the DB for event 32 / min_year 2019 / tour 'pga'.
+from the DB for the exact physical course configured in sim_inputs.py.
 """
 import sqlite3
 from datetime import datetime
@@ -9,13 +9,17 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
+from sim_inputs import course_id, event_ids, start_yr
+try:
+    from sim_inputs import tour_override
+except ImportError:
+    tour_override = "pga"
 
 DG_HISTORICAL_DB = "C:/Users/mckin/OneDrive/dg_historical.db"
 
-# ---- This-week inputs (mirror task spec) ----
-event_id_list = [32]
-min_year = 2019
-tour_override = "pga"
+# ---- This-week inputs ----
+event_id_list = list(event_ids)  # reporting only; course_id is the history key
+min_year = start_yr
 
 CAT_COLS = ["sg_ott_adj", "sg_app_adj", "sg_arg_adj", "sg_putt_adj"]
 CAT_NAMES = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
@@ -55,14 +59,13 @@ def main():
     print("baseline_skew:", baseline_skew)
 
     # --- Step 2: player-year combos at this course ---
-    placeholders = ",".join("?" * len(event_id_list))
     player_year_query = f"""
         SELECT DISTINCT player_name, year, MIN(round_date) AS event_start
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
+        WHERE course_num = ? AND year >= ? AND tour = ?
         GROUP BY player_name, year
     """
-    params = list(event_id_list) + [min_year, tour_override]
+    params = [course_id, min_year, tour_override]
     player_years = pd.read_sql_query(player_year_query, conn, params=params)
     player_years["event_start"] = pd.to_datetime(player_years["event_start"])
     print(f"player-year combos at course: {len(player_years)}")
@@ -93,11 +96,11 @@ def main():
     event_sg_query = f"""
         SELECT player_name, year, {cat_cols_str}
         FROM player_rounds
-        WHERE event_id IN ({placeholders}) AND year >= ? AND tour = ?
+        WHERE course_num = ? AND year >= ? AND tour = ?
           AND sg_total_adj IS NOT NULL
     """
     event_sg = pd.read_sql_query(
-        event_sg_query, conn, params=list(event_id_list) + [min_year, tour_override]
+        event_sg_query, conn, params=[course_id, min_year, tour_override]
     )
     conn.close()
 
