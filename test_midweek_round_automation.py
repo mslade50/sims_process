@@ -1,6 +1,8 @@
 import os
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -224,6 +226,69 @@ class CourseCoordinateTests(unittest.TestCase):
             _load_course_coordinates(999999, 45.16, -93.235),
             (45.16, -93.235),
         )
+
+
+class ShotCollectorReadinessTests(unittest.TestCase):
+    @staticmethod
+    def _field():
+        return pd.DataFrame({
+            "player_name": ["player one", "player two", "withdrawn player"],
+            "r2_teetime": ["2026-08-14 07:00", "2026-08-14 07:10", None],
+        })
+
+    def test_requires_every_active_next_round_player_to_be_complete(self):
+        archive = pd.DataFrame({
+            "player_name": ["player one", "player two"],
+            "complete": [True, False],
+        })
+        config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
+        with patch("api_utils.fetch_img_player_rounds", return_value=archive):
+            with self.assertRaisesRegex(NotReady, "1/2 complete.*player two"):
+                automation._check_shot_collector_ready(
+                    config, self._field(), completed_round=1, target_round=2
+                )
+
+    def test_ignores_players_without_next_round_tee_times(self):
+        archive = pd.DataFrame({
+            "player_name": ["player one", "player two"],
+            "complete": [True, True],
+        })
+        config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
+        with patch("api_utils.fetch_img_player_rounds", return_value=archive):
+            active = automation._check_shot_collector_ready(
+                config, self._field(), completed_round=1, target_round=2
+            )
+
+        self.assertEqual(active, {"player one", "player two"})
+
+    def test_pin_high_coverage_fails_closed_after_terminal_collection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pin_high_r1.csv"
+            pd.DataFrame({
+                "event_key": ["pga:R2026027", "pga:R2026027"],
+                "player_name": ["player one", "player two"],
+                "n_approaches": [8, 0],
+                "coverage_status": ["full", "no_data"],
+            }).to_csv(path, index=False)
+
+            with self.assertRaisesRegex(PipelineFailure, "1/2.*player two"):
+                automation._validate_pin_high_coverage(
+                    path, {"player one", "player two"}, "pga:R2026027"
+                )
+
+    def test_pin_high_coverage_accepts_all_observed_active_players(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pin_high_r1.csv"
+            pd.DataFrame({
+                "event_key": ["pga:R2026027", "pga:R2026027"],
+                "player_name": ["player one", "player two"],
+                "n_approaches": [8, 3],
+                "coverage_status": ["full", "partial"],
+            }).to_csv(path, index=False)
+
+            automation._validate_pin_high_coverage(
+                path, {"player one", "player two"}, "pga:R2026027"
+            )
 
 
 class PredictionVerificationTests(unittest.TestCase):

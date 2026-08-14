@@ -8,10 +8,12 @@ Actions workflow fetches that JSON and invokes this coordinator.
 The coordinator is intentionally fail-closed:
   1. Require fresh, event-scoped next-round prices from BetCris and BetOnline.
   2. Require completed-round DataGolf stats and posted next-round tee times.
-  3. Fetch all remaining-round Open-Meteo dewpoint + AI multi-model wind.
-  4. Batch-write weather, advance the Sheet round pointer exactly once, and
+  3. Before R2, require terminal rich-shot collection and pin-high coverage for
+     every active player in the posted R2 field.
+  4. Fetch all remaining-round Open-Meteo dewpoint + AI multi-model wind.
+  5. Batch-write weather, advance the Sheet round pointer exactly once, and
      leave a durable Sheet status so a failed run can resume.
-  5. Run live_stats_engine.py --automation, then the full round_sim.py.
+  6. Run live_stats_engine.py --automation, then the full round_sim.py.
 
 Normal "not ready yet" checks exit 0 because the odds board will dispatch again.
 Pipeline failures after a transition starts exit non-zero and are retried on the
@@ -295,6 +297,132 @@ def _check_datagolf_ready(api_key: str, completed_round: int, target_round: int,
     return field
 
 
+def _normalized_player_names(values) -> set[str]:
+    return {
+        str(value).strip().lower()
+        for value in values
+        if str(value).strip() and str(value).strip().lower() != "nan"
+    }
+
+
+def _active_target_round_players(field: pd.DataFrame, target_round: int) -> set[str]:
+    tee_col = f"r{target_round}_teetime"
+    if "player_name" not in field.columns or tee_col not in field.columns:
+        raise PipelineFailure(
+            f"DataGolf R{target_round} field is missing player_name or {tee_col}"
+        )
+    tee_times = field[tee_col].replace("", None)
+    return _normalized_player_names(field.loc[tee_times.notna(), "player_name"])
+
+
+def _check_shot_collector_ready(
+    config: dict,
+    field: pd.DataFrame,
+    completed_round: int,
+    target_round: int,
+) -> set[str]:
+    """Require a terminal rich-shot archive row for every next-round player."""
+    from api_utils import fetch_img_player_rounds
+    from generate_pin_high_r1 import build_event_key
+
+    active_players = _active_target_round_players(field, target_round)
+    if not active_players:
+        raise NotReady(f"DataGolf R{target_round} active field is empty")
+
+    event_ids = config.get("event_ids") or [config.get("event_id")]
+    if len(event_ids) != 1 or event_ids[0] is None:
+        raise PipelineFailure(
+            f"Shot-collector readiness requires one active event: {event_ids}"
+        )
+    season = datetime.now().year
+    event_key = build_event_key(config.get("tour", "pga"), event_ids[0], season)
+    archive = fetch_img_player_rounds(
+        event_ids[0],
+        completed_round,
+        db_path=os.getenv("IMG_SHOT_DB_PATH"),
+        tour=config.get("tour", "pga"),
+        season=season,
+        event_key=event_key,
+    )
+    if archive is None or archive.empty:
+        raise NotReady(
+            f"Shot collector has no R{completed_round} archive for {event_key}"
+        )
+    if "player_name" not in archive.columns or "complete" not in archive.columns:
+        raise PipelineFailure(
+            f"Shot collector R{completed_round} archive is missing player_name/complete"
+        )
+
+    archive = archive.copy()
+    archive["player_key"] = archive["player_name"].map(
+        lambda value: str(value).strip().lower()
+    )
+    complete_values = archive["complete"].map(
+        lambda value: value is True
+        or str(value).strip().lower() in {"1", "true", "yes"}
+    )
+    complete_players = set(archive.loc[complete_values, "player_key"])
+    incomplete = sorted(active_players - complete_players)
+    if incomplete:
+        preview = ", ".join(incomplete[:12])
+        if len(incomplete) > 12:
+            preview += f", +{len(incomplete) - 12} more"
+        raise NotReady(
+            f"Shot collector R{completed_round} is incomplete for the R{target_round} "
+            f"field ({len(active_players) - len(incomplete)}/{len(active_players)} "
+            f"complete): {preview}"
+        )
+
+    print(
+        f"  Shot collector ready: {len(active_players)}/{len(active_players)} "
+        f"active players complete for {event_key} R{completed_round}"
+    )
+    return active_players
+
+
+def _validate_pin_high_coverage(
+    path: Path,
+    active_players: set[str],
+    event_key: str,
+) -> None:
+    """Fail closed when a complete archive did not map into the pin-high model."""
+    if not path.exists() or path.stat().st_size == 0:
+        raise PipelineFailure(f"{path.name} was not created")
+    frame = pd.read_csv(path)
+    required = {"event_key", "player_name", "n_approaches", "coverage_status"}
+    missing_columns = sorted(required - set(frame.columns))
+    if missing_columns:
+        raise PipelineFailure(
+            f"{path.name} is missing coverage columns: {missing_columns}"
+        )
+    event_keys = set(frame["event_key"].dropna().astype(str).str.strip())
+    if event_keys != {event_key}:
+        raise PipelineFailure(
+            f"{path.name} is for {sorted(event_keys)}, expected {event_key}"
+        )
+
+    frame = frame.copy()
+    frame["player_key"] = frame["player_name"].map(
+        lambda value: str(value).strip().lower()
+    )
+    approaches = pd.to_numeric(frame["n_approaches"], errors="coerce").fillna(0)
+    covered_players = set(frame.loc[approaches.gt(0), "player_key"])
+    missing_players = sorted(active_players - covered_players)
+    if missing_players:
+        preview = ", ".join(missing_players[:12])
+        if len(missing_players) > 12:
+            preview += f", +{len(missing_players) - 12} more"
+        raise PipelineFailure(
+            "Shot collection is terminal, but pin-high coverage/mapping is "
+            f"incomplete ({len(covered_players & active_players)}/"
+            f"{len(active_players)}): {preview}"
+        )
+    print(
+        f"  Pin-high coverage ready: {len(active_players)}/{len(active_players)} "
+        "active players observed"
+    )
+
+
 def _format_array(values) -> str:
     return ",".join(f"{float(value):g}" for value in values)
 
@@ -484,9 +612,33 @@ def run_pipeline(args) -> int:
     api_key = os.getenv("DATAGOLF_API_KEY", "").strip()
     if not api_key:
         raise PipelineFailure("DATAGOLF_API_KEY is not configured")
-    _check_datagolf_ready(
+    field = _check_datagolf_ready(
         api_key, completed_round, target_round, min_rows=args.min_datagolf_rows
     )
+
+    if (
+        completed_round == 1
+        and os.environ.get("LIVE_PIN_HIGH_ADJ") == "1"
+    ):
+        active_players = _check_shot_collector_ready(
+            config, field, completed_round, target_round
+        )
+        if args.dry_run:
+            print("  [dry-run] Would regenerate and validate full-field R1 pin-high")
+        else:
+            _run(
+                [sys.executable, "generate_pin_high_r1.py"],
+                "R1 pin-high adjustment generation",
+            )
+            from generate_pin_high_r1 import build_event_key
+
+            event_ids = config.get("event_ids") or [event_id]
+            event_key = build_event_key(
+                config.get("tour", "pga"), event_ids[0], datetime.now().year
+            )
+            _validate_pin_high_coverage(
+                ROOT / "pin_high_r1.csv", active_players, event_key
+            )
 
     from api_utils import fetch_event_weather_forecast, get_round_dates
 
@@ -570,15 +722,6 @@ def run_pipeline(args) -> int:
             f"  Sheet transition {action}: completed round R{completed_round}, "
             f"target sim R{target_round}"
         )
-
-        if (
-            completed_round == 1
-            and os.environ.get("LIVE_PIN_HIGH_ADJ") == "1"
-        ):
-            _run(
-                [sys.executable, "generate_pin_high_r1.py"],
-                "R1 pin-high adjustment generation",
-            )
 
         _run(
             [sys.executable, "live_stats_engine.py", "--automation"],
