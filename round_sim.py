@@ -5589,6 +5589,10 @@ def main():
             print(f"{'='*60}")
         except Exception as e:
             print(f"  [publish_sim_fairs] Warning: {e}")
+            if (os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or "").strip().lower() in (
+                "1", "true", "yes"
+            ):
+                raise
 
 
 if __name__ == "__main__":

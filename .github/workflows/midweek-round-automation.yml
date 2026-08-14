@@ -147,6 +147,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
           LIVE_PIN_HIGH_ADJ: '1'
+          REQUIRE_SIM_FAIRS_PUBLISH: '1'
           IMG_SHOT_COLLECTOR_ROOT: 'C:\Users\McKinley Slade\dev\golf_scraping-collector-prod'
           IMG_SHOT_DB_PATH: 'C:\Users\McKinley Slade\dev\golf_scraping\output\imgarena_shots_lean.sqlite3'
           GIT_AUTHOR_NAME: github-actions[bot]

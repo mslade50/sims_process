@@ -28,6 +28,7 @@ Hook: new_sim.py calls publish_sim_fairs.publish() at the end of a run
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -1152,15 +1153,15 @@ def build_payload() -> dict:
 BOARD_REPO = "mslade50/golf_scraping"
 
 
-def _dispatch_board_build(sha: str | None = None) -> None:
+def _dispatch_board_build(sha: str | None = None) -> bool:
     """Best-effort repository_dispatch to the board repo so a fairs publish always
     triggers one board build, even when it lands outside the board's cron window.
     (The Open 2026-07-19: R4 fairs published Sat night fell in the overnight cron
     gap; every Sunday run then gate-skipped mid-play, so the board served R3-era
     fairs all day.) The dispatched run still goes through the board's own mid-play
     gate, so extra fires are harmless. Never breaks a publish."""
-    import os
     import subprocess
+    import time
 
     import requests
 
@@ -1179,57 +1180,79 @@ def _dispatch_board_build(sha: str | None = None) -> None:
                        "board picks the fairs up on its next cron build")
         _alert("board dispatch SKIPPED: no GitHub token — fresh fairs wait for "
                "the next board cron (may miss a pre-freeze window)")
-        return
-    try:
-        # client_payload.sha pins the dispatched build's sims_process fetches to
-        # THIS push (the GitHub contents API can serve a pre-push cached copy
-        # for minutes after a push — the dispatched build then freezes the very
-        # stale fairs it was fired to replace).
-        body = {"event_type": "sim-fairs-published"}
-        if sha:
-            body["client_payload"] = {"sha": sha}
-        resp = requests.post(
-            f"https://api.github.com/repos/{BOARD_REPO}/dispatches",
-            json=body,
-            headers={"Authorization": f"Bearer {token}",
-                     "Accept": "application/vnd.github+json",
-                     "X-GitHub-Api-Version": "2022-11-28"},
-            timeout=15)
-        if resp.status_code == 204:
-            logger.info(f"board dispatch: triggered {BOARD_REPO} board build")
-        else:
-            logger.warning(f"board dispatch rejected (HTTP {resp.status_code}): "
-                           f"{resp.text[:120]} — board waits for its next cron")
-            _alert(f"board dispatch REJECTED (HTTP {resp.status_code}) — check the "
-                   f"PAT's dispatch permission on {BOARD_REPO}")
-    except Exception as e:
-        logger.warning(f"board dispatch failed (non-fatal): {e}")
-        _alert(f"board dispatch FAILED ({e}) — fresh fairs wait for the next cron")
+        return False
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            # client_payload.sha pins the dispatched build's sims_process fetches to
+            # THIS push (the GitHub contents API can serve a pre-push cached copy
+            # for minutes after a push — the dispatched build then freezes the very
+            # stale fairs it was fired to replace).
+            body = {"event_type": "sim-fairs-published"}
+            if sha:
+                body["client_payload"] = {"sha": sha}
+            resp = requests.post(
+                f"https://api.github.com/repos/{BOARD_REPO}/dispatches",
+                json=body,
+                headers={"Authorization": f"Bearer {token}",
+                         "Accept": "application/vnd.github+json",
+                         "X-GitHub-Api-Version": "2022-11-28"},
+                timeout=15)
+            if resp.status_code == 204:
+                logger.info(f"board dispatch: triggered {BOARD_REPO} board build")
+                return True
+            last_error = f"HTTP {resp.status_code}: {resp.text[:120]}"
+        except Exception as e:
+            last_error = str(e)
+        logger.warning(
+            f"board dispatch attempt {attempt}/3 failed ({last_error})"
+        )
+        if attempt < 3:
+            time.sleep(attempt)
+    _alert(f"board dispatch FAILED after 3 attempts ({last_error}) — fresh "
+           "fairs wait for the next board cron")
+    return False
 
 
-def _git_push(files=("sim_fairs.json",)) -> None:
+def _git_push(
+    files=("sim_fairs.json",), *, require_dispatch: bool = False, _rebuilds: int = 1
+) -> bool:
     """Publish the given repo-relative files to origin/main WITHOUT touching the
     local working tree, index, or branches. Builds one commit on top of origin/main
     via git plumbing and pushes it, so finishing a sim run can never rebase,
-    autostash, or wedge the live repo. On any failure it logs and skips.
+    autostash, or wedge the live repo. Automated runs can require the push and
+    downstream board dispatch to succeed; interactive runs retain best-effort mode.
 
     Note: local main is left behind by the published commit (working-tree files
     match what was pushed); a routine `git pull` fast-forwards it."""
-    import os
     import subprocess
     import tempfile
+    import time
 
     def git(*args, env=None):
         return subprocess.run(["git", "-C", str(PROJECT_ROOT), *args],
                               capture_output=True, text=True, env=env)
 
-    if git("fetch", "origin", "main").returncode != 0:
-        logger.warning("sim_fairs publish: git fetch failed; skipping")
-        return
+    fetch = None
+    for attempt in range(1, 4):
+        fetch = git("fetch", "origin", "main")
+        if fetch.returncode == 0:
+            break
+        logger.warning(f"sim publish fetch attempt {attempt}/3 failed")
+        if attempt < 3:
+            time.sleep(attempt)
+    if fetch is None or fetch.returncode != 0:
+        message = "sim_fairs publish: git fetch failed after 3 attempts"
+        logger.warning(message)
+        if require_dispatch:
+            raise RuntimeError(message)
+        return False
     base = git("rev-parse", "origin/main").stdout.strip()
     if not base:
         logger.warning("sim_fairs publish: no origin/main; skipping")
-        return
+        if require_dispatch:
+            raise RuntimeError("sim_fairs publish: no origin/main")
+        return False
 
     blobs = {}  # repo path -> blob, only for files that actually changed
     for fp in files:
@@ -1240,7 +1263,10 @@ def _git_push(files=("sim_fairs.json",)) -> None:
             blobs[fp] = blob
     if not blobs:
         logger.info("sim publish: nothing changed on origin/main")
-        return
+        dispatched = _dispatch_board_build(sha=base)
+        if require_dispatch and not dispatched:
+            raise RuntimeError("sim fairs are current but board dispatch failed")
+        return True
 
     # ── Never regress origin's fairs (2026-07-01 audit, freshness #2). Git push
     # here is last-writer-wins on CONTENT: a machine holding older sim artifacts
@@ -1290,7 +1316,9 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                        + (" (cross-event: set PUBLISH_ALLOW_EVENT_SWITCH=1 to force)" if _ev_switch else ""))
                 logger.warning(f"sim publish {msg}")
                 _alert(msg)
-                return
+                if require_dispatch:
+                    raise RuntimeError(msg)
+                return False
         # A machine with only PARTIAL sim outputs (e.g. no tournament h2h matrix
         # once the event is live) builds a valid, freshly-stamped payload that
         # would empty a market origin had populated. Rather than abort the WHOLE
@@ -1344,7 +1372,9 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                            f"(git: {(rehash.stderr or '').strip()[:120]})")
                     logger.warning(f"sim publish {msg}")
                     _alert(msg)
-                    return
+                    if require_dispatch:
+                        raise RuntimeError(msg)
+                    return False
                 blobs["sim_fairs.json"] = new_blob
                 # Mirror the merged payload to the local file so the working tree
                 # matches the pushed commit (the docstring's fast-forward invariant);
@@ -1358,7 +1388,10 @@ def _git_push(files=("sim_fairs.json",)) -> None:
                 logger.info(f"sim publish: carried origin markets forward {carried} "
                             f"— fresh local markets still published")
 
-    idx = os.path.join(tempfile.gettempdir(), f"sim_fairs_index_{os.getpid()}")
+    idx = os.path.join(
+        tempfile.gettempdir(),
+        f"sim_fairs_index_{os.getpid()}_{time.time_ns()}",
+    )
     try:
         env = {**os.environ, "GIT_INDEX_FILE": idx}
         if git("read-tree", base, env=env).returncode != 0:
@@ -1376,18 +1409,54 @@ def _git_push(files=("sim_fairs.json",)) -> None:
             # runners with no user.name/email) instead of a bare failure
             raise RuntimeError(
                 f"commit-tree failed: {(ct.stderr or '').strip()[:160]}")
-        p = git("push", "origin", f"{commit}:main")
-        if p.returncode == 0:
-            logger.info(f"Pushed {', '.join(blobs)} to origin/main")
-            _dispatch_board_build(sha=commit)
-        else:
-            err = (p.stderr or p.stdout).strip()[:160]
-            logger.warning(f"sim publish push rejected (retries next run): {err}")
-            _alert(f"push rejected — fairs on origin NOT updated, maker/board serve "
-                   f"old fairs until a publish lands: {err}")
+        pushed = False
+        last_error = ""
+        for attempt in range(1, 4):
+            p = git("push", "origin", f"{commit}:main")
+            if p.returncode == 0:
+                pushed = True
+                break
+            last_error = (p.stderr or p.stdout).strip()[:160]
+            logger.warning(
+                f"sim publish push attempt {attempt}/3 failed: {last_error}"
+            )
+            fetch = git("fetch", "origin", "main")
+            if fetch.returncode == 0:
+                remote = git("rev-parse", "origin/main").stdout.strip()
+                accepted = remote == commit or git(
+                    "merge-base", "--is-ancestor", commit, "origin/main"
+                ).returncode == 0
+                if accepted:
+                    logger.info("sim publish push was accepted despite client error")
+                    pushed = True
+                    break
+                if remote and remote != base and _rebuilds > 0:
+                    logger.info("origin/main advanced during publish; rebuilding commit")
+                    return _git_push(
+                        files,
+                        require_dispatch=require_dispatch,
+                        _rebuilds=_rebuilds - 1,
+                    )
+            if attempt < 3:
+                time.sleep(attempt)
+        if not pushed:
+            message = f"sim publish push failed after 3 attempts: {last_error}"
+            logger.warning(message)
+            _alert(f"{message} — maker/board still serve old fairs")
+            if require_dispatch:
+                raise RuntimeError(message)
+            return False
+        logger.info(f"Pushed {', '.join(blobs)} to origin/main")
+        dispatched = _dispatch_board_build(sha=commit)
+        if require_dispatch and not dispatched:
+            raise RuntimeError("sim fairs pushed but board dispatch failed")
+        return True
     except Exception as e:
+        if require_dispatch:
+            raise
         logger.warning(f"sim publish failed ({e}); skipping push")
         _alert(f"publish failed ({e}) — fairs on origin NOT updated")
+        return False
     finally:
         try:
             if os.path.exists(idx):
@@ -1483,7 +1552,10 @@ def publish(push: bool = True) -> dict:
         logger.warning(f"matchup tape release upload failed (non-fatal): {e}")
 
     if push:
-        _git_push(files)
+        strict_publish = (
+            os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or ""
+        ).strip().lower() in ("1", "true", "yes")
+        _git_push(files, require_dispatch=strict_publish)
     return payload
 
 

@@ -65,6 +65,7 @@ _git(work, "push", "origin", "main")
 psf.PROJECT_ROOT = work
 alerts = []
 psf._alert = lambda text: alerts.append(text)
+psf._dispatch_board_build = lambda sha=None: True
 
 
 def attempt(payload):
@@ -84,11 +85,11 @@ got = attempt(_payload(None))
 eq("unstamped-local refused", got["sim_run_at"], T1)
 eq("unstamped-local alerted", len(alerts), 1)
 
-# 3. Shrink: fresher stamp but top_5 emptied (same event) — refused.
+# 3. Shrink: fresher stamp but top_5 emptied — carry origin forward.
 got = attempt(_payload(T2, top5=False))
-eq("shrink refused (top_5 kept on origin)", len(got["outrights"]["top_5"]), 2)
-eq("shrink alerted", len(alerts), 1)
-eq("shrink alert names market", "top_5" in alerts[0], True)
+eq("shrink backfilled (top_5 kept on origin)", len(got["outrights"]["top_5"]), 2)
+eq("shrink backfill does not alert", len(alerts), 0)
+eq("shrink provenance names market", "outrights.top_5" in got["carried_from_origin"], True)
 
 # 4. Shrink on a DIFFERENT event (rotation): allowed.
 got = attempt(_payload(T2, top5=False, event_id=31))
