@@ -55,11 +55,19 @@ def resolve_db_path(value: str | Path | None = None) -> Path:
     return Path(configured).expanduser().resolve() if configured else default_db_path()
 
 
+def _readonly_uri(path: Path) -> str:
+    # The collector owns and checkpoints the WAL. ``immutable=1`` prevents a
+    # read-only service account from needing directory write access merely to
+    # create SQLite -wal/-shm sidecars. At worst an overlapping burst remains
+    # invisible until its final checkpoint, which keeps readiness fail-closed.
+    return f"{path.as_uri()}?mode=ro&immutable=1"
+
+
 def _connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     path = resolve_db_path(db_path)
     if not path.is_file():
         raise FileNotFoundError(path)
-    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=30)
+    connection = sqlite3.connect(_readonly_uri(path), uri=True, timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
     return connection

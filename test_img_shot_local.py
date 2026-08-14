@@ -2,7 +2,12 @@ import csv
 import json
 import sqlite3
 
-from img_shot_local import read_player_rounds, read_player_shots, write_player_crosswalk
+from img_shot_local import (
+    _readonly_uri,
+    read_player_rounds,
+    read_player_shots,
+    write_player_crosswalk,
+)
 
 
 def build_db(path):
@@ -52,7 +57,10 @@ def build_db(path):
         [
             ("old", json.dumps({"archive_adapter": "rich_numbered_strokes_course_aware_v2"})),
             ("raw", json.dumps({"archive_adapter": "rich_numbered_strokes_course_aware_v2"})),
-            ("signal", json.dumps({"status": "provisional_calibration_required"})),
+            ("signal", json.dumps({
+                "status": "validated_pga_2020_2024_plus_2026",
+                "method": "predictive_skill_pga_validated_v2",
+            })),
         ],
     )
     row = (
@@ -83,6 +91,12 @@ def build_db(path):
     )
     connection.commit()
     connection.close()
+
+
+def test_readonly_uri_does_not_require_sqlite_sidecar_writes(tmp_path):
+    uri = _readonly_uri((tmp_path / "shots.sqlite3").resolve())
+    assert "mode=ro" in uri
+    assert "immutable=1" in uri
 
 
 def test_reads_newest_player_and_signal_models(tmp_path):
