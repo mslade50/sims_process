@@ -4,7 +4,9 @@
   "year": 2026,
   "files": [
     "model_predictions_r2.csv",
+    "model_predictions_r3.csv",
     "r1_live_model.csv",
+    "r2_live_model.csv",
     "sg_dist_player.csv",
     "simulated_probs.csv",
     "simulated_probs_live.csv",
