@@ -49,6 +49,11 @@ from score_centering import (
     expected_field_score,
     validate_field_relative_predictions,
 )
+from forecast_feedback import (
+    forecast_feedback,
+    round_scoring_result,
+    single_published_forecast,
+)
 from r1_prediction_artifact import load_matching_r1_predictions
 
 load_dotenv()
@@ -2132,7 +2137,8 @@ def _write_param_to_sheet(ws, all_data, param_name, value):
 
 def write_actuals_to_sheet(round_num):
     """
-    Write realized weather actuals for a completed round to the config tab.
+    Write forecast accuracy and realized-weather diagnostics for a completed
+    round to the config tab.
 
     Steps:
       1. Read current dew array for this round (= forecast dew before refresh)
@@ -2140,8 +2146,10 @@ def write_actuals_to_sheet(round_num):
       3. Read refreshed dew array (= realized dew)
       4. Read realized_wind, dewpoint_base, wind_override, dew_calculation from config
       5. Read base_score and field_adj from pre-tourney breakdown (cols V-W)
-      6. Compute expected score; fetch actual scoring avg; compute delta
-      7. Write row to sheet
+      6. Read the durable published pre-round forecast
+      7. Fetch actual scoring avg and compute actual - published forecast
+      8. Retain the realized-weather structural baseline as a diagnostic only
+      9. Write row to sheet
     """
     from sheets_storage import get_spreadsheet
     from sheet_config import load_config
@@ -2179,9 +2187,8 @@ def write_actuals_to_sheet(round_num):
     realized_wind = config.get(f"realized_wind_r{round_num}")
     dewpoint_base = config.get("dewpoint_base", 0.0) or 0.0
     # wind_override == 0 means "use the computed blend" — the raw value is NOT
-    # the factor. Using it directly zeroed wind_impact on blend-mode weeks, so
-    # realized wind leaked into the delta and the difficulty feedback would
-    # re-apply it on top of future rounds' own wind terms (double count).
+    # the factor. The correct factor keeps the realized-weather structural
+    # diagnostic interpretable even though forecast feedback no longer uses it.
     from api_utils import compute_wind_factor
     wind_factor = compute_wind_factor(
         event_ids, config.get("wind_override", 0.0) or 0.0, baseline_wind,
@@ -2234,12 +2241,22 @@ def write_actuals_to_sheet(round_num):
     except (ValueError, IndexError, TypeError):
         print(f"  [actuals] Could not read base_score/field_adj from pre-tourney breakdown")
 
-    # 6. Compute expected and actual
+    # 6. Compute the realized-weather structural baseline. This remains useful
+    # for diagnosis, but is not the forecast whose calibration we update.
     wind_impact = realized_wind * wind_factor
     dew_impact = (realized_dew - dewpoint_base) * dew_calc if dewpoint_base else 0.0
 
-    # base_score is already the absolute baseline (not relative to par)
-    expected_score = base_score + field_adj + wind_impact + dew_impact
+    # Updating a later round does not overwrite prior expected_score_rN values,
+    # so this is the durable forecast actually published before the round.
+    # Reject multi-course lists because they need player-weighted aggregation.
+    published_forecast = single_published_forecast(
+        config.get(f"expected_score_r{round_num}")
+    )
+    if published_forecast is None:
+        print(
+            f"  [actuals] No single published R{round_num} forecast is available; "
+            "forecast feedback will be blank"
+        )
 
     # Fetch actual scoring average from DataGolf.
     # The live-tournament-stats endpoint has no absolute "score" field; the
@@ -2255,27 +2272,54 @@ def write_actuals_to_sheet(round_num):
     except Exception as e:
         print(f"  [actuals] Could not fetch live scores: {e}")
 
-    delta = (actual_score - expected_score) if actual_score is not None else None
+    scoring = round_scoring_result(
+        published_forecast=published_forecast,
+        actual_score=actual_score,
+        base_score=base_score,
+        field_adjustment=field_adj,
+        wind_impact=wind_impact,
+        dew_impact=dew_impact,
+    )
+    forecast_miss = scoring["forecast_miss"]
+    structural_baseline = scoring["structural_baseline"]
+    structural_residual = scoring["structural_residual"]
 
     print(f"  [actuals] R{round_num}: wind={realized_wind:.1f}, "
-          f"expected={expected_score:.1f}, actual={actual_score if actual_score else 'N/A'}, "
-          f"delta={delta if delta is not None else 'N/A'}")
+          f"published={published_forecast if published_forecast is not None else 'N/A'}, "
+          f"actual={actual_score if actual_score is not None else 'N/A'}, "
+          f"miss={forecast_miss if forecast_miss is not None else 'N/A'}")
+    print(
+        f"  [actuals] diagnostic only: realized-weather structural baseline="
+        f"{structural_baseline:.3f}, residual="
+        f"{structural_residual if structural_residual is not None else 'N/A'}"
+    )
 
-    # 7. Write to sheet (row = 10 + round_num, cols U-AC)
+    # 7. Write to sheet. AC remains the feedback input column, but now holds
+    # forecast miss. AD/AE preserve the former structural diagnostic explicitly.
     import gspread
     COL_U = 21
     write_row = 10 + round_num  # R1=11, R2=12, etc.
 
+    headers = [
+        "Round", "Realized Wind", "Forecast Dew", "Realized Dew",
+        "Wind Impact", "Dew Impact", "Published Forecast", "Actual",
+        "Forecast Miss", "Structural Wx Baseline", "Structural Residual",
+    ]
     cells = [
+        gspread.Cell(row=10, col=COL_U + offset, value=header)
+        for offset, header in enumerate(headers)
+    ] + [
         gspread.Cell(row=write_row, col=COL_U, value=f"R{round_num}"),
         gspread.Cell(row=write_row, col=COL_U + 1, value=round(realized_wind, 1)),
         gspread.Cell(row=write_row, col=COL_U + 2, value=round(forecast_dew, 1)),
         gspread.Cell(row=write_row, col=COL_U + 3, value=round(realized_dew, 1)),
         gspread.Cell(row=write_row, col=COL_U + 4, value=round(wind_impact, 3)),
         gspread.Cell(row=write_row, col=COL_U + 5, value=round(dew_impact, 3)),
-        gspread.Cell(row=write_row, col=COL_U + 6, value=round(expected_score, 1) if expected_score else ""),
-        gspread.Cell(row=write_row, col=COL_U + 7, value=round(actual_score, 2) if actual_score else ""),
-        gspread.Cell(row=write_row, col=COL_U + 8, value=round(delta, 2) if delta is not None else ""),
+        gspread.Cell(row=write_row, col=COL_U + 6, value=round(published_forecast, 1) if published_forecast is not None else ""),
+        gspread.Cell(row=write_row, col=COL_U + 7, value=round(actual_score, 2) if actual_score is not None else ""),
+        gspread.Cell(row=write_row, col=COL_U + 8, value=round(forecast_miss, 2) if forecast_miss is not None else ""),
+        gspread.Cell(row=write_row, col=COL_U + 9, value=round(structural_baseline, 2)),
+        gspread.Cell(row=write_row, col=COL_U + 10, value=round(structural_residual, 2) if structural_residual is not None else ""),
     ]
     ws.update_cells(cells, value_input_option="USER_ENTERED")
     print(f"  [actuals] Wrote R{round_num} actuals to row {write_row}")
@@ -2598,48 +2642,52 @@ def update_expected_scores(completed_round, sync_primary=False):
     except Exception as exc:
         print(f"  WARNING: Could not read dewpoint_base — dew effect disabled ({exc})")
 
-    # 4b. In-week difficulty feedback: shift future-round expectations by a
-    # fraction of the mean realized delta (actual - expected, from the actuals
-    # rows this engine writes to cols U-AC). Realized wind/dew sit on the
-    # expected side of that delta, so it isolates course-difficulty surprise.
-    # Weight grows with evidence: 50% after R1, 60% after R2, 70% after R3.
-    DELTA_WEIGHTS = {1: 0.5, 2: 0.6, 3: 0.7}
+    # 4b. In-week forecast-error feedback: shift future-round expectations by
+    # a fraction of the mean miss against the forecasts actually published for
+    # completed rounds. Do not substitute a hindsight structural baseline; the
+    # user-facing forecast is the quantity whose calibration we update.
     delta_adj = 0.0
     try:
         from sheets_storage import get_spreadsheet as _get_ss
 
         if spreadsheet is None:
             spreadsheet = _get_ss()
-        actual_rows = spreadsheet.worksheet("round_config").get("U11:AC14")
+        actual_grid = spreadsheet.worksheet("round_config").get("U10:AC14")
+        header = actual_grid[0] if actual_grid else []
+        if len(header) < 9 or str(header[8]).strip().lower() != "forecast miss":
+            raise RuntimeError(
+                "round actuals use the legacy structural Delta column; "
+                "backfill Published Forecast / Forecast Miss before updating"
+            )
+        actual_rows = actual_grid[1:]
         deltas = []
         for rnd in range(1, completed_round + 1):
             row = actual_rows[rnd - 1] if len(actual_rows) >= rnd else []
             try:
                 d = float(row[8])
             except (IndexError, TypeError, ValueError):
-                print(f"  WARNING: no usable R{rnd} delta in actuals row — skipping it")
+                print(f"  WARNING: no usable R{rnd} forecast miss; skipping it")
                 continue
             if abs(d) > 5:
-                print(f"  WARNING: ignoring implausible R{rnd} delta {d:+.2f}")
+                print(f"  WARNING: ignoring implausible R{rnd} forecast miss {d:+.2f}")
                 continue
             deltas.append(d)
         if deltas:
-            # weight by deltas actually available, not rounds elapsed — after R3
-            # with only one usable delta, one noisy number shouldn't get 70%
-            weight = DELTA_WEIGHTS.get(len(deltas), 0.7)
-            delta_adj = round(weight * (sum(deltas) / len(deltas)), 3)
-            print(f"  Difficulty feedback: deltas {['%+.2f' % d for d in deltas]} "
+            # Weight by usable misses, not rounds elapsed; one usable forecast
+            # should not receive a later round's higher evidence weight.
+            delta_adj, weight = forecast_feedback(deltas)
+            print(f"  Forecast feedback: misses {['%+.2f' % d for d in deltas]} "
                   f"-> {weight:.0%} x mean = {delta_adj:+.3f}")
         else:
-            print("  Difficulty feedback: no realized deltas yet")
+            print("  Forecast feedback: no completed-round misses yet")
     except Exception as exc:
-        print(f"  WARNING: difficulty feedback skipped ({exc})")
+        print(f"  WARNING: forecast feedback skipped ({exc})")
 
     # 5. Compute for future rounds
     future_rounds = range(completed_round + 1, 5)
     adjusted = {}
 
-    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'DeltaFb':>8} | {'Expected':>8}")
+    print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'Fcst Fb':>8} | {'Expected':>8}")
     print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
 
     for rnd in future_rounds:
