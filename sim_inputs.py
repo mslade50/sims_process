@@ -38,9 +38,10 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [27]
-course_id = 513
-tourney = 'st_jude'
+event_ids = [28]
+# DataGolf's 2026 Bellerive identity; the 2018 PGA is stored as course 534.
+course_id = 679
+tourney = 'bmw'
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -61,7 +62,7 @@ ingest_events = []
 #     {"tour": "pga", "event_ids": [524], "years": [2026]},
 #     {"tour": "kft", "event_ids": [26], "years": [2026]},
 # ]
-ingest_event_ids = [13]
+ingest_event_ids = [27]
 ingest_tour = 'pga'
 ingest_years = [2026]
 course_par = 70
