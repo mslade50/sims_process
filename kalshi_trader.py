@@ -261,8 +261,13 @@ def compute_orders(
         min_edge = MIN_EDGE.get(mtype, MIN_EDGE_OUTRIGHT)
 
         # Determine side
-        # price_cents = the yes_price we send to Kalshi API
-        # cost_cents  = what we actually pay per contract (= price for YES, 100-price for NO)
+        # price_cents = the SIDE'S OWN limit price in cents. KalshiClient.
+        # place_order interprets it that way (it sends yes_price =
+        # 100 - price_cents when side == 'no'), so for NO bets price_cents
+        # must be the NO price. The old code computed it in YES terms and
+        # posted NO at ~sim_prob cents instead of ~(1 - sim_prob) — intended
+        # NO exposure essentially never filled (2026-08 audit).
+        # cost_cents = what we pay per contract = the side's own price.
         if edge >= min_edge:
             side = "yes"
             # Post at fair - 0.5pp to retain minimum edge on fill
@@ -274,11 +279,10 @@ def compute_orders(
             # NO side: edge = mid - sim_prob (we think YES is overpriced)
             side = "no"
             edge = (mid - sim_prob) * 100.0
-            # Our NO fair value in yes_price terms: sim_prob + 0.5pp
-            # (posting YES side higher = cheaper NO for us)
-            price_cents = math.ceil((sim_prob + 0.005) * 100)
+            # NO fair = 1 - sim_prob; post at fair - 0.5pp (NO terms)
+            price_cents = math.floor(((1.0 - sim_prob) - 0.005) * 100)
             # Skip if no room — NO ask = 1 - YES bid
-            no_cost = (100 - price_cents) / 100.0
+            no_cost = price_cents / 100.0
             no_ask = 1.0 - bid
             if no_ask <= no_cost:
                 continue
@@ -288,11 +292,8 @@ def compute_orders(
         # Clamp price
         price_cents = max(1, min(99, price_cents))
 
-        # Cost per contract: what we actually pay
-        if side == "yes":
-            cost_cents = price_cents
-        else:
-            cost_cents = 100 - price_cents
+        # Cost per contract: the side's own price (both YES and NO)
+        cost_cents = price_cents
         cost_dollars = cost_cents / 100.0
 
         # Kelly sizing (based on cost, not yes_price)
@@ -327,17 +328,23 @@ def compute_orders(
             try:
                 ob = client.get_orderbook(ticker)
                 _time.sleep(0.05)
+                # get_orderbook returns DOLLAR prices (0.0-1.0). The old cents
+                # math compared 100 - 0.001 = 99.999 against a cents threshold,
+                # so no level ever qualified, depth == 0, and every proposed
+                # order was silently dropped (2026-08 audit).
                 yes_levels = ob.get("yes", [])
                 no_levels = ob.get("no", [])
 
                 if side == "yes":
-                    max_yes_cents = int((sim_prob - EDGE_RETAIN) * 100)
+                    # Fillable YES depth = resting NO orders whose implied YES
+                    # price (1 - no_price) keeps our retained edge.
+                    max_yes = sim_prob - EDGE_RETAIN
                     depth = sum(qty for (no_price, qty) in no_levels
-                                if (100 - no_price) <= max_yes_cents)
+                                if (1.0 - no_price) <= max_yes)
                 else:
-                    max_no_cents = int(((1 - sim_prob) - EDGE_RETAIN) * 100)
+                    max_no = (1.0 - sim_prob) - EDGE_RETAIN
                     depth = sum(qty for (yes_price, qty) in yes_levels
-                                if (100 - yes_price) <= max_no_cents)
+                                if (1.0 - yes_price) <= max_no)
 
                 if depth is not None and depth > 0:
                     contracts = min(contracts, depth)

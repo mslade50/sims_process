@@ -185,17 +185,24 @@ class KalshiClient:
         data = self._get(f"/markets/{ticker}/orderbook", params=params)
         ob = data.get("orderbook", data.get("orderbook_fp", data))
 
-        def parse_levels(raw):
+        def parse_levels(raw, scale):
             levels = []
             for item in (raw or []):
                 if isinstance(item, list) and len(item) == 2:
-                    price = float(item[0])          # keep as dollars (full precision)
+                    price = float(item[0]) * scale  # normalized to dollars
                     qty = int(float(item[1]))
                     levels.append((price, qty))
             return levels
 
-        yes_levels = parse_levels(ob.get("yes_dollars") or ob.get("yes", []))
-        no_levels = parse_levels(ob.get("no_dollars") or ob.get("no", []))
+        # Contract: ALWAYS dollars. The legacy 'yes'/'no' shape carries integer
+        # cents and must be scaled — without this the function's unit was
+        # shape-dependent (2026-08 audit note).
+        raw_yes = ob.get("yes_dollars")
+        raw_no = ob.get("no_dollars")
+        yes_levels = parse_levels(raw_yes, 1.0) if raw_yes is not None \
+            else parse_levels(ob.get("yes", []), 0.01)
+        no_levels = parse_levels(raw_no, 1.0) if raw_no is not None \
+            else parse_levels(ob.get("no", []), 0.01)
 
         return {"yes": yes_levels, "no": no_levels}
 

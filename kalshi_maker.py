@@ -225,12 +225,26 @@ def _authed_request(method, path, json_body=None):
 
 
 def _get_markets(series_ticker):
+    """Fetch all open markets for a series, with pagination + 429 backoff.
+
+    Without the backoff (same pattern as kalshi_client.get_markets), a burst
+    throttle on page 2+ raised out of scan() as a generic fetch failure, the
+    series contributed zero markets, and under --live reconcile_and_post then
+    CANCELLED every resting quote in the series as "stale" — a routine 429
+    became a cancel/repost oscillator on real orders (2026-08 audit).
+    """
     out, cursor = [], None
     while True:
         params = {"limit": 200, "status": "open", "series_ticker": series_ticker}
         if cursor:
             params["cursor"] = cursor
-        r = _client.get(f"{KALSHI_API}/markets", params=params)
+        r = None
+        for attempt in range(5):
+            r = _client.get(f"{KALSHI_API}/markets", params=params)
+            if r.status_code != 429:
+                break
+            wait = float(r.headers.get("retry-after", 1.0)) * (attempt + 1)
+            time.sleep(min(wait, 5.0))
         r.raise_for_status()
         data = r.json()
         mkts = data.get("markets", [])
@@ -648,6 +662,39 @@ def load_matchup_sim_data(allow_pre_fallback=False):
         return final_scores, player_names
 
     return None, None
+
+
+def _load_round_sim_cache():
+    """Load the latest per-round score sim (round_sim's sim_cache_r{N}) for
+    per-round H2H fairs. Returns (sim_dict, sim_round) or (None, None).
+
+    Mirrors round_sim.load_sim_cache's format (players x sims parquet with a
+    player_name index + _meta.json sidecar) without importing round_sim (its
+    module top-level runs the sheet/config load). A stale cache from an
+    earlier round is naturally inert: its sim_round won't match the current
+    round's tickers, so scan_matchups quotes nothing rather than misprices.
+    """
+    import glob as _glob
+    import json as _json
+    metas = sorted(_glob.glob(os.path.join(".", tourney, "sim_cache_r*_meta.json")))
+    if not metas:
+        return None, None
+    meta_path = metas[-1]
+    parquet_path = meta_path.replace("_meta.json", ".parquet")
+    if not os.path.exists(parquet_path):
+        return None, None
+    try:
+        with open(meta_path) as f:
+            meta = _json.load(f)
+        df = pd.read_parquet(parquet_path)
+        sim_dict = {player: df.loc[player].values for player in df.index}
+        mt = re.search(r"sim_cache_r(\d)", os.path.basename(meta_path))
+        sim_round = int(meta.get("sim_round", int(mt.group(1)) if mt else 0))
+        print(f"    [matchups] cache {parquet_path} saved {meta.get('saved_at', '?')}")
+        return sim_dict, sim_round
+    except Exception as e:
+        print(f"    [matchups] round sim cache load failed: {e!r}")
+        return None, None
 
 
 def matchup_sim_prob(p1, p2, final_scores, name_to_idx):
@@ -1257,17 +1304,21 @@ def scan_matchups():
     """
     import maker_quotes
     h2h_kelly_min = maker_quotes.KELLY_MIN_BY_TYPE["h2h"]
-    final_scores, player_names = load_matchup_sim_data(
-        allow_pre_fallback=_allow_pre_matchup_fallback
-    )
-    if final_scores is None:
-        live_fs = f"final_scores_live_{tourney}.npy"
-        print(f"    [matchups] no live final_scores at {live_fs} — skipping. "
-              f"round_sim.py must persist final_scores_live_{{tourney}}.npy "
-              f"to enable mid-event matchup pricing. "
-              f"(Use --allow-pre-matchup pre-tournament only.)")
+
+    # KXPGAH2H is a PER-ROUND series ("only the golfers' scores from that
+    # specific round will be considered ... regardless of their cumulative
+    # tournament score"), so fairs MUST come from round_sim's single-round
+    # score sim (sim_cache_r{N}), never the tournament final-total matrix —
+    # mid-event the totals embed the current stroke gap and misprice the
+    # round by tens of pp (2026-08 audit HIGH). Same source and scoping as
+    # kalshi_ancillary's H2H pricing.
+    sim_dict, sim_round = _load_round_sim_cache()
+    if sim_dict is None:
+        print(f"    [matchups] no round sim cache ({tourney}/sim_cache_r*.parquet) "
+              f"— skipping H2H. Run round_sim first; tournament final totals "
+              f"are the wrong fair for per-round markets.")
         return []
-    name_to_idx = {p: i for i, p in enumerate(player_names)}
+    print(f"    [matchups] round sim cache: R{sim_round}, {len(sim_dict)} players")
 
     try:
         all_mkts = _get_markets(MATCHUP_SERIES)
@@ -1276,8 +1327,24 @@ def scan_matchups():
         return []
     print(f"    Fetched {len(all_mkts)} H2H markets")
 
-    all_mkts = _apply_event_filter(all_mkts, set(name_to_idx.keys()), label="matchups")
+    # Event + round scoping. NOT _apply_event_filter: every H2H pair carries
+    # its own event code, so sim-player-overlap counting caps at 2 and the
+    # filter fail-closed on every run (2026-08 audit — this silently killed
+    # the H2H path AND masked the wrong-fair bug above). Scope instead by
+    # tournament match on title/rules/event_ticker, ticker round == the round
+    # the cache holds, and both players resolving into the current sim field.
+    from kalshi_ancillary import _match_tournament, h2h_prob
+    import kalshi_match as _km
+    all_mkts = _match_tournament(all_mkts, tourney)
 
+    def _ticker_round(m):
+        mt = re.search(r"R(\d)", m.get("ticker", ""))
+        return int(mt.group(1)) if mt else None
+
+    all_mkts = [m for m in all_mkts if _ticker_round(m) == sim_round]
+    print(f"    [matchups] {len(all_mkts)} R{sim_round} markets for {tourney}")
+
+    field_set = set(sim_dict.keys())
     candidates = []
     skipped_name = 0
     for m in all_mkts:
@@ -1291,12 +1358,20 @@ def scan_matchups():
         if bid <= 0 or ask <= 0:
             continue
 
-        player_raw, opp_raw = _extract_matchup(title)
+        sub = m.get("yes_sub_title") or title
+        mt = re.match(r"(?:Will\s+)?(.+?)\s+beats?\s+(.+?)\s+in the\b", sub)
+        if mt:
+            player_raw, opp_raw = mt.group(1).strip(), mt.group(2).strip()
+        else:
+            player_raw, opp_raw = _extract_matchup(title)
         if not player_raw or not opp_raw:
             continue
-        player = _norm(player_raw)
-        opp = _norm(opp_raw)
-        sim_yes = matchup_sim_prob(player, opp, final_scores, name_to_idx)
+        player = _km.norm_name(player_raw, name_replacements, field_set)
+        opp = _km.norm_name(opp_raw, name_replacements, field_set)
+        if player not in sim_dict or opp not in sim_dict:
+            skipped_name += 1
+            continue
+        sim_yes = h2h_prob(sim_dict, player, opp)
         if sim_yes is None or sim_yes <= 0:
             skipped_name += 1
             continue
