@@ -136,6 +136,13 @@ after pulling any change to `rust/src/`, the kernel must be rebuilt or the sims
 silently keep running old logic while the Python fallbacks run new logic
 (this exact drift shipped a stale 0.1.0 kernel once).
 
+**Current minimum: 0.3.0** (2026-08-18, week-level latent — `run_pretournament`
+grew a trailing `week_latent_sd` arg). A machine with an older kernel prints a
+`[rust] WARNING ... TypeError` on every new_sim run and falls back to the
+Python cascade (correct fairs, ~20s slower). Rebuild note with copy-paste
+commands: `rust/README.md` (top banner). Verify:
+`python -c "import sims_kernel; print(sims_kernel.version())"` → `0.3.0`.
+
 Update ritual (maturin is typically NOT installed; use cargo directly):
 1. `cd rust && cargo test --release` (expect all green)
 2. `cargo build --release --features pyo3/extension-module`

@@ -1,5 +1,39 @@
 # `sims_kernel` — Rust Monte Carlo kernel
 
+> ## ⚠ REBUILD REQUIRED — kernel 0.3.0 (2026-08-18, week-level latent)
+>
+> `run_pretournament` grew a trailing `week_latent_sd` argument (the shared
+> week-level form draw; see CLAUDE.md "Week-level form latent"). **`git pull`
+> does NOT update your installed kernel** — until you rebuild, every
+> `new_sim.py` run on this machine prints
+> `[rust] WARNING: Rust kernel unavailable/failed (TypeError...)` and falls
+> back to the Python cascade. The fallback DOES include the latent, so fairs
+> are still correct — it's just ~20s slower and the warning is noise.
+>
+> **Rebuild (machine with cargo):**
+> ```bash
+> cd rust
+> cargo test --release                                  # expect 27 green
+> cargo build --release --features pyo3/extension-module
+> python -c "import sims_kernel, pathlib; print(pathlib.Path(sims_kernel.__file__).parent)"
+> # back up, then overwrite <that dir>/sims_kernel.pyd with:
+> #   rust/target/release/sims_kernel.dll  (rename to sims_kernel.pyd)
+> python -c "import sims_kernel; print(sims_kernel.version(), sims_kernel.selftest())"
+> # expect: 0.3.0 True
+> ```
+>
+> **No cargo on the machine?** The `.pyd` is an abi3 Windows-x64 binary —
+> copy the freshly built `sims_kernel.pyd` from a machine that has rebuilt
+> (e.g. the main dev box) straight over your site-packages copy, then run the
+> version/selftest check above.
+>
+> **Verify after installing:** `python rust/fixtures/verify_cascade_against_prod.py bmw`
+> (uses the committed BMW fixture + sha sidecar; expect transcription OK +
+> all four statistical gates OK). Note for future fixture captures: run with
+> `--no-week-latent` and pin the sha from the ROOT `final_scores_{t}.npy`
+> (the event-dir cache copy is saved AFTER the totals skew top-up and is not
+> a valid bit-for-bit oracle).
+
 Statistical-equivalence port of the `new_sim.py` / `round_sim.py` numerical kernels.
 See `../RUST_MIGRATION_PLAN.md` for the full plan, parity targets, and rollout phases.
 
