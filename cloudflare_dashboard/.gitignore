@@ -44,7 +44,7 @@ yarn-error.log*
 /tsconfig.tsbuildinfo
 /McKinley
 
-# Unused starter surfaces retained locally until cleanup is approved
+# Prevent unused starter surfaces from being reintroduced
 /app/_sites-preview/
 /app/chatgpt-auth.ts
 /db/
