@@ -20,6 +20,14 @@ npx tsc --noEmit --incremental false
 npm test
 ```
 
+Private Cloudflare deployment (uses the authenticated Wrangler account):
+
+```powershell
+npm run deploy:cloudflare
+```
+
+The direct Cloudflare deployment intentionally omits an R2 binding and serves the packaged JSON snapshot. Its `workers.dev` route is protected by a Worker-specific, deny-by-default Cloudflare Access application; only members matched by an explicit Allow policy can sign in. Preview URLs remain disabled. This stays within the Workers/static-assets free tier at normal dashboard traffic levels and avoids provisioning storage until live snapshot uploads are needed.
+
 ## Architecture
 
 The interface runs on [vinext](https://github.com/cloudflare/vinext) and a Cloudflare Worker. Static snapshots make a first deployment immediately usable; R2 can replace any snapshot at the same `data/` key without rebuilding the interface.
