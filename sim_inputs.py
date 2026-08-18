@@ -94,6 +94,7 @@ tee_time_end="1:00"
 
 #any names that cause trouble, want to ensure consistency
 name_replacements = {
+    'chacarra, eugenio': 'lopez-chacarra, eugenio',
     'echavarria, nico': 'echavarria, nicolas',
     'norgaard, niklas': 'norgaard moller, niklas',
     'moller, niklas norgaard': 'norgaard moller, niklas',

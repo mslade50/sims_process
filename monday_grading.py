@@ -155,8 +155,11 @@ def _count_ungraded(spreadsheet, event_id):
     import time
 
     # Include "Live" — exchange/live finish bets land there and must not be
-    # skipped just because the standard tabs are already graded.
-    tabs = ["Tournament Matchups", "Round Matchups", "Finish Positions", "Live"]
+    # skipped just because the standard tabs are already graded. "Round 3-Balls"
+    # and "Score Edges" were missing from this scan (2026-08 audit): Score Edges
+    # ran ungraded for 18 weeks with this check green.
+    tabs = ["Tournament Matchups", "Round Matchups", "Round 3-Balls",
+            "Finish Positions", "Live", "Score Edges"]
     total = 0
 
     for i, tab in enumerate(tabs):
@@ -181,8 +184,8 @@ def _alert_orphan_ungraded(spreadsheet, week_event_ids):
     from grade_bets import get_ungraded_bets
     week_ids = {str(e) for e in week_event_ids}
     orphans = {}
-    for i, tab in enumerate(["Tournament Matchups", "Round Matchups",
-                             "Finish Positions", "Live"]):
+    for i, tab in enumerate(["Tournament Matchups", "Round Matchups", "Round 3-Balls",
+                             "Finish Positions", "Live", "Score Edges"]):
         if i > 0:
             time.sleep(3)
         try:

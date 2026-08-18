@@ -951,6 +951,39 @@ def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=
     print(f"  [storage] Wrote {written} score edge rows to '{TAB_SCORE_EDGES}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
+    # Dual-write to the Parquet ledger (was the only store_* without one —
+    # the family ran with zero ledger presence for 18 weeks, 2026-08 audit).
+    # Ledger opponent encoding for score bets: "{side}_{line}".
+    try:
+        records = []
+        for _, r in score_edges_df.iterrows():
+            side = str(r.get("Best_Side", "")).lower().strip()
+            line = _safe(r.get("Line"))
+            book_odds = r.get("Mkt_Under") if side == "under" else r.get("Mkt_Over")
+            fair_odds = r.get("Fair_Under") if side == "under" else r.get("Fair_Over")
+            bookmaker = str(r.get("Book", "")).lower().strip()
+            rec = _empty_ledger_record()
+            rec.update({
+                "bet_id": str(uuid.uuid4()),
+                "run_timestamp": ts,
+                "event_name": tourney,
+                "year": year,
+                "event_id": str(event_id),
+                "bet_type": "score_bet",
+                "round": str(sim_round),
+                "bet_on": str(r.get("Player", "")).lower().strip(),
+                "opponent": f"{side}_{line}",
+                "bookmaker": bookmaker,
+                "book_odds": _safe_float(book_odds),
+                "fair_odds": _safe_float(fair_odds),
+                "edge": _safe_float(r.get("Best_Edge")),
+                "book_category": _categorize_book(bookmaker),
+            })
+            records.append(rec)
+        _append_to_ledger(records)
+    except Exception as e:
+        print(f"  [ledger] Warning: score edge write failed: {e}")
+
 
 
 

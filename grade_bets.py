@@ -59,6 +59,7 @@ TAB_FINISH_POS = "Finish Positions"
 TAB_ROUND_MU = "Round Matchups"
 TAB_ROUND_3BALL = "Round 3-Balls"
 TAB_LIVE = "Live"  # live in-tournament finish positions (bet_type=finish_position_live)
+TAB_SCORE_EDGES = "Score Edges"  # round score O/U (bet_type=score_bet)
 
 # Tab names - results output
 TAB_RESULTS_SUMMARY = "Bet Results Summary"
@@ -401,6 +402,8 @@ def deduplicate_bets(df, bet_type):
         key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker"]
     elif bet_type.startswith("finish_position"):
         key_cols = ["event_id", "player_name", "market_type", "sportsbook"]
+    elif bet_type == "score_bet":
+        key_cols = ["event_id", "player", "round", "book", "best_side"]
     elif bet_type == "sharp":
         key_cols = ["event_id", "bet_type", "bet_on", "opponent", "bookmaker", "round"]
     else:
@@ -480,6 +483,18 @@ def calculate_dead_heat_factor(actual_finish, market_threshold, results_df):
 # ══════════════════════════════════════════════════════════════════════════════
 # Grading Logic
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _ties_lose(row):
+    """True when this matchup was priced/stored under a ties-LOSE book rule.
+
+    The pricing layer treats 'separate bet offered' as a 3-way market where a
+    tie loses the stake (new_sim/round_sim/reprice_core: use_tl = Ties ==
+    'separate bet offered'); grading previously settled every tie as push
+    regardless, overstating P&L at those books (2026-08 audit, −13.84u).
+    """
+    v = str(row.get("ties_rule", row.get("Ties", ""))).lower()
+    return "separate" in v
+
 
 def grade_round_matchup(row, results_df):
     """
@@ -605,8 +620,12 @@ def grade_round_matchup(row, results_df):
             units_to_win = 1.0
 
     if winner == "tie":
-        result = "push"
-        units_won = 0.0
+        if _ties_lose(row):
+            result = "loss"       # ties-lose book: 3-way market, stake is lost
+            units_won = -units_wagered
+        else:
+            result = "push"
+            units_won = 0.0
     elif winner == bet_on:
         result = "win"
         units_won = units_to_win
@@ -830,8 +849,12 @@ def grade_tournament_matchup(row, results_df):
             units_to_win = 1.0
 
     if winner == "tie":
-        result = "push"
-        units_won = 0.0
+        if _ties_lose(row):
+            result = "loss"       # ties-lose book: 3-way market, stake is lost
+            units_won = -units_wagered
+        else:
+            result = "push"
+            units_won = 0.0
     elif winner == bet_on:
         result = "win"
         units_won = units_to_win
@@ -1111,6 +1134,95 @@ def grade_sharp_bet(row, results_df):
         "units_wagered": 0,
         "units_won": 0,
         "notes": f"Unknown bet type: {bet_type}"
+    }
+
+
+def grade_score_bet(row, results_df):
+    """
+    Grade a round score bet (over/under a line).
+
+    Restored from b5562d5 (removed by the 6b606d1 production-copy promotion;
+    the family then ran ungraded for 18 weeks). The bet is on a player's
+    actual round score vs a line (e.g., 70.5); best_side is 'Over' or 'Under'.
+    """
+    player = str(row.get("player", "")).lower().strip()
+    round_num = str(row.get("round", "1")).strip()
+    best_side = str(row.get("best_side", "")).strip()
+
+    try:
+        line = float(row.get("line", 0))
+    except (ValueError, TypeError):
+        return {"result": "no_data", "actual_score": "", "units_wagered": FLAT_BET_SIZE, "units_won": 0}
+
+    try:
+        round_num = int(round_num)
+    except (ValueError, TypeError):
+        round_num = 1
+
+    # Get the book odds for the side we bet
+    if best_side.lower() == "under":
+        odds_str = row.get("mkt_under", "")
+    else:
+        odds_str = row.get("mkt_over", "")
+
+    # Convert american odds to decimal
+    decimal_odds = 1.0
+    try:
+        am = float(odds_str)
+        if am > 0:
+            decimal_odds = am / 100 + 1
+        else:
+            decimal_odds = 100 / abs(am) + 1
+    except (ValueError, TypeError):
+        pass
+
+    # Find round score column
+    score_col = None
+    for col_format in [f"round_{round_num}", f"r{round_num}", f"rd{round_num}", f"round{round_num}"]:
+        if col_format in results_df.columns:
+            score_col = col_format
+            break
+
+    if score_col is None:
+        return {"result": "no_data", "actual_score": "", "units_wagered": FLAT_BET_SIZE, "units_won": 0}
+
+    # Find player
+    player_data = results_df[results_df["player_name"] == player]
+    if player_data.empty:
+        return {"result": "no_data", "actual_score": "", "units_wagered": FLAT_BET_SIZE, "units_won": 0}
+
+    actual_score = player_data[score_col].iloc[0]
+    if pd.isna(actual_score):
+        return {"result": "no_data", "actual_score": "", "units_wagered": FLAT_BET_SIZE, "units_won": 0}
+
+    try:
+        actual_score = float(actual_score)
+    except (ValueError, TypeError):
+        return {"result": "no_data", "actual_score": "", "units_wagered": FLAT_BET_SIZE, "units_won": 0}
+
+    # Grade: compare actual score to line
+    if actual_score > line:
+        outcome = "Over"
+    elif actual_score < line:
+        outcome = "Under"
+    else:
+        outcome = "push"
+
+    if outcome == "push":
+        result = "push"
+        units_won = 0.0
+    elif outcome.lower() == best_side.lower():
+        result = "win"
+        units_won = round(FLAT_BET_SIZE * (decimal_odds - 1), 3)
+    else:
+        result = "loss"
+        units_won = round(-FLAT_BET_SIZE, 3)
+
+    return {
+        "result": result,
+        "actual_score": actual_score,
+        "units_wagered": FLAT_BET_SIZE,
+        "units_won": units_won,
     }
 
 
@@ -2009,6 +2121,7 @@ def main():
             # (identical headers); deduplicate_bets collapses repriced snapshots to
             # one bet per (event, player, market, book) and marks the rest duplicate.
             (TAB_LIVE, "finish_position_live", grade_finish_position),
+            (TAB_SCORE_EDGES, "score_bet", grade_score_bet),
         ]
 
         for tab_idx, (tab_name, bet_type, grade_fn) in enumerate(tabs_to_process):
@@ -2115,6 +2228,23 @@ def main():
                     grade["dead_heat_factor"] = grade_result.get("dead_heat_factor", "")
                     grade["player_name"] = row_dict.get("player_name", "")
 
+                elif bet_type == "score_bet":
+                    _side = str(row_dict.get("best_side", "")).lower()
+                    grade["round"] = row_dict.get("round", "")
+                    grade["line"] = row_dict.get("line", "")
+                    grade["best_side"] = row_dict.get("best_side", "")
+                    grade["actual_score"] = grade_result.get("actual_score", "")
+                    grade["bet_on"] = str(row_dict.get("player", "")).lower().strip()
+                    # Ledger opponent encoding for score bets: side_line
+                    grade["opponent"] = f"{_side}_{row_dict.get('line', '')}"
+                    grade["book_odds"] = (row_dict.get("mkt_under", "") if _side == "under"
+                                          else row_dict.get("mkt_over", ""))
+                    grade["fair_odds"] = (row_dict.get("fair_under", "") if _side == "under"
+                                          else row_dict.get("fair_over", ""))
+                    grade["edge"] = row_dict.get("best_edge", row_dict.get("edge", ""))
+                    grade["bookmaker"] = row_dict.get("book", bookmaker)
+                    grade["book_category"] = categorize_book(grade["bookmaker"])
+
                 grades.append(grade)
                 if not bet_type.endswith("_v2"):
                     all_graded_bets.append(grade)
@@ -2130,12 +2260,53 @@ def main():
             elif args.dry_run:
                 print(f"    [DRY RUN] Would update {len(grades)} rows")
 
-        # Update Parquet ledger with grades
-        if all_graded_bets and not args.dry_run:
+        # Insert score bets into the ledger (store_score_edges historically
+        # didn't dual-write, so grade time is where these rows first exist;
+        # _append_to_ledger dedups on the ledger key, so re-runs and the
+        # store-time dual-write added 2026-08 can't double-insert).
+        score_bets_for_ledger = [
+            b for b in all_graded_bets
+            if b.get("bet_type") == "score_bet"
+            and b.get("result") not in ("duplicate", "no_data", "unknown")
+        ]
+        if score_bets_for_ledger and not args.dry_run:
+            print(f"\n  Adding {len(score_bets_for_ledger)} score bets to ledger...")
+            from sheets_storage import _append_to_ledger
+            ledger_rows = []
+            for b in score_bets_for_ledger:
+                def _f(v):
+                    try:
+                        return float(str(v).replace("+", ""))
+                    except (ValueError, TypeError):
+                        return np.nan
+                ledger_rows.append({
+                    "run_timestamp": datetime.now().isoformat(),
+                    "event_name": event_name,
+                    "year": year,
+                    "event_id": str(event_id),
+                    "bet_type": "score_bet",
+                    "round": str(b.get("round", "")),
+                    "bet_on": str(b.get("bet_on", "")).lower().strip(),
+                    "opponent": str(b.get("opponent", "")).lower().strip(),
+                    "bookmaker": str(b.get("bookmaker", "")).lower().strip(),
+                    "book_odds": _f(b.get("book_odds", "")),
+                    "fair_odds": _f(b.get("fair_odds", "")),
+                    "edge": _f(b.get("edge", "")),
+                    "book_category": b.get("book_category", ""),
+                    "result": b.get("result", ""),
+                    "units_wagered": b.get("units_wagered", FLAT_BET_SIZE),
+                    "units_won": b.get("units_won", 0),
+                    "graded_at": datetime.now().isoformat(),
+                })
+            _append_to_ledger(ledger_rows)
+
+        # Update Parquet ledger with grades (bet types already written at store time)
+        non_score_graded = [b for b in all_graded_bets if b.get("bet_type") != "score_bet"]
+        if non_score_graded and not args.dry_run:
             print("\n  Updating Parquet ledger...")
-            for bet in all_graded_bets:
+            for bet in non_score_graded:
                 bet["event_id"] = str(event_id)
-            update_ledger_grades(all_graded_bets)
+            update_ledger_grades(non_score_graded)
 
         # Calculate and write summary
         if all_graded_bets and not args.dry_run:
