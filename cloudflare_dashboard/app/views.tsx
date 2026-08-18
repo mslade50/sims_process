@@ -8,6 +8,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -54,6 +55,51 @@ function RangeControl({ label, value, min, max, step = 1, onChange }: { label: s
       <span>{label}<b>{value}</b></span>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
+  );
+}
+
+type FilterOption = { value: string; label: string };
+
+function MultiSelectControl({ label, value, options, onChange, placeholder = "All" }: { label: string; value: string[]; options: FilterOption[]; onChange: (value: string[]) => void; placeholder?: string }) {
+  const selectedLabel = value.length === 0
+    ? placeholder
+    : value.length === 1
+      ? options.find((option) => option.value === value[0])?.label ?? titleCase(value[0])
+      : `${value.length} selected`;
+  return (
+    <div className="filter-control multi-select-control">
+      <span>{label}</span>
+      <details>
+        <summary>{selectedLabel}</summary>
+        <div className="multi-select-menu">
+          {options.map((option) => (
+            <label key={option.value}>
+              <input
+                type="checkbox"
+                checked={value.includes(option.value)}
+                onChange={(event) => onChange(event.target.checked ? [...value, option.value] : value.filter((item) => item !== option.value))}
+              />
+              <span className="checkbox-mark">✓</span>
+              <span>{option.label}</span>
+            </label>
+          ))}
+          {value.length > 0 && <button type="button" onClick={() => onChange([])}>Clear selection</button>}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function NumberRangeControl({ label, minValue, maxValue, onMinChange, onMaxChange, min, step = 1 }: { label: string; minValue: number | null; maxValue: number | null; onMinChange: (value: number | null) => void; onMaxChange: (value: number | null) => void; min?: number; step?: number }) {
+  const update = (value: string, callback: (next: number | null) => void) => callback(value === "" ? null : Number(value));
+  return (
+    <div className="filter-control">
+      <span>{label}</span>
+      <div className="number-range">
+        <input type="number" min={min} step={step} value={minValue ?? ""} placeholder="Min" aria-label={`${label} minimum`} onChange={(event) => update(event.target.value, onMinChange)} />
+        <input type="number" min={min} step={step} value={maxValue ?? ""} placeholder="Max" aria-label={`${label} maximum`} onChange={(event) => update(event.target.value, onMaxChange)} />
+      </div>
+    </div>
   );
 }
 
@@ -274,60 +320,307 @@ export function HistoryView() {
 }
 
 type PerformancePayload = { bets: DataRow[] };
+type PerformanceRow = DataRow & {
+  _units_wagered: number;
+  _units_won: number;
+  raw_edge: number | null;
+  dec_odds: number | null;
+  archetype: string;
+  archetype_against: string;
+  bet_day: string;
+};
 
-function unitsForBet(row: DataRow): number {
-  const stored = numberValue(row.units_won, Number.NaN);
-  if (Number.isFinite(stored)) return stored;
-  const result = String(row.result ?? "").toLowerCase();
-  if (!result || result === "push") return 0;
-  const stake = String(row.bet_type ?? "").startsWith("finish_position") ? numberValue(row.kelly_stake) / 200 : 1;
-  if (result === "loss") return -stake;
-  const odds = numberValue(row.book_odds);
-  const decimal = odds >= 0 ? odds / 100 + 1 : 100 / Math.abs(odds) + 1;
-  return stake * (decimal - 1);
+const SHARP_BOOKS = ["pinnacle", "betonline", "betcris"];
+const EXCHANGE_BOOKS = ["kalshi", "novig"];
+const PERFORMANCE_TYPE_OPTIONS: FilterOption[] = [
+  { value: "tournament_matchup", label: "Tournament Matchup" },
+  { value: "round_matchup", label: "Round Matchup" },
+  { value: "finish_position", label: "Finish Position" },
+  { value: "finish_position_live", label: "Finish Position (Live)" },
+  { value: "score_bet", label: "Score Bet" },
+];
+const PERFORMANCE_TYPE_COLORS: Record<string, string> = {
+  tournament_matchup: "#54d6c8",
+  round_matchup: "#ffba69",
+  finish_position: "#8ca7ff",
+  finish_position_live: "#f27ea9",
+  score_bet: "#a58cff",
+};
+
+function americanToProbability(value: unknown): number {
+  const odds = numberValue(value, Number.NaN);
+  if (!Number.isFinite(odds) || odds === 0) return Number.NaN;
+  return odds >= 0 ? 100 / (odds + 100) : Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function buildCumulativeCurve(rows: DataRow[]) {
+function americanToDecimal(value: unknown): number {
+  const odds = numberValue(value, Number.NaN);
+  if (!Number.isFinite(odds) || odds === 0) return Number.NaN;
+  return odds >= 0 ? odds / 100 + 1 : 100 / Math.abs(odds) + 1;
+}
+
+function unitsWagered(row: DataRow): number {
+  const betType = String(row.bet_type ?? "");
+  if (betType.startsWith("finish_position")) return Math.max(0, numberValue(row.kelly_stake) / 200);
+  const odds = numberValue(row.book_odds, Number.NaN);
+  return Number.isFinite(odds) && odds <= -100 ? Math.abs(odds) / 100 : 1;
+}
+
+function enrichPerformanceRows(rows: DataRow[]): PerformanceRow[] {
+  const archetypeLookup = new Map<string, string>();
+  rows.forEach((row) => {
+    const archetype = String(row.type_on ?? "").trim();
+    if (archetype) archetypeLookup.set(`${String(row.event_id)}|${String(row.bet_on).trim().toLowerCase()}`, archetype);
+  });
+  return rows.map((row) => {
+    const result = String(row.result ?? "").trim().toLowerCase();
+    const stake = unitsWagered(row);
+    const decimal = americanToDecimal(row.book_odds);
+    const storedWon = numberValue(row.units_won, Number.NaN);
+    const calculatedWon = result === "loss" ? -stake : result.startsWith("win") && Number.isFinite(decimal) ? stake * (decimal - 1) : 0;
+    const marketProbability = americanToProbability(row.book_odds);
+    const modelProbability = americanToProbability(row.fair_odds);
+    const rawEdge = Number.isFinite(marketProbability) && Number.isFinite(modelProbability) ? (modelProbability - marketProbability) * 100 : null;
+    const eventKey = String(row.event_id);
+    const betOn = String(row.bet_on ?? "").trim().toLowerCase();
+    const opponent = String(row.opponent ?? "").trim().toLowerCase();
+    const stamped = String(row.type_on ?? "").trim();
+    const date = new Date(`${String(row.run_timestamp ?? "").replace(" ", "T")}Z`);
+    return {
+      ...row,
+      result,
+      raw_edge: rawEdge,
+      dec_odds: Number.isFinite(decimal) ? decimal : null,
+      archetype: stamped || archetypeLookup.get(`${eventKey}|${betOn}`) || "Unknown",
+      archetype_against: archetypeLookup.get(`${eventKey}|${opponent}`) || "",
+      bet_day: Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+      _units_wagered: stake,
+      _units_won: Number.isFinite(storedWon) ? storedWon : calculatedWon,
+    };
+  });
+}
+
+function buildCumulativeCurve(rows: PerformanceRow[]) {
   let running = 0;
   return rows.map((row, index) => {
-    running += unitsForBet(row);
+    running += row._units_won;
     return { index: index + 1, units: running };
+  });
+}
+
+function bucketRoi(rows: PerformanceRow[], group: string, color: string, buckets: Array<{ label: string; min: number; max: number }>, getter: (row: PerformanceRow) => number): DataRow[] {
+  return buckets.map((bucket) => {
+    const selected = rows.filter((row) => {
+      const value = getter(row);
+      return Number.isFinite(value) && value >= bucket.min && value < bucket.max;
+    });
+    const wagered = sum(selected.map((row) => row._units_wagered));
+    return { bucket: `${group}: ${bucket.label}`, roi: wagered ? sum(selected.map((row) => row._units_won)) / wagered * 100 : 0, bets: selected.length, color };
   });
 }
 
 export function PerformanceView() {
   const { data, loading, error } = useDashboardData<PerformancePayload>("performance.json");
-  const [event, setEvent] = useState("all");
-  const [type, setType] = useState("all");
-  const [book, setBook] = useState("all");
+  const [eventsSelected, setEventsSelected] = useState<string[]>([]);
+  const [typesSelected, setTypesSelected] = useState<string[]>([]);
+  const [booksSelected, setBooksSelected] = useState<string[]>([]);
   const [minEdge, setMinEdge] = useState(0);
+  const [includeLive, setIncludeLive] = useState(false);
+  const [roundsSelected, setRoundsSelected] = useState<string[]>([]);
+  const [daysSelected, setDaysSelected] = useState<string[]>([]);
+  const [sampleMin, setSampleMin] = useState<number | null>(null);
+  const [sampleMax, setSampleMax] = useState<number | null>(null);
+  const [predMin, setPredMin] = useState<number | null>(null);
+  const [predMax, setPredMax] = useState<number | null>(null);
+  const [marketsSelected, setMarketsSelected] = useState<string[]>([]);
+  const [side, setSide] = useState("all");
+  const [analysisMode, setAnalysisMode] = useState("all");
+  const [rawEdgeMin, setRawEdgeMin] = useState<number | null>(null);
+  const [rawEdgeMax, setRawEdgeMax] = useState<number | null>(null);
+  const [decimalMin, setDecimalMin] = useState<number | null>(null);
+  const [decimalMax, setDecimalMax] = useState<number | null>(null);
+  const [archetypesSelected, setArchetypesSelected] = useState<string[]>([]);
+  const [againstSelected, setAgainstSelected] = useState<string[]>([]);
+  const [playersSelected, setPlayersSelected] = useState<string[]>([]);
+
+  const rows = useMemo(() => enrichPerformanceRows(data?.bets ?? []), [data]);
+  const events = useMemo(() => uniqueStrings(rows, "event_name"), [rows]);
+  const books = useMemo(() => uniqueStrings(rows, "bookmaker"), [rows]);
+  const players = useMemo(() => uniqueStrings(rows, "bet_on"), [rows]);
+  const archetypes = useMemo(() => uniqueStrings(rows, "archetype"), [rows]);
+  const archetypesAgainst = useMemo(() => uniqueStrings(rows, "archetype_against"), [rows]);
+
+  const filtered = useMemo(() => {
+    const showLive = includeLive || typesSelected.includes("finish_position_live");
+    const explicitlySelectedBooks = booksSelected.map((value) => value.toLowerCase());
+    let selected = rows.filter((row) => {
+      const betType = String(row.bet_type ?? "");
+      const bookmaker = String(row.bookmaker ?? "").toLowerCase();
+      const result = String(row.result ?? "").trim().toLowerCase();
+      if (result === "duplicate") return false;
+      if (eventsSelected.length && !eventsSelected.includes(String(row.event_name))) return false;
+      if (typesSelected.length ? !typesSelected.includes(betType) : betType === "score_bet") return false;
+      if (!showLive && betType === "finish_position_live") return false;
+      if (booksSelected.length && !booksSelected.includes(String(row.bookmaker))) return false;
+      const hiddenExchange = EXCHANGE_BOOKS.some((exchange) => bookmaker.includes(exchange) && !explicitlySelectedBooks.some((selectedBook) => selectedBook.includes(exchange)));
+      if (hiddenExchange && !(showLive && betType === "finish_position_live")) return false;
+      if (numberValue(row.edge) < minEdge) return false;
+      if (roundsSelected.length && !roundsSelected.includes(String(row.round).trim())) return false;
+      if (daysSelected.length && !daysSelected.includes(row.bet_day)) return false;
+      if (sampleMin !== null && numberValue(row.sample_on) < sampleMin) return false;
+      if (sampleMax !== null && numberValue(row.sample_on) > sampleMax) return false;
+      if (predMin !== null && numberValue(row.pred_on) < predMin) return false;
+      if (predMax !== null && numberValue(row.pred_on) > predMax) return false;
+      if (rawEdgeMin !== null && numberValue(row.raw_edge, Number.NEGATIVE_INFINITY) < rawEdgeMin) return false;
+      if (rawEdgeMax !== null && numberValue(row.raw_edge, Number.POSITIVE_INFINITY) > rawEdgeMax) return false;
+      if (decimalMin !== null && numberValue(row.dec_odds, Number.NEGATIVE_INFINITY) < decimalMin) return false;
+      if (decimalMax !== null && numberValue(row.dec_odds, Number.POSITIVE_INFINITY) > decimalMax) return false;
+      if (archetypesSelected.length && !archetypesSelected.includes(row.archetype)) return false;
+      if (againstSelected.length && !againstSelected.includes(row.archetype_against)) return false;
+      if (playersSelected.length && !playersSelected.includes(String(row.bet_on))) return false;
+      if ((analysisMode === "sharp_only" || analysisMode === "sharp_best") && !SHARP_BOOKS.some((sharp) => bookmaker.includes(sharp))) return false;
+      if (side !== "all") {
+        const isFinish = betType.startsWith("finish_position");
+        const isNo = String(row.opponent ?? "").trim().toLowerCase().endsWith("_no");
+        if (!isFinish || (side === "no" ? !isNo : isNo)) return false;
+      }
+      if (marketsSelected.length) {
+        if (!betType.startsWith("finish_position")) return false;
+        const market = String(row.opponent ?? "").trim().toLowerCase().replace(/_no$/, "");
+        const normalized = market === "winner" ? "win" : market;
+        if (!marketsSelected.includes(normalized)) return false;
+      }
+      return true;
+    });
+    if (analysisMode === "best_price" || analysisMode === "sharp_best") {
+      const grouped = new Map<string, PerformanceRow[]>();
+      selected.forEach((row) => {
+        const key = [row.event_id, row.bet_type, row.round, row.bet_on, row.opponent].join("|");
+        grouped.set(key, [...(grouped.get(key) ?? []), row]);
+      });
+      selected = [...grouped.values()].map((group) => {
+        const earliest = group.reduce((value, row) => String(row.run_timestamp) < value ? String(row.run_timestamp) : value, String(group[0]?.run_timestamp ?? ""));
+        return group.filter((row) => String(row.run_timestamp) === earliest).sort((a, b) => numberValue(b.edge) - numberValue(a.edge))[0];
+      }).filter(Boolean);
+    }
+    return selected;
+  }, [againstSelected, analysisMode, archetypesSelected, booksSelected, daysSelected, decimalMax, decimalMin, eventsSelected, includeLive, marketsSelected, minEdge, playersSelected, predMax, predMin, rawEdgeMax, rawEdgeMin, roundsSelected, rows, sampleMax, sampleMin, side, typesSelected]);
+
   if (loading) return <LoadingState label="Loading performance history" />;
   if (error || !data) return <ErrorState message={error ?? "Performance data is unavailable."} />;
-  const events = uniqueStrings(data.bets, "event_name");
-  const types = uniqueStrings(data.bets, "bet_type");
-  const books = uniqueStrings(data.bets, "bookmaker");
-  const filtered = data.bets.filter((row) => (event === "all" || String(row.event_name) === event) && (type === "all" || String(row.bet_type) === type) && (book === "all" || String(row.bookmaker) === book) && numberValue(row.edge) >= minEdge);
-  const resolved = filtered.filter((row) => String(row.result ?? "").trim());
+
+  const resolved = filtered.filter((row) => row.result && !["no_data", "unknown"].includes(String(row.result)));
   const ordered = [...resolved].sort((a, b) => String(a.run_timestamp).localeCompare(String(b.run_timestamp)));
   const curve = buildCumulativeCurve(ordered);
-  const wagered = resolved.reduce((total, row) => total + (String(row.bet_type).startsWith("finish_position") ? Math.max(0.005, numberValue(row.kelly_stake) / 200) : 1), 0);
+  const wagered = sum(resolved.map((row) => row._units_wagered));
   const wins = resolved.filter((row) => String(row.result).startsWith("win")).length;
-  const totalUnits = sum(resolved.map(unitsForBet));
+  const losses = resolved.filter((row) => row.result === "loss").length;
+  const pushes = resolved.filter((row) => row.result === "push").length;
+  const totalUnits = sum(resolved.map((row) => row._units_won));
+  const winRate = wins + losses ? wins / (wins + losses) * 100 : 0;
+
+  const eventFirstSeen = new Map<string, string>();
+  ordered.forEach((row) => {
+    const name = String(row.event_name);
+    if (!eventFirstSeen.has(name)) eventFirstSeen.set(name, String(row.run_timestamp));
+  });
+  const eventOrder = [...eventFirstSeen.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([name]) => name);
+  const byEvent = eventOrder.map((name) => {
+    const eventRows = resolved.filter((row) => String(row.event_name) === name);
+    const point: DataRow = { event: titleCase(name), total: sum(eventRows.map((row) => row._units_won)) };
+    PERFORMANCE_TYPE_OPTIONS.forEach((option) => point[option.value] = sum(eventRows.filter((row) => row.bet_type === option.value).map((row) => row._units_won)));
+    return point;
+  });
   const byBook = books.map((name) => {
-    const rows = resolved.filter((row) => String(row.bookmaker) === name);
-    const won = sum(rows.map(unitsForBet));
-    return { book: titleCase(name), units: won, bets: rows.length };
-  }).filter((row) => row.bets).sort((a, b) => b.units - a.units);
+    const bookRows = resolved.filter((row) => String(row.bookmaker) === name);
+    const risked = sum(bookRows.map((row) => row._units_wagered));
+    return { book: titleCase(name), roi: risked ? sum(bookRows.map((row) => row._units_won)) / risked * 100 : 0, bets: bookRows.length };
+  }).filter((row) => row.bets >= 3).sort((a, b) => a.roi - b.roi);
+  const bucketRows = [
+    ...bucketRoi(resolved, "Raw edge", "#54d6c8", [{ label: "0–2%", min: 0, max: 2 }, { label: "2–4%", min: 2, max: 4 }, { label: "4–6%", min: 4, max: 6 }, { label: "6%+", min: 6, max: 1000 }], (row) => numberValue(row.raw_edge, Number.NaN)),
+    ...bucketRoi(resolved, "Kelly edge", "#ffba69", [{ label: "3–5%", min: 3, max: 5 }, { label: "5–8%", min: 5, max: 8 }, { label: "8%+", min: 8, max: 1000 }], (row) => numberValue(row.edge, Number.NaN)),
+    ...bucketRoi(resolved, "Odds", "#8ca7ff", [{ label: "<2.0", min: 0, max: 2 }, { label: "2.0–2.5", min: 2, max: 2.5 }, { label: "2.5–3.5", min: 2.5, max: 3.5 }, { label: "3.5–8.0", min: 3.5, max: 8 }, { label: "8.0+", min: 8, max: 1000 }], (row) => numberValue(row.dec_odds, Number.NaN)),
+  ];
+  const activeArchetypes = uniqueStrings(resolved, "archetype");
+  const archetypeSeries = new Map(activeArchetypes.map((archetype) => {
+    let running = 0;
+    return [archetype, [...resolved].filter((row) => row.archetype === archetype).sort((a, b) => String(a.run_timestamp).localeCompare(String(b.run_timestamp))).map((row) => (running += row._units_won))];
+  }));
+  const maxArchetypeBets = Math.max(0, ...[...archetypeSeries.values()].map((values) => values.length));
+  const archetypeCurve = Array.from({ length: maxArchetypeBets }, (_, index) => {
+    const point: DataRow = { index: index + 1 };
+    archetypeSeries.forEach((values, archetype) => { if (values[index] !== undefined) point[archetype] = values[index]; });
+    return point;
+  });
+  const archetypePnl = activeArchetypes.map((archetype) => ({ archetype, units: sum(resolved.filter((row) => row.archetype === archetype).map((row) => row._units_won)) })).sort((a, b) => a.units - b.units);
+  const againstPnl = uniqueStrings(resolved, "archetype_against").map((archetype) => ({ archetype, units: sum(resolved.filter((row) => row.archetype_against === archetype).map((row) => row._units_won)) })).sort((a, b) => a.units - b.units);
+  const eventSummary = eventOrder.map((name) => {
+    const eventRows = resolved.filter((row) => String(row.event_name) === name);
+    const risked = sum(eventRows.map((row) => row._units_wagered));
+    const won = sum(eventRows.map((row) => row._units_won));
+    return { event_name: name, bets: eventRows.length, wins: eventRows.filter((row) => String(row.result).startsWith("win")).length, losses: eventRows.filter((row) => row.result === "loss").length, wagered: risked, units_won: won, roi: risked ? won / risked * 100 : 0 };
+  }).sort((a, b) => b.units_won - a.units_won);
+  const detailRows = filtered.map((row) => ({ ...row, units_wagered: row._units_wagered, units_won: row._units_won }));
+  const activeFilterCount = [eventsSelected, typesSelected, booksSelected, roundsSelected, daysSelected, marketsSelected, archetypesSelected, againstSelected, playersSelected].filter((value) => value.length).length + [sampleMin, sampleMax, predMin, predMax, rawEdgeMin, rawEdgeMax, decimalMin, decimalMax].filter((value) => value !== null).length + (minEdge > 0 ? 1 : 0) + (includeLive ? 1 : 0) + (side !== "all" ? 1 : 0) + (analysisMode !== "all" ? 1 : 0);
+
+  function resetFilters() {
+    setEventsSelected([]); setTypesSelected([]); setBooksSelected([]); setMinEdge(0); setIncludeLive(false);
+    setRoundsSelected([]); setDaysSelected([]); setSampleMin(null); setSampleMax(null); setPredMin(null); setPredMax(null);
+    setMarketsSelected([]); setSide("all"); setAnalysisMode("all"); setRawEdgeMin(null); setRawEdgeMax(null);
+    setDecimalMin(null); setDecimalMax(null); setArchetypesSelected([]); setAgainstSelected([]); setPlayersSelected([]);
+  }
 
   return (
     <>
-      <PageIntro eyebrow="Bet review" title="Performance" description="A filterable, exportable record of historical results with cumulative P&L and book-level attribution." controls={<div className="control-row wrap"><SelectControl label="Event" value={event} onChange={setEvent} options={[{ value: "all", label: "All events" }, ...events.map((value) => ({ value, label: titleCase(value) }))]}/><SelectControl label="Bet type" value={type} onChange={setType} options={[{ value: "all", label: "All bet types" }, ...types.map((value) => ({ value, label: titleCase(value) }))]}/><SelectControl label="Book" value={book} onChange={setBook} options={[{ value: "all", label: "All books" }, ...books.map((value) => ({ value, label: titleCase(value) }))]}/><RangeControl label="Minimum edge" value={minEdge} min={0} max={25} onChange={setMinEdge}/></div>} />
-      <div className="kpi-grid"><Kpi label="Net P&L" value={`${totalUnits >= 0 ? "+" : ""}${totalUnits.toFixed(1)}u`} detail={`${resolved.length.toLocaleString()} resolved bets`} tone={totalUnits >= 0 ? "positive" : "negative"}/><Kpi label="ROI" value={`${wagered ? (totalUnits / wagered * 100).toFixed(1) : "0.0"}%`} detail={`${wagered.toFixed(1)} units risked`} tone={totalUnits >= 0 ? "positive" : "negative"}/><Kpi label="Win rate" value={`${resolved.length ? (wins / resolved.length * 100).toFixed(1) : "0.0"}%`} detail={`${wins} wins`}/><Kpi label="Open positions" value={String(filtered.length - resolved.length)} detail="Awaiting grade"/></div>
-      <div className="two-column">
-        <Panel title="Cumulative P&L" eyebrow="Resolved bets in time order"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={curve} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="index" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Line type="monotone" dataKey="units" stroke="var(--accent)" dot={false} strokeWidth={2.5}/></LineChart></ResponsiveContainer></div></Panel>
-        <Panel title="P&L by sportsbook" eyebrow="Current filters"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={byBook.slice(0, 12)} layout="vertical" margin={{ ...chartMargin, left: 30 }}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="book" stroke="var(--muted)" width={90}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0, 6, 6, 0]}>{byBook.slice(0, 12).map((row) => <Cell key={row.book} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
-      </div>
-      <Panel title="Bet history" eyebrow="Search, sort, customize, export"><DataTable rows={filtered} label="Performance history" preferredColumns={["run_timestamp", "event_name", "bet_type", "round", "bet_on", "opponent", "bookmaker", "book_odds", "edge", "result", "units_won"]} pageSize={40}/></Panel>
+      <PageIntro eyebrow="Bet review" title="Performance" description="Historical results with the original analysis universe, inclusion rules, advanced filters, and P&L breakdowns restored." />
+      <Panel title="Filters & inclusion rules" eyebrow={`${activeFilterCount} active filter${activeFilterCount === 1 ? "" : "s"}`} actions={<button type="button" className="icon-button" onClick={resetFilters}>Reset filters</button>} className="performance-filter-panel">
+        <div className="inclusion-rules" aria-label="Default bet inclusion rules">
+          <span className={typesSelected.includes("score_bet") ? "included" : "excluded"}><b>Score bets</b>{typesSelected.includes("score_bet") ? "Included by selection" : "Excluded by default"}</span>
+          <span className={includeLive || typesSelected.includes("finish_position_live") ? "included" : "excluded"}><b>Live finish bets</b>{includeLive || typesSelected.includes("finish_position_live") ? "Included" : "Excluded by default"}</span>
+          <span className={booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "included" : "excluded"}><b>Kalshi / NoVig</b>{booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "Included by selection" : "Hidden until selected"}</span>
+        </div>
+        <div className="filter-section"><h3>Bet universe</h3><div className="performance-filter-grid">
+          <MultiSelectControl label="Event" value={eventsSelected} onChange={setEventsSelected} placeholder="All events" options={events.map((value) => ({ value, label: titleCase(value) }))}/>
+          <MultiSelectControl label="Bet type" value={typesSelected} onChange={setTypesSelected} placeholder="Default types" options={PERFORMANCE_TYPE_OPTIONS}/>
+          <MultiSelectControl label="Sportsbook" value={booksSelected} onChange={setBooksSelected} placeholder="Default books" options={books.map((value) => ({ value, label: titleCase(value) }))}/>
+          <RangeControl label="Minimum Kelly edge" value={minEdge} min={0} max={25} onChange={setMinEdge}/>
+          <label className="toggle-filter"><input type="checkbox" aria-label="Include live finish-position bets" checked={includeLive} onChange={(event) => setIncludeLive(event.target.checked)}/><span><b>Live bets</b><small>Include live finish positions</small></span></label>
+        </div></div>
+        <div className="filter-section"><h3>Timing & market</h3><div className="performance-filter-grid performance-filter-grid-six">
+          <MultiSelectControl label="Round" value={roundsSelected} onChange={setRoundsSelected} placeholder="All rounds" options={[1,2,3,4].map((round) => ({ value: String(round), label: `R${round}` }))}/>
+          <MultiSelectControl label="Day of bet" value={daysSelected} onChange={setDaysSelected} placeholder="All days" options={["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map((value) => ({ value, label: value.slice(0,3) }))}/>
+          <NumberRangeControl label="Sample size" minValue={sampleMin} maxValue={sampleMax} onMinChange={setSampleMin} onMaxChange={setSampleMax} min={0}/>
+          <NumberRangeControl label="Pred (skill estimate)" minValue={predMin} maxValue={predMax} onMinChange={setPredMin} onMaxChange={setPredMax} min={0} step={0.1}/>
+          <MultiSelectControl label="Market (finish position)" value={marketsSelected} onChange={setMarketsSelected} placeholder="All markets" options={[{value:"win",label:"Win"},{value:"top_5",label:"Top 5"},{value:"top_10",label:"Top 10"},{value:"top_20",label:"Top 20"}]}/>
+          <SelectControl label="Side (finish position)" value={side} onChange={setSide} options={[{value:"all",label:"All sides"},{value:"yes",label:"YES side"},{value:"no",label:"NO side (fades)"}]}/>
+        </div></div>
+        <div className="filter-section"><h3>Analysis</h3><div className="performance-filter-grid performance-filter-grid-six">
+          <SelectControl label="Analysis mode" value={analysisMode} onChange={setAnalysisMode} options={[{value:"all",label:"All bets"},{value:"best_price",label:"Best price"},{value:"sharp_only",label:"Sharp only"},{value:"sharp_best",label:"Sharp only, best price"}]}/>
+          <NumberRangeControl label="Raw % edge" minValue={rawEdgeMin} maxValue={rawEdgeMax} onMinChange={setRawEdgeMin} onMaxChange={setRawEdgeMax} step={0.5}/>
+          <NumberRangeControl label="Decimal odds" minValue={decimalMin} maxValue={decimalMax} onMinChange={setDecimalMin} onMaxChange={setDecimalMax} min={1} step={0.1}/>
+          <MultiSelectControl label="Archetype" value={archetypesSelected} onChange={setArchetypesSelected} placeholder="All archetypes" options={archetypes.map((value) => ({value,label:value}))}/>
+          <MultiSelectControl label="Archetype against" value={againstSelected} onChange={setAgainstSelected} placeholder="All archetypes" options={archetypesAgainst.map((value) => ({value,label:value}))}/>
+          <MultiSelectControl label="Player" value={playersSelected} onChange={setPlayersSelected} placeholder="All players" options={players.map((value) => ({value,label:titleCase(value)}))}/>
+        </div></div>
+      </Panel>
+
+      <div className="kpi-grid performance-kpi-grid"><Kpi label="Total bets" value={filtered.length.toLocaleString()} detail={`${resolved.length.toLocaleString()} resolved`}/><Kpi label="Record" value={`${wins}W-${losses}L-${pushes}P`} detail={`${(filtered.length - resolved.length).toLocaleString()} open or ungraded`}/><Kpi label="Win rate" value={`${winRate.toFixed(1)}%`} detail="Pushes excluded"/><Kpi label="Units won" value={`${totalUnits >= 0 ? "+" : ""}${totalUnits.toFixed(2)}u`} detail={`${wagered.toFixed(2)} units risked`} tone={totalUnits >= 0 ? "positive" : "negative"}/><Kpi label="ROI" value={`${wagered ? totalUnits / wagered * 100 >= 0 ? "+" : "" : ""}${wagered ? (totalUnits / wagered * 100).toFixed(1) : "0.0"}%`} detail="Resolved bets" tone={totalUnits >= 0 ? "positive" : "negative"}/></div>
+
+      {filtered.length === 0 ? <EmptyState title="No bets match these filters" detail="Reset filters or broaden the selected analysis universe."/> : <>
+        <div className="performance-chart-grid">
+          <Panel title="Cumulative P&L" eyebrow="Resolved bets in time order"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={curve} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="index" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Line type="monotone" dataKey="units" stroke="var(--accent)" dot={false} strokeWidth={2.5}/></LineChart></ResponsiveContainer></div></Panel>
+          <Panel title="P&L by event" eyebrow="Bet type attribution"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={byEvent} margin={{...chartMargin,bottom:52}}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="event" stroke="var(--muted)" angle={-28} textAnchor="end" interval={0} height={70}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{PERFORMANCE_TYPE_OPTIONS.map((option) => <Bar key={option.value} dataKey={option.value} name={option.label} fill={PERFORMANCE_TYPE_COLORS[option.value]} radius={[3,3,0,0]}/>) }<Line type="monotone" dataKey="total" name="Total" stroke="var(--foreground)" strokeWidth={2} dot={{r:2}}/></ComposedChart></ResponsiveContainer></div></Panel>
+          <Panel title="ROI by sportsbook" eyebrow="Minimum 3 resolved bets"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={byBook} layout="vertical" margin={{...chartMargin,left:36}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="book" stroke="var(--muted)" width={92}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="roi" name="ROI %" radius={[0,6,6,0]}>{byBook.map((row) => <Cell key={row.book} fill={row.roi >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+        </div>
+        <Panel title="ROI by bucket" eyebrow="Raw edge, Kelly edge, and decimal odds"><div className="chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={bucketRows} margin={{...chartMargin,bottom:76}}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="bucket" stroke="var(--muted)" angle={-28} textAnchor="end" interval={0} height={92}/><YAxis stroke="var(--muted)" tickFormatter={(value) => `${value}%`}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="roi" name="ROI %" radius={[5,5,0,0]}>{bucketRows.map((row,index) => <Cell key={index} fill={String(row.color)}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+        <div className="performance-chart-grid">
+          <Panel title="Cumulative P&L by archetype" eyebrow="Player bet-on profile"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={archetypeCurve} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="index" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Legend/>{activeArchetypes.map((archetype,index) => <Line key={archetype} type="monotone" dataKey={archetype} stroke={palette[index % palette.length]} dot={false} strokeWidth={1.8}/>)}</LineChart></ResponsiveContainer></div></Panel>
+          <Panel title="Total P&L by archetype" eyebrow="Player bet-on profile"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypePnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{archetypePnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+          <Panel title="P&L by archetype against" eyebrow="Opponent profile"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={againstPnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{againstPnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+        </div>
+        <Panel title="Event summary" eyebrow="Resolved performance by tournament"><DataTable rows={eventSummary} label="Event summary" preferredColumns={["event_name","bets","wins","losses","wagered","units_won","roi"]} pageSize={30}/></Panel>
+        <Panel title="Filtered bets" eyebrow="Search, sort, customize, export"><DataTable rows={detailRows} label="Filtered bets" preferredColumns={["bet_on","opponent","bookmaker","bet_type","round","event_name","archetype","archetype_against","edge","raw_edge","dec_odds","pred_on","result","units_wagered","units_won"]} pageSize={40}/></Panel>
+      </>}
     </>
   );
 }

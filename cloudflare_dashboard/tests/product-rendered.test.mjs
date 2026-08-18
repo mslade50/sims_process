@@ -76,6 +76,23 @@ test("forces full-page navigation for Cloudflare route compatibility", async () 
   assert.match(dashboardApp, /href="\/performance"/);
 });
 
+test("restores the legacy Performance analysis controls and default exclusions", async () => {
+  const performanceView = await readFile(new URL("../app/views.tsx", import.meta.url), "utf8");
+  for (const expected of [
+    "Excluded by default",
+    "Hidden until selected",
+    "finish_position_live",
+    "score_bet",
+    "Kalshi / NoVig",
+    "Analysis mode",
+    "Raw % edge",
+    "Archetype against",
+    "ROI by bucket",
+    "Event summary",
+    "Filtered bets",
+  ]) assert.match(performanceView, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+});
+
 test("serves dashboard data from R2 and falls back to packaged assets", async () => {
   const worker = await loadWorker();
   const context = { waitUntil() {}, passThroughOnException() {} };
