@@ -31,6 +31,16 @@ jobs:
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow xlsxwriter boto3 zstandard
 
+    # CI runners have no git identity; without this the push_dashboard_data
+    # commit fails ("Author identity unknown"), the subsequent push returns 0
+    # trivially, and the run stays green while the week's diagnostics are lost
+    # (recurred 2026-08-17: St. Jude). push_dashboard_data now also checks the
+    # commit's exit status — this is the belt, that's the suspenders.
+    - name: Configure git identity
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
     - name: Run grading pipeline
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}

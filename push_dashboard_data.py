@@ -309,13 +309,10 @@ def git_push(dry_run=False):
         print("\n  No dashboard changes to commit.")
         return
 
-    # Commit ONLY our pathspec — any other staged change is left untouched, never pushed.
-    _run(["git", "commit", "-m", "Update dashboard data for Render deploy", "--", *paths])
-
-    # Push with up to 3 retries (pull+rebase on rejection). Failures alert:
-    # this commit carries the cross-machine skill-update state
-    # (model_predictions_r{N} / r{N}_live_model) — if it silently doesn't land,
-    # another machine or nightly CI runs the next round on stale predictions.
+    # Commit/push failures alert loudly: this commit carries the cross-machine
+    # skill-update state (model_predictions_r{N} / r{N}_live_model) — if it
+    # silently doesn't land, another machine or nightly CI runs the next round
+    # on stale predictions.
     def _fail(msg):
         print(f"  ERROR: {msg}")
         try:
@@ -328,6 +325,15 @@ def git_push(dry_run=False):
         # A swallowed push failure kept monday-grading green while two weeks of
         # diagnostics were silently lost (2026-08). Fail the process.
         sys.exit(1)
+
+    # Commit ONLY our pathspec — any other staged change is left untouched,
+    # never pushed. The exit status MUST be checked: on a runner with no git
+    # identity the commit errors, the push then returns 0 trivially
+    # ("everything up-to-date"), and the run goes green with nothing landed
+    # (the 2026-08-17 St. Jude silent loss).
+    commit = _run(["git", "commit", "-m", "Update dashboard data for Render deploy", "--", *paths])
+    if commit.returncode != 0:
+        _fail(f"git commit failed: {(commit.stderr or commit.stdout).strip()[:160]}")
 
     for attempt in range(3):
         result = _run(["git", "push"])
