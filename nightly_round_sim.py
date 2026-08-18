@@ -144,12 +144,33 @@ def main():
     pred_path = os.path.join(project_root, pred_file)
     alt_path = os.path.join(project_root, "dashboard_data", pred_file)
 
+    # dashboard_data/ pred copies are tracked in git and, on a clean CI
+    # checkout, can be the PREVIOUS week's vintage — the exact scenario this
+    # backup exists for (Sheet advanced, no fresh local run) is the one where
+    # blindly copying resurrects last week's field/skill state and publishes
+    # fairs for the wrong players (2026-08 audit HIGH). Only copy when the
+    # sync manifest attributes this exact file to the current event; else run
+    # live_stats_engine to regenerate.
+    _alt_ok = False
+    if not os.path.exists(pred_path) and os.path.exists(alt_path):
+        try:
+            from sync_event_files import _manifest_allowed
+            _alt_ok = pred_file in _manifest_allowed(
+                str(config.get("tourney", "")).lower())
+        except Exception as _me:
+            print(f"  manifest check failed ({_me}) — treating {alt_path} as stale")
+        if not _alt_ok:
+            print(f"\n  {pred_file} in dashboard_data/ is NOT manifest-attributed "
+                  f"to '{config.get('tourney')}' — refusing stale fallback, "
+                  f"running live_stats_engine instead")
+
     if os.path.exists(pred_path):
         print(f"\n  {pred_file} already exists, skipping live_stats_engine.py")
-    elif os.path.exists(alt_path):
+    elif _alt_ok:
         import shutil
         shutil.copy2(alt_path, pred_path)
-        print(f"\n  {pred_file} found in dashboard_data/, copied to root. Skipping live_stats_engine.py")
+        print(f"\n  {pred_file} found in dashboard_data/ (manifest-verified), "
+              f"copied to root. Skipping live_stats_engine.py")
     else:
         success = _run_subprocess(
             [python, "live_stats_engine.py"],

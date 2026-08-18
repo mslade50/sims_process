@@ -524,13 +524,24 @@ def load_known_rounds(completed_round, course_map, default_par):
         if not os.path.exists(live_file):
             # Root copy is gitignored and only synced via the post-merge hook;
             # fall back to the tracked dashboard_data/ copy (same pattern as
-            # model_predictions below) so a fresh pull works without the sync.
+            # model_predictions below) so a fresh pull works without the sync —
+            # but ONLY when the sync manifest attributes the file to the
+            # current event; a previous week's tracked copy would silently
+            # feed last week's rounds in (2026-08 audit).
             alt = os.path.join("dashboard_data", live_file)
-            if os.path.exists(alt):
-                print(f"  [resolve] {live_file} not in root, using {alt}")
+            from sync_event_files import _manifest_allowed
+            if os.path.exists(alt) and \
+                    f"r{rnd}_live_model.csv" in _manifest_allowed(str(tourney).lower()):
+                print(f"  [resolve] {live_file} not in root, using {alt} "
+                      f"(manifest-verified for {tourney})")
                 live_file = alt
             else:
-                print(f"  Warning: {live_file} not found. Skipping round {rnd}.")
+                if os.path.exists(alt):
+                    print(f"  Warning: {live_file} in dashboard_data/ is not "
+                          f"manifest-attributed to '{tourney}' — refusing stale "
+                          f"fallback. Skipping round {rnd}.")
+                else:
+                    print(f"  Warning: {live_file} not found. Skipping round {rnd}.")
                 continue
 
         df = pd.read_csv(live_file)
@@ -4745,10 +4756,22 @@ def main():
     if os.path.exists(pred_file):
         pred_file_path = pred_file
     else:
+        # dashboard_data/ copies are tracked in git and can be a PREVIOUS
+        # week's vintage on a fresh checkout; only use one when the sync
+        # manifest attributes this exact file to the current event (the same
+        # guard sync_event_files applies — 2026-08 audit: the unguarded copy
+        # could sim a new event on last week's field/skill state).
         alt = os.path.join("dashboard_data", pred_file)
         if os.path.exists(alt):
-            print(f"  [resolve] {pred_file} not in root, using {alt}")
-            pred_file_path = alt
+            from sync_event_files import _manifest_allowed
+            if pred_file in _manifest_allowed(str(tourney).lower()):
+                print(f"  [resolve] {pred_file} not in root, using {alt} "
+                      f"(manifest-verified for {tourney})")
+                pred_file_path = alt
+            else:
+                print(f"  [resolve] {pred_file} exists in dashboard_data/ but the "
+                      f"sync manifest does not attribute it to '{tourney}' — "
+                      f"refusing stale fallback (rerun live_stats_engine)")
 
     if pred_file_path:
         model_preds = pd.read_csv(pred_file_path)
