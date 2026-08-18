@@ -26,6 +26,14 @@ TOP_K = 20
 # One simulation-count contract for both round- and hole-level consumers.
 num_sims = SIMULATIONS
 
+# Week-level form latent (2026-08 joint distributional fix): sigma of the shared
+# per-(player,sim) week draw, in SG/round. Each round's category means get +w/4;
+# idiosyncratic category stds are shrunk so per-round total variance is unchanged
+# (round-level products don't reprice). Targets a 72-hole variance ratio of
+# ~1.15-1.20; re-scored monthly against the closing line within [1.09, 1.30].
+# 0.0 disables (bit-identical pre-latent cascade).
+WEEK_LATENT_SD = 0.65
+
 ###basic information for the week
 wind_override = 0.0
 # 0.155 re-estimated 2026-08 (scratch_weather_reanalysis/REPORT.md section 2)

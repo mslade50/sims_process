@@ -34,6 +34,13 @@ _parser.add_argument("--use-python", action="store_true",
                           "sims_kernel, which is now the PRODUCTION DEFAULT. The "
                           "Python kernel still runs as a shadow; this flag just "
                           "keeps its output instead of the Rust one.")
+_parser.add_argument("--no-week-latent", action="store_true",
+                     help="Disable the shared week-level form draw (sim_inputs."
+                          "WEEK_LATENT_SD). Off-state is bit-identical to the "
+                          "pre-latent cascade; use for parity fixture capture.")
+_parser.add_argument("--no-skew-cal", action="store_true",
+                     help="Disable the 72-hole totals skew top-up "
+                          "(skew_calibration.calibrate_total_skew).")
 args = _parser.parse_args()
 if args.reprice:
     args.price_only = True
@@ -74,6 +81,10 @@ from sim_inputs import (
     # R3 update sets (avg SG only; no residual terms)
     coefficients_r3, coefficients_r3_mid, coefficients_r3_high,
 )
+import sim_inputs as _sim_inputs_mod
+# Week-level form latent sigma (SG/round); getattr so a stale synced
+# sim_inputs copy degrades to latent-off instead of crashing the sim.
+WEEK_LATENT_SD = float(getattr(_sim_inputs_mod, "WEEK_LATENT_SD", 0.0))
 
 # Tour-wide baseline skewness (PGA, 2019-2025 — stable, update rarely)
 BASELINE_CAT_SKEW = {
@@ -330,22 +341,6 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
-# --- Save init_sim_skill for mkt_regress (first pass only) ---
-# DG blending is handled upstream by pre_sim_skill.py — no override here.
-if PRED_PATH != _final_pred_path:
-    _pss_path = f"pre_sim_summary_{tourney}.csv"
-    if os.path.exists(_pss_path):
-        _pss_df = pd.read_csv(_pss_path)
-        _pss_df['player_name'] = _pss_df['player_name'].str.lower().str.strip().replace(name_replacements)
-        _init_skill = model_preds[['player_name', 'my_pred']].rename(columns={'my_pred': 'pred'})
-        _init_skill = _init_skill.merge(_pss_df[['player_name', 'c_adj', 'sample']], on='player_name', how='left')
-        _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
-        print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players)")
-    else:
-        print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
-else:
-    print("[init_sim_skill] Second pass — skipping (regressed predictions already in final_predictions)")
-
 # --- Archetype boosts from Google Sheet (first pass only) ---
 if _sheet_archetype_boosts and PRED_PATH != _final_pred_path:
     try:
@@ -375,8 +370,12 @@ elif _sheet_archetype_boosts:
 else:
     _precomputed_arch_map = None
 
-# --- Manual boosts from Google Sheet (first pass only) ---
-if _sheet_manual_boosts and PRED_PATH != _final_pred_path:
+# --- Manual boosts from Google Sheet (pre_course_fit fallback only) ---
+# pre_sim_skill.py already bakes sheet boosts into pre_sim_summary's pred
+# (tracked in its 'sheet_boost' column), and final_predictions inherits them
+# through init_sim_skill -> mkt_regress. Only the raw pre_course_fit fallback
+# has never seen them — re-applying on the pre_sim_summary path double-boosts.
+if _sheet_manual_boosts and PRED_PATH == _pre_course_path:
     _boost_applied = 0
     for name, boost in _sheet_manual_boosts.items():
         mask = model_preds['player_name'] == name
@@ -388,8 +387,29 @@ if _sheet_manual_boosts and PRED_PATH != _final_pred_path:
         else:
             print(f"[boost] Warning: {name} not found in field")
     print(f"[boost] Applied {_boost_applied} manual boosts from Sheet")
+elif _sheet_manual_boosts and PRED_PATH == _pre_sim_path:
+    print("[boost] Skipping manual boosts (already baked into pre_sim_summary by pre_sim_skill)")
 elif _sheet_manual_boosts:
     print("[boost] Second pass - skipping manual boosts (already baked into final_predictions)")
+
+# --- Save init_sim_skill for mkt_regress (first pass only) ---
+# DG blending is handled upstream by pre_sim_skill.py — no override here.
+# Saved AFTER the boost blocks so archetype/manual boosts reach mkt_regress's
+# base pred; saving first made mkt_regress regress boosted sim probs against an
+# un-boosted base, partially inverting the boost in final_predictions.
+if PRED_PATH != _final_pred_path:
+    _pss_path = f"pre_sim_summary_{tourney}.csv"
+    if os.path.exists(_pss_path):
+        _pss_df = pd.read_csv(_pss_path)
+        _pss_df['player_name'] = _pss_df['player_name'].str.lower().str.strip().replace(name_replacements)
+        _init_skill = model_preds[['player_name', 'my_pred']].rename(columns={'my_pred': 'pred'})
+        _init_skill = _init_skill.merge(_pss_df[['player_name', 'c_adj', 'sample']], on='player_name', how='left')
+        _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
+        print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players)")
+    else:
+        print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
+else:
+    print("[init_sim_skill] Second pass — skipping (regressed predictions already in final_predictions)")
 
 # Pull sample sizes from pre_course_fit if missing
 if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
@@ -601,6 +621,67 @@ print(f"\n[sim] {n_players} players, {SIMULATIONS:,} simulations")
 # ======================
 # ─── Sim block (skip when --price-only loads cached arrays) ───────
 if not args.price_only:
+    # ─── Week-level form latent (2026-08 joint distributional fix, step 1) ───
+    # One shared draw per (player, sim) added as +w/4 to every round's category
+    # means; idiosyncratic category stds shrunk so per-round total variance is
+    # unchanged (round products don't reprice — only the cross-round linkage).
+    # Drawn from a SEPARATE RNG stream so latent-off stays bit-identical to the
+    # pre-latent cascade (the seed-456 stream is never touched by this block).
+    WEEK_LATENT = 0.0 if args.no_week_latent else WEEK_LATENT_SD
+    if WEEK_LATENT > 0.0:
+        _round_var = np.array([std_c @ R @ std_c for (_mu_i, std_c) in player_params_v2])
+        _latent_shrink = np.sqrt(np.clip(1.0 - WEEK_LATENT**2 / _round_var, 0.05, 1.0))
+        W_LATENT = (np.random.default_rng(789)
+                    .standard_normal((n_players, SIMULATIONS)) * WEEK_LATENT)
+        _exp_ratio = float(np.mean(1.0 + 3.0 * WEEK_LATENT**2 / _round_var))
+        print(f"[week-latent] sigma={WEEK_LATENT:.2f} SG/round, shrink "
+              f"{_latent_shrink.min():.3f}-{_latent_shrink.max():.3f}, "
+              f"expected 72h variance ratio ~{_exp_ratio:.3f} pre-cascade "
+              f"(target 1.15-1.20)")
+    else:
+        _latent_shrink = np.ones(n_players)
+        W_LATENT = None
+        print("[week-latent] disabled")
+
+    # ─── Fixture dump hook (parity re-capture; see rust/fixtures/verify_cascade_against_prod.py) ───
+    # SIMS_DUMP_FIXTURE=<path.npz> (or =1 for the default fixtures path) freezes the
+    # fully-assembled kernel inputs so the Rust kernel and the Python cascade can be
+    # compared on IDENTICAL real arrays. Pair with --use-python so the saved
+    # final_scores support the bit-for-bit transcription check.
+    _dump_path = os.getenv("SIMS_DUMP_FIXTURE")
+    if _dump_path:
+        if _dump_path == "1":
+            _dump_path = os.path.join("rust", "fixtures", f"prod_input_{tourney}.npz")
+        _c1 = lambda c: np.asarray([c['ott'], c['putt'], c['residual'], c['residual2']], dtype=float)
+        _c2 = lambda c: np.asarray([c['residual'], c['residual2'], c['residual3'], c['avg_ott'],
+                                    c['avg_putt'], c['avg_app'], c['avg_arg'], c['delta_app']], dtype=float)
+        _c3 = lambda c: np.asarray([c['sg_ott_avg'], c['sg_putt_avg'], c['sg_app_avg'],
+                                    c['sg_arg_avg'], c.get('pos_6_10', 0.0)], dtype=float)
+        np.savez_compressed(
+            _dump_path,
+            mu=np.stack([m for (m, s) in player_params_v2]),
+            std_course=np.stack([s for (m, s) in player_params_v2]),
+            eff_skew=np.asarray(effective_skew, dtype=float),
+            l_corr=np.asarray(L_corr, dtype=float),
+            my_pred_base=np.asarray(my_pred_base, dtype=float),
+            r2_mu=np.asarray(r2_mu, dtype=float), r3_mu=np.asarray(r3_mu, dtype=float),
+            r4_mu=np.asarray(r4_mu, dtype=float),
+            weather_delta_r1=np.asarray(weather_delta_r1, dtype=float),
+            weather_delta_r2=np.asarray(weather_delta_r2, dtype=float),
+            r1_high=_c1(coefficients_r1_high), r1_midh=_c1(coefficients_r1_midh),
+            r1_midl=_c1(coefficients_r1_midl), r1_low=_c1(coefficients_r1_low),
+            r2_lt6=_c2(coefficients_r2), r2_6_30=_c2(coefficients_r2_6_30),
+            r2_30up=_c2(coefficients_r2_30_up),
+            r3_lt6=_c3(coefficients_r3), r3_6_20=_c3(coefficients_r3_mid),
+            r3_30up=_c3(coefficients_r3_high),
+            cut_line=int(CUT_LINE), use_10_shot_rule=bool(USE_10_SHOT_RULE),
+            sims=int(SIMULATIONS), seed=456, week_latent_sd=float(WEEK_LATENT),
+            player_names=np.asarray(player_names, dtype=object),
+        )
+        print(f"  [fixture] dumped kernel inputs -> {_dump_path}"
+              + ("" if WEEK_LATENT == 0.0 else
+                 "  [NOTE: latent ON — bit-for-bit A-check needs --no-week-latent]"))
+
     # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy Python draw) ───
     # Compute final_scores + per-category SG means via the Rust sims_kernel up
     # front (inputs map 1:1 to the seed-456 dump-hook contract). On --use-python
@@ -629,6 +710,7 @@ if not args.price_only:
                 _r2(coefficients_r2), _r2(coefficients_r2_6_30), _r2(coefficients_r2_30_up),
                 _r3(coefficients_r3), _r3(coefficients_r3_mid), _r3(coefficients_r3_high),
                 int(CUT_LINE), bool(USE_10_SHOT_RULE), int(SIMULATIONS), 456,
+                float(WEEK_LATENT),
             )
             if len(_ret) >= 7:
                 _fs, _win, _cm1, _cm2, _cm3, _cm4, _mc = _ret[:7]
@@ -655,11 +737,13 @@ if not args.price_only:
         for i, (mu, std_c) in enumerate(player_params_v2):
             # Category means shifted by weather delta
             cat_mu = mu - weather_delta_r1[i] * WEATHER_CAT_SPLIT
+            if W_LATENT is not None:                        # week latent: +w/4 per category
+                cat_mu = cat_mu + W_LATENT[i][:, None] / 4.0
             Z = RNG.standard_normal(size=(SIMULATIONS, 4))
             corr_z = Z @ L_corr.T                          # correlated unit-variance draws
             for j in range(4):                              # apply per-player skewness
                 corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-            draws = cat_mu + corr_z * std_c                 # scale by per-player category stds
+            draws = cat_mu + corr_z * (std_c * _latent_shrink[i])
             cats_r1[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
             sg_r1[i] = cats_r1[i].sum(axis=1)
 
@@ -734,12 +818,14 @@ if not args.price_only:
             # Skill update shift: distribute evenly across 4 categories
             base_total_mu = mu.sum() - weather_delta_r2[i]
             skill_shift = sg_r2_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+            if W_LATENT is not None:                     # week latent rides the shift (/4)
+                skill_shift = skill_shift + W_LATENT[i]
             cat_mu_shifted = cat_mu + skill_shift[:, None] / 4.0
             Z = RNG.standard_normal(size=(SIMULATIONS, 4))
             corr_z = Z @ L_corr.T
             for j in range(4):
                 corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-            draws = cat_mu_shifted + corr_z * std_c
+            draws = cat_mu_shifted + corr_z * (std_c * _latent_shrink[i])
             cats_r2[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
             sg_r2[i] = cats_r2[i].sum(axis=1)
 
@@ -870,12 +956,14 @@ if not args.price_only:
             # No weather delta for R3
             base_total_mu = mu.sum()
             skill_shift = sg_r3_mean[i] - base_total_mu  # shape (SIMULATIONS,)
+            if W_LATENT is not None:                     # week latent rides the shift (/4)
+                skill_shift = skill_shift + W_LATENT[i]
             cat_mu_shifted = mu + skill_shift[:, None] / 4.0
             Z = RNG.standard_normal(size=(SIMULATIONS, 4))
             corr_z = Z @ L_corr.T
             for j in range(4):
                 corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-            draws = cat_mu_shifted + corr_z * std_c
+            draws = cat_mu_shifted + corr_z * (std_c * _latent_shrink[i])
             cats_r3[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
             sg_r3[i] = cats_r3[i].sum(axis=1)
 
@@ -953,12 +1041,14 @@ if not args.price_only:
         for i, (mu, std_c) in enumerate(player_params_v2):
             base_total_mu = mu.sum()
             skill_shift = sg_r4_mean[i] - base_total_mu
+            if W_LATENT is not None:                     # week latent rides the shift (/4)
+                skill_shift = skill_shift + W_LATENT[i]
             cat_mu_shifted = mu + skill_shift[:, None] / 4.0
             Z = RNG.standard_normal(size=(SIMULATIONS, 4))
             corr_z = Z @ L_corr.T
             for j in range(4):
                 corr_z[:, j] = _apply_skew(corr_z[:, j], effective_skew[i, j])
-            draws = cat_mu_shifted + corr_z * std_c
+            draws = cat_mu_shifted + corr_z * (std_c * _latent_shrink[i])
             cats_r4[i] = np.clip(draws, CLIP_CAT[0], CLIP_CAT[1])
             sg_r4[i] = cats_r4[i].sum(axis=1)
 
@@ -986,12 +1076,36 @@ if not args.price_only:
             std_realized = np.std(sg_arr, axis=1).mean()
             print(f"  {label} total std (realized avg): {std_realized:.3f}")
 
+        # 1b. 72-hole dependence: total variance / sum of round variances.
+        # Independent rounds -> 1.0; empirical player-weeks 1.09-1.38; the week
+        # latent targets 1.15-1.20 (see sim_inputs.WEEK_LATENT_SD).
+        _tot_sg = sg_r1 + sg_r2 + sg_r3 + sg_r4
+        _vr = float(np.mean(_tot_sg.var(axis=1) /
+                            (sg_r1.var(axis=1) + sg_r2.var(axis=1)
+                             + sg_r3.var(axis=1) + sg_r4.var(axis=1))))
+        print(f"  72h variance ratio: {_vr:.3f}  (target 1.15-1.20; independent rounds = 1.0)")
+
         # 2. Category stds vs expected
         print(f"\n  Category stds (R1 realized vs input*course_mult):")
         for k, cat in enumerate(["OTT", "APP", "ARG", "PUTT"]):
             realized = np.std(cats_r1[:, :, k], axis=1).mean()
             expected_avg = np.mean([p[1][k] for p in player_params_v2])
             print(f"    {cat}: realized={realized:.3f}, expected_avg={expected_avg:.3f}, ratio={realized/expected_avg:.3f}")
+
+    # ─── 72-hole totals skew top-up (joint fix step 2 — ALWAYS after the cascade;
+    # self-calibrating to the absolute empirical target, so running it last makes
+    # the joint fit with the week latent automatic. Cut-conditional at cut events;
+    # monotone per player, preserves per-player mean/std and the copula. Applied
+    # BEFORE win/top-N aggregation and the cache save so --price-only/--reprice
+    # inherit it. The raw pre-top-up final_scores_{tourney}.npy saved above stays
+    # the parity-oracle artifact.) ───
+    if not args.price_only:
+        if not args.no_skew_cal:
+            from skew_calibration import calibrate_total_skew
+            final_scores = np.asarray(final_scores)
+            calibrate_total_skew(final_scores, made_cut_mask)
+        else:
+            print("  [skew-cal] totals top-up disabled (--no-skew-cal)")
 
     # 3. Win prob sanity
     simulated_winners_v2 = []

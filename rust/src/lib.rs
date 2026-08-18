@@ -167,6 +167,7 @@ fn run_pretournament<'py>(
     use_10_shot_rule: bool,
     sims: usize,
     seed: u64,
+    week_latent_sd: f64,
 ) -> (
     Bound<'py, PyArray2<i64>>,
     Bound<'py, PyArray1<f64>>,
@@ -214,6 +215,7 @@ fn run_pretournament<'py>(
         r3_lt6: c3(r3_lt6), r3_6_20: c3(r3_6_20), r3_30up: c3(r3_30up),
         cut_line,
         use_10_shot_rule,
+        week_latent_sd,
     };
     let out = cascade::run_pretournament(&inp);
     let no = out.n;

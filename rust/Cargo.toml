@@ -1,6 +1,6 @@
 [package]
 name = "sims_kernel"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.77"            # f64::round_ties_even stabilized in 1.77
 description = "Rust Monte Carlo kernel for new_sim/round_sim (statistical-equivalence port)"

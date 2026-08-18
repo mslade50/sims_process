@@ -76,7 +76,10 @@ def run(inp, seed=456):
     strokes_r1 = np.rint(PAR - sg_r1).astype(int)
 
     # ---- R1 -> R2 update ----
-    resid_r1 = sg_r1 - my_pred[:, None]
+    # field_skill baseline matches production (new_sim.py):
+    #   resid_r1 = sg_r1 + field_skill - my_pred
+    field_skill = float(np.nanmean(my_pred))
+    resid_r1 = sg_r1 + field_skill - my_pred[:, None]
     resid2_r1 = resid_r1 ** 2
     high_m = my_pred > 1.0
     midh_m = (my_pred > 0.5) & (my_pred <= 1.0)

@@ -111,3 +111,79 @@ def calibrate_round_skew(sim_dict, target=TARGET_ROUND_SKEW, verbose=True):
               f"avg round skew {np.mean(skews_before):+.3f} -> {np.mean(skews_after):+.3f} "
               f"(target {target:+.2f})")
     return sim_dict
+
+
+# Empirical within-player 72-hole score skew target (2026-08 joint fix analysis
+# on dg_historical 2017-2025 player-weeks; cut-conditional at cut events). The
+# week-level latent recovers part of this organically; this top-up is
+# SELF-CALIBRATING (measures realized skew, adds only the residual), so
+# running it LAST makes the joint fit automatic — never apply it before the
+# latent is in the cascade.
+TARGET_TOTAL_SKEW = 0.23
+
+
+def calibrate_total_skew(final_scores, made_cut_mask=None,
+                         target=TARGET_TOTAL_SKEW, verbose=True):
+    """
+    Top up each player's simulated 72-HOLE total-score skew to the empirical
+    target. Same machinery as calibrate_round_skew (dither -> Cornish-Fisher
+    reshape -> stochastic rounding; monotone per player, preserves per-player
+    mean/std and the cross-player copula), applied to the (n, sims) integer
+    totals matrix IN PLACE.
+
+    At cut events the reshape is cut-conditional: only sims where the player
+    made the cut are transformed (missed-cut rows carry the +200 penalty and
+    are left untouched), matching how the empirical target is measured.
+
+    Args:
+        final_scores: (n_players, sims) integer 72-hole totals (penalty incl.)
+        made_cut_mask: (n_players, sims) bool, or None for no-cut events
+        target: within-player moment-skew target for 72-hole totals
+
+    Returns:
+        The same array, adjusted in place (also returned for chaining).
+    """
+    rng = np.random.default_rng(_SEED + 1)
+    n_players = final_scores.shape[0]
+    skews_before, skews_after = [], []
+    n_adj = 0
+    for i in range(n_players):
+        if made_cut_mask is not None:
+            sel = made_cut_mask[i]
+            if sel.sum() < 100:
+                continue
+        else:
+            sel = slice(None)
+        s_int = final_scores[i, sel]
+        s_f = s_int.astype(float)
+        if s_f.std() < 1e-9:
+            continue
+        v = s_f + rng.uniform(-0.5, 0.5, size=s_f.shape)
+        m, sd = v.mean(), v.std()
+        x = (v - m) / sd
+        g0 = float(_moment_skew(x))
+        skews_before.append(g0)
+        need = target - g0
+        if need < MIN_TOPUP:
+            skews_after.append(g0)
+            continue
+        gamma = min(need, MAX_TOPUP)
+        achieved = float(_moment_skew(_cf(x, gamma))) - g0
+        if achieved > 1e-6:
+            gamma = float(np.clip(gamma * need / achieved, 0.0, MAX_TOPUP))
+        y = _cf(x, gamma)
+        y = (y - y.mean()) / y.std()
+        var_target = max(sd * sd - 1.0 / 6.0, 0.25)
+        out_c = m + y * np.sqrt(var_target)
+        fl = np.floor(out_c)
+        out = fl + (rng.uniform(size=out_c.shape) < (out_c - fl))
+        out = np.clip(out, s_f.min() - 4, s_f.max() + 4)
+        final_scores[i, sel] = out.astype(final_scores.dtype)
+        skews_after.append(float(_moment_skew((out - out.mean()) / out.std())))
+        n_adj += 1
+
+    if verbose and skews_before:
+        print(f"  [skew-cal] totals: {n_adj}/{len(skews_before)} players topped up: "
+              f"avg 72h skew {np.mean(skews_before):+.3f} -> {np.mean(skews_after):+.3f} "
+              f"(target {target:+.2f})")
+    return final_scores

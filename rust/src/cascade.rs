@@ -91,6 +91,12 @@ pub struct Inputs {
     pub r3_30up: CoeffR3,
     pub cut_line: usize,
     pub use_10_shot_rule: bool,
+    /// Week-level form latent sigma (SG/round). One shared draw per
+    /// (player, sim) added as +w/4 to every round's category means, with
+    /// idiosyncratic category stds shrunk so per-round total variance is
+    /// unchanged. 0.0 disables — bit-identical to the pre-latent cascade
+    /// (the latent uses its own RNG stream, never the main seed stream).
+    pub week_latent_sd: f64,
 }
 
 pub struct Output {
@@ -222,6 +228,37 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
 
     let mut stream = NormalStream::new(inp.seed);
 
+    // ---- Week-level form latent (2026-08 joint distributional fix) ----
+    // Separate RNG stream so sd=0 leaves the main seed-456 stream bit-identical.
+    // std_eff = std_course * shrink_i with shrink_i^2 = 1 - sd^2/round_var_i,
+    // round_var_i = std_i^T (L L^T) std_i — per-round total variance unchanged.
+    let (w_latent, std_eff): (Option<Vec<f64>>, Vec<[f64; 4]>) = if inp.week_latent_sd > 0.0 {
+        let sd = inp.week_latent_sd;
+        let mut lat_stream = NormalStream::new(inp.seed.wrapping_add(789));
+        let mut w = vec![0.0f64; ns];
+        for v in w.iter_mut() {
+            *v = sd * lat_stream.next_normal();
+        }
+        let mut se = Vec::with_capacity(n);
+        for i in 0..n {
+            let s = inp.std_course[i];
+            // round_var = |L^T s|^2  (R = L L^T)
+            let mut rv = 0.0f64;
+            for k in 0..4 {
+                let mut dot = 0.0f64;
+                for a in 0..4 {
+                    dot += inp.l_corr[a][k] * s[a];
+                }
+                rv += dot * dot;
+            }
+            let shrink = (1.0 - sd * sd / rv).clamp(0.05, 1.0).sqrt();
+            se.push([s[0] * shrink, s[1] * shrink, s[2] * shrink, s[3] * shrink]);
+        }
+        (Some(w), se)
+    } else {
+        (None, inp.std_course.clone())
+    };
+
     // ---- R1 ----
     // base_cat = mu - weather_delta_r1 * WEATHER_CAT_SPLIT
     let base_cat_r1: Vec<[f64; 4]> = (0..n)
@@ -239,8 +276,8 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
     let mut cats_r1 = vec![[0.0f64; 4]; ns];
     let mut sg_r1 = vec![0.0f64; ns];
     let mut strokes_r1 = vec![0i64; ns];
-    draw_round(&mut stream, n, sims, &base_cat_r1, &inp.std_course, &skew, &inp.l_corr,
-        None, &mut cats_r1, &mut sg_r1, &mut strokes_r1);
+    draw_round(&mut stream, n, sims, &base_cat_r1, &std_eff, &skew, &inp.l_corr,
+        w_latent.as_deref(), &mut cats_r1, &mut sg_r1, &mut strokes_r1);
 
     // ---- R1 -> R2 skill update ----
     // adj_r1 (R1's FULL fresh adjustment: sg + residual), updated_skill_r2,
@@ -315,10 +352,15 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             shift_r2[k] = sg_r2_mean[k] - base_total;
         }
     }
+    if let Some(w) = &w_latent {
+        for k in 0..ns {
+            shift_r2[k] += w[k];
+        }
+    }
     let mut cats_r2 = vec![[0.0f64; 4]; ns];
     let mut sg_r2 = vec![0.0f64; ns];
     let mut strokes_r2 = vec![0i64; ns];
-    draw_round(&mut stream, n, sims, &base_cat_r2, &inp.std_course, &skew, &inp.l_corr,
+    draw_round(&mut stream, n, sims, &base_cat_r2, &std_eff, &skew, &inp.l_corr,
         Some(&shift_r2), &mut cats_r2, &mut sg_r2, &mut strokes_r2);
 
     // r1_r2_scores
@@ -409,10 +451,15 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             shift_r3[k] = sg_r3_mean[k] - base_total;
         }
     }
+    if let Some(w) = &w_latent {
+        for k in 0..ns {
+            shift_r3[k] += w[k];
+        }
+    }
     let mut cats_r3 = vec![[0.0f64; 4]; ns];
     let mut sg_r3 = vec![0.0f64; ns];
     let mut strokes_r3 = vec![0i64; ns];
-    draw_round(&mut stream, n, sims, &inp.mu, &inp.std_course, &skew, &inp.l_corr,
+    draw_round(&mut stream, n, sims, &inp.mu, &std_eff, &skew, &inp.l_corr,
         Some(&shift_r3), &mut cats_r3, &mut sg_r3, &mut strokes_r3);
 
     let mut r1_r3 = vec![0i64; ns];
@@ -464,10 +511,15 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             shift_r4[k] = sg_r4_mean[k] - base_total;
         }
     }
+    if let Some(w) = &w_latent {
+        for k in 0..ns {
+            shift_r4[k] += w[k];
+        }
+    }
     let mut cats_r4 = vec![[0.0f64; 4]; ns];
     let mut sg_r4 = vec![0.0f64; ns];
     let mut strokes_r4 = vec![0i64; ns];
-    draw_round(&mut stream, n, sims, &inp.mu, &inp.std_course, &skew, &inp.l_corr,
+    draw_round(&mut stream, n, sims, &inp.mu, &std_eff, &skew, &inp.l_corr,
         Some(&shift_r4), &mut cats_r4, &mut sg_r4, &mut strokes_r4);
 
     // ---- finalize: missed-cut penalty + totals ----
@@ -567,6 +619,7 @@ mod tests {
             r3_lt6: z3, r3_6_20: z3, r3_30up: z3,
             cut_line: 65,
             use_10_shot_rule: true,
+            week_latent_sd: 0.0,
         }
     }
 
@@ -584,6 +637,40 @@ mod tests {
         let out = run_pretournament(&inp);
         let total: f64 = out.win_prob.iter().sum();
         assert!((total - 1.0).abs() < 1e-9, "win prob sum {total}");
+    }
+
+    #[test]
+    fn week_latent_raises_total_variance_ratio() {
+        // No-cut config (cut_line >= n): final = sum of 4 rounds' strokes.
+        // With ident corr and std [1,1,.8,.8], round_var = 3.28. At sd=0.6 the
+        // per-player total variance should rise by ~1 + 3*sd^2/round_var = 1.33
+        // (per-round variance is preserved by the shrink, so the increase is
+        // pure cross-round covariance).
+        let n = 30usize;
+        let sims = 6000usize;
+        let mut inp0 = tiny_inputs(n, sims);
+        inp0.cut_line = n; // no cut
+        let mut inp1 = tiny_inputs(n, sims);
+        inp1.cut_line = n;
+        inp1.week_latent_sd = 0.6;
+        let out0 = run_pretournament(&inp0);
+        let out1 = run_pretournament(&inp1);
+        let var = |fs: &[i64]| -> f64 {
+            let mut acc = 0.0f64;
+            for i in 0..n {
+                let row = &fs[i * sims..(i + 1) * sims];
+                let m = row.iter().sum::<i64>() as f64 / sims as f64;
+                let v = row.iter().map(|&x| { let d = x as f64 - m; d * d }).sum::<f64>()
+                    / sims as f64;
+                acc += v;
+            }
+            acc / n as f64
+        };
+        let ratio = var(&out1.final_scores) / var(&out0.final_scores);
+        assert!(ratio > 1.20 && ratio < 1.45,
+            "latent variance ratio {ratio} outside expected (1.20, 1.45)");
+        let total: f64 = out1.win_prob.iter().sum();
+        assert!((total - 1.0).abs() < 1e-9, "win prob sum with latent {total}");
     }
 
     #[test]

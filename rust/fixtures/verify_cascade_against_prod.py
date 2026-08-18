@@ -41,7 +41,8 @@ def load_inputs(npz):
     def r1(a): return dict(ott=a[0], putt=a[1], residual=a[2], residual2=a[3])
     def r2(a): return dict(residual=a[0], residual2=a[1], residual3=a[2], avg_ott=a[3],
                            avg_putt=a[4], avg_app=a[5], avg_arg=a[6], delta_app=a[7])
-    def r3(a): return dict(sg_ott_avg=a[0], sg_putt_avg=a[1], sg_app_avg=a[2], sg_arg_avg=a[3])
+    def r3(a): return dict(sg_ott_avg=a[0], sg_putt_avg=a[1], sg_app_avg=a[2], sg_arg_avg=a[3],
+                           pos_6_10=(float(a[4]) if len(a) > 4 else 0.0))
     inp_ref = dict(
         mu=d["mu"], std_course=d["std_course"], eff_skew=d["eff_skew"], l_corr=d["l_corr"],
         my_pred_base=d["my_pred_base"], r2_mu=d["r2_mu"], r3_mu=d["r3_mu"], r4_mu=d["r4_mu"],
@@ -56,6 +57,10 @@ def load_inputs(npz):
     return d, inp_ref, seed
 
 
+def week_latent_sd(d):
+    return float(d["week_latent_sd"]) if "week_latent_sd" in d else 0.0
+
+
 def run_rust(d, seed):
     A = np.ascontiguousarray
     return k.run_pretournament(
@@ -66,6 +71,7 @@ def run_rust(d, seed):
         list(d["r2_lt6"]), list(d["r2_6_30"]), list(d["r2_30up"]),
         list(d["r3_lt6"]), list(d["r3_6_20"]), list(d["r3_30up"]),
         int(d["cut_line"]), bool(d["use_10_shot_rule"]), int(d["sims"]), seed,
+        week_latent_sd(d),
     )
 
 
@@ -88,15 +94,18 @@ def verify(event):
         print(f"[{event}] SKIP — no prod_input_{event}.npz "
               f"(run: SIMS_DUMP_FIXTURE=1 python new_sim.py --sim-only)")
         return True
-    # Prefer the sequestered fixture copy (permanent oracle), then fall back to a
-    # live working-tree copy if present.
+    # Oracle preference: the sequestered fixture copy, then the sha256 sidecar
+    # (pinned from the RAW pre-top-up final_scores_{event}.npy), then live
+    # working-tree copies. NOTE the event cache (<event>/final_scores.npy) is
+    # saved AFTER the totals skew top-up and cannot serve as a bit-for-bit
+    # oracle — only the root final_scores_{event}.npy (saved pre-top-up) can.
+    sha_sidecar = os.path.join(FIXDIR, f"prod_final_scores_{event}.sha256")
     fs_candidates = [
         os.path.join(FIXDIR, f"prod_final_scores_{event}.npy"),
-        os.path.join(ROOT, event, "final_scores.npy"),
-        os.path.join(ROOT, f"final_scores_{event}.npy"),
     ]
+    if not os.path.exists(sha_sidecar):
+        fs_candidates.append(os.path.join(ROOT, f"final_scores_{event}.npy"))
     fs_path = next((p for p in fs_candidates if os.path.exists(p)), None)
-    sha_sidecar = os.path.join(FIXDIR, f"prod_final_scores_{event}.sha256")
     if fs_path is None and not os.path.exists(sha_sidecar):
         print(f"[{event}] SKIP — production final_scores (or sha256 sidecar) not found")
         return True
@@ -113,6 +122,28 @@ def verify(event):
     # --- A. transcription: ref must reproduce prod final_scores bit-for-bit ---
     # Works against the full prod matrix when present, else against the committed
     # sha256 sidecar (so the tiny npz+sha256 fixture stays a valid CI oracle).
+    # Fixtures captured with the week latent ON cannot be transcription-checked
+    # (ref_pretournament has no latent) — capture with --no-week-latent for A.
+    if week_latent_sd(d) != 0.0:
+        print(f"  A. transcription  SKIP — fixture captured with week latent "
+              f"sd={week_latent_sd(d)} (re-capture with --no-week-latent); "
+              f"running B only vs stored prod matrix")
+        if prod_fs is None:
+            return True
+        rust_fs, *_ = run_rust(d, seed)
+        rust_fs = np.ascontiguousarray(rust_fs)
+        u_p, ndh_p, top_p = k.aggregate(np.ascontiguousarray(prod_fs))
+        u_r, ndh_r, top_r = k.aggregate(rust_fs)
+        gate(top_r[:, 0], top_p[:, 0], sims, "top5", fails)
+        gate(top_r[:, 1], top_p[:, 1], sims, "top10", fails)
+        gate(top_r[:, 2], top_p[:, 2], sims, "top20", fails)
+        gate(u_r[:, :20].ravel(), u_p[:, :20].ravel(), sims, "rank_prob[1..20]", fails)
+        if fails:
+            print(f"  [{event}] FAIL:")
+            for m in fails:
+                print(f"    - {m}")
+            return False
+        return True
     ref_fs, _ = run_py(inp_ref, seed=seed)
     sha_path = os.path.join(FIXDIR, f"prod_final_scores_{event}.sha256")
     if prod_fs is not None:
