@@ -29,20 +29,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.data_layer import (  # noqa: E402
     get_bet_ledger,
-    get_devig_fades,
-    get_finish_equity,
     get_h2h_matrix,
     get_historical_events,
     get_historical_rank_probs,
     get_mkt_regress_diagnostics,
     get_model_predictions,
-    get_outright_edges,
     get_rank_probs_live,
     get_rank_probs_pre,
     get_round_score_probs,
     get_sg_diagnostics,
     get_sg_dist_player,
-    get_simulated_probs,
     get_tournament_config,
     get_v2_dists,
     get_weather_forecast,
@@ -134,20 +130,6 @@ def export(output: Path) -> None:
             tagged["round"] = round_num
             prediction_frames.append(tagged)
 
-    edges = get_outright_edges(tourney)
-    fades = get_devig_fades(tourney)
-    finish = get_finish_equity(tourney)
-    simulated = get_simulated_probs()
-    _write(
-        output / "outrights.json",
-        {
-            "edges": _records(edges),
-            "fades": _records(fades),
-            "finish": _records(finish),
-            "probabilities": _records(simulated),
-        },
-    )
-
     _write(
         output / "distributions.json",
         {
@@ -237,7 +219,6 @@ def export(output: Path) -> None:
             "par": config.get("course_par") or config.get("PAR"),
             "rounds": sorted(int(key) for key in rounds),
             "views": [
-                "outrights",
                 "distributions",
                 "sg-distributions",
                 "round-scores",

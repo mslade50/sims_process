@@ -1,6 +1,6 @@
 # Golf Model dashboard
 
-Cloudflare-native replacement for the legacy Dash/Render interface. The site keeps the eight analytical views that remain useful—Outrights, Round Scores, Weather, Finish Distributions, SG Distributions, History, Performance, and Diagnostics—and intentionally omits Home, Matchups, Bets, and Pricer.
+Cloudflare-native replacement for the legacy Dash/Render interface. The site keeps the seven analytical views that remain useful—Round Scores, Weather, Finish Distributions, SG Distributions, History, Performance, and Diagnostics—and intentionally omits Home, Outrights, Matchups, Bets, and Pricer.
 
 The existing Python simulation remains the source of truth. `scripts/export_dashboard_data.py` converts its current CSV, Parquet, and Google Sheets-backed data into browser-safe JSON snapshots. The Worker reads the same keys from the `DASHBOARD_DATA` R2 binding when populated and falls back to the packaged snapshot for safe first deploys.
 

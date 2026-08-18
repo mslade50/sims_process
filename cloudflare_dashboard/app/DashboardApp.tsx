@@ -13,7 +13,6 @@ import {
   Menu,
   Microscope,
   Settings2,
-  Trophy,
   TrendingUp,
   X,
 } from "lucide-react";
@@ -23,14 +22,13 @@ import {
   DiagnosticsView,
   DistributionsView,
   HistoryView,
-  OutrightsView,
   PerformanceView,
   RoundScoresView,
   SgDistributionsView,
   WeatherView,
 } from "./views";
 
-export type ViewKey = "outrights" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
+export type ViewKey = "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
 
 type Manifest = {
   generated_at: string;
@@ -42,11 +40,10 @@ type Manifest = {
   rounds: number[];
 };
 
-const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: string; description: string; icon: typeof Trophy }> }> = [
+const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: string; description: string; icon: typeof CircleGauge }> }> = [
   {
     label: "Live",
     items: [
-      { key: "outrights", label: "Outrights", description: "Win and finish equity", icon: Trophy },
       { key: "round-scores", label: "Round scores", description: "Score distributions", icon: CircleGauge },
       { key: "weather", label: "Weather", description: "Forecast and impact", icon: CloudSun },
     ],
@@ -69,7 +66,6 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
 ];
 
 const views: Record<ViewKey, React.ComponentType> = {
-  outrights: OutrightsView,
   distributions: DistributionsView,
   "sg-distributions": SgDistributionsView,
   "round-scores": RoundScoresView,
@@ -86,8 +82,14 @@ const accents = [
   { name: "Rose", value: "#f27ea9" },
 ];
 
+function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  window.location.assign(href);
+}
+
 export function DashboardApp({ initialView }: { initialView: ViewKey }) {
-  const activeView = views[initialView] ? initialView : "outrights";
+  const activeView = views[initialView] ? initialView : "round-scores";
   const ActiveView = views[activeView];
   const { data: manifest } = useDashboardData<Manifest>("manifest.json");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -115,7 +117,7 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
         <div className="brand-row">
-          <Link className="brand" href="/outrights" aria-label="Golf Model home">
+          <Link className="brand" href="/round-scores" onClick={(event) => navigateWithReload(event, "/round-scores")} aria-label="Golf Model home">
             <span className="brand-mark"><i /><i /><i /></span>
             {!collapsed && <span><strong>Golf Model</strong><small>Simulation intelligence</small></span>}
           </Link>
@@ -128,7 +130,7 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <Link className={activeView === item.key ? "active" : ""} href={`/${item.key}`} key={item.key} title={collapsed ? item.label : undefined}>
+                  <Link className={activeView === item.key ? "active" : ""} href={`/${item.key}`} onClick={(event) => navigateWithReload(event, `/${item.key}`)} key={item.key} title={collapsed ? item.label : undefined}>
                     <Icon size={18} />
                     {!collapsed && <span><strong>{item.label}</strong><small>{item.description}</small></span>}
                   </Link>
