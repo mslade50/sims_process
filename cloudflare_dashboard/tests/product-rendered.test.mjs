@@ -44,7 +44,7 @@ test("server-renders the Golf Model application shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Golf Model<\/title>/i);
   assert.match(html, /Golf Model/);
-  assert.match(html, /Round scores/i);
+  assert.match(html, /Performance/i);
   assert.match(html, /Finish distributions/i);
   assert.match(html, /Performance/);
   assert.doesNotMatch(html, /Your site is taking shape/);
@@ -73,7 +73,7 @@ test("forces full-page navigation for Cloudflare route compatibility", async () 
   const dashboardApp = await readFile(new URL("../app/DashboardApp.tsx", import.meta.url), "utf8");
   assert.match(dashboardApp, /window\.location\.assign\(href\)/);
   assert.match(dashboardApp, /navigateWithReload\(event, `\/\$\{item\.key\}`\)/);
-  assert.match(dashboardApp, /href="\/round-scores"/);
+  assert.match(dashboardApp, /href="\/performance"/);
 });
 
 test("serves dashboard data from R2 and falls back to packaged assets", async () => {

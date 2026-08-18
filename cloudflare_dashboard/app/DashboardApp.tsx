@@ -89,7 +89,7 @@ function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: st
 }
 
 export function DashboardApp({ initialView }: { initialView: ViewKey }) {
-  const activeView = views[initialView] ? initialView : "round-scores";
+  const activeView = views[initialView] ? initialView : "performance";
   const ActiveView = views[activeView];
   const { data: manifest } = useDashboardData<Manifest>("manifest.json");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -117,7 +117,7 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
         <div className="brand-row">
-          <Link className="brand" href="/round-scores" onClick={(event) => navigateWithReload(event, "/round-scores")} aria-label="Golf Model home">
+          <Link className="brand" href="/performance" onClick={(event) => navigateWithReload(event, "/performance")} aria-label="Golf Model home">
             <span className="brand-mark"><i /><i /><i /></span>
             {!collapsed && <span><strong>Golf Model</strong><small>Simulation intelligence</small></span>}
           </Link>
