@@ -29,7 +29,13 @@ load_dotenv()
 OUTRIGHT_EFFECT = 0.12      # max mkt_adj magnitude (SG)
 MU_EFFECT = 0.13            # max mu_adj magnitude (SG)
 CADJ_MAX_PCT = 0.30         # max c_adj regression at tails (30% of c_adj)
-UP_DAMPEN = 0.35            # dampen upward regression (UP is ~40% accurate vs ~67% for DOWN)
+# 2026-08 retune on week-latent-corrected fairs (4-event open/close backtest):
+# the UP/DOWN accuracy asymmetry that justified 0.35 (UP ~40% vs DOWN ~67%,
+# measured on the OLD fairs whose favorite end was biased) is gone — market-
+# right rates are now ~89% both directions. 0.75 captures most of the gap;
+# held below 1.0 because UP_DAMPEN also gates mu_adj/c_adj_regress, whose
+# asymmetry was not re-measured. Re-score with the monthly closing-line pass.
+UP_DAMPEN = 0.75            # dampen upward regression (was 0.35 pre week-latent fix)
 
 # ---------------------------------------------------------------------------
 # Load sim outputs
