@@ -15,6 +15,7 @@
         <button class="tab" data-tab="tape">Tape</button>
         <button class="tab" data-tab="pnl">PnL</button>
         <button class="tab" data-tab="maker">Maker</button>
+        <button class="tab" data-tab="px">ProphetX</button>
       </nav>
       <div class="event-bar">
         <span class="event-label">⛳</span>
@@ -223,6 +224,41 @@
           <div id="makerRules" class="maker-rules"></div>
           <div id="makerTotals" class="statstrip"></div>
           <div id="maker-table" class="tablewrap"></div>
+        </div>
+      </section>
+
+      <!-- PROPHETX TAB -->
+      <section id="px" class="tabpane">
+        <div class="grid">
+          <div class="card ticket">
+            <h2>ProphetX ticket <span id="pxBalance" class="muted small"></span></h2>
+            <div class="row">
+              <label>Event</label>
+              <select id="pxEvent"></select>
+              <button id="pxLoadEvents" class="btn">Load</button>
+            </div>
+            <div class="row">
+              <input id="pxMarketSearch" type="text" placeholder="filter markets / players…" autocomplete="off" />
+            </div>
+            <div class="row">
+              <select id="pxLine" size="8" class="marketlist"></select>
+            </div>
+            <div id="pxTicketBody" class="ticket-body" hidden>
+              <div class="selected" id="pxSelectedLine"></div>
+              <div class="row two">
+                <div><label>Odds (ladder)</label><input id="pxOdds" type="number" step="1" /></div>
+                <div><label>Stake $</label><input id="pxStake" type="number" step="1" min="1" value="10" /></div>
+              </div>
+              <div class="row">
+                <button id="pxPlace" class="btn primary big">Place wager</button>
+              </div>
+              <div id="pxTicketMsg" class="msg"></div>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Wagers <button id="pxRefresh" class="btn tiny">↻</button></h2>
+            <div id="pxWagers" class="tablewrap"></div>
+          </div>
         </div>
       </section>
     </main>

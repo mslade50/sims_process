@@ -78,6 +78,7 @@ function activateTab(name) {
   if (name === "tape") loadTape();
   if (name === "pnl") loadPnL();
   if (name === "maker") loadMaker();
+  if (name === "px") loadPx();
 }
 document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => activateTab(btn.dataset.tab))
@@ -990,6 +991,156 @@ setInterval(() => {
     loadTape();
   }
 }, 8000);
+
+// ── ProphetX (golf-only; server enforces scope, ladder odds, stake caps) ─────
+let pxLines = []; // flattened selectable lines for the current event
+let pxSelected = null;
+let pxLoaded = false;
+
+function pxFlattenMarkets(markets) {
+  // Shape-tolerant: collect selection-like nodes carrying a line id + odds,
+  // labeled with the nearest market/selection names.
+  const out = [];
+  const visit = (node, marketName) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach((n) => visit(n, marketName)); return; }
+    const name = node.name || node.display_name || marketName;
+    const lineId = node.line_id != null ? String(node.line_id)
+      : node.id != null && node.odds != null ? String(node.id) : null;
+    if (lineId && node.odds != null) {
+      out.push({ line_id: lineId, label: `${marketName || ""} — ${node.name || node.display_name || lineId}`,
+                 odds: node.odds, line: node.line });
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (typeof v === "object") visit(v, k === "selections" || k === "market_lines" ? name : marketName || name);
+    }
+  };
+  markets.forEach((m) => visit(m, m.name || m.market_name || ""));
+  const seen = new Set();
+  return out.filter((l) => (seen.has(l.line_id) ? false : (seen.add(l.line_id), true)));
+}
+
+async function loadPx() {
+  if (pxLoaded) { loadPxWagers(); return; }
+  pxLoaded = true;
+  try {
+    const d = await api("/api/px/markets");
+    const sel = $("pxEvent");
+    sel.innerHTML = "";
+    for (const e of d.events || []) {
+      const o = document.createElement("option");
+      o.value = e.id;
+      o.textContent = `${e.tournament}: ${e.name}`;
+      sel.appendChild(o);
+    }
+    if (!(d.events || []).length) $("pxTicketMsg").textContent = "no active golf events";
+    loadPxWagers();
+  } catch (e) {
+    $("pxTicketMsg").textContent = e.message; // 503 until PROPHETX_* secrets are set
+  }
+}
+
+async function loadPxLines() {
+  const eventId = $("pxEvent").value;
+  if (!eventId) return;
+  $("pxTicketMsg").textContent = "loading markets…";
+  try {
+    const d = await api(`/api/px/markets?event=${encodeURIComponent(eventId)}`);
+    pxLines = pxFlattenMarkets(d.markets || []);
+    renderPxLines();
+    $("pxTicketMsg").textContent = `${pxLines.length} lines`;
+  } catch (e) {
+    $("pxTicketMsg").textContent = e.message;
+  }
+}
+
+function renderPxLines() {
+  const q = $("pxMarketSearch").value.toLowerCase();
+  const list = $("pxLine");
+  list.innerHTML = "";
+  for (const l of pxLines.filter((l) => !q || l.label.toLowerCase().includes(q)).slice(0, 400)) {
+    const o = document.createElement("option");
+    o.value = l.line_id;
+    o.textContent = `${l.label}  @${l.odds}`;
+    list.appendChild(o);
+  }
+}
+
+function selectPxLine(lineId) {
+  pxSelected = pxLines.find((l) => l.line_id === lineId) || null;
+  if (!pxSelected) return;
+  $("pxTicketBody").hidden = false;
+  $("pxSelectedLine").textContent = pxSelected.label;
+  if (pxSelected.odds != null) $("pxOdds").value = pxSelected.odds;
+}
+
+async function placePxWager() {
+  if (!pxSelected) return;
+  const body = {
+    event_id: $("pxEvent").value,
+    line_id: pxSelected.line_id,
+    odds: Number($("pxOdds").value),
+    stake: Number($("pxStake").value),
+  };
+  $("pxTicketMsg").textContent = "placing…";
+  try {
+    const r = await api("/api/px/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("pxTicketMsg").textContent = r.ok ? `placed (${r.external_id})` : JSON.stringify(r.detail).slice(0, 200);
+    loadPxWagers();
+  } catch (e) {
+    $("pxTicketMsg").textContent = e.message;
+  }
+}
+
+async function cancelPxWager(wagerId, externalId) {
+  try {
+    await api("/api/px/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(wagerId ? { wager_id: wagerId } : { external_id: externalId }),
+    });
+    loadPxWagers();
+  } catch (e) {
+    $("pxTicketMsg").textContent = e.message;
+  }
+}
+
+async function loadPxWagers() {
+  try {
+    const d = await api("/api/px/positions");
+    const bal = d.balance || {};
+    const balVal = bal.balance ?? bal.available ?? bal.total ?? null;
+    $("pxBalance").textContent = balVal != null ? `bal $${Number(balVal).toLocaleString()}` : "";
+    const raw = d.wagers || {};
+    const rows = raw.wagers || raw.wager_histories || (Array.isArray(raw) ? raw : []);
+    const html = ['<table><tr><th>placed</th><th>market</th><th>odds</th><th>stake</th><th>matched</th><th>status</th><th></th></tr>'];
+    for (const w of rows.slice(0, 60)) {
+      const open = String(w.status || "").toLowerCase() === "open" ||
+                   String(w.matching_status || "").toLowerCase().includes("unmatched");
+      const isExec = String(w.external_id || "").startsWith("exm-");
+      html.push(`<tr><td>${w.created_at || w.placed_at || ""}</td>` +
+        `<td>${w.market_name || w.display_name || w.line_id || ""}</td>` +
+        `<td>${w.odds ?? ""}</td><td>${w.stake ?? ""}</td>` +
+        `<td>${w.matched_stake ?? w.matched ?? ""}</td><td>${w.status || ""}/${w.matching_status || ""}</td>` +
+        `<td>${open && isExec ? `<button class="btn tiny" onclick="cancelPxWager('${w.wager_id || w.id || ""}','${w.external_id || ""}')">cancel</button>` : ""}</td></tr>`);
+    }
+    html.push("</table>");
+    $("pxWagers").innerHTML = rows.length ? html.join("") : '<div class="muted">no wagers</div>';
+  } catch (e) {
+    $("pxWagers").innerHTML = `<div class="muted">${e.message}</div>`;
+  }
+}
+
+$("pxLoadEvents").addEventListener("click", () => { pxLoaded = false; loadPx(); });
+$("pxEvent").addEventListener("change", loadPxLines);
+$("pxMarketSearch").addEventListener("input", renderPxLines);
+$("pxLine").addEventListener("change", (e) => selectPxLine(e.target.value));
+$("pxPlace").addEventListener("click", placePxWager);
+$("pxRefresh").addEventListener("click", loadPxWagers);
 
 // Init
 loadReference();
