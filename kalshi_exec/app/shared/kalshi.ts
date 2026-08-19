@@ -14,6 +14,9 @@ export interface Env {
   KALSHI_API_KEY: string; // access key ID (value of KALSHI_ACCESS_KEY in .env)
   KALSHI_PRIVATE_KEY: string; // full PKCS#8 PEM text
   DB: D1Database;
+  // Optional server-side order caps for /api/send (2026-08 audit hardening).
+  SEND_MAX_COUNT?: string; // max contracts per order (default 1000)
+  SEND_MAX_COST_DOLLARS?: string; // max cost per order in dollars (default 500)
 }
 
 export const API_BASE = "https://api.elections.kalshi.com/trade-api/v2";

@@ -14,6 +14,12 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   const orders = Array.isArray(body.orders) ? body.orders : [];
   if (!orders.length) return json({ error: "no orders submitted" }, 400);
 
+  // Server-side caps (2026-08 audit): the UI can't be the only guard on a
+  // real-order surface. Per-order contract count and notional cost limits,
+  // env-overridable (wrangler pages secret/var) with conservative defaults.
+  const maxCount = parseInt(ctx.env.SEND_MAX_COUNT || "1000", 10);
+  const maxCostDollars = Number(ctx.env.SEND_MAX_COST_DOLLARS || "500");
+
   const now = Math.floor(Date.now() / 1000);
   const details: any[] = [];
   let posted = 0;
@@ -40,6 +46,19 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
     if (!(cents > 0 && cents < 100)) {
       failed++;
       details.push({ ...base, status: "failed", message: "price must be between 0 and 100¢" });
+      continue;
+    }
+    if (count > maxCount) {
+      failed++;
+      details.push({ ...base, status: "failed",
+        message: `count ${count} exceeds server cap ${maxCount} (SEND_MAX_COUNT)` });
+      continue;
+    }
+    const costDollars = (count * cents) / 100;
+    if (costDollars > maxCostDollars) {
+      failed++;
+      details.push({ ...base, status: "failed",
+        message: `cost $${costDollars.toFixed(2)} exceeds server cap $${maxCostDollars} (SEND_MAX_COST_DOLLARS)` });
       continue;
     }
     if (kill_ts !== null && kill_ts <= now) {

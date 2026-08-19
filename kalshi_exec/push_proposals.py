@@ -5,8 +5,13 @@ This reads it, keeps the strongest edge per ticker, and POSTs the set to the
 serverless app's `/api/proposals` so the order ticket can overlay model fair /
 edge per market. Display only — this never places an order.
 
-Auth: the app's proposals POST is gated by the `X-Proposals-Token` header, which
-must match the Cloudflare secret `PROPOSALS_TOKEN`. Set it locally:
+Auth (two layers since 2026-08-19):
+1. Cloudflare Access fronts the whole app — this script authenticates with the
+   "kalshi-exec-push" service token via CF-Access-Client-Id/Secret headers,
+   read from CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (kalshi_exec/.env,
+   gitignored, or process env). Without them Access 302s to the login page.
+2. The app's own `X-Proposals-Token` header, which must match the Cloudflare
+   secret `PROPOSALS_TOKEN`. Set it locally:
 
     setx PROPOSALS_TOKEN "<the token>"          # or pass --token
     python kalshi_exec/push_proposals.py --push  # actually send
@@ -32,6 +37,22 @@ import pandas as pd
 
 DEFAULT_URL = "https://kalshi-exec.pages.dev"
 DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "permanent_data" / "maker_proposals.parquet"
+
+
+def _load_local_env() -> None:
+    """Best-effort load of kalshi_exec/.env (no python-dotenv dependency)."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        os.environ.setdefault(k.strip(), v.strip())
+
+
+_load_local_env()
 
 # Columns we forward (best-effort; missing ones are dropped per row).
 FIELDS = ["ticker", "side", "sim_prob", "edge_pp", "best_bid", "best_ask", "post_price", "kelly_f"]
@@ -100,6 +121,16 @@ def main() -> int:
         print("\nrefusing to push: no token (set PROPOSALS_TOKEN or pass --token)", file=sys.stderr)
         return 2
 
+    # Cloudflare Access service-token headers (the platform gate; app token below
+    # is the second factor). Missing creds -> Access will 302 to the login page.
+    cf_id = os.getenv("CF_ACCESS_CLIENT_ID", "")
+    cf_secret = os.getenv("CF_ACCESS_CLIENT_SECRET", "")
+    if not (cf_id and cf_secret):
+        print("\nrefusing to push: CF_ACCESS_CLIENT_ID/SECRET not set "
+              "(kalshi_exec/.env) — Access would redirect this request to the "
+              "login page", file=sys.stderr)
+        return 2
+
     # Browser UA: Cloudflare's edge bot-protection blocks the default Python
     # urllib client signature (CF error 1010).
     req = urllib.request.Request(
@@ -108,6 +139,8 @@ def main() -> int:
         headers={
             "Content-Type": "application/json",
             "X-Proposals-Token": args.token,
+            "CF-Access-Client-Id": cf_id,
+            "CF-Access-Client-Secret": cf_secret,
             "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
         },

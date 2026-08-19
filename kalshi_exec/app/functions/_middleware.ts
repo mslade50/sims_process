@@ -15,10 +15,21 @@
 interface MEnv {
   APP_PASSWORD?: string;
   SESSION_SECRET?: string;
+  // Bump to instantly revoke ALL sessions (tokens embed + verify this value).
+  SESSION_GENERATION?: string;
+  DB?: D1Database;
 }
 
 const COOKIE = "kx_session";
-const MAX_AGE = 30 * 24 * 3600; // 30 days
+// 12 hours (was 30 days — a non-revocable month-long cookie was the only gate
+// pre-Cloudflare-Access; 2026-08 audit). Sessions are also generation-stamped:
+// `wrangler pages secret put SESSION_GENERATION` with a new value kills every
+// outstanding session immediately.
+const MAX_AGE = 12 * 3600;
+// /__auth lockout: after this many failures in the window, reject without
+// evaluating the password.
+const AUTH_MAX_FAILURES = 5;
+const AUTH_WINDOW_SECS = 15 * 60;
 
 function b64url(buf: ArrayBuffer): string {
   const b = new Uint8Array(buf);
@@ -45,18 +56,53 @@ async function hmac(secret: string, msg: string): Promise<string> {
   return b64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg)));
 }
 
-async function mintToken(secret: string): Promise<string> {
+async function mintToken(secret: string, gen: string): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + MAX_AGE;
-  return `${exp}.${await hmac(secret, String(exp))}`;
+  return `${exp}.${gen}.${await hmac(secret, `${exp}.${gen}`)}`;
 }
 
-async function validToken(token: string, secret: string): Promise<boolean> {
-  const dot = token.indexOf(".");
-  if (dot < 0) return false;
-  const exp = token.slice(0, dot);
-  const sig = token.slice(dot + 1);
+async function validToken(token: string, secret: string, gen: string): Promise<boolean> {
+  const parts = token.split(".");
+  if (parts.length !== 3) return false; // also invalidates all pre-generation tokens
+  const [exp, tokenGen, sig] = parts;
   if (!/^\d+$/.test(exp) || Number(exp) < Date.now() / 1000) return false;
-  return timingSafeEqual(sig, await hmac(secret, exp));
+  if (!timingSafeEqual(tokenGen, gen)) return false;
+  return timingSafeEqual(sig, await hmac(secret, `${exp}.${tokenGen}`));
+}
+
+// ── /__auth brute-force lockout (D1-backed; fail-open only if D1 is absent,
+//    in which case the timing-safe compare is still the floor) ───────────────
+async function authLockedOut(db: D1Database | undefined, now: number): Promise<boolean> {
+  if (!db) return false;
+  try {
+    const row = await db
+      .prepare("SELECT COUNT(*) AS n FROM auth_attempts WHERE ts > ?")
+      .bind(now - AUTH_WINDOW_SECS)
+      .first<{ n: number }>();
+    return (row?.n ?? 0) >= AUTH_MAX_FAILURES;
+  } catch {
+    return false; // table may not exist yet — created on first failure
+  }
+}
+
+async function recordAuthFailure(db: D1Database | undefined, now: number): Promise<void> {
+  if (!db) return;
+  try {
+    await db.prepare("CREATE TABLE IF NOT EXISTS auth_attempts (ts INTEGER NOT NULL)").run();
+    await db.prepare("INSERT INTO auth_attempts (ts) VALUES (?)").bind(now).run();
+    await db.prepare("DELETE FROM auth_attempts WHERE ts <= ?").bind(now - AUTH_WINDOW_SECS).run();
+  } catch {
+    /* non-fatal */
+  }
+}
+
+async function clearAuthFailures(db: D1Database | undefined): Promise<void> {
+  if (!db) return;
+  try {
+    await db.prepare("DELETE FROM auth_attempts").run();
+  } catch {
+    /* non-fatal */
+  }
 }
 
 function getCookie(req: Request, name: string): string | null {
@@ -91,12 +137,20 @@ export const onRequest: PagesFunction<MEnv> = async (ctx) => {
   // Login form
   if (url.pathname === "/__login") return loginPage(url.searchParams.get("e") === "1");
 
-  // Login submit
+  // Login submit (rate-limited: AUTH_MAX_FAILURES per AUTH_WINDOW_SECS, D1-backed)
   if (url.pathname === "/__auth" && ctx.request.method === "POST") {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (await authLockedOut(ctx.env.DB, nowSec)) {
+      return new Response("Too many failed attempts — try again later.", {
+        status: 429,
+        headers: { "Retry-After": String(AUTH_WINDOW_SECS) },
+      });
+    }
     const form = await ctx.request.formData().catch(() => null);
     const pw = form ? String(form.get("password") || "") : "";
     if (timingSafeEqual(pw, APP_PASSWORD)) {
-      const token = await mintToken(SESSION_SECRET);
+      await clearAuthFailures(ctx.env.DB);
+      const token = await mintToken(SESSION_SECRET, ctx.env.SESSION_GENERATION || "1");
       return new Response(null, {
         status: 303,
         headers: {
@@ -105,6 +159,7 @@ export const onRequest: PagesFunction<MEnv> = async (ctx) => {
         },
       });
     }
+    await recordAuthFailure(ctx.env.DB, nowSec);
     return new Response(null, { status: 303, headers: { Location: "/__login?e=1" } });
   }
 
@@ -130,7 +185,7 @@ export const onRequest: PagesFunction<MEnv> = async (ctx) => {
 
   // Gate everything else
   const tok = getCookie(ctx.request, COOKIE);
-  if (tok && (await validToken(tok, SESSION_SECRET))) return ctx.next();
+  if (tok && (await validToken(tok, SESSION_SECRET, ctx.env.SESSION_GENERATION || "1"))) return ctx.next();
 
   // Unauthenticated: 401 JSON for API, redirect for navigations
   if (url.pathname.startsWith("/api/")) {
