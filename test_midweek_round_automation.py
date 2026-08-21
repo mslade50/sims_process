@@ -236,14 +236,29 @@ class ShotCollectorReadinessTests(unittest.TestCase):
             "r2_teetime": ["2026-08-14 07:00", "2026-08-14 07:10", None],
         })
 
-    def test_requires_every_active_next_round_player_to_be_complete(self):
+    def test_warns_but_allows_an_incomplete_archived_player(self):
         archive = pd.DataFrame({
             "player_name": ["player one", "player two"],
             "complete": [True, False],
         })
         config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
         with patch("api_utils.fetch_img_player_rounds", return_value=archive):
-            with self.assertRaisesRegex(NotReady, "1/2 complete.*player two"):
+            with patch("builtins.print") as print_mock:
+                active = automation._check_shot_collector_ready(
+                    config, self._field(), completed_round=1, target_round=2
+                )
+
+        self.assertEqual(active, {"player one", "player two"})
+        self.assertIn("player two", str(print_mock.call_args_list))
+
+    def test_requires_every_active_next_round_player_to_be_archived(self):
+        archive = pd.DataFrame({
+            "player_name": ["player one"],
+            "complete": [True],
+        })
+        config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
+        with patch("api_utils.fetch_img_player_rounds", return_value=archive):
+            with self.assertRaisesRegex(NotReady, "1/2 archived.*player two"):
                 automation._check_shot_collector_ready(
                     config, self._field(), completed_round=1, target_round=2
                 )
@@ -276,7 +291,7 @@ class ShotCollectorReadinessTests(unittest.TestCase):
                     path, {"player one", "player two"}, "pga:R2026027"
                 )
 
-    def test_pin_high_coverage_accepts_all_observed_active_players(self):
+    def test_pin_high_coverage_requires_six_usable_approaches_per_player(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pin_high_r1.csv"
             pd.DataFrame({
@@ -286,9 +301,61 @@ class ShotCollectorReadinessTests(unittest.TestCase):
                 "coverage_status": ["full", "partial"],
             }).to_csv(path, index=False)
 
+            with self.assertRaisesRegex(PipelineFailure, "below 6.*1/2.*player two"):
+                automation._validate_pin_high_coverage(
+                    path, {"player one", "player two"}, "pga:R2026027"
+                )
+
+    def test_pin_high_coverage_accepts_full_strength_active_players(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pin_high_r1.csv"
+            pd.DataFrame({
+                "event_key": ["pga:R2026027", "pga:R2026027"],
+                "player_name": ["player one", "player two"],
+                "n_approaches": [8, 6],
+                "coverage_status": ["full", "full"],
+            }).to_csv(path, index=False)
+
             automation._validate_pin_high_coverage(
                 path, {"player one", "player two"}, "pga:R2026027"
             )
+
+    def test_optional_pin_high_failure_disables_feature_and_returns_warning(self):
+        config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
+        with patch.dict(os.environ, {"LIVE_PIN_HIGH_ADJ": "1"}), patch.object(
+            automation,
+            "_check_shot_collector_ready",
+            side_effect=NotReady("one harmless feed gap"),
+        ):
+            warning = automation._prepare_optional_pin_high(
+                config,
+                self._field(),
+                completed_round=1,
+                target_round=2,
+            )
+
+            self.assertEqual(warning, "one harmless feed gap")
+            self.assertEqual(os.environ["LIVE_PIN_HIGH_ADJ"], "0")
+
+    def test_optional_pin_high_success_keeps_feature_enabled(self):
+        config = {"event_id": 27, "event_ids": [27], "tour": "pga"}
+        active = {"player one", "player two"}
+        with patch.dict(os.environ, {"LIVE_PIN_HIGH_ADJ": "1"}), patch.object(
+            automation, "_check_shot_collector_ready", return_value=active
+        ), patch.object(automation, "_run") as run_mock, patch.object(
+            automation, "_validate_pin_high_coverage"
+        ) as validate_mock:
+            warning = automation._prepare_optional_pin_high(
+                config,
+                self._field(),
+                completed_round=1,
+                target_round=2,
+            )
+
+            self.assertIsNone(warning)
+            self.assertEqual(os.environ["LIVE_PIN_HIGH_ADJ"], "1")
+            run_mock.assert_called_once()
+            validate_mock.assert_called_once()
 
 
 class PredictionVerificationTests(unittest.TestCase):

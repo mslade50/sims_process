@@ -5,11 +5,12 @@ The golf_scraping odds board already dispatches ``sentinel-scrape-complete`` to
 this repository after committing fresh sim-facing odds. The accompanying GitHub
 Actions workflow fetches that JSON and invokes this coordinator.
 
-The coordinator is intentionally fail-closed:
+The coordinator is intentionally fail-closed on inputs the simulation consumes:
   1. Require fresh, event-scoped next-round prices from BetCris and BetOnline.
   2. Require completed-round DataGolf stats and posted next-round tee times.
-  3. Before R2, require terminal rich-shot collection and pin-high coverage for
-     every active player in the posted R2 field.
+  3. Before R2, require every active player in the rich-shot archive and enough
+     valid approaches for the pin-high feature. A harmless gap elsewhere in a
+     player's shot sequence is warned on, but does not block the simulation.
   4. Fetch all remaining-round Open-Meteo dewpoint + AI multi-model wind.
   5. Batch-write weather, advance the Sheet round pointer exactly once, and
      leave a durable Sheet status so a failed run can resume.
@@ -46,6 +47,7 @@ DEFAULT_ODDS_FILE = (
     ROOT / "permanent_data" / "scraped_odds" / "round_matchups_latest.json"
 )
 REQUIRED_BOOKS = ("betcris", "betonline")
+MIN_PIN_HIGH_APPROACHES = 6
 
 
 class NotReady(RuntimeError):
@@ -321,7 +323,13 @@ def _check_shot_collector_ready(
     completed_round: int,
     target_round: int,
 ) -> set[str]:
-    """Require a terminal rich-shot archive row for every next-round player."""
+    """Require an archive row for every next-round player.
+
+    ``complete`` describes the integrity of the player's entire round, while
+    the R2 simulation consumes only the derived pin-high approach feature.
+    Sequence gaps therefore warn here and are judged by the feature-specific
+    approach coverage check after the artifact is generated.
+    """
     from api_utils import fetch_img_player_rounds
     from generate_pin_high_r1 import build_event_key
 
@@ -361,22 +369,34 @@ def _check_shot_collector_ready(
         lambda value: value is True
         or str(value).strip().lower() in {"1", "true", "yes"}
     )
+    archived_players = set(archive["player_key"])
+    missing = sorted(active_players - archived_players)
+    if missing:
+        preview = ", ".join(missing[:12])
+        if len(missing) > 12:
+            preview += f", +{len(missing) - 12} more"
+        raise NotReady(
+            f"Shot collector R{completed_round} is missing R{target_round} active "
+            f"players ({len(active_players) - len(missing)}/{len(active_players)} "
+            f"archived): {preview}"
+        )
+
     complete_players = set(archive.loc[complete_values, "player_key"])
     incomplete = sorted(active_players - complete_players)
     if incomplete:
         preview = ", ".join(incomplete[:12])
         if len(incomplete) > 12:
             preview += f", +{len(incomplete) - 12} more"
-        raise NotReady(
-            f"Shot collector R{completed_round} is incomplete for the R{target_round} "
-            f"field ({len(active_players) - len(incomplete)}/{len(active_players)} "
-            f"complete): {preview}"
+        print(
+            f"::warning::Shot collector R{completed_round} has "
+            f"{len(incomplete)} incomplete active-player round(s): {preview}. "
+            "Continuing to the pin-high approach coverage check."
         )
-
-    print(
-        f"  Shot collector ready: {len(active_players)}/{len(active_players)} "
-        f"active players complete for {event_key} R{completed_round}"
-    )
+    else:
+        print(
+            f"  Shot collector ready: {len(active_players)}/{len(active_players)} "
+            f"active players complete for {event_key} R{completed_round}"
+        )
     return active_players
 
 
@@ -384,8 +404,9 @@ def _validate_pin_high_coverage(
     path: Path,
     active_players: set[str],
     event_key: str,
+    minimum_approaches: int = MIN_PIN_HIGH_APPROACHES,
 ) -> None:
-    """Fail closed when a complete archive did not map into the pin-high model."""
+    """Fail closed only when usable pin-high input coverage is insufficient."""
     if not path.exists() or path.stat().st_size == 0:
         raise PipelineFailure(f"{path.name} was not created")
     frame = pd.read_csv(path)
@@ -406,21 +427,70 @@ def _validate_pin_high_coverage(
         lambda value: str(value).strip().lower()
     )
     approaches = pd.to_numeric(frame["n_approaches"], errors="coerce").fillna(0)
-    covered_players = set(frame.loc[approaches.gt(0), "player_key"])
+    covered_players = set(
+        frame.loc[approaches.ge(int(minimum_approaches)), "player_key"]
+    )
     missing_players = sorted(active_players - covered_players)
     if missing_players:
         preview = ", ".join(missing_players[:12])
         if len(missing_players) > 12:
             preview += f", +{len(missing_players) - 12} more"
         raise PipelineFailure(
-            "Shot collection is terminal, but pin-high coverage/mapping is "
-            f"incomplete ({len(covered_players & active_players)}/"
+            f"Pin-high coverage is below {int(minimum_approaches)} valid approaches "
+            f"for one or more active players ({len(covered_players & active_players)}/"
             f"{len(active_players)}): {preview}"
         )
     print(
         f"  Pin-high coverage ready: {len(active_players)}/{len(active_players)} "
-        "active players observed"
+        f"active players have at least {int(minimum_approaches)} valid approaches"
     )
+
+
+def _prepare_optional_pin_high(
+    config: dict,
+    field: pd.DataFrame,
+    completed_round: int,
+    target_round: int,
+    *,
+    dry_run: bool = False,
+) -> str | None:
+    """Prepare R1 pin-high input without making it a core-sim dependency.
+
+    The adjustment is deliberately optional in ``live_stats_engine.py``. Keep
+    its stricter feature-quality checks, but disable it for this process when
+    the collector, generator, or artifact is not healthy enough. This also
+    prevents a stale artifact from being consumed after a generation failure.
+    """
+    try:
+        active_players = _check_shot_collector_ready(
+            config, field, completed_round, target_round
+        )
+        if dry_run:
+            print("  [dry-run] Would regenerate and validate full-field R1 pin-high")
+            return None
+
+        _run(
+            [sys.executable, "generate_pin_high_r1.py"],
+            "R1 pin-high adjustment generation",
+        )
+        from generate_pin_high_r1 import build_event_key
+
+        event_ids = config.get("event_ids") or [config.get("event_id")]
+        event_key = build_event_key(
+            config.get("tour", "pga"), event_ids[0], datetime.now().year
+        )
+        _validate_pin_high_coverage(
+            ROOT / "pin_high_r1.csv", active_players, event_key
+        )
+        return None
+    except Exception as exc:  # noqa: BLE001 - optional feature must fail open
+        warning = str(exc).strip() or exc.__class__.__name__
+        os.environ["LIVE_PIN_HIGH_ADJ"] = "0"
+        print(
+            "::warning::Optional R1 pin-high adjustment disabled for this "
+            f"R{target_round} run: {warning}. Continuing with the core sim."
+        )
+        return warning
 
 
 def _format_array(values) -> str:
@@ -616,29 +686,18 @@ def run_pipeline(args) -> int:
         api_key, completed_round, target_round, min_rows=args.min_datagolf_rows
     )
 
+    pin_high_warning = None
     if (
         completed_round == 1
         and os.environ.get("LIVE_PIN_HIGH_ADJ") == "1"
     ):
-        active_players = _check_shot_collector_ready(
-            config, field, completed_round, target_round
+        pin_high_warning = _prepare_optional_pin_high(
+            config,
+            field,
+            completed_round,
+            target_round,
+            dry_run=args.dry_run,
         )
-        if args.dry_run:
-            print("  [dry-run] Would regenerate and validate full-field R1 pin-high")
-        else:
-            _run(
-                [sys.executable, "generate_pin_high_r1.py"],
-                "R1 pin-high adjustment generation",
-            )
-            from generate_pin_high_r1 import build_event_key
-
-            event_ids = config.get("event_ids") or [event_id]
-            event_key = build_event_key(
-                config.get("tour", "pga"), event_ids[0], datetime.now().year
-            )
-            _validate_pin_high_coverage(
-                ROOT / "pin_high_r1.csv", active_players, event_key
-            )
 
     from api_utils import fetch_event_weather_forecast, get_round_dates
 
@@ -731,12 +790,17 @@ def run_pipeline(args) -> int:
         sim_started_at = datetime.now(timezone.utc).timestamp()
         _run([sys.executable, "round_sim.py"], "round_sim.py")
         _verify_outputs(target_round, tourney, started_at=sim_started_at)
+        completion_message = (
+            f"R{target_round} predictions, simulation, and fairs completed"
+        )
+        if pin_high_warning:
+            completion_message += f"; optional pin-high disabled: {pin_high_warning}"
         _mark_status(
             spreadsheet,
             event_id,
             target_round,
             "complete",
-            f"R{target_round} predictions, simulation, and fairs completed",
+            completion_message,
         )
     except Exception as exc:
         try:
