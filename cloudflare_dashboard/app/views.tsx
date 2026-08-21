@@ -424,7 +424,8 @@ export function PerformanceView() {
   const [eventsSelected, setEventsSelected] = useState<string[]>([]);
   const [typesSelected, setTypesSelected] = useState<string[]>([]);
   const [booksSelected, setBooksSelected] = useState<string[]>([]);
-  const [minEdge, setMinEdge] = useState(0);
+  const [kellyEdgeMin, setKellyEdgeMin] = useState<number | null>(0);
+  const [kellyEdgeMax, setKellyEdgeMax] = useState<number | null>(null);
   const [includeLive, setIncludeLive] = useState(false);
   const [roundsSelected, setRoundsSelected] = useState<string[]>([]);
   const [daysSelected, setDaysSelected] = useState<string[]>([]);
@@ -464,7 +465,8 @@ export function PerformanceView() {
       if (booksSelected.length && !booksSelected.includes(String(row.bookmaker))) return false;
       const hiddenExchange = EXCHANGE_BOOKS.some((exchange) => bookmaker.includes(exchange) && !explicitlySelectedBooks.some((selectedBook) => selectedBook.includes(exchange)));
       if (hiddenExchange && !(showLive && betType === "finish_position_live")) return false;
-      if (numberValue(row.edge) < minEdge) return false;
+      if (kellyEdgeMin !== null && numberValue(row.edge, Number.NEGATIVE_INFINITY) < kellyEdgeMin) return false;
+      if (kellyEdgeMax !== null && numberValue(row.edge, Number.POSITIVE_INFINITY) > kellyEdgeMax) return false;
       if (roundsSelected.length && !roundsSelected.includes(String(row.round).trim())) return false;
       if (daysSelected.length && !daysSelected.includes(row.bet_day)) return false;
       if (sampleMin !== null && numberValue(row.sample_on) < sampleMin) return false;
@@ -504,7 +506,7 @@ export function PerformanceView() {
       }).filter(Boolean);
     }
     return selected;
-  }, [againstSelected, analysisMode, archetypesSelected, booksSelected, daysSelected, decimalMax, decimalMin, eventsSelected, includeLive, marketsSelected, minEdge, playersSelected, predMax, predMin, rawEdgeMax, rawEdgeMin, roundsSelected, rows, sampleMax, sampleMin, side, typesSelected]);
+  }, [againstSelected, analysisMode, archetypesSelected, booksSelected, daysSelected, decimalMax, decimalMin, eventsSelected, includeLive, kellyEdgeMax, kellyEdgeMin, marketsSelected, playersSelected, predMax, predMin, rawEdgeMax, rawEdgeMin, roundsSelected, rows, sampleMax, sampleMin, side, typesSelected]);
 
   if (loading) return <LoadingState label="Loading performance history" />;
   if (error || !data) return <ErrorState message={error ?? "Performance data is unavailable."} />;
@@ -561,10 +563,10 @@ export function PerformanceView() {
     return { event_name: name, bets: eventRows.length, wins: eventRows.filter((row) => String(row.result).startsWith("win")).length, losses: eventRows.filter((row) => row.result === "loss").length, wagered: risked, units_won: won, roi: risked ? won / risked * 100 : 0 };
   }).sort((a, b) => b.units_won - a.units_won);
   const detailRows = filtered.map((row) => ({ ...row, units_wagered: row._units_wagered, units_won: row._units_won }));
-  const activeFilterCount = [eventsSelected, typesSelected, booksSelected, roundsSelected, daysSelected, marketsSelected, archetypesSelected, againstSelected, playersSelected].filter((value) => value.length).length + [sampleMin, sampleMax, predMin, predMax, rawEdgeMin, rawEdgeMax, decimalMin, decimalMax].filter((value) => value !== null).length + (minEdge > 0 ? 1 : 0) + (includeLive ? 1 : 0) + (side !== "all" ? 1 : 0) + (analysisMode !== "all" ? 1 : 0);
+  const activeFilterCount = [eventsSelected, typesSelected, booksSelected, roundsSelected, daysSelected, marketsSelected, archetypesSelected, againstSelected, playersSelected].filter((value) => value.length).length + [sampleMin, sampleMax, predMin, predMax, rawEdgeMin, rawEdgeMax, decimalMin, decimalMax].filter((value) => value !== null).length + (kellyEdgeMin !== null && kellyEdgeMin !== 0 ? 1 : 0) + (kellyEdgeMax !== null ? 1 : 0) + (includeLive ? 1 : 0) + (side !== "all" ? 1 : 0) + (analysisMode !== "all" ? 1 : 0);
 
   function resetFilters() {
-    setEventsSelected([]); setTypesSelected([]); setBooksSelected([]); setMinEdge(0); setIncludeLive(false);
+    setEventsSelected([]); setTypesSelected([]); setBooksSelected([]); setKellyEdgeMin(0); setKellyEdgeMax(null); setIncludeLive(false);
     setRoundsSelected([]); setDaysSelected([]); setSampleMin(null); setSampleMax(null); setPredMin(null); setPredMax(null);
     setMarketsSelected([]); setSide("all"); setAnalysisMode("all"); setRawEdgeMin(null); setRawEdgeMax(null);
     setDecimalMin(null); setDecimalMax(null); setArchetypesSelected([]); setAgainstSelected([]); setPlayersSelected([]);
@@ -583,7 +585,7 @@ export function PerformanceView() {
           <MultiSelectControl label="Event" value={eventsSelected} onChange={setEventsSelected} placeholder="All events" options={events.map((value) => ({ value, label: titleCase(value) }))}/>
           <MultiSelectControl label="Bet type" value={typesSelected} onChange={setTypesSelected} placeholder="Default types" options={PERFORMANCE_TYPE_OPTIONS}/>
           <MultiSelectControl label="Sportsbook" value={booksSelected} onChange={setBooksSelected} placeholder="Default books" options={books.map((value) => ({ value, label: titleCase(value) }))}/>
-          <RangeControl label="Minimum Kelly edge" value={minEdge} min={0} max={25} onChange={setMinEdge}/>
+          <NumberRangeControl label="Kelly % edge" minValue={kellyEdgeMin} maxValue={kellyEdgeMax} onMinChange={setKellyEdgeMin} onMaxChange={setKellyEdgeMax} min={0} step={0.5}/>
           <label className="toggle-filter"><input type="checkbox" aria-label="Include live finish-position bets" checked={includeLive} onChange={(event) => setIncludeLive(event.target.checked)}/><span><b>Live bets</b><small>Include live finish positions</small></span></label>
         </div></div>
         <div className="filter-section"><h3>Timing & market</h3><div className="performance-filter-grid performance-filter-grid-six">
