@@ -56,11 +56,13 @@ def _r2_client():
     import boto3
 
     account_id = os.environ["CF_ACCOUNT_ID"]
+    access_key = os.getenv("DASHBOARD_R2_ACCESS_KEY_ID") or os.environ["R2_ACCESS_KEY_ID"]
+    secret_key = os.getenv("DASHBOARD_R2_SECRET_ACCESS_KEY") or os.environ["R2_SECRET_ACCESS_KEY"]
     return boto3.client(
         "s3",
         endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
         region_name="auto",
     )
 
@@ -135,10 +137,19 @@ def publish(
         print(f"  [DRY RUN] Would upload to r2://{bucket}/data/")
         return
 
-    has_s3_credentials = all(
+    has_dashboard_credentials = all(
+        os.getenv(name)
+        for name in (
+            "CF_ACCOUNT_ID",
+            "DASHBOARD_R2_ACCESS_KEY_ID",
+            "DASHBOARD_R2_SECRET_ACCESS_KEY",
+        )
+    )
+    has_legacy_credentials = all(
         os.getenv(name)
         for name in ("CF_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
     )
+    has_s3_credentials = has_dashboard_credentials or has_legacy_credentials
     if has_s3_credentials:
         try:
             upload_with_s3(files, output, bucket)
