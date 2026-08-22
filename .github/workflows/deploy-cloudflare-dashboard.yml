@@ -1,0 +1,41 @@
+name: Deploy Cloudflare Dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cloudflare_dashboard/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: cloudflare_dashboard/package-lock.json
+
+    - name: Install dashboard dependencies
+      working-directory: cloudflare_dashboard
+      run: npm ci
+
+    - name: Validate dashboard
+      working-directory: cloudflare_dashboard
+      run: npm test
+
+    - name: Deploy private Worker
+      if: env.CLOUDFLARE_API_TOKEN != ''
+      working-directory: cloudflare_dashboard
+      run: npm run deploy:cloudflare
+
+    - name: Note manual application deployment
+      if: env.CLOUDFLARE_API_TOKEN == ''
+      run: echo "Dashboard validated; add the scoped CLOUDFLARE_API_TOKEN secret to enable automatic application deployment. JSON data publishing is already automated separately."

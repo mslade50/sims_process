@@ -76,8 +76,8 @@ jobs:
 
         # dashboard_data/ is intentionally NOT cleared: it holds the CURRENT week's
         # data under generic filenames (model_predictions_*, sg_dist_player, etc.),
-        # is overwritten every week by push_dashboard_data, and is served live by
-        # Render. Wiping it mid-week deleted current-week files (the bug this fix
+        # is overwritten every week by push_dashboard_data, and is exported to
+        # Cloudflare R2. Wiping it mid-week deleted current-week files (the bug this fix
         # addresses); since it self-overwrites it never accumulates stale data.
         echo "ℹ️  Skipping dashboard_data/ (current-week data, overwritten weekly by push_dashboard_data)."
 
@@ -111,7 +111,7 @@ jobs:
         echo "  - Anything tied to the current week (tourney slug from sim_inputs.py)"
         echo "  - permanent_data/ (correlation matrices, reference data)"
         echo "  - dashboard/ (dashboard app code)"
-        echo "  - dashboard_data/ (current-week data for Render)"
+        echo "  - dashboard_data/ (current-week data for Cloudflare)"
         echo "  - deploy/ (maker service scripts)"
         echo "  - backups/ (code backups)"
         echo "  - .github/ (workflows)"

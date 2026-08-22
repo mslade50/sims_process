@@ -6,8 +6,9 @@ import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
+const DASHBOARD_R2_BUCKET = "golf-model-dashboard-data";
 
-const { d1 } = hostingConfig;
+const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -26,9 +27,9 @@ const localBindingConfig = {
         },
       ]
     : [],
-  // Direct Cloudflare deploys intentionally use the packaged data snapshot.
-  // Sites can still inject its managed R2 binding from .openai/hosting.json.
-  r2_buckets: [],
+  r2_buckets: r2
+    ? [{ binding: r2, bucket_name: DASHBOARD_R2_BUCKET }]
+    : [],
 };
 
 export default defineConfig(() => {

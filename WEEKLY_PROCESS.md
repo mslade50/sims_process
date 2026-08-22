@@ -29,7 +29,7 @@ The `monday-grading.yml` workflow runs the full grading pipeline automatically:
 3. Runs `grade_bets.py` (grades bets, writes to Sheets + Parquet, sends email)
 4. Verifies all bets graded
 5. Runs `sg_diagnostic.py --no-email` (stores SG diagnostic to Parquet)
-6. Runs `push_dashboard_data.py` (deploys dashboard to Render)
+6. Runs `push_dashboard_data.py` (syncs source data and atomically publishes dashboard JSON to Cloudflare R2)
 
 **Manual trigger** (if you don't want to wait for schedule):
 ```bash
@@ -760,7 +760,7 @@ python bet_query.py --plot                       # Plotly dashboard
 python bet_query.py --all-years                  # Include prior years
 
 # Dashboard deploy (only when you need to push manually — Monday pipeline handles this)
-python push_dashboard_data.py                    # Copy + commit + push to Render
+python push_dashboard_data.py                    # Copy + commit + publish JSON to Cloudflare
 python push_dashboard_data.py --dry-run          # Preview only
 
 # Monday grading pipeline (automated via GitHub Actions, or run manually)

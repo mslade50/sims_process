@@ -38,6 +38,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/.publish/
 
 # Local/generated dashboard artifacts
 /coeffs_cache.json
