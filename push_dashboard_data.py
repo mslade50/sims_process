@@ -1,4 +1,4 @@
-"""Copy pipeline outputs into dashboard_data/ and push to trigger Render deploy.
+"""Copy pipeline outputs, sync GitHub, and publish dashboard JSON to Cloudflare.
 
 Usage:
     python push_dashboard_data.py             # Copy, commit, push
@@ -15,6 +15,9 @@ from datetime import date
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD_DATA = os.path.join(PROJECT_ROOT, "dashboard_data")
 SYNC_MANIFEST = os.path.join(DASHBOARD_DATA, ".sync_manifest.json")
+CLOUDFLARE_PUBLISHER = os.path.join(
+    PROJECT_ROOT, "cloudflare_dashboard", "scripts", "publish_dashboard_data.py"
+)
 
 # Files to copy: (source_pattern, dest_name_or_None)
 # source_pattern is relative to PROJECT_ROOT; {tourney} gets substituted
@@ -285,7 +288,7 @@ def git_push(dry_run=False):
 
     # The exact set of paths this deploy commit is allowed to touch.
     # historical_dists is included so the per-event rank_probs archives written
-    # above actually publish — they're the cross-machine/Render copy; without
+    # above actually publish — they're the cross-machine/dashboard copy; without
     # this they stay local to whichever machine ran the deploy that week.
     paths = ["dashboard_data", "sim_inputs.py", "permanent_data/historical_dists"]
     tourney = get_tourney()
@@ -331,7 +334,7 @@ def git_push(dry_run=False):
     # identity the commit errors, the push then returns 0 trivially
     # ("everything up-to-date"), and the run goes green with nothing landed
     # (the 2026-08-17 St. Jude silent loss).
-    commit = _run(["git", "commit", "-m", "Update dashboard data for Render deploy", "--", *paths])
+    commit = _run(["git", "commit", "-m", "Update dashboard data for Cloudflare", "--", *paths])
     if commit.returncode != 0:
         _fail(f"git commit failed: {(commit.stderr or commit.stdout).strip()[:160]}")
 
@@ -354,8 +357,32 @@ def git_push(dry_run=False):
         _fail("push failed after 3 attempts")
 
 
+def publish_cloudflare(dry_run=False):
+    """Export the browser JSON contract and publish it to the dashboard's R2 bucket."""
+    import subprocess
+
+    command = [sys.executable, CLOUDFLARE_PUBLISHER]
+    if dry_run:
+        command.append("--dry-run")
+    result = subprocess.run(command, cwd=PROJECT_ROOT)
+    if result.returncode == 0:
+        return
+
+    msg = f"Cloudflare dashboard publish failed with exit code {result.returncode}"
+    print(f"  ERROR: {msg}")
+    try:
+        from maker_alerts import send_telegram
+        if not send_telegram(
+            f"[push_dashboard_data] {msg} — the private Cloudflare dashboard is STALE"
+        ):
+            print("  (telegram alert not sent: TELEGRAM_* env missing or send failed)")
+    except Exception as exc:
+        print(f"  (telegram alert failed: {exc})")
+    sys.exit(1)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Push dashboard data to trigger Render deploy")
+    parser = argparse.ArgumentParser(description="Publish dashboard data to GitHub and Cloudflare")
     parser.add_argument("--dry-run", action="store_true", help="Preview files without copying or pushing")
     args = parser.parse_args()
 
@@ -375,16 +402,18 @@ def main():
         for f in skipped:
             print(f"    - {f}")
 
-    if not copied:
-        print("\n  No files to copy. Nothing to push.")
-        return
-
-    if not args.dry_run:
+    if copied and not args.dry_run:
         print("\n  Staging and pushing to GitHub...")
         git_push(dry_run=args.dry_run)
-        print("  Done! Render will auto-deploy from the push.")
+    elif not copied:
+        print("\n  No pipeline files to copy; refreshing Cloudflare from current sources.")
     else:
         print(f"\n  [DRY RUN] Would copy {len(copied)} files and push to GitHub.")
+
+    print("\n  Publishing browser JSON to Cloudflare...")
+    publish_cloudflare(dry_run=args.dry_run)
+    if not args.dry_run:
+        print("  Done! The private Cloudflare dashboard data is current.")
 
 
 if __name__ == "__main__":

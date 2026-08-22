@@ -90,7 +90,11 @@ def _write(path: Path, payload: Any) -> None:
         json.dumps(_json_value(payload), ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
-    print(f"  + {path.relative_to(DEFAULT_OUTPUT.parent)} ({path.stat().st_size / 1024:.1f} KB)")
+    try:
+        display_path = path.relative_to(SITE_ROOT)
+    except ValueError:
+        display_path = path
+    print(f"  + {display_path} ({path.stat().st_size / 1024:.1f} KB)")
 
 
 def _diagnostic_summary(frame: pd.DataFrame) -> list[dict[str, Any]]:

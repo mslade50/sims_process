@@ -2,7 +2,7 @@
 
 Cloudflare-native replacement for the legacy Dash/Render interface. The site keeps the seven analytical views that remain useful—Round Scores, Weather, Finish Distributions, SG Distributions, History, Performance, and Diagnostics—and intentionally omits Home, Outrights, Matchups, Bets, and Pricer.
 
-The existing Python simulation remains the source of truth. `scripts/export_dashboard_data.py` converts its current CSV, Parquet, and Google Sheets-backed data into browser-safe JSON snapshots. The Worker reads the same keys from the `DASHBOARD_DATA` R2 binding when populated and falls back to the packaged snapshot for safe first deploys.
+The existing Python simulation remains the source of truth. `scripts/export_dashboard_data.py` converts its current CSV, Parquet, and Google Sheets-backed data into browser-safe JSON snapshots. `scripts/publish_dashboard_data.py` uploads every data object to the dedicated `golf-model-dashboard-data` R2 bucket and publishes `manifest.json` last, so the Worker never exposes a partially refreshed snapshot. Packaged assets remain a fallback only.
 
 ## Local workflow
 
@@ -26,11 +26,13 @@ Private Cloudflare deployment (uses the authenticated Wrangler account):
 npm run deploy:cloudflare
 ```
 
-The direct Cloudflare deployment intentionally omits an R2 binding and serves the packaged JSON snapshot. Its `workers.dev` route is protected by a Worker-specific, deny-by-default Cloudflare Access application; only members matched by an explicit Allow policy can sign in. Preview URLs remain disabled. This stays within the Workers/static-assets free tier at normal dashboard traffic levels and avoids provisioning storage until live snapshot uploads are needed.
+The direct Cloudflare deployment binds `DASHBOARD_DATA` to the private dashboard R2 bucket. Its `workers.dev` route is protected by a Worker-specific, deny-by-default Cloudflare Access application; only members matched by an explicit Allow policy can sign in. Preview URLs remain disabled.
+
+The normal weekly entry point remains `python push_dashboard_data.py`. It copies and syncs the simulation artifacts, exports fresh JSON, and publishes that JSON to R2. The Monday grading workflow runs the same path automatically. A separate `Publish Cloudflare Dashboard Data` workflow can refresh only the JSON on demand. `Deploy Cloudflare Dashboard` always validates application changes and deploys them automatically when the scoped `CLOUDFLARE_API_TOKEN` repository secret is present; otherwise application deployment remains an authenticated local command. Neither path depends on Render.
 
 ## Architecture
 
-The interface runs on [vinext](https://github.com/cloudflare/vinext) and a Cloudflare Worker. Static snapshots make a first deployment immediately usable; R2 can replace any snapshot at the same `data/` key without rebuilding the interface.
+The interface runs on [vinext](https://github.com/cloudflare/vinext) and a Cloudflare Worker. R2 serves the current JSON snapshot at stable `data/` keys without rebuilding the interface; static assets provide a safe fallback if storage is briefly unavailable.
 
 ## Prerequisites
 
