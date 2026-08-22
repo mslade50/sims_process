@@ -3074,8 +3074,14 @@ def build_round_score_probs(sim_dict, expected_avg_lookup, cat_mu_lookup=None):
     for player, scores in sim_dict.items():
         if scores is None or len(scores) == 0:
             continue
-        total = len(scores)
-        vals, counts = np.unique(scores, return_counts=True)
+        # A score-est reprice may shift cached integer draws by a fractional
+        # number of strokes.  Golf scores still settle on integers, so map each
+        # shifted draw to its half-up settlement score before publishing the PMF.
+        # This preserves every strict comparison against a standard half-stroke
+        # O/U line: x < (n + .5) iff floor(x + .5) < (n + .5).
+        settled_scores = np.floor(np.asarray(scores, dtype=float) + 0.5).astype(int)
+        total = len(settled_scores)
+        vals, counts = np.unique(settled_scores, return_counts=True)
         probs = counts / total
 
         if isinstance(expected_avg_lookup, dict):
@@ -4989,17 +4995,18 @@ def main():
         score_card = build_score_card(sim_dict, expected_avg, pred_lookup)
 
     # ── Step 3a: Pre-aggregated score distributions for dashboard ────────
-    # Skip in --price-only: cat_mu_lookup is unavailable and the parquet was
-    # already written by the prior --sim-only run.
+    # Rebuild these in --price-only too.  A --score-est override shifts the
+    # cached arrays in memory, and publishing the old parquet would otherwise
+    # put the odds board on a different scoring average than the score card.
+    # Category means are optional metadata, so their absence in price-only is
+    # harmless.
     try:
-        if args.price_only:
-            raise RuntimeError("skip in --price-only")
         # Per-player expected avg (course-adjusted when multi-course), else scalar
         if "course_score_adj" in model_preds.columns:
-            exp_lookup = dict(zip(
-                model_preds["player_name"],
-                model_preds["course_score_adj"].fillna(expected_avg),
-            ))
+            course_expected = model_preds["course_score_adj"].fillna(expected_avg)
+            if args.price_only and score_shift_delta:
+                course_expected = course_expected + score_shift_delta
+            exp_lookup = dict(zip(model_preds["player_name"], course_expected))
         else:
             exp_lookup = expected_avg
 
