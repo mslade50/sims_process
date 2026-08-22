@@ -24,8 +24,8 @@ jobs:
     - name: Export and publish dashboard JSON
       env:
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        DASHBOARD_R2_ACCESS_KEY_ID: ${{ secrets.DASHBOARD_R2_ACCESS_KEY_ID }}
+        DASHBOARD_R2_SECRET_ACCESS_KEY: ${{ secrets.DASHBOARD_R2_SECRET_ACCESS_KEY }}
         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python cloudflare_dashboard/scripts/publish_dashboard_data.py

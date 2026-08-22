@@ -30,6 +30,8 @@ The direct Cloudflare deployment binds `DASHBOARD_DATA` to the private dashboard
 
 The normal weekly entry point remains `python push_dashboard_data.py`. It copies and syncs the simulation artifacts, exports fresh JSON, and publishes that JSON to R2. The Monday grading workflow runs the same path automatically. A separate `Publish Cloudflare Dashboard Data` workflow can refresh only the JSON on demand. `Deploy Cloudflare Dashboard` always validates application changes and deploys them automatically when the scoped `CLOUDFLARE_API_TOKEN` repository secret is present; otherwise application deployment remains an authenticated local command. Neither path depends on Render.
 
+GitHub uses bucket-scoped `DASHBOARD_R2_ACCESS_KEY_ID` and `DASHBOARD_R2_SECRET_ACCESS_KEY` secrets for JSON publication. They are deliberately separate from the simulation repository's other R2 credentials so rotating or restricting dashboard access cannot disrupt historical-data workflows.
+
 ## Architecture
 
 The interface runs on [vinext](https://github.com/cloudflare/vinext) and a Cloudflare Worker. R2 serves the current JSON snapshot at stable `data/` keys without rebuilding the interface; static assets provide a safe fallback if storage is briefly unavailable.
