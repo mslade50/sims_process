@@ -510,8 +510,24 @@ def _merge_r3r4(df, round_num):
         cur_preds = pd.read_csv(pred_file)
         cur_preds = clean_names(cur_preds)
         teetime_col = f"r{round_num}_teetime"
-        cur_cols = ["player_name", f"wind_adj{round_num}", f"dew_adj{round_num}", teetime_col]
+        # The current-round prediction file is the authoritative skill entering
+        # this round.  Normally the same value arrives through the prior live
+        # model as ``updated_pred_rN``; retain it as a narrow fallback for an
+        # active player missing from that carried artifact.  Without this guard,
+        # one absent prior row turns the next-round skill and centered score into
+        # NaN even when model_predictions_rN has the correct current-event value.
+        current_skill_col = f"my_pred{round_num}"
+        carried_skill_col = f"updated_pred_r{round_num}"
+        cur_cols = [
+            "player_name", current_skill_col,
+            f"wind_adj{round_num}", f"dew_adj{round_num}", teetime_col,
+        ]
         cur_cols = [c for c in cur_cols if c in cur_preds.columns]
+        cur_frame = cur_preds[cur_cols].copy()
+        if current_skill_col in cur_frame.columns:
+            cur_frame = cur_frame.rename(
+                columns={current_skill_col: "_current_round_skill"}
+            )
         # df may already carry r{N}_teetime from the live field merge. If the
         # prediction file also supplies it, drop the existing one first so the
         # merge doesn't collide into r{N}_teetime_x / _y — that collision left the
@@ -519,7 +535,22 @@ def _merge_r3r4(df, round_num):
         # was silently skipped.
         if teetime_col in cur_cols and teetime_col in df.columns:
             df = df.drop(columns=[teetime_col])
-        df = df.merge(cur_preds[cur_cols], on="player_name", how="left")
+        df = df.merge(cur_frame, on="player_name", how="left")
+        if "_current_round_skill" in df.columns:
+            if carried_skill_col not in df.columns:
+                df[carried_skill_col] = np.nan
+            missing_carried = df[carried_skill_col].isna()
+            recovered = missing_carried & df["_current_round_skill"].notna()
+            if recovered.any():
+                names = df.loc[recovered, "player_name"].tolist()
+                df.loc[recovered, carried_skill_col] = df.loc[
+                    recovered, "_current_round_skill"
+                ]
+                print(
+                    f"  Recovered {int(recovered.sum())} missing {carried_skill_col} "
+                    f"value(s) from {pred_file}: {names}"
+                )
+            df = df.drop(columns=["_current_round_skill"])
     else:
         print(f"Warning: {pred_file} not found. Weather adjustments will be zero.")
 
