@@ -11,12 +11,13 @@ Usage:
 
 Env vars:
     CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY  (for R2 upload)
-    GH_TOKEN or GITHUB_TOKEN  (for golf_scraping repo fetch)
+    SIMS_PROCESS_PAT, GH_TOKEN, or GITHUB_TOKEN  (scrapes + bound release asset)
     GOOGLE_CREDS_JSON or credentials.json  (for sheet_config)
 """
 
-import json
 import hashlib
+import io
+import json
 import logging
 import math
 import os
@@ -52,6 +53,8 @@ PROVENANCE_KEYS = (
 GITHUB_REPO = "mslade50/golf_scraping"
 GITHUB_BRANCH = "master"
 GITHUB_DATA_PATH = "data"
+SIMS_PROCESS_REPO = "mslade50/sims_process"
+SIM_RELEASE_TAG = "sim-data"
 
 SCRAPED_LOCAL = PROJECT_ROOT / "permanent_data" / "scraped_odds"
 
@@ -353,7 +356,7 @@ def _require_release_health(
     return source
 
 
-def _parquet_metadata(path: Path) -> dict[str, str]:
+def _parquet_metadata(path) -> dict[str, str]:
     import pyarrow.parquet as pq
 
     metadata = pq.read_schema(path).metadata or {}
@@ -420,6 +423,213 @@ def _validate_release_assets(manifest: dict) -> None:
             raise OddsScreenContractError(
                 f"sim release asset binding is incomplete: {label}"
             )
+
+
+def _require_simulation_field_binding(
+    players: set[str], simulation_manifest: dict
+) -> None:
+    """Bind all active round artifacts to the approved simulation player axis."""
+    from sim_health_gate import names_sha256
+
+    facts = simulation_manifest.get("simulation") or {}
+    try:
+        expected_players = int(facts.get("num_players"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise OddsScreenContractError(
+            "approved simulation has no valid player-field binding"
+        ) from exc
+    expected_digest = str(facts.get("player_set_sha256") or "")
+    if (
+        expected_players <= 0
+        or expected_players != len(players)
+        or len(expected_digest) != 64
+        or any(char not in "0123456789abcdefABCDEF" for char in expected_digest)
+        or names_sha256(players) != expected_digest.lower()
+    ):
+        raise OddsScreenContractError(
+            "round H2H/score/sample field does not match the approved simulation"
+        )
+
+
+def _fetch_bound_release_asset(manifest: dict, label: str) -> bytes:
+    """Download one immutable GitHub release asset and verify its sealed bytes."""
+    _validate_release_assets(manifest)
+    binding = manifest["release_assets"][label]
+    repo = str(os.environ.get("SIMS_PROCESS_REPO") or SIMS_PROCESS_REPO).strip()
+    repo_parts = PurePosixPath(repo).parts
+    safe_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+    if (
+        len(repo_parts) != 2
+        or any(
+            not part or any(char not in safe_chars for char in part)
+            for part in repo_parts
+        )
+    ):
+        raise OddsScreenContractError("SIMS_PROCESS_REPO is unsafe")
+
+    token = (
+        os.environ.get("SIMS_PROCESS_PAT")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "sims-process-odds-screen",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/releases/tags/{SIM_RELEASE_TAG}",
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        release_payload = response.json()
+    except (requests.RequestException, TypeError, ValueError) as exc:
+        raise OddsScreenContractError(
+            "cannot resolve the manifest-bound full tournament release asset"
+        ) from exc
+
+    asset_name = str(binding["name"])
+    assets = release_payload.get("assets") if isinstance(release_payload, dict) else None
+    matches = [
+        asset
+        for asset in (assets or [])
+        if isinstance(asset, dict) and asset.get("name") == asset_name
+    ]
+    if len(matches) != 1:
+        raise OddsScreenContractError(
+            f"manifest-bound release asset is missing or ambiguous: {asset_name}"
+        )
+    asset = matches[0]
+    asset_url = str(asset.get("url") or "")
+    expected_url_prefix = f"https://api.github.com/repos/{repo}/releases/assets/"
+    try:
+        advertised_size = int(asset.get("size"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise OddsScreenContractError(
+            f"manifest-bound release asset metadata is malformed: {asset_name}"
+        ) from exc
+    if advertised_size != int(binding["size"]) or not asset_url.startswith(
+        expected_url_prefix
+    ):
+        raise OddsScreenContractError(
+            f"manifest-bound release asset metadata changed: {asset_name}"
+        )
+    try:
+        download = requests.get(
+            asset_url,
+            headers={**headers, "Accept": "application/octet-stream"},
+            timeout=600,
+        )
+        download.raise_for_status()
+        data = download.content
+    except requests.RequestException as exc:
+        raise OddsScreenContractError(
+            f"cannot download manifest-bound release asset: {asset_name}"
+        ) from exc
+    if (
+        not isinstance(data, bytes)
+        or len(data) != int(binding["size"])
+        or hashlib.sha256(data).hexdigest() != str(binding["sha256"]).lower()
+    ):
+        raise OddsScreenContractError(
+            f"downloaded release asset does not match its manifest binding: {asset_name}"
+        )
+    return data
+
+
+def _load_bound_full_tournament_samples(release: dict) -> pd.DataFrame:
+    """Load and prove the full-resolution tournament joint used for settlement."""
+    import numpy as np
+
+    manifest = release.get("manifest") or {}
+    binding = (manifest.get("release_assets") or {}).get(
+        "tournament_samples_full"
+    ) or {}
+    data = _fetch_bound_release_asset(manifest, "tournament_samples_full")
+    try:
+        metadata = _parquet_metadata(io.BytesIO(data))
+        full_samples = pd.read_parquet(io.BytesIO(data))
+    except Exception as exc:
+        raise OddsScreenContractError(
+            "manifest-bound full tournament release asset is not valid parquet"
+        ) from exc
+
+    for key in ("event_id", "tourney"):
+        if metadata.get(key) != str(manifest.get(key)):
+            raise OddsScreenContractError(
+                f"{binding.get('name')} does not bind release {key}"
+            )
+    if (
+        metadata.get("source") != "final_scores_live"
+        or metadata.get("simulation_manifest_sha256")
+        != str(manifest.get("simulation_manifest_sha256"))
+        or metadata.get("live_tournament_manifest_sha256")
+        != str(manifest.get("live_tournament_manifest_sha256"))
+    ):
+        raise OddsScreenContractError(
+            "full tournament release asset does not bind the approved live simulation"
+        )
+
+    simulation = (release.get("simulation_manifest") or {}).get("simulation") or {}
+    try:
+        expected_draws = int(simulation.get("num_sims"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise OddsScreenContractError(
+            "approved simulation has no valid full-joint draw count"
+        ) from exc
+    expected_field = {
+        str(player or "").strip().lower()
+        for player in (release.get("fairs") or {}).get("field", [])
+    }
+    canonical_index = [
+        str(player or "").strip().lower() for player in full_samples.index
+    ]
+    column_names = [str(column) for column in full_samples.columns]
+    if (
+        full_samples.empty
+        or expected_draws <= 0
+        or full_samples.shape[1] != expected_draws
+        or column_names != [str(index) for index in range(expected_draws)]
+        or set(canonical_index) != expected_field
+        or len(canonical_index) != len(set(canonical_index))
+        or not np.isfinite(full_samples.to_numpy(dtype=float)).all()
+    ):
+        raise OddsScreenContractError(
+            "full tournament release asset is not the approved complete joint"
+        )
+
+    committed = release.get("tournament_samples")
+    committed_meta = release.get("tournament_samples_meta") or {}
+    if (
+        not isinstance(committed, pd.DataFrame)
+        or committed.empty
+        or metadata.get("sim_run_at") != committed_meta.get("sim_run_at")
+    ):
+        raise OddsScreenContractError(
+            "full tournament release asset does not align with the committed Git joint"
+        )
+    full_samples = full_samples.copy()
+    full_samples.index = canonical_index
+    full_samples.columns = column_names
+    committed = committed.copy()
+    committed.index = [str(player or "").strip().lower() for player in committed.index]
+    committed.columns = [str(column) for column in committed.columns]
+    if (
+        list(committed.index) != list(full_samples.index)
+        or not set(committed.columns).issubset(full_samples.columns)
+        or not np.array_equal(
+            full_samples.loc[committed.index, committed.columns].to_numpy(),
+            committed.to_numpy(),
+        )
+    ):
+        raise OddsScreenContractError(
+            "committed tournament sample tape is not an exact subset of the full joint"
+        )
+    return full_samples
 
 
 def _require_threeball_group_binding(
@@ -720,7 +930,10 @@ def _validate_non_h2h_release_artifacts(
         active_field=active_field,
         priced_groups=seen_groups,
     )
-    return {"tournament_samples": tournament}
+    return {
+        "tournament_samples": tournament,
+        "tournament_samples_meta": tournament_meta,
+    }
 
 
 def _load_committed_release_contract(
@@ -919,13 +1132,17 @@ def _load_committed_release_contract(
             raise OddsScreenContractError(
                 f"round H2H health manifest does not bind {path.name}"
             )
-    _require_release_health(
+    simulation_manifest = _require_release_health(
         h2h_health,
         kind="published_round_h2h",
         simulation_id=simulation_id,
         identity=identity,
         label="round H2H",
     )
+    active_field = {
+        str(player).strip().lower() for player in fairs["round_scores"]
+    }
+    _require_simulation_field_binding(active_field, simulation_manifest)
 
     seen_pairs = set()
     h2h_players = set()
@@ -961,9 +1178,7 @@ def _load_committed_release_contract(
         expected_players < 2
         or len(h2h_players) != expected_players
         or len(seen_pairs) != expected_pairs
-        or h2h_players != {
-            str(player).strip().lower() for player in fairs["round_scores"]
-        }
+        or h2h_players != active_field
     ):
         raise OddsScreenContractError(
             "committed round H2H table does not cover the sealed round-score field"
@@ -981,6 +1196,7 @@ def _load_committed_release_contract(
         "fairs": fairs,
         "round_h2h": h2h,
         "round_h2h_meta": h2h_meta,
+        "simulation_manifest": simulation_manifest,
         **non_h2h,
         "source_git_sha": source_git_sha,
     }
@@ -1466,7 +1682,7 @@ def _fetch_scraped_guarded(
         guard_scraped_data,
     )
 
-    data = _ol_fetch(market)
+    data = _normalize_scraped_event_ids(_ol_fetch(market))
     target = _event_id_token(event_id)
     event_ids = {target} if target is not None else None
     guarded = guard_scraped_data(
@@ -1529,6 +1745,32 @@ def _event_id_token(value) -> str | None:
     except (TypeError, ValueError, OverflowError):
         pass
     return text or None
+
+
+def _normalize_scraped_event_ids(data):
+    """Canonicalize numeric event IDs before odds_loader's string comparison."""
+    if not isinstance(data, dict):
+        return data
+    normalized = dict(data)
+    file_event = _event_id_token(normalized.get("event_id"))
+    if file_event is not None:
+        normalized["event_id"] = file_event
+    for rows_key in ("match_list", "lines"):
+        rows = normalized.get(rows_key)
+        if not isinstance(rows, list):
+            continue
+        normalized_rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                normalized_rows.append(row)
+                continue
+            normalized_row = dict(row)
+            row_event = _event_id_token(normalized_row.get("event_id"))
+            if row_event is not None:
+                normalized_row["event_id"] = row_event
+            normalized_rows.append(normalized_row)
+        normalized[rows_key] = normalized_rows
+    return normalized
 
 
 def _load_name_replacements() -> dict:
@@ -1712,11 +1954,7 @@ def _tournament_h2h_lookup(release: dict) -> dict:
 
 
 def _tournament_score_lookup(release: dict) -> dict:
-    samples = release.get("tournament_samples")
-    if not isinstance(samples, pd.DataFrame) or samples.empty:
-        raise OddsScreenContractError(
-            "committed tournament sample joint is unavailable for settlement"
-        )
+    samples = _load_bound_full_tournament_samples(release)
     return {
         str(player).strip().lower(): samples.loc[player].to_numpy(dtype=float)
         for player in samples.index

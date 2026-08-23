@@ -1,3 +1,4 @@
+import io
 import json
 import hashlib
 import subprocess
@@ -29,7 +30,7 @@ from push_odds_screen import (
     _write_atomic_payload_bundle,
     _write_payload_files,
 )
-from sim_health_gate import file_sha256, seal_manifest
+from sim_health_gate import file_sha256, names_sha256, seal_manifest
 
 
 PROVENANCE = {
@@ -49,6 +50,15 @@ def _write_indexed_parquet(path: Path, frame: pd.DataFrame, metadata: dict):
     encoded = {str(key).encode(): str(value).encode() for key, value in metadata.items()}
     table = table.replace_schema_metadata({**(table.schema.metadata or {}), **encoded})
     pq.write_table(table, path)
+
+
+def _indexed_parquet_bytes(frame: pd.DataFrame, metadata: dict) -> bytes:
+    table = pa.Table.from_pandas(frame, preserve_index=True)
+    encoded = {str(key).encode(): str(value).encode() for key, value in metadata.items()}
+    table = table.replace_schema_metadata({**(table.schema.metadata or {}), **encoded})
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer)
+    return buffer.getvalue()
 
 
 def _complete_payloads():
@@ -124,6 +134,8 @@ def _write_strict_release(
     release_generated_at: str | None = None,
     simulation_generated_at: str | None = None,
     root_generated_at: str | None = None,
+    simulation_players=("a", "b"),
+    simulation_num_sims: int = 4,
 ):
     current = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     generated_at = release_generated_at or current
@@ -139,6 +151,11 @@ def _write_strict_release(
             },
             "approval": {"status": "approved"},
             "checks": {"passed": True},
+            "simulation": {
+                "num_players": len(simulation_players),
+                "num_sims": simulation_num_sims,
+                "player_set_sha256": names_sha256(simulation_players),
+            },
         }
     )
     simulation_id = simulation_manifest["manifest_sha256"]
@@ -711,6 +728,21 @@ class CommittedReleaseContractTests(unittest.TestCase):
             self.assertEqual(release["manifest"]["manifest_sha256"], manifest["manifest_sha256"])
             self.assertEqual(len(release["round_h2h"]), 1)
 
+    def test_round_artifact_field_must_match_approved_simulation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root, simulation_players=("a", "b", "c"))
+            with self.assertRaisesRegex(
+                OddsScreenContractError, "approved simulation"
+            ):
+                _load_committed_release_contract(
+                    expected_tourney="test_event",
+                    expected_event_id=99,
+                    expected_round=4,
+                    project_root=root,
+                    verify_git=False,
+                )
+
     def test_changed_declared_file_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -828,7 +860,18 @@ class CommittedReleaseContractTests(unittest.TestCase):
                         "test_event", 4, {}, event_id=99, release=release
                     )
 
-    def test_tournament_builder_uses_raw_wins_when_ties_lose(self):
+    def test_tournament_builder_uses_manifest_bound_full_joint_for_tie_losses(self):
+        class Response:
+            def __init__(self, *, payload=None, content=b""):
+                self.payload = payload
+                self.content = content
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_strict_release(root)
@@ -840,10 +883,50 @@ class CommittedReleaseContractTests(unittest.TestCase):
                 verify_git=False,
             )
             release["fairs"]["matchups"] = [["a", "b", 2 / 3]]
-            release["tournament_samples"] = pd.DataFrame(
-                [[280, 281, 282, 283], [281, 281, 281, 284]],
+            full_samples = pd.DataFrame(
+                [[280, 281, 282, 283], [282, 279, 282, 284]],
                 index=["a", "b"],
+                columns=["0", "1", "2", "3"],
             )
+            manifest = release["manifest"]
+            full_bytes = _indexed_parquet_bytes(
+                full_samples,
+                {
+                    "event_id": manifest["event_id"],
+                    "tourney": manifest["tourney"],
+                    "source": "final_scores_live",
+                    "simulation_manifest_sha256": manifest[
+                        "simulation_manifest_sha256"
+                    ],
+                    "live_tournament_manifest_sha256": manifest[
+                        "live_tournament_manifest_sha256"
+                    ],
+                    "sim_run_at": release["tournament_samples_meta"]["sim_run_at"],
+                },
+            )
+            full_digest = hashlib.sha256(full_bytes).hexdigest()
+            full_name = (
+                "tournament_samples_full."
+                f"{manifest['generation']}.{full_digest[:16]}.parquet"
+            )
+            manifest["release_assets"]["tournament_samples_full"] = {
+                "name": full_name,
+                "sha256": full_digest,
+                "size": len(full_bytes),
+            }
+            asset_url = (
+                "https://api.github.com/repos/mslade50/sims_process/"
+                "releases/assets/123"
+            )
+            release_payload = {
+                "assets": [
+                    {
+                        "name": full_name,
+                        "size": len(full_bytes),
+                        "url": asset_url,
+                    }
+                ]
+            }
             offered = {
                 "match_list": [
                     {
@@ -854,10 +937,19 @@ class CommittedReleaseContractTests(unittest.TestCase):
                     }
                 ]
             }
-            with patch("push_odds_screen._fetch_scraped_guarded", return_value=offered):
+            with patch(
+                "push_odds_screen._fetch_scraped_guarded", return_value=offered
+            ), patch(
+                "push_odds_screen.requests.get",
+                side_effect=[
+                    Response(payload=release_payload),
+                    Response(content=full_bytes),
+                ],
+            ) as mocked_get:
                 rows = _build_tournament_matchups(
                     "test_event", {}, event_id=99, release=release
                 )
+            self.assertEqual(mocked_get.call_count, 2)
             self.assertEqual(rows[0]["fair"]["p1_prob"], 0.5)
             self.assertEqual(rows[0]["fair"]["p2_prob"], 0.25)
             self.assertEqual(rows[0]["fair"]["tie_prob"], 0.25)
@@ -865,6 +957,23 @@ class CommittedReleaseContractTests(unittest.TestCase):
             payloads = _complete_payloads()
             payloads["tournament_matchups.json"]["matchups"] = rows
             _validate_odds_screen_payloads(payloads)
+
+            corrupted = bytes([full_bytes[0] ^ 1]) + full_bytes[1:]
+            with patch(
+                "push_odds_screen._fetch_scraped_guarded", return_value=offered
+            ), patch(
+                "push_odds_screen.requests.get",
+                side_effect=[
+                    Response(payload=release_payload),
+                    Response(content=corrupted),
+                ],
+            ):
+                with self.assertRaisesRegex(
+                    OddsScreenContractError, "manifest binding"
+                ):
+                    _build_tournament_matchups(
+                        "test_event", {}, event_id=99, release=release
+                    )
 
     def test_score_builder_rejects_off_model_and_integer_offers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1031,6 +1140,16 @@ class StrictQuoteProvenanceTests(unittest.TestCase):
         with patch("odds_loader._fetch_scraped_json", return_value=base):
             result = _fetch_scraped_guarded("round_matchups", round=4, event_id=99)
         self.assertEqual(len(result["match_list"]), 1)
+
+        numeric_ids = {
+            **base,
+            "event_id": 99.0,
+            "match_list": [{**base["match_list"][0], "event_id": 99.0}],
+        }
+        with patch("odds_loader._fetch_scraped_json", return_value=numeric_ids):
+            result = _fetch_scraped_guarded("round_matchups", round=4, event_id=99)
+        self.assertEqual(result["event_id"], "99")
+        self.assertEqual(result["match_list"][0]["event_id"], "99")
 
         with patch(
             "odds_loader._fetch_scraped_json",
