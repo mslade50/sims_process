@@ -47,7 +47,8 @@ jobs:
       run: npm test
 
     - name: Deploy Worker
-      uses: cloudflare/wrangler-action@v3
+      uses: cloudflare/wrangler-action@v4
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CF_ACCOUNT_ID }}
         workingDirectory: odds_screen
