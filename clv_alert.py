@@ -15,6 +15,7 @@ Fri/Sat/Sun (morning of R1-R3 bets closing before the next round).
 
 import os
 import sys
+import json
 import pandas as pd
 import requests
 from dotenv import load_dotenv
@@ -123,43 +124,71 @@ def load_round_bets(sim_round, event_id=None):
 # Fetch closing odds
 # ---------------------------------------------------------------------------
 
-def fetch_board_closing(sim_round, event_id=None):
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_BOARD_CLOSING_PATH = os.path.join(
+    PROJECT_ROOT, "permanent_data", "board_closing.json"
+)
+
+
+class FrozenClosingUnavailable(RuntimeError):
+    """Raised when an automated CLV run cannot use its frozen close."""
+
+
+def _load_local_board_closing(path=None):
+    """Load a Wrangler-downloaded closing snapshot, if one is available."""
+    configured_path = path or os.getenv("CLV_BOARD_CLOSING_PATH")
+    snapshot_path = configured_path or DEFAULT_BOARD_CLOSING_PATH
+    if not os.path.isfile(snapshot_path):
+        if configured_path:
+            print(f"  board closing snapshot not found: {snapshot_path}")
+        return None
+    try:
+        with open(snapshot_path, "r", encoding="utf-8") as handle:
+            closing = json.load(handle)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"  board closing snapshot is unreadable ({e})")
+        return None
+    if not isinstance(closing, dict):
+        print("  board closing snapshot is not a JSON object")
+        return None
+    return closing
+
+
+def fetch_board_closing(sim_round, event_id=None, snapshot_path=None):
     """The board's FROZEN closing snapshot for this round, from R2 closing.json.
 
     This is the actual line set at the freeze cutoff — strictly better than
     'whatever is live at 11:30 UTC' (on UK weeks the live feed is 7-12h stale by
     then and gets freshness-rejected, losing the round's CLV entirely). Returns
-    a DataFrame in the load_matchup_odds schema, or empty on ANY failure so the
-    caller falls back to the live feed."""
-    import boto3
-
-    account_id = os.getenv("CF_ACCOUNT_ID")
-    if not (account_id and os.getenv("R2_ACCESS_KEY_ID")
-            and os.getenv("R2_SECRET_ACCESS_KEY")):
-        return pd.DataFrame()
-    try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-        )
-        import json as _json
-        obj = s3.get_object(Bucket="golf-odds-board", Key="board/closing.json")
-        closing = _json.loads(obj["Body"].read())
-    except Exception as e:
-        print(f"  board closing fetch failed ({e}) — falling back to live feed")
+    a DataFrame in the load_matchup_odds schema, or empty on any validation or
+    read failure. CI downloads this file with Wrangler before Python starts;
+    interactive runs may still fall back to the live feed when it is absent.
+    """
+    closing = _load_local_board_closing(snapshot_path)
+    if closing is None:
         return pd.DataFrame()
     if event_id is not None and str(closing.get("event_id")) != str(event_id):
         print(f"  board closing is for event {closing.get('event_id')}, "
               f"not {event_id} — ignoring")
         return pd.DataFrame()
-    snap = (closing.get("rounds") or {}).get(str(sim_round)) or {}
+    rounds = closing.get("rounds")
+    if not isinstance(rounds, dict) or str(sim_round) not in rounds:
+        print(f"  board closing has no frozen R{sim_round} snapshot — ignoring")
+        return pd.DataFrame()
+    snap = rounds[str(sim_round)]
+    if not isinstance(snap, dict):
+        print(f"  board closing R{sim_round} snapshot is malformed — ignoring")
+        return pd.DataFrame()
     rows = []
     for mt, rws in ((snap.get("rmatch") or {}).get("markets") or {}).items():
         if mt != "round_matchup":
             continue
         for r in rws:
+            row_round = r.get("round")
+            if row_round is not None and str(row_round) != str(sim_round):
+                print(f"  board closing contains an R{row_round} row in the "
+                      f"R{sim_round} snapshot — ignoring")
+                return pd.DataFrame()
             for bk, entry in (r.get("books") or {}).items():
                 if not (entry.get("a") and entry.get("b")):
                     continue
@@ -191,6 +220,19 @@ def fetch_closing_odds(sim_round):
     df["Bookmaker"] = df["Bookmaker"].str.lower().str.strip()
 
     return df
+
+
+def resolve_closing_odds(sim_round, event_id=None, require_frozen=False):
+    """Use the frozen board close, optionally refusing any live fallback."""
+    closing_odds = fetch_board_closing(sim_round, event_id)
+    if not closing_odds.empty:
+        return closing_odds
+    if require_frozen:
+        raise FrozenClosingUnavailable(
+            f"authoritative frozen closing is unavailable for event "
+            f"{event_id}, R{sim_round}"
+        )
+    return fetch_closing_odds(sim_round)
 
 
 # ---------------------------------------------------------------------------
@@ -381,11 +423,18 @@ def main():
 
     print(f"  Found {len(bets)} stored R{sim_round} matchup bets")
 
-    # Closing lines: prefer the board's FROZEN closing snapshot (the actual
-    # pre-cutoff lines), fall back to the live scraped/API feed.
-    closing_odds = fetch_board_closing(sim_round, event_id)
-    if closing_odds.empty:
-        closing_odds = fetch_closing_odds(sim_round)
+    # Automated runs must grade against the authoritative frozen snapshot.
+    # Interactive runs retain the historical live-feed fallback for diagnosis.
+    require_frozen = os.getenv("CLV_REQUIRE_FROZEN_CLOSING", "").lower() in {
+        "1", "true", "yes", "on"
+    }
+    try:
+        closing_odds = resolve_closing_odds(
+            sim_round, event_id, require_frozen=require_frozen
+        )
+    except FrozenClosingUnavailable as e:
+        print(f"  ERROR: {e}")
+        sys.exit(1)
     if closing_odds.empty:
         print("  No closing odds available.")
         send_telegram(f"R{sim_round} CLV — {tourney}: no closing odds available.")

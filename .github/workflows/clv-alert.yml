@@ -28,26 +28,24 @@ jobs:
       run: |
         pip install pandas numpy scipy requests python-dotenv gspread google-auth pyarrow pytz boto3
 
-    - name: Fetch scraped odds for closing lines
+    - name: Fetch frozen board closing snapshot
       env:
-        GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
-        mkdir -p permanent_data/scraped_odds
-        for MARKET in round_matchups; do
-          curl -sL -H "Authorization: token $GH_TOKEN" \
-            "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/${MARKET}_latest.json" \
-            -o "permanent_data/scraped_odds/${MARKET}_latest.json" || true
-        done
-        echo "Fetched odds files:"
-        ls -la permanent_data/scraped_odds/ || true
+        mkdir -p permanent_data
+        npx --yes wrangler@4 r2 object get \
+          golf-odds-board/board/closing.json \
+          --file permanent_data/board_closing.json \
+          --remote
+        python -m json.tool permanent_data/board_closing.json >/dev/null
 
     - name: Run CLV alert
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
-        # R2 read access: grade against the board's FROZEN closing snapshot
-        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        # Fail closed: never substitute a live quote for the frozen close in CI.
+        CLV_BOARD_CLOSING_PATH: ${{ github.workspace }}/permanent_data/board_closing.json
+        CLV_REQUIRE_FROZEN_CLOSING: '1'
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
