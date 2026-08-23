@@ -1343,6 +1343,188 @@ def _strict_live_health_files(tourney: str) -> dict[str, Path]:
     }
 
 
+def _build_strict_live_outright_family(
+    tourney: str,
+    repl: dict,
+    *,
+    files: dict[str, Path] | None = None,
+) -> tuple[dict, dict, list[str]]:
+    """Build the complete live outright family from manifest-bound inputs only.
+
+    The ordinary publisher intentionally layers sparse/pre-event files over one
+    another. A complete-live publish has a stronger contract: every player and
+    every probability (including a legitimate zero) must come from the exact
+    ``simulated_probs_live.csv`` and made-cut tape sealed by the live health
+    manifest. No edge file, rank-probability fallback, or pre-event probability
+    is eligible here.
+    """
+    import numpy as np
+
+    files = files or _strict_live_health_files(tourney)
+    required_files = {"final_scores", "player_names", "made_cut", "finish_probs"}
+    missing_files = sorted(
+        label
+        for label in required_files
+        if label not in files or not Path(files[label]).is_file()
+    )
+    if missing_files:
+        raise SimulationHealthError(
+            "complete-live outright family is missing bound inputs: "
+            + ", ".join(missing_files)
+        )
+
+    try:
+        finish = pd.read_csv(files["finish_probs"])
+        player_names = json.loads(
+            Path(files["player_names"]).read_text(encoding="utf-8")
+        )
+        final_scores = np.load(files["final_scores"], mmap_mode="r", allow_pickle=False)
+        made_cut = np.load(files["made_cut"], mmap_mode="r", allow_pickle=False)
+    except Exception as exc:
+        raise SimulationHealthError(
+            f"complete-live outright inputs are unreadable: {exc}"
+        ) from exc
+
+    column_map = {
+        "winner": "simulated_win_prob",
+        "top_5": "top_5",
+        "top_10": "top_10",
+        "top_20": "top_20",
+    }
+    nodh_column_map = {
+        "top_5": "top_5_nodh",
+        "top_10": "top_10_nodh",
+        "top_20": "top_20_nodh",
+    }
+    required_columns = {
+        "player_name",
+        *column_map.values(),
+        *nodh_column_map.values(),
+    }
+    missing_columns = sorted(required_columns - set(finish.columns))
+    if missing_columns:
+        raise SimulationHealthError(
+            "complete-live finish probabilities are missing columns: "
+            + ", ".join(missing_columns)
+        )
+    if not isinstance(player_names, list) or not player_names:
+        raise SimulationHealthError(
+            "complete-live player sidecar is empty or malformed"
+        )
+
+    def _canonical_sequence(values, label):
+        canonical = []
+        for value in values:
+            if pd.isna(value) or not str(value).strip():
+                raise SimulationHealthError(
+                    f"complete-live {label} contains a blank player name"
+                )
+            canonical.append(_norm(value, repl))
+        if len(canonical) != len(set(canonical)):
+            raise SimulationHealthError(
+                f"complete-live {label} contains duplicate canonical player names"
+            )
+        return canonical
+
+    sidecar_players = _canonical_sequence(player_names, "player sidecar")
+    finish_players = _canonical_sequence(
+        finish["player_name"].tolist(), "finish probabilities"
+    )
+    if finish_players != sidecar_players:
+        raise SimulationHealthError(
+            "complete-live finish probability player order/field does not match "
+            "the bound player sidecar"
+        )
+
+    if (
+        final_scores.ndim != 2
+        or final_scores.shape[0] != len(sidecar_players)
+        or made_cut.ndim != 2
+        or made_cut.shape != final_scores.shape
+    ):
+        raise SimulationHealthError(
+            "complete-live final-score/made-cut axes do not match the bound field"
+        )
+    if not np.isfinite(made_cut).all() or not np.isin(made_cut, (0, 1)).all():
+        raise SimulationHealthError(
+            "complete-live made-cut tape must contain only binary values"
+        )
+
+    numeric = {}
+    for column in [*column_map.values(), *nodh_column_map.values()]:
+        values = pd.to_numeric(finish[column], errors="coerce").to_numpy(dtype=float)
+        if (
+            len(values) != len(sidecar_players)
+            or not np.isfinite(values).all()
+            or np.any(values < 0.0)
+            or np.any(values > 1.0)
+        ):
+            raise SimulationHealthError(
+                f"complete-live finish probabilities contain invalid {column} values"
+            )
+        numeric[column] = values
+
+    outrights = {
+        market: {
+            player: round(float(probability), 5)
+            for player, probability in zip(sidecar_players, numeric[column])
+        }
+        for market, column in column_map.items()
+    }
+    made_cut_probs = np.asarray(made_cut, dtype=float).mean(axis=1)
+    outrights["make_cut"] = {
+        player: round(float(probability), 5)
+        for player, probability in zip(sidecar_players, made_cut_probs)
+    }
+    outrights_nodh = {
+        market: {
+            player: round(float(probability), 5)
+            for player, probability in zip(sidecar_players, numeric[column])
+        }
+        for market, column in nodh_column_map.items()
+    }
+    return outrights, outrights_nodh, sorted(sidecar_players)
+
+
+def _require_strict_live_outright_payload(
+    payload: dict,
+    repl: dict,
+    files: dict[str, Path],
+) -> None:
+    """Prove the staged payload is exactly derivable from the bound live files."""
+    expected, expected_nodh, expected_field = _build_strict_live_outright_family(
+        str(payload.get("tourney") or ""), repl, files=files
+    )
+    if payload.get("outrights_source") != "live":
+        raise SimulationHealthError(
+            "complete-live outright payload is not labeled as live"
+        )
+    expected_provenance = {
+        "outrights_sim_run_at": _utc_stamp(Path(files["finish_probs"]).stat().st_mtime),
+        "matchups_sim_run_at": _utc_stamp(Path(files["final_scores"]).stat().st_mtime),
+    }
+    if payload.get("matchups_source") != "final_scores_live" or any(
+        payload.get(key) != value for key, value in expected_provenance.items()
+    ):
+        raise SimulationHealthError(
+            "complete-live market provenance does not match the bound live files"
+        )
+    if payload.get("field") != expected_field:
+        raise SimulationHealthError(
+            "complete-live payload field does not match the bound live field"
+        )
+    if payload.get("outrights") != expected:
+        raise SimulationHealthError(
+            "complete-live outright payload is not exactly derived from the bound "
+            "live finish/made-cut family"
+        )
+    if payload.get("outrights_nodh") != expected_nodh:
+        raise SimulationHealthError(
+            "complete-live no-dead-heat payload is not exactly derived from the "
+            "bound live finish family"
+        )
+
+
 def _load_and_validate_strict_live_health(payload: dict) -> tuple[dict, dict[str, Path]]:
     """Re-hash the exact live outright family used by strict nightly publish.
 
@@ -1426,9 +1608,13 @@ def _write_strict_release_manifest(
         path = PROJECT_ROOT / relative
         if not path.is_file():
             raise RuntimeError(f"strict publish package file is missing: {relative}")
+        blob = _git_filtered_blob_bytes(relative)
         git_files[relative] = {
-            "sha256": file_sha256(path),
-            "size": path.stat().st_size,
+            # Consumer contract: hashes refer to bytes stored in the Git blob,
+            # after clean filters/EOL normalization. A Windows publisher commonly
+            # has CRLF working-tree JSON while Git and API consumers see LF.
+            "sha256": hashlib.sha256(blob).hexdigest(),
+            "size": len(blob),
         }
     assets = {
         label: {key: value for key, value in asset.items() if key != "data"}
@@ -1456,6 +1642,57 @@ def _write_strict_release_manifest(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
     return manifest
+
+
+def _git_filtered_blob_bytes(relative: str) -> bytes:
+    """Return the exact bytes Git would commit for one working-tree path."""
+    import subprocess
+
+    hashed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(PROJECT_ROOT),
+            "hash-object",
+            "-w",
+            f"--path={relative}",
+            relative,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    object_id = hashed.stdout.strip()
+    if hashed.returncode != 0 or not object_id:
+        raise RuntimeError(
+            f"strict publish could not apply git filters to {relative}: "
+            f"{(hashed.stderr or '').strip()[:160]}"
+        )
+    blob = subprocess.run(
+        ["git", "-C", str(PROJECT_ROOT), "cat-file", "blob", object_id],
+        capture_output=True,
+    )
+    if blob.returncode != 0:
+        raise RuntimeError(
+            f"strict publish could not read filtered git blob for {relative}"
+        )
+    return blob.stdout
+
+
+def _require_filtered_git_binding(relative: str, binding: dict) -> None:
+    """Re-filter a mutable path and compare the consumer-visible Git bytes.
+
+    This preserves the pre-push TOCTOU check without making a sealed manifest
+    depend on whether the publisher's checkout represents text as LF or CRLF.
+    A raw EOL-only change is harmless because it produces the same committed
+    blob; every change that a Git/API consumer could observe still fails.
+    """
+    if not (PROJECT_ROOT / relative).is_file():
+        raise RuntimeError(f"strict git package changed after sealing: {relative}")
+    blob = _git_filtered_blob_bytes(relative)
+    if hashlib.sha256(blob).hexdigest() != binding.get("sha256"):
+        raise RuntimeError(f"strict git package changed after sealing: {relative}")
+    if len(blob) != int(binding.get("size") or -1):
+        raise RuntimeError(f"strict git package size changed after sealing: {relative}")
 
 
 def _require_strict_release_manifest_current(
@@ -1491,9 +1728,7 @@ def _require_strict_release_manifest_current(
         if len(asset["data"]) != int(asset.get("size") or -1):
             raise RuntimeError(f"strict release asset size changed after sealing: {label}")
     for relative, binding in (manifest.get("git_files") or {}).items():
-        path = PROJECT_ROOT / relative
-        if not path.is_file() or file_sha256(path) != binding.get("sha256"):
-            raise RuntimeError(f"strict git package changed after sealing: {relative}")
+        _require_filtered_git_binding(relative, binding)
 
 
 def _require_strict_git_blob_snapshot(
@@ -1561,9 +1796,7 @@ def _require_strict_git_package_from_disk() -> dict:
         ):
             raise RuntimeError(f"strict release manifest binding is incomplete: {label}")
     for relative, binding in (manifest.get("git_files") or {}).items():
-        path = PROJECT_ROOT / relative
-        if not path.is_file() or file_sha256(path) != binding.get("sha256"):
-            raise RuntimeError(f"strict git package changed after sealing: {relative}")
+        _require_filtered_git_binding(relative, binding)
     fairs = json.loads(LOCAL_OUT.read_text(encoding="utf-8"))
     for key, manifest_key in (
         ("release_generation", "generation"),
@@ -2101,7 +2334,7 @@ def _check_outright_mass(outrights: dict, tourney: str) -> None:
         raise RuntimeError(msg)
 
 
-def build_payload() -> dict:
+def build_payload(*, require_complete_live: bool = False) -> dict:
     si = _sim_inputs()
     tourney = getattr(si, "tourney", None)
     event_ids = getattr(si, "event_ids", []) or []
@@ -2116,6 +2349,10 @@ def build_payload() -> dict:
     # Guard against a stale, generic-named live dump from a PRIOR event defining this
     # week's field/outrights (cross-event bleed). Pre-event builds ignore it entirely.
     use_live = _live_dump_is_current(tourney, rnd, repl)
+    if require_complete_live and not use_live:
+        raise RuntimeError(
+            "complete-live publish has no current live probability source"
+        )
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     sim_run_at = _sim_run_at(tourney, rnd)
     if sim_run_at is None:
@@ -2124,7 +2361,15 @@ def build_payload() -> dict:
         # to publish anyway.
         raise RuntimeError(f"no sim source files found for '{tourney}' — cannot stamp "
                            f"sim_run_at; run the sim before publishing")
-    outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl, use_live=use_live)
+    if require_complete_live:
+        outrights, outrights_nodh, strict_field = (
+            _build_strict_live_outright_family(tourney, repl)
+        )
+    else:
+        outrights, outrights_nodh = _build_outrights(
+            tourney, cut_line, repl, use_live=use_live
+        )
+        strict_field = None
     _check_outright_mass(outrights, tourney)
     matchup_source, matchup_run_at = _matchups_provenance(tourney, use_live=use_live)
     payload = {
@@ -2134,13 +2379,21 @@ def build_payload() -> dict:
         "generated_at": now,                # publish wall-clock (display only)
         "sim_run_at": sim_run_at,           # when the SIM ran — consumers gate on this
         "round": rnd,                       # live round these round_* markets price
-        "field": _build_field(tourney, repl, use_live=use_live),
+        "field": (
+            strict_field
+            if strict_field is not None
+            else _build_field(tourney, repl, use_live=use_live)
+        ),
         "outrights": outrights,
         # no-dead-heat top-N fairs for books that settle a top-N as a clean binary
         # (Kalshi, NoVig). The board grades those books against these instead of the
         # dead-heat `outrights` above. Older boards ignore this key (degrade to DH).
         "outrights_nodh": outrights_nodh,
-        "matchups": _build_matchups(tourney, repl, use_live=use_live),
+        "matchups": (
+            _build_matchups_live(tourney, repl)
+            if require_complete_live
+            else _build_matchups(tourney, repl, use_live=use_live)
+        ),
         "round_scores": _build_round_scores(tourney, rnd, repl),
         # per-player skill estimate (pred, SG/round vs field) for the board's
         # skill filter. Older boards ignore this key.
@@ -2188,17 +2441,49 @@ def _validate_complete_live_payload(payload: dict, expected_round: int | None = 
                 "matchups_sim_run_at"):
         if not payload.get(key):
             problems.append(f"missing {key}")
-    if not payload.get("field"):
+    field_values = payload.get("field") or []
+    field = {str(player) for player in field_values if str(player).strip()}
+    if not field_values:
         problems.append("empty field")
+    elif len(field) != len(field_values):
+        problems.append("field contains blank or duplicate players")
 
     outrights = payload.get("outrights") or {}
     for market in ("winner", "top_5", "top_10", "top_20", "make_cut"):
-        if not outrights.get(market):
+        probabilities = outrights.get(market) or {}
+        if not probabilities:
             problems.append(f"empty outrights.{market}")
+        elif set(probabilities) != field:
+            problems.append(
+                f"outrights.{market} field coverage={len(set(probabilities) & field)}/"
+                f"{len(field)}"
+            )
+        for player, probability in probabilities.items():
+            try:
+                value = float(probability)
+            except (TypeError, ValueError):
+                value = float("nan")
+            if not (0.0 <= value <= 1.0):
+                problems.append(f"invalid outrights.{market}[{player!r}]")
+                break
     outrights_nodh = payload.get("outrights_nodh") or {}
     for market in ("top_5", "top_10", "top_20"):
-        if not outrights_nodh.get(market):
+        probabilities = outrights_nodh.get(market) or {}
+        if not probabilities:
             problems.append(f"empty outrights_nodh.{market}")
+        elif set(probabilities) != field:
+            problems.append(
+                f"outrights_nodh.{market} field coverage="
+                f"{len(set(probabilities) & field)}/{len(field)}"
+            )
+        for player, probability in probabilities.items():
+            try:
+                value = float(probability)
+            except (TypeError, ValueError):
+                value = float("nan")
+            if not (0.0 <= value <= 1.0):
+                problems.append(f"invalid outrights_nodh.{market}[{player!r}]")
+                break
     if not payload.get("matchups"):
         problems.append("empty tournament matchups")
     if not payload.get("round_scores"):
@@ -2364,7 +2649,7 @@ def _git_push(
     for fp in files:
         if not (PROJECT_ROOT / fp).exists():
             continue
-        blob = git("hash-object", "-w", fp).stdout.strip()
+        blob = git("hash-object", "-w", f"--path={fp}", fp).stdout.strip()
         if blob and git("rev-parse", f"{base}:{fp}").stdout.strip() != blob:
             blobs[fp] = blob
     if strict_package_manifest is not None:
@@ -2657,13 +2942,16 @@ def publish(
     """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
-    payload = build_payload()
+    payload = build_payload(require_complete_live=require_complete_live)
     strict_live_health = None
     strict_release = None
     if require_complete_live:
         _validate_complete_live_payload(payload, expected_round=expected_round)
-        strict_live_health, _ = _load_and_validate_strict_live_health(
+        strict_live_health, strict_live_files = _load_and_validate_strict_live_health(
             payload
+        )
+        _require_strict_live_outright_payload(
+            payload, _name_replacements(), strict_live_files
         )
         strict_release = _build_strict_release_package(
             payload, _name_replacements(), strict_live_health
@@ -2895,7 +3183,7 @@ def main():
             _git_push(tuple(files))
         return
 
-    payload = build_payload()
+    payload = build_payload(require_complete_live=args.require_complete_live)
     if args.require_complete_live:
         _validate_complete_live_payload(
             payload, expected_round=args.expected_round

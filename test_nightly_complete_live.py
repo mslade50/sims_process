@@ -140,7 +140,7 @@ def test_nightly_exports_publish_gate_only_after_validation(tmp_path, monkeypatc
     ]
 
 
-def _complete_payload():
+def _complete_payload(**_kwargs):
     return {
         "event_id": "99",
         "tourney": "test_event",
@@ -148,19 +148,22 @@ def _complete_payload():
         "round": 3,
         "field": ["alpha player", "beta player"],
         "outrights": {
-            "winner": {"alpha player": 0.5},
-            "top_5": {"alpha player": 1.0},
-            "top_10": {"alpha player": 1.0},
-            "top_20": {"alpha player": 1.0},
-            "make_cut": {"alpha player": 1.0},
+            "winner": {"alpha player": 0.5, "beta player": 0.5},
+            "top_5": {"alpha player": 1.0, "beta player": 1.0},
+            "top_10": {"alpha player": 1.0, "beta player": 1.0},
+            "top_20": {"alpha player": 1.0, "beta player": 1.0},
+            "make_cut": {"alpha player": 1.0, "beta player": 0.0},
         },
         "outrights_nodh": {
-            "top_5": {"alpha player": 1.0},
-            "top_10": {"alpha player": 1.0},
-            "top_20": {"alpha player": 1.0},
+            "top_5": {"alpha player": 1.0, "beta player": 1.0},
+            "top_10": {"alpha player": 1.0, "beta player": 1.0},
+            "top_20": {"alpha player": 1.0, "beta player": 1.0},
         },
         "matchups": [["alpha player", "beta player", 0.5]],
-        "round_scores": {"alpha player": {69: 0.5, 70: 0.5}},
+        "round_scores": {
+            "alpha player": {69: 0.5, 70: 0.5},
+            "beta player": {70: 0.5, 71: 0.5},
+        },
         "outrights_source": "live",
         "outrights_sim_run_at": "2026-08-23 12:00:00 UTC",
         "matchups_source": "final_scores_live",
@@ -182,6 +185,14 @@ def test_complete_live_publish_contract_rejects_wrong_round_and_pre_market():
 
 def test_complete_live_publish_contract_accepts_complete_payload():
     psf._validate_complete_live_payload(_complete_payload(), expected_round=3)
+
+
+def test_complete_live_publish_contract_rejects_partial_outright_coverage():
+    payload = _complete_payload()
+    del payload["outrights"]["winner"]["beta player"]
+
+    with pytest.raises(RuntimeError, match=r"outrights\.winner field coverage=1/2"):
+        psf._validate_complete_live_payload(payload, expected_round=3)
 
 
 @pytest.mark.parametrize(
@@ -251,6 +262,9 @@ def test_strict_release_failure_aborts_before_git_publish(tmp_path, monkeypatch)
         psf, "_load_and_validate_strict_live_health", lambda *_a, **_k: (health, {})
     )
     monkeypatch.setattr(
+        psf, "_require_strict_live_outright_payload", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
         psf, "_build_strict_release_package", lambda *_a, **_k: prepared
     )
     monkeypatch.setattr(
@@ -314,6 +328,126 @@ def test_live_make_cut_uses_paired_mask_not_conflicting_pre_event_csv(
         "alpha player": 0.5,
         "beta player": 0.25,
     }
+
+
+def test_strict_live_outrights_ignore_fallbacks_and_preserve_zeroes(
+    tmp_path, monkeypatch
+):
+    tourney = "test_event"
+    players = ["alpha player", "beta player"]
+    finish = pd.DataFrame(
+        {
+            "player_name": players,
+            "simulated_win_prob": [0.0, 1.0],
+            "top_5": [1.0, 1.0],
+            "top_10": [1.0, 1.0],
+            "top_20": [1.0, 1.0],
+            "top_5_nodh": [1.0, 1.0],
+            "top_10_nodh": [1.0, 1.0],
+            "top_20_nodh": [1.0, 1.0],
+        }
+    )
+    finish.to_csv(tmp_path / "simulated_probs_live.csv", index=False)
+    pd.DataFrame(
+        {
+            "player_name": players,
+            "simulated_win_prob": [0.9, 0.1],
+            "top_5": [0.9, 0.1],
+            "top_10": [0.9, 0.1],
+            "top_20": [0.9, 0.1],
+        }
+    ).to_csv(tmp_path / "simulated_probs.csv", index=False)
+    pd.DataFrame(
+        {
+            "player_name": players,
+            "simulated_win_prob": [0.8, 0.2],
+            "top_5": [0.8, 0.2],
+            "top_10": [0.8, 0.2],
+            "top_20": [0.8, 0.2],
+        }
+    ).to_csv(tmp_path / f"finish_equity_{tourney}.csv", index=False)
+    np.save(tmp_path / f"final_scores_live_{tourney}.npy", np.zeros((2, 4)))
+    np.save(
+        tmp_path / f"made_cut_live_{tourney}.npy",
+        np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=bool),
+    )
+    (tmp_path / f"player_names_live_{tourney}.json").write_text(
+        json.dumps(players), encoding="utf-8"
+    )
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+
+    outrights, nodh, field = psf._build_strict_live_outright_family(
+        tourney, {}
+    )
+
+    assert field == players
+    assert outrights["winner"] == {
+        "alpha player": 0.0,
+        "beta player": 1.0,
+    }
+    assert outrights["make_cut"] == {
+        "alpha player": 0.0,
+        "beta player": 1.0,
+    }
+    assert set(outrights["top_5"]) == set(players)
+    assert set(nodh["top_5"]) == set(players)
+
+
+def test_strict_live_outright_provenance_rejects_payload_mutation(
+    tmp_path, monkeypatch
+):
+    tourney = "test_event"
+    players = ["alpha player", "beta player"]
+    finish = pd.DataFrame(
+        {
+            "player_name": players,
+            "simulated_win_prob": [0.0, 1.0],
+            "top_5": [1.0, 1.0],
+            "top_10": [1.0, 1.0],
+            "top_20": [1.0, 1.0],
+            "top_5_nodh": [1.0, 1.0],
+            "top_10_nodh": [1.0, 1.0],
+            "top_20_nodh": [1.0, 1.0],
+        }
+    )
+    finish.to_csv(tmp_path / "simulated_probs_live.csv", index=False)
+    np.save(tmp_path / f"final_scores_live_{tourney}.npy", np.zeros((2, 4)))
+    np.save(
+        tmp_path / f"made_cut_live_{tourney}.npy",
+        np.ones((2, 4), dtype=bool),
+    )
+    (tmp_path / f"player_names_live_{tourney}.json").write_text(
+        json.dumps(players), encoding="utf-8"
+    )
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+    files = psf._strict_live_health_files(tourney)
+    outrights, nodh, field = psf._build_strict_live_outright_family(
+        tourney, {}, files=files
+    )
+    payload = {
+        "tourney": tourney,
+        "field": field,
+        "outrights": outrights,
+        "outrights_nodh": nodh,
+        "outrights_source": "live",
+        "outrights_sim_run_at": psf._utc_stamp(
+            files["finish_probs"].stat().st_mtime
+        ),
+        "matchups_source": "final_scores_live",
+        "matchups_sim_run_at": psf._utc_stamp(
+            files["final_scores"].stat().st_mtime
+        ),
+    }
+    psf._require_strict_live_outright_payload(payload, {}, files)
+
+    payload["outrights"]["winner"]["alpha player"] = 0.25
+    with pytest.raises(psf.SimulationHealthError, match="not exactly derived"):
+        psf._require_strict_live_outright_payload(payload, {}, files)
+
+    payload["outrights"]["winner"]["alpha player"] = 0.0
+    payload["outrights_sim_run_at"] = "2026-01-01 00:00:00 UTC"
+    with pytest.raises(psf.SimulationHealthError, match="market provenance"):
+        psf._require_strict_live_outright_payload(payload, {}, files)
 
 
 def test_nightly_workflow_is_strict_and_side_effect_free():
@@ -579,6 +713,11 @@ def test_strict_release_manifest_detects_git_file_mutation(tmp_path, monkeypatch
     monkeypatch.setattr(
         psf, "STRICT_RELEASE_MANIFEST", tmp_path / "sim_release_manifest.json"
     )
+    monkeypatch.setattr(
+        psf,
+        "_git_filtered_blob_bytes",
+        lambda relative: (tmp_path / relative).read_bytes(),
+    )
     (tmp_path / "sim_fairs.json").write_text("{}", encoding="utf-8")
     data = b"release-bytes"
     prepared = {
@@ -681,6 +820,11 @@ def test_strict_release_generation_is_stable_and_includes_live_health(
     monkeypatch.setattr(
         psf, "STRICT_RELEASE_MANIFEST", tmp_path / "sim_release_manifest.json"
     )
+    monkeypatch.setattr(
+        psf,
+        "_git_filtered_blob_bytes",
+        lambda relative: (tmp_path / relative).read_bytes(),
+    )
     (tmp_path / "sim_fairs.json").write_text("{}", encoding="utf-8")
     first_manifest = psf._write_strict_release_manifest(
         first, files=["sim_fairs.json"]
@@ -689,6 +833,74 @@ def test_strict_release_generation_is_stable_and_includes_live_health(
         retry, files=["sim_fairs.json"]
     )
     assert first_manifest == retry_manifest
+
+
+def test_strict_release_manifest_binds_filtered_git_bytes_with_crlf(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "core.autocrlf", "true"],
+        check=True,
+    )
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        psf, "STRICT_RELEASE_MANIFEST", tmp_path / "sim_release_manifest.json"
+    )
+    working_tree_bytes = b'{\r\n  "live": true\r\n}\r\n'
+    (tmp_path / "sim_fairs.json").write_bytes(working_tree_bytes)
+    release_bytes = b"release-bytes"
+    prepared = {
+        "schema_version": psf.STRICT_RELEASE_SCHEMA,
+        "generation": "event-99-r4-sim",
+        "generated_at": "2026-08-23 12:00:00 UTC",
+        "event_id": "99",
+        "tourney": "test_event",
+        "round": 4,
+        "simulation_manifest_sha256": "sim",
+        "live_tournament_manifest_sha256": "live",
+        "assets": {
+            "tournament_samples_full": {
+                "name": "finish.version.parquet",
+                "sha256": hashlib.sha256(release_bytes).hexdigest(),
+                "size": len(release_bytes),
+                "data": release_bytes,
+            }
+        },
+    }
+
+    manifest = psf._write_strict_release_manifest(
+        prepared, files=["sim_fairs.json"]
+    )
+    binding = manifest["git_files"]["sim_fairs.json"]
+    committed_bytes = psf._git_filtered_blob_bytes("sim_fairs.json")
+
+    assert b"\r\n" not in committed_bytes
+    assert committed_bytes == working_tree_bytes.replace(b"\r\n", b"\n")
+    assert binding["sha256"] == hashlib.sha256(committed_bytes).hexdigest()
+    assert binding["size"] == len(committed_bytes)
+    psf._require_strict_release_manifest_current(manifest, prepared)
+
+    staged = {
+        "sim_fairs.json": committed_bytes,
+        "sim_release_manifest.json": psf._git_filtered_blob_bytes(
+            "sim_release_manifest.json"
+        ),
+    }
+    psf._require_strict_git_blob_snapshot(
+        manifest,
+        ["sim_fairs.json", "sim_release_manifest.json"],
+        staged,
+    )
+
+    (tmp_path / "sim_fairs.json").write_bytes(
+        b'{\r\n  "live": false\r\n}\r\n'
+    )
+    with pytest.raises(RuntimeError, match="changed after sealing"):
+        psf._require_strict_release_manifest_current(manifest, prepared)
 
 
 def test_strict_release_stages_only_versioned_assets(monkeypatch):
