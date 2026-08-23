@@ -573,6 +573,19 @@ automatic approval after all checks pass. CLI runs that can email/store require
 `--health-approved-by <operator>`; this names the approver but never bypasses a
 failed invariant. The manual `run-sim.yml` workflow supplies the GitHub actor.
 
+**Decimal score-estimate refreshes:** a cached `--score-est` move uses
+`uniform_rounding_bin_v1`, the same approximation as the odds-board control.
+Each integer cache bucket is treated as uniform inside its one-stroke rounding
+bin, so a 0.3-stroke move deterministically transfers 30% of its mass to the
+adjacent settlement score. Whole-stroke moves retain exact legacy parity, while
+uniformly shifted joint draws preserve matchup and 3-ball outcomes. During a
+live event, a non-zero score-estimate refresh is not allowed to reuse its parent
+outright tape: it requires current centered predictions and known-round inputs,
+rebuilds the remaining-tournament/finish tape, binds both the score PMF and live
+tape to the exact derived health manifest, and only then promotes the shifted
+round cache. Missing inputs, a stale parent tape, or any partial artifact family
+fails closed with a full-simulation requirement.
+
 ---
 
 ## Phase 5: Friday (Round 2)

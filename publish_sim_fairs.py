@@ -41,10 +41,14 @@ from r1_prediction_artifact import (
     manifest_path_for,
     validate_r1_prediction_frame,
 )
+from score_reprice import FRACTIONAL_SCORE_REPRICE_METHOD
 from sim_health_gate import (
     SimulationHealthError,
     collect_overlay_provenance,
+    require_bound_artifact,
+    require_exact_simulation_source,
     require_h2h_probability_table,
+    require_round_score_probability_table,
     require_simulation_healthy,
     write_bound_artifact_manifest,
 )
@@ -709,6 +713,49 @@ def _build_round_scores(tourney: str, rnd, repl: dict) -> dict:
     df = pd.read_parquet(f)
     if not {"player_name", "score", "prob"} <= set(df.columns):
         return {}
+
+    health_path = f.with_name(f"{f.stem}_health.json")
+    if not health_path.is_file():
+        raise SimulationHealthError(
+            f"round score publish blocked: {f.name} has no bound health manifest"
+        )
+    with health_path.open(encoding="utf-8") as handle:
+        score_health = json.load(handle)
+    if (score_health.get("extra") or {}).get("reprice_method") != (
+        FRACTIONAL_SCORE_REPRICE_METHOD
+    ):
+        raise SimulationHealthError(
+            "round score publish blocked: unsupported or missing fractional "
+            "reprice method"
+        )
+    cache_health = (_cache_meta(tourney, rnd).get("health_manifest") or {})
+    bound_health = score_health.get("simulation_manifest") or {}
+    require_exact_simulation_source(
+        score_health,
+        cache_health,
+        artifact_label="round score PMF",
+    )
+    event = bound_health.get("event") or {}
+    scoring = bound_health.get("scoring") or {}
+    model = bound_health.get("model") or {}
+    current_overlay = collect_overlay_provenance(
+        tourney=tourney,
+        event_id=event.get("event_id"),
+        dists_path=(model.get("shot_dispersion_overlay") or {}).get("distribution_file"),
+        selected_model=model.get("selected", "category_first"),
+    )
+    require_bound_artifact(
+        score_health,
+        kind="round_score_pmf",
+        files={"score_pmf": f},
+        tourney=tourney,
+        event_id=event.get("event_id"),
+        sim_round=rnd,
+        configured_expected_avg=scoring.get("expected_avg"),
+        configured_course_averages=scoring.get("configured_course_averages"),
+        current_overlay=current_overlay,
+    )
+    require_round_score_probability_table(df, bound_health)
     out = {}
     for nm, g in df.groupby("player_name"):
         pmf = {int(s): round(float(p), 6) for s, p in zip(g["score"], g["prob"]) if p > 0}

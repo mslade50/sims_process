@@ -41,10 +41,11 @@ from sim_health_gate import (
     configured_round_scoring_baselines,
     derive_authoritative_scoring_targets,
     names_sha256,
-    parse_utc,
     require_bound_artifact,
+    require_exact_simulation_source,
     require_live_tournament_alignment,
     require_market_outputs_healthy,
+    require_round_score_probability_table,
     require_simulation_healthy,
     sealed_cache_expected_avg,
     write_bound_artifact_manifest,
@@ -53,6 +54,12 @@ from sim_health_gate import (
 from score_centering import (
     CENTERING_VERSION,
     validate_field_relative_predictions,
+)
+from score_reprice import (
+    FRACTIONAL_SCORE_REPRICE_METHOD,
+    fractional_settlement_pmf,
+    score_est_requires_live_refresh,
+    uniformly_shift_score_tape,
 )
 
 # --- Weekly-changing config from Google Sheet ---
@@ -703,6 +710,40 @@ def load_known_rounds(completed_round, course_map, default_par):
 # Tournament Simulation Engine
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _active_round_expected_scores(player_names, model_preds, tournament_config):
+    """Resolve absolute per-player baselines for the next simulated round.
+
+    The prediction artifact's course baselines have already been checked against
+    the authoritative Sheet map before this function is called. Single-course
+    weeks use ``default_expected``; multi-course weeks use each player's verified
+    ``course_score_adj``.
+    """
+    expected = np.full(
+        len(player_names), float(tournament_config["default_expected"]), dtype=float
+    )
+    if model_preds is None or getattr(model_preds, "empty", True):
+        return expected
+    if "player_name" not in model_preds.columns:
+        raise ValueError("active round predictions have no player_name column")
+    if model_preds["player_name"].duplicated().any():
+        raise ValueError("active round predictions contain duplicate player names")
+    if "course_score_adj" not in model_preds.columns:
+        return expected
+
+    indexed = model_preds.set_index("player_name")
+    missing = [player for player in player_names if player not in indexed.index]
+    if missing:
+        raise ValueError(
+            f"active round predictions are missing {len(missing)} players: {missing[:5]}"
+        )
+    course_expected = pd.to_numeric(
+        indexed.loc[player_names, "course_score_adj"], errors="coerce"
+    ).to_numpy(dtype=float)
+    available = np.isfinite(course_expected)
+    expected[available] = course_expected[available]
+    return expected
+
+
 def simulate_remaining_rounds(
     completed_round,
     player_names,
@@ -729,6 +770,9 @@ def simulate_remaining_rounds(
     live_r4_advantage = None
     live_r4_weather = None
     player_expected_r4 = None
+    player_expected_active = _active_round_expected_scores(
+        player_names, model_preds, tournament_config
+    )
 
     # After R3, the live prediction file is authoritative for R4. It contains
     # zero-mean player advantages (skill + relative tee-time weather), while
@@ -777,15 +821,7 @@ def simulate_remaining_rounds(
         else:
             live_r4_weather = np.zeros(n_players, dtype=float)
 
-        player_expected_r4 = np.full(
-            n_players, tournament_config["default_expected"], dtype=float
-        )
-        if "course_score_adj" in indexed_r4.columns:
-            course_expected = pd.to_numeric(
-                indexed_r4.loc[player_names, "course_score_adj"], errors="coerce"
-            ).to_numpy(dtype=float)
-            available = ~np.isnan(course_expected)
-            player_expected_r4[available] = course_expected[available]
+        player_expected_r4 = player_expected_active.copy()
 
         centered_live_r4 = True
         print(
@@ -798,12 +834,12 @@ def simulate_remaining_rounds(
     my_pred_base = np.array([player_preds_base.get(p, 0.0) for p in player_names])
 
     # Per-player expected score for R2 (multi-course aware)
-    player_expected_r2 = np.full(n_players, default_par, dtype=float)
-    if model_preds is not None and 'course_score_adj' in model_preds.columns:
-        for i, p in enumerate(player_names):
-            row = model_preds[model_preds['player_name'] == p]
-            if not row.empty and pd.notna(row['course_score_adj'].iloc[0]):
-                player_expected_r2[i] = row['course_score_adj'].iloc[0]
+    player_expected_r2 = (
+        player_expected_active.copy()
+        if completed_round == 1
+        else np.full(n_players, default_par, dtype=float)
+    )
+    if completed_round == 1:
         if np.unique(player_expected_r2).size > 1:
             print(f"    Multi-course R2: expected scores = {dict(zip(*np.unique(player_expected_r2, return_counts=True)))}")
 
@@ -837,7 +873,14 @@ def simulate_remaining_rounds(
     # All inputs are assembled above; sims_kernel.run_remaining_rounds (seed 42)
     # returns the same (final_scores, made_cut_mask). On --use-python or any Rust
     # error we fall through to the Python cascade below.
-    if not _USE_PYTHON and not centered_live_r4:
+    # The current Rust ABI accepts an absolute baseline only for R2. Until its
+    # R3/R4 inputs are extended, using it for a non-par active R3/R4 would
+    # silently produce different outright math than the round-score engine.
+    rust_supports_active_baseline = (
+        completed_round <= 1
+        or np.allclose(player_expected_active, float(default_par), atol=1e-12)
+    )
+    if not _USE_PYTHON and not centered_live_r4 and rust_supports_active_baseline:
         try:
             import sims_kernel as _sk
             _A = np.ascontiguousarray
@@ -876,6 +919,11 @@ def simulate_remaining_rounds(
             _handle_rust_kernel_failure("run_remaining_rounds", _rust_err)
     elif centered_live_r4 and not _USE_PYTHON:
         print("  [rust] Bypassing legacy cascade so centered live R4 inputs are honored")
+    elif not rust_supports_active_baseline and not _USE_PYTHON:
+        print(
+            "  [rust] Bypassing legacy cascade so the active decimal R3/R4 "
+            "scoring baseline is honored"
+        )
 
     # Initialize accumulators
     if completed_round >= 1 and 1 in known_strokes:
@@ -1068,7 +1116,16 @@ def simulate_remaining_rounds(
                 mu, std_c, effective_skew[i], updated_skill_r3[i],
                 L_corr, RNG, num_sims
             )
-        strokes_r3 = np.clip(np.rint(default_par - sg_r3), default_par - 12, default_par + 12).astype(int)
+        expected_r3 = (
+            player_expected_active
+            if completed_round == 2
+            else np.full(n_players, default_par, dtype=float)
+        )
+        strokes_r3 = np.clip(
+            np.rint(expected_r3[:, None] - sg_r3),
+            (expected_r3 - 12)[:, None],
+            (expected_r3 + 12)[:, None],
+        ).astype(int)
 
     r1_r3_scores = r1_r2_scores + strokes_r3
 
@@ -1158,8 +1215,15 @@ def simulate_remaining_rounds(
                 mu, std_c, effective_skew[i], updated_skill_r4[i],
                 L_corr, RNG, num_sims
             )
+        expected_r4 = (
+            player_expected_active
+            if completed_round == 3
+            else np.full(n_players, default_par, dtype=float)
+        )
         strokes_r4 = np.clip(
-            np.rint(default_par - sg_r4), default_par - 12, default_par + 12
+            np.rint(expected_r4[:, None] - sg_r4),
+            (expected_r4 - 12)[:, None],
+            (expected_r4 + 12)[:, None],
         ).astype(int)
 
     # Missed-cut penalty
@@ -3094,10 +3158,14 @@ def build_score_card(sim_dict, expected_avg, pred_lookup):
         if pred is None or pred < MIN_PRED_FOR_CARD:
             continue
 
+        settlement_scores, settlement_probs = fractional_settlement_pmf(scores)
         row = {"Player": player, "Pred": round(pred, 2)}
         for line in lines:
-            threshold = int(line)  # e.g. 70.5 → count scores ≤ 70
-            under_pct = (scores <= threshold).mean()
+            # Cached score-est reprices may carry a uniform decimal offset.
+            # Recover fractional probability mass from the inferred latent
+            # rounding bins, matching the odds-board UI exactly. Integer and
+            # whole-stroke-shifted caches retain point-mass parity.
+            under_pct = float(settlement_probs[settlement_scores < line].sum())
             fair_under = implied_to_american(under_pct)
             row[str(line)] = fair_under
 
@@ -3130,15 +3198,11 @@ def build_round_score_probs(sim_dict, expected_avg_lookup, cat_mu_lookup=None):
     for player, scores in sim_dict.items():
         if scores is None or len(scores) == 0:
             continue
-        # A score-est reprice may shift cached integer draws by a fractional
-        # number of strokes.  Golf scores still settle on integers, so map each
-        # shifted draw to its half-up settlement score before publishing the PMF.
-        # This preserves every strict comparison against a standard half-stroke
-        # O/U line: x < (n + .5) iff floor(x + .5) < (n + .5).
-        settled_scores = np.floor(np.asarray(scores, dtype=float) + 0.5).astype(int)
-        total = len(settled_scores)
-        vals, counts = np.unique(settled_scores, return_counts=True)
-        probs = counts / total
+        # A fractional shift redistributes mass deterministically between the
+        # adjacent integer settlement buckets. This is the same uniform-bin
+        # approximation used by the deployed board frontend, so a 0.3-stroke
+        # move changes strict half-stroke O/U fairs without Monte Carlo noise.
+        vals, probs = fractional_settlement_pmf(scores)
 
         if isinstance(expected_avg_lookup, dict):
             p_exp = expected_avg_lookup.get(player)
@@ -4749,7 +4813,8 @@ def main():
                         help="Like --price-only but dedup against Sheets and Telegram-alert only new bets (no email)")
     parser.add_argument("--score-est", type=float, default=None,
                         help="Override expected score estimate (only valid with --price-only/--reprice). "
-                             "Shifts every cached score by (new - cached_expected_avg) and re-prices.")
+                             "Fractionally shifts cached round-score mass and re-prices; during a live "
+                             "event also requires a fresh remaining-tournament/finish rerun.")
     parser.add_argument(
         "--health-approved-by",
         default=None,
@@ -5033,10 +5098,7 @@ def main():
         cat_mu_lookup = {}
         print(f"\n  [price-only] Skipped sim — using {len(sim_dict)} cached player arrays")
         if score_shift_delta != 0.0:
-            sim_dict = {
-                p: scores.astype(np.float64) + score_shift_delta
-                for p, scores in sim_dict.items()
-            }
+            sim_dict = uniformly_shift_score_tape(sim_dict, score_shift_delta)
             print(f"  [score-est] Shifted {len(sim_dict)} cached arrays by {score_shift_delta:+.3f} strokes")
 
         parent_health = cached_parent_health
@@ -5085,6 +5147,29 @@ def main():
                     "BLOCKED — a uniform --score-est shift does not match every active "
                     "course baseline; run a fresh full simulation"
                 )
+            parent_player_means = {
+                str(name): float(value)
+                for name, value in (
+                    (parent_health.get("scoring") or {}).get("player_expected_means")
+                    or {}
+                ).items()
+            }
+            shifted_player_means = {
+                name: value + score_shift_delta
+                for name, value in parent_player_means.items()
+            }
+            if (
+                set(shifted_player_means) != set(expected_player_means)
+                or any(
+                    abs(shifted_player_means[name] - expected_player_means[name]) > 1e-6
+                    for name in expected_player_means
+                )
+            ):
+                raise SimulationHealthError(
+                    "BLOCKED — active player skill/weather inputs changed since the "
+                    "cached simulation; run a fresh full round simulation instead of "
+                    "a score-est-only shift"
+                )
             active_health_manifest = build_simulation_manifest(
                 sim_dict,
                 tourney=tourney,
@@ -5097,25 +5182,22 @@ def main():
                     if expected_avg_authority == "sheet"
                     else expected_avg_authority
                 ),
-                expected_field_mean=(
-                    float((parent_health.get("scoring") or {}).get("implied_field_mean"))
-                    + score_shift_delta
-                ),
-                expected_player_means={
-                    name: float(value) + score_shift_delta
-                    for name, value in (
-                        (parent_health.get("scoring") or {}).get("player_expected_means") or {}
-                    ).items()
-                },
+                expected_field_mean=expected_field_mean,
+                expected_player_means=expected_player_means,
                 configured_course_averages=active_course_averages,
                 selected_model=selected_model,
                 skew_calibrated=bool(parent_model.get("skew_calibrated")),
                 overlay=overlay,
                 prediction_path=pred_file_path,
-                generated_at=parse_utc((parent_health.get("source") or {}).get("generated_at")),
                 manual_approved_by=args.health_approved_by,
                 manual_approval_required=(args.cli or expected_avg_authority == "cli"),
                 parent_manifest=parent_health,
+                derivation={
+                    "method": FRACTIONAL_SCORE_REPRICE_METHOD,
+                    "from_expected_avg": cached_avg,
+                    "to_expected_avg": float(expected_avg),
+                    "delta": score_shift_delta,
+                },
             )
         else:
             active_health_manifest = parent_health
@@ -5209,6 +5291,23 @@ def main():
             print(f"{'='*60}\n")
             return
 
+    must_refresh_live_tournament = score_est_requires_live_refresh(
+        price_only=args.price_only,
+        score_shift_delta=score_shift_delta,
+        completed_round=round_num,
+    )
+    if must_refresh_live_tournament:
+        if args.skip_tournament_sim:
+            raise SimulationHealthError(
+                "BLOCKED — a live --score-est refresh must rebuild the remaining-"
+                "tournament/finish tape; remove --skip-tournament-sim"
+            )
+        if not pred_file_path or model_preds.empty:
+            raise SimulationHealthError(
+                f"BLOCKED — a live --score-est refresh requires fresh centered "
+                f"{pred_file}; rerun live_stats_engine.py, then retry"
+            )
+
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
     matchup_book_counts = {b: 0 for b in SHARP_BOOKS}  # sharp-book line counts for email banner
@@ -5291,24 +5390,44 @@ def main():
     # put the odds board on a different scoring average than the score card.
     # Category means are optional metadata, so their absence in price-only is
     # harmless.
+    score_pmf_health = None
+    score_pmf_health_files = {}
     try:
         # Per-player expected avg (course-adjusted when multi-course), else scalar
         if "course_score_adj" in model_preds.columns:
             course_expected = model_preds["course_score_adj"].fillna(expected_avg)
-            if args.price_only and score_shift_delta:
-                course_expected = course_expected + score_shift_delta
             exp_lookup = dict(zip(model_preds["player_name"], course_expected))
         else:
             exp_lookup = expected_avg
 
         score_probs = build_round_score_probs(sim_dict, exp_lookup, cat_mu_lookup)
         if not score_probs.empty:
+            require_round_score_probability_table(score_probs, active_health_manifest)
             out_dir_probs = f"./{tourney}"
             os.makedirs(out_dir_probs, exist_ok=True)
             probs_path = os.path.join(out_dir_probs, f"round_score_probs_r{sim_round}.parquet")
             score_probs.to_parquet(probs_path, index=False)
+            score_pmf_health_path = os.path.join(
+                out_dir_probs, f"round_score_probs_r{sim_round}_health.json"
+            )
+            score_pmf_health_files = {"score_pmf": probs_path}
+            score_pmf_health = write_bound_artifact_manifest(
+                score_pmf_health_path,
+                kind="round_score_pmf",
+                simulation_manifest=active_health_manifest,
+                files=score_pmf_health_files,
+                extra={
+                    "reprice_method": FRACTIONAL_SCORE_REPRICE_METHOD,
+                    "num_players": int(score_probs["player_name"].nunique()),
+                    "num_rows": int(len(score_probs)),
+                },
+            )
             print(f"  Saved {probs_path} ({len(score_probs)} rows, {score_probs['player_name'].nunique()} players)")
     except Exception as e:
+        if must_refresh_live_tournament:
+            raise SimulationHealthError(
+                f"BLOCKED — decimal score refresh could not publish a bound score PMF: {e}"
+            ) from e
         print(f"  Warning: round_score_probs write failed: {e}")
 
     # ── Step 3b: Price score lines vs market ─────────────────────────────
@@ -5339,8 +5458,13 @@ def main():
     tournament_health_files = {}
     tournament_field_players = []
 
-    if not args.skip_tournament_sim and not args.price_only and round_num >= 1:
-        print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
+    if (
+        not args.skip_tournament_sim
+        and (not args.price_only or must_refresh_live_tournament)
+        and round_num >= 1
+    ):
+        _refresh_label = " [required decimal refresh]" if must_refresh_live_tournament else ""
+        print(f"\n  Running tournament simulation (R{round_num} complete -> R4){_refresh_label}...")
         try:
             # Load tournament config from sheet
             if sheet_config:
@@ -5353,6 +5477,10 @@ def main():
                     "wind_arrays": {2: [], 3: [], 4: []},
                     "dew_arrays": {2: [], 3: [], 4: []},
                 }
+            # The active next-round target is authoritative. In particular,
+            # do not let a stale per-round fallback inside the tournament config
+            # keep live finish tapes on the pre-update scoring baseline.
+            tourn_config["default_expected"] = float(expected_avg)
 
             # Load known rounds
             known_data = load_known_rounds(
@@ -5451,6 +5579,47 @@ def main():
                 )
                 print(f"    Saved {tournament_health_path} (content-bound live tape)")
 
+                _tournament_report = require_bound_artifact(
+                    tournament_health,
+                    kind="live_tournament_tape",
+                    files=tournament_health_files,
+                    tourney=tourney,
+                    event_id=_event_id,
+                    sim_round=sim_round,
+                    configured_expected_avg=configured_expected_avg,
+                    configured_course_averages=active_course_averages,
+                    current_overlay=overlay,
+                )
+                require_live_tournament_alignment(
+                    final_scores_path=tournament_health_files["final_scores"],
+                    player_names_path=tournament_health_files["player_names"],
+                    made_cut_path=tournament_health_files["made_cut"],
+                    finish_probs=finish_probs,
+                    artifact_manifest=tournament_health,
+                )
+                require_market_outputs_healthy(
+                    finish_probs=finish_probs,
+                    expected_players=tournament_field_players,
+                    bound_artifact_report=_tournament_report,
+                )
+                if must_refresh_live_tournament:
+                    # Promote the decimal-shifted round cache only after the
+                    # corresponding live tournament/finish tape is complete and
+                    # content-bound to the exact same derived manifest.
+                    save_sim_cache(
+                        sim_dict,
+                        sim_round,
+                        expected_avg,
+                        pred_lookup,
+                        _wx_lookup,
+                        health_manifest=active_health_manifest,
+                    )
+                    approved_cache_saved = True
+                    print(
+                        "    [score-est] Promoted derived round cache only after "
+                        "live tournament refresh passed"
+                    )
+
                 # ── Price ancillary Kalshi markets (round leaders/top-N, playoff) ──
                 # Graceful: never let this break the existing pipeline.
                 try:
@@ -5464,7 +5633,7 @@ def main():
                             "made_cut": made_cut_mask,
                             "final_scores": final_scores,
                             "pred_lookup": pred_lookup,
-                            "sim_dict": sim_dict_cf,
+                            "sim_dict": sim_dict,
                             "completed_round": round_num,
                         },
                         tourney, name_replacements,
@@ -5584,11 +5753,21 @@ def main():
                     win_negative_top10 = neg
 
             else:
+                if must_refresh_live_tournament:
+                    raise SimulationHealthError(
+                        "BLOCKED — decimal score refresh found no authoritative known-round "
+                        "players; refresh DataGolf round data and retry"
+                    )
                 print(f"    No player data found for tournament sim")
 
         except SimulationHealthError:
             raise
         except Exception as e:
+            if must_refresh_live_tournament:
+                raise SimulationHealthError(
+                    "BLOCKED — decimal score refresh could not rebuild the live "
+                    f"tournament/finish tape: {e}"
+                ) from e
             print(f"    Warning: Tournament simulation failed: {e}")
             import traceback
             traceback.print_exc()
@@ -5624,16 +5803,11 @@ def main():
                 }
                 with open(tournament_health_files["player_names"], encoding="utf-8") as _nf:
                     tournament_field_players = _health_json.load(_nf)
-                _bound_sim = tournament_health.get("simulation_manifest") or {}
-                _bound_parent = (_bound_sim.get("source") or {}).get("parent_manifest_sha256")
-                _active_parent = (active_health_manifest.get("source") or {}).get("parent_manifest_sha256")
-                _allowed_source_ids = {
-                    active_health_manifest.get("manifest_sha256"), _active_parent,
-                }
-                if _bound_sim.get("manifest_sha256") not in _allowed_source_ids:
-                    raise SimulationHealthError(
-                        "BLOCKED — cached live outright tape comes from a different round simulation"
-                    )
+                require_exact_simulation_source(
+                    tournament_health,
+                    active_health_manifest,
+                    artifact_label="cached live outright tape",
+                )
                 require_bound_artifact(
                     tournament_health,
                     kind="live_tournament_tape",
@@ -5641,7 +5815,8 @@ def main():
                     tourney=tourney,
                     event_id=_event_id,
                     sim_round=sim_round,
-                    configured_expected_avg=(_bound_sim.get("scoring") or {}).get("expected_avg"),
+                    configured_expected_avg=configured_expected_avg,
+                    configured_course_averages=active_course_averages,
                     current_overlay=overlay,
                 )
                 finish_probs = pd.read_csv(_fp_path)
@@ -5839,21 +6014,36 @@ def main():
             model_players=list(pred_lookup),
             current_overlay=overlay,
         )
+        if not score_pmf_health or not score_pmf_health_files:
+            raise SimulationHealthError(
+                "BLOCKED — score prices are not bound to the active simulation manifest"
+            )
+        require_exact_simulation_source(
+            score_pmf_health,
+            active_health_manifest,
+            artifact_label="round score PMF",
+        )
+        require_bound_artifact(
+            score_pmf_health,
+            kind="round_score_pmf",
+            files=score_pmf_health_files,
+            tourney=tourney,
+            event_id=_event_id,
+            sim_round=sim_round,
+            configured_expected_avg=configured_expected_avg,
+            configured_course_averages=active_course_averages,
+            current_overlay=overlay,
+        )
         if finish_probs is not None and not finish_probs.empty:
             if not tournament_health or not tournament_health_files:
                 raise SimulationHealthError(
                     "BLOCKED — outright prices are not bound to an approved live tournament tape"
                 )
-            _bound_sim = tournament_health.get("simulation_manifest") or {}
-            _active_parent = (active_health_manifest.get("source") or {}).get(
-                "parent_manifest_sha256"
+            require_exact_simulation_source(
+                tournament_health,
+                active_health_manifest,
+                artifact_label="live outright tape",
             )
-            if _bound_sim.get("manifest_sha256") not in {
-                active_health_manifest.get("manifest_sha256"), _active_parent,
-            }:
-                raise SimulationHealthError(
-                    "BLOCKED — round and outright outputs come from different simulations"
-                )
             _bound_report = require_bound_artifact(
                 tournament_health,
                 kind="live_tournament_tape",
@@ -5861,7 +6051,8 @@ def main():
                 tourney=tourney,
                 event_id=_event_id,
                 sim_round=sim_round,
-                configured_expected_avg=(_bound_sim.get("scoring") or {}).get("expected_avg"),
+                configured_expected_avg=configured_expected_avg,
+                configured_course_averages=active_course_averages,
                 current_overlay=overlay,
             )
             if names_sha256(tournament_field_players) != (

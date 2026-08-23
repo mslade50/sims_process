@@ -546,3 +546,182 @@ def test_rejected_simulation_cannot_be_wrapped_in_a_bound_manifest(tmp_path):
         assert "unapproved or invalid" in str(exc)
     else:
         raise AssertionError("rejected simulation was rebound as approved")
+
+
+def test_live_outright_parent_manifest_is_rejected_after_decimal_derivation():
+    parent_tape = _tape(68.7)
+    parent = _manifest(parent_tape)
+    shifted_tape = {
+        player: scores.astype(float) + 0.3
+        for player, scores in parent_tape.items()
+    }
+    derived = _manifest(
+        shifted_tape,
+        expected_avg=69.0,
+        expected_field_mean=69.0,
+        authority="sheet_score_est",
+        parent_manifest=parent,
+        generated_at=NOW + timedelta(minutes=1),
+        derivation={
+            "method": "uniform_rounding_bin_v1",
+            "from_expected_avg": 68.7,
+            "to_expected_avg": 69.0,
+            "delta": 0.3,
+        },
+    )
+    stale_outright = {"simulation_manifest": parent}
+
+    try:
+        shg.require_exact_simulation_source(
+            stale_outright,
+            derived,
+            artifact_label="live outright tape",
+        )
+    except shg.SimulationHealthError as exc:
+        assert "exact active simulation manifest" in str(exc)
+        assert "rebuild" in str(exc)
+    else:
+        raise AssertionError("parent outright tape was reused under a derived score-est manifest")
+
+    shg.require_exact_simulation_source(
+        {"simulation_manifest": derived},
+        derived,
+        artifact_label="refreshed live outright tape",
+    )
+
+    report = shg.validate_simulation_manifest(
+        derived,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=69.0,
+        sim_dict=shifted_tape,
+        model_players=list(shifted_tape),
+        current_overlay=OVERLAY,
+        now=NOW + timedelta(minutes=2),
+    )
+    assert report.ok, report.errors
+
+    bad = json.loads(json.dumps(derived))
+    bad["source"]["derivation"]["delta"] = 0.0
+    bad = shg.seal_manifest(bad)
+    rejected = shg.validate_simulation_manifest(
+        bad,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=69.0,
+        sim_dict=shifted_tape,
+        model_players=list(shifted_tape),
+        current_overlay=OVERLAY,
+        now=NOW + timedelta(minutes=2),
+    )
+    assert any("derivation baseline/delta" in error for error in rejected.errors)
+
+
+def test_derived_generation_refreshes_consumers_without_laundering_root_tape_age():
+    tape = _tape(68.7)
+    parent_time = NOW - timedelta(hours=17)
+    parent = _manifest(tape, generated_at=parent_time)
+    derived_time = NOW
+    derived = _manifest(tape, generated_at=derived_time, parent_manifest=parent)
+
+    assert derived["source"]["generated_at"] == shg.utc_stamp(derived_time)
+    assert derived["source"]["root_generated_at"] == shg.utc_stamp(parent_time)
+    report = shg.validate_simulation_manifest(
+        derived,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.7,
+        sim_dict=tape,
+        model_players=list(tape),
+        current_overlay=OVERLAY,
+        now=NOW + timedelta(hours=2),
+    )
+    assert not report.ok
+    assert any("root simulation tape" in error for error in report.errors)
+
+
+def test_fractional_round_score_pmf_is_content_bound_and_source_aligned(tmp_path):
+    tape = _tape(68.7)
+    manifest = _manifest(tape)
+    rows = []
+    for player, draws in tape.items():
+        values, counts = np.unique(draws, return_counts=True)
+        for score, count in zip(values, counts):
+            rows.append({
+                "player_name": player,
+                "score": int(score),
+                "prob": float(count / len(draws)),
+            })
+    score_df = pd.DataFrame(rows)
+    score_path = tmp_path / "round_score_probs_r3.parquet"
+    score_df.to_parquet(score_path, index=False)
+    health_path = tmp_path / "round_score_probs_r3_health.json"
+    health = shg.write_bound_artifact_manifest(
+        health_path,
+        kind="round_score_pmf",
+        simulation_manifest=manifest,
+        files={"score_pmf": score_path},
+        extra={"reprice_method": "uniform_rounding_bin_v1"},
+    )
+
+    assert not shg.validate_round_score_probability_table(score_df, manifest)
+    report = shg.validate_bound_artifact(
+        health,
+        kind="round_score_pmf",
+        files={"score_pmf": score_path},
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.7,
+        current_overlay=OVERLAY,
+        now=NOW + timedelta(minutes=5),
+    )
+    assert report.ok, report.errors
+
+    tampered = score_df.copy()
+    tampered.loc[tampered.index[0], "prob"] += 0.01
+    assert any(
+        "sum to one" in error
+        for error in shg.validate_round_score_probability_table(tampered, manifest)
+    )
+
+
+def test_round_score_publisher_rejects_pmf_from_parent_cache(tmp_path, monkeypatch):
+    tape = _tape(68.7)
+    parent = _manifest(tape)
+    rows = []
+    for player, draws in tape.items():
+        values, counts = np.unique(draws, return_counts=True)
+        rows.extend({
+            "player_name": player,
+            "score": int(score),
+            "prob": float(count / len(draws)),
+        } for score, count in zip(values, counts))
+    score_df = pd.DataFrame(rows)
+    score_path = tmp_path / "round_score_probs_r3.parquet"
+    score_df.to_parquet(score_path, index=False)
+    shg.write_bound_artifact_manifest(
+        tmp_path / "round_score_probs_r3_health.json",
+        kind="round_score_pmf",
+        simulation_manifest=parent,
+        files={"score_pmf": score_path},
+        extra={"reprice_method": "uniform_rounding_bin_v1"},
+    )
+    monkeypatch.setattr(psf, "_find_fresh", lambda *_args: score_path)
+    monkeypatch.setattr(psf, "collect_overlay_provenance", lambda **_kwargs: OVERLAY)
+    monkeypatch.setattr(psf, "_cache_meta", lambda *_args: {"health_manifest": parent})
+
+    published = psf._build_round_scores("test_event", 3, {})
+    assert len(published) == len(tape)
+
+    derived = _manifest(tape, parent_manifest=parent, generated_at=NOW + timedelta(minutes=1))
+    monkeypatch.setattr(psf, "_cache_meta", lambda *_args: {"health_manifest": derived})
+    try:
+        psf._build_round_scores("test_event", 3, {})
+    except shg.SimulationHealthError as exc:
+        assert "exact active simulation manifest" in str(exc)
+    else:
+        raise AssertionError("parent PMF was published beside a derived round cache")

@@ -525,9 +525,16 @@ def build_simulation_manifest(
     manual_approved_by: str | None = None,
     manual_approval_required: bool | None = None,
     parent_manifest: Mapping[str, Any] | None = None,
+    derivation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build and content-seal the health record for an exact score tape."""
     generated_at = generated_at or utc_now()
+    parent_source = (parent_manifest or {}).get("source") or {}
+    root_generated_at = (
+        parent_source.get("root_generated_at")
+        or parent_source.get("generated_at")
+        or utc_stamp(generated_at)
+    )
     facts, errors = _inspect_tape(sim_dict, model_players)
     try:
         expected = float(expected_avg)
@@ -538,6 +545,24 @@ def build_simulation_manifest(
             f"expected scoring average {expected_avg!r} is outside "
             f"{EXPECTED_AVG_RANGE[0]:g}..{EXPECTED_AVG_RANGE[1]:g}"
         )
+    if parent_manifest:
+        derivation_record = dict(derivation or {})
+        try:
+            derivation_from = float(derivation_record.get("from_expected_avg"))
+            derivation_to = float(derivation_record.get("to_expected_avg"))
+            derivation_delta = float(derivation_record.get("delta"))
+            if derivation_record.get("method") != "uniform_rounding_bin_v1":
+                errors.append("derived simulation uses an unsupported fractional method")
+            if (
+                not all(math.isfinite(value) for value in (
+                    derivation_from, derivation_to, derivation_delta
+                ))
+                or abs(derivation_to - expected) > 1e-6
+                or abs((derivation_to - derivation_from) - derivation_delta) > 1e-6
+            ):
+                errors.append("derived simulation baseline/delta provenance is inconsistent")
+        except (TypeError, ValueError):
+            errors.append("derived simulation provenance is missing or invalid")
     course_averages: dict[str, float] = {}
     for raw_code, raw_value in (
         configured_course_averages or {"field": expected}
@@ -673,9 +698,14 @@ def build_simulation_manifest(
         },
         "source": {
             "generated_at": utc_stamp(generated_at),
+            # Derived decimal reprices receive a fresh publish generation so
+            # consumers refresh, while retaining the root tape clock so a chain
+            # of reprices can never extend an old Monte Carlo cache indefinitely.
+            "root_generated_at": root_generated_at,
             "expected_avg_authority": expected_avg_authority,
             "prediction_artifact": _source_file(prediction_path),
             "parent_manifest_sha256": (parent_manifest or {}).get("manifest_sha256"),
+            "derivation": copy.deepcopy(dict(derivation or {})),
         },
         "scoring": {
             "expected_avg": expected,
@@ -744,6 +774,7 @@ def validate_simulation_manifest(
         errors.append(f"manifest event {event.get('event_id')!r} != active {event_id!r}")
     if str(event.get("round")) != str(sim_round):
         errors.append(f"manifest round {event.get('round')!r} != active R{sim_round}")
+    manifest_avg = math.nan
     try:
         manifest_avg = float((payload.get("scoring") or {}).get("expected_avg"))
         active_avg = float(configured_expected_avg)
@@ -754,6 +785,7 @@ def validate_simulation_manifest(
     except (TypeError, ValueError):
         errors.append("expected scoring average is missing or invalid")
     scoring = payload.get("scoring") or {}
+    source = payload.get("source") or {}
     stored_course_averages = scoring.get("configured_course_averages") or {}
     try:
         stored_course_averages = {
@@ -784,6 +816,29 @@ def validate_simulation_manifest(
                 )
     except (AttributeError, TypeError, ValueError):
         errors.append("manifest authoritative course scoring baselines are missing or invalid")
+    if (
+        source.get("expected_avg_authority") == "sheet_score_est"
+        or source.get("parent_manifest_sha256")
+    ):
+        derivation = source.get("derivation") or {}
+        try:
+            derivation_from = float(derivation.get("from_expected_avg"))
+            derivation_to = float(derivation.get("to_expected_avg"))
+            derivation_delta = float(derivation.get("delta"))
+            if source.get("parent_manifest_sha256") in {None, ""}:
+                errors.append("score-est derivation has no parent simulation manifest")
+            if derivation.get("method") != "uniform_rounding_bin_v1":
+                errors.append("score-est derivation uses an unsupported fractional method")
+            if (
+                not all(math.isfinite(v) for v in (
+                    derivation_from, derivation_to, derivation_delta
+                ))
+                or abs(derivation_to - manifest_avg) > 1e-6
+                or abs((derivation_to - derivation_from) - derivation_delta) > 1e-6
+            ):
+                errors.append("score-est derivation baseline/delta provenance is inconsistent")
+        except (TypeError, ValueError):
+            errors.append("score-est derivation provenance is missing or invalid")
     try:
         implied_mean = float(scoring.get("implied_field_mean"))
         recorded_empirical = float(scoring.get("empirical_field_mean"))
@@ -818,6 +873,10 @@ def validate_simulation_manifest(
         errors.append("manifest behavioral centering evidence is missing or invalid")
 
     generated = parse_utc((payload.get("source") or {}).get("generated_at"))
+    root_generated = parse_utc(
+        (payload.get("source") or {}).get("root_generated_at")
+        or (payload.get("source") or {}).get("generated_at")
+    )
     now = now or utc_now()
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -830,6 +889,20 @@ def validate_simulation_manifest(
         if age > timedelta(hours=float(max_age_hours)):
             errors.append(
                 f"simulation is {age.total_seconds() / 3600:.1f}h old; "
+                f"maximum is {max_age_hours:g}h"
+            )
+    if root_generated is None:
+        errors.append("manifest root tape timestamp is missing or invalid")
+    else:
+        root_age = now.astimezone(timezone.utc) - root_generated
+        if root_age < -timedelta(minutes=5):
+            errors.append(
+                f"root tape timestamp is {abs(root_age.total_seconds()) / 60:.1f}m "
+                "in the future"
+            )
+        if root_age > timedelta(hours=float(max_age_hours)):
+            errors.append(
+                f"root simulation tape is {root_age.total_seconds() / 3600:.1f}h old; "
                 f"maximum is {max_age_hours:g}h"
             )
 
@@ -996,6 +1069,28 @@ def require_bound_artifact(*args: Any, **kwargs: Any) -> HealthReport:
     return report
 
 
+def require_exact_simulation_source(
+    artifact_manifest: Mapping[str, Any] | None,
+    active_simulation_manifest: Mapping[str, Any] | None,
+    *,
+    artifact_label: str,
+) -> None:
+    """Reject artifacts bound to a parent or any other simulation generation.
+
+    Parent reuse is unsafe for derived score-est manifests: it can make stale
+    outright fairs look healthy merely because their old round cache is the
+    active cache's ancestor. Exact manifest identity is cheap and unambiguous.
+    """
+    artifact_source = (artifact_manifest or {}).get("simulation_manifest") or {}
+    artifact_id = artifact_source.get("manifest_sha256")
+    active_id = (active_simulation_manifest or {}).get("manifest_sha256")
+    if not artifact_id or not active_id or artifact_id != active_id:
+        raise SimulationHealthError(
+            f"BLOCKED — {artifact_label} does not match the exact active simulation "
+            "manifest; rebuild it before pricing or publishing"
+        )
+
+
 def validate_h2h_probability_table(h2h_df: Any, simulation_manifest: Mapping[str, Any]) -> list[str]:
     """Check all-pairs coverage, uniqueness, field identity, and probability mass."""
     errors: list[str] = []
@@ -1043,6 +1138,78 @@ def require_h2h_probability_table(h2h_df: Any, simulation_manifest: Mapping[str,
         print(f"  [sim-health] {report.summary()}")
         raise SimulationHealthError(report.summary())
     print("  [sim-health] PASS — complete H2H field and probability mass")
+
+
+def validate_round_score_probability_table(
+    score_df: Any, simulation_manifest: Mapping[str, Any]
+) -> list[str]:
+    """Validate a published integer-score PMF against its exact source tape."""
+    errors: list[str] = []
+    required = {"player_name", "score", "prob"}
+    if score_df is None or getattr(score_df, "empty", True):
+        return ["round score PMF is empty"]
+    if not required <= set(getattr(score_df, "columns", [])):
+        return ["round score PMF lacks player_name/score/prob columns"]
+
+    names = score_df["player_name"].map(_normalise_name)
+    if bool((names == "").any()):
+        errors.append("round score PMF contains blank player names")
+    if bool(score_df.assign(_name=names).duplicated(["_name", "score"]).any()):
+        errors.append("round score PMF contains duplicate player/score rows")
+    expected_n = int((simulation_manifest.get("simulation") or {}).get("num_players") or 0)
+    players = set(names)
+    if len(players) != expected_n:
+        errors.append(f"round score PMF player coverage is {len(players)}/{expected_n}")
+    elif names_sha256(players) != (
+        simulation_manifest.get("simulation") or {}
+    ).get("player_set_sha256"):
+        errors.append("round score PMF player set does not match source simulation tape")
+
+    try:
+        scores = np.asarray(score_df["score"], dtype=float)
+        probs = np.asarray(score_df["prob"], dtype=float)
+        if not np.isfinite(scores).all() or not np.isfinite(probs).all():
+            errors.append("round score PMF contains non-finite values")
+        elif np.any(np.abs(scores - np.rint(scores)) > 1e-9):
+            errors.append("round score PMF contains non-integer settlement scores")
+        elif np.any(probs < 0.0) or np.any(probs > 1.0):
+            errors.append("round score PMF probability mass is outside [0, 1]")
+        else:
+            work = score_df.assign(_name=names, _score=scores, _prob=probs)
+            totals = work.groupby("_name")["_prob"].sum()
+            if not np.allclose(totals.to_numpy(dtype=float), 1.0, atol=1e-8):
+                errors.append("round score PMF probabilities do not sum to one per player")
+            pmf_field_mean = float(
+                work.assign(_weighted=work["_score"] * work["_prob"])
+                .groupby("_name")["_weighted"]
+                .sum()
+                .mean()
+            )
+            tape_field_mean = float(
+                (simulation_manifest.get("simulation") or {}).get(
+                    "empirical_field_score_mean"
+                )
+            )
+            if not math.isfinite(tape_field_mean) or abs(
+                pmf_field_mean - tape_field_mean
+            ) > 1e-8:
+                errors.append(
+                    "round score PMF mean does not match its source simulation tape"
+                )
+    except (KeyError, TypeError, ValueError):
+        errors.append("round score PMF values are not numeric")
+    return errors
+
+
+def require_round_score_probability_table(
+    score_df: Any, simulation_manifest: Mapping[str, Any]
+) -> None:
+    errors = validate_round_score_probability_table(score_df, simulation_manifest)
+    if errors:
+        report = HealthReport(False, errors=errors)
+        print(f"  [sim-health] {report.summary()}")
+        raise SimulationHealthError(report.summary())
+    print("  [sim-health] PASS — complete round-score PMF probability mass")
 
 
 def validate_finish_probability_mass(finish_probs: Any, expected_players: Iterable[Any]) -> list[str]:
