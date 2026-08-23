@@ -67,6 +67,14 @@ def send_telegram(text):
 # Load bets from Sheets
 # ---------------------------------------------------------------------------
 
+def _drop_excluded_bets(df):
+    """Remove audit-preserved invalid bets while supporting legacy sheets."""
+    if df is None or df.empty or "result" not in df.columns:
+        return df
+    result = df["result"].fillna("").astype(str).str.lower().str.strip()
+    return df[~result.str.startswith("excluded_")].copy()
+
+
 def load_round_bets(sim_round, event_id=None):
     """Read stored round matchup bets for a specific round from Google Sheets."""
     from sheets_storage import get_spreadsheet
@@ -78,6 +86,9 @@ def load_round_bets(sim_round, event_id=None):
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
+    # Invalidated rows remain in Sheets for audit history, but are not bets and
+    # must be removed before the report's keep-first dedup can select one.
+    df = _drop_excluded_bets(df)
 
     # Filter to this round
     df["round"] = pd.to_numeric(df["round"], errors="coerce")

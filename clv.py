@@ -343,6 +343,14 @@ def match_finish_bet(bet, tape) -> dict:
 #   source_tab, sheet_row
 
 
+def _drop_excluded_bets(df):
+    """Remove audit-preserved invalid bets while supporting legacy sources."""
+    if df is None or df.empty or "result" not in df.columns:
+        return df
+    result = df["result"].fillna("").astype(str).str.lower().str.strip()
+    return df[~result.str.startswith("excluded_")].copy()
+
+
 def _drop_uncovered_books(df, label):
     """Drop bets at books DataGolf doesn't archive (exchanges etc.)."""
     if df is None or df.empty:
@@ -359,6 +367,7 @@ def load_bets_from_ledger(event_id) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load matchup + pre-tournament finish bets for an event from the ledger."""
     path = os.path.join("permanent_data", "bet_ledger.parquet")
     ledger = pd.read_parquet(path)
+    ledger = _drop_excluded_bets(ledger)
     ev = ledger[ledger["event_id"].astype(str) == str(event_id)].copy()
 
     mu = ev[ev["bet_type"].isin(["round_matchup", "tournament_matchup"])].copy()
@@ -416,7 +425,7 @@ def load_bets_from_sheet(event_id=None) -> tuple[pd.DataFrame, pd.DataFrame]:
         df["sheet_row"] = df.index + 2
         if event_id is not None and "event_id" in df.columns:
             df = df[df["event_id"].astype(str).str.strip() == str(event_id)]
-        return df
+        return _drop_excluded_bets(df)
 
     # Matchup tabs
     for tab, is_round in [("Tournament Matchups", False), ("Round Matchups", True)]:
