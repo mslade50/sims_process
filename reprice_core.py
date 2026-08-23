@@ -289,6 +289,25 @@ def alerted_key(p1, p2, bet_on):
     return (a, b, str(bet_on).lower().strip())
 
 
+def _canonical_mu_key(p1, p2, book, o1, o2):
+    """Order-insensitive matchup identity with each price attached to its player."""
+    def _price(value):
+        try:
+            number = float(value)
+            if not np.isfinite(number):
+                return ""
+            if number == int(number):
+                return str(int(number))
+            return format(number, ".6f").rstrip("0").rstrip(".")
+        except (TypeError, ValueError, OverflowError):
+            return str(value).strip().lower()
+
+    a = (str(p1).lower().strip(), _price(o1))
+    b = (str(p2).lower().strip(), _price(o2))
+    lo, hi = (a, b) if a[0] <= b[0] else (b, a)
+    return (lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1])
+
+
 def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     """Split `combined` against the Round Matchups sheet for this event+round.
 
@@ -311,12 +330,10 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     seen_alert_keys = set()
     for row in existing:
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
-            existing_keys.add((
-                str(row.get("player_1", "")).lower().strip(),
-                str(row.get("player_2", "")).lower().strip(),
-                str(row.get("bookmaker", "")).lower().strip(),
-                str(row.get("p1_odds", "")),
-                str(row.get("p2_odds", "")),
+            existing_keys.add(_canonical_mu_key(
+                row.get("player_1", ""), row.get("player_2", ""),
+                row.get("bookmaker", ""), row.get("p1_odds", ""),
+                row.get("p2_odds", ""),
             ))
             seen_alert_keys.add(alerted_key(
                 row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
@@ -326,12 +343,9 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
 
     mask = []
     for _, r in combined.iterrows():
-        key = (
-            str(r.get("Player 1", "")).lower().strip(),
-            str(r.get("Player 2", "")).lower().strip(),
-            str(r.get("Bookmaker", "")).lower().strip(),
-            str(r.get("P1 Odds", "")),
-            str(r.get("P2 Odds", "")),
+        key = _canonical_mu_key(
+            r.get("Player 1", ""), r.get("Player 2", ""),
+            r.get("Bookmaker", ""), r.get("P1 Odds", ""), r.get("P2 Odds", ""),
         )
         mask.append(key not in existing_keys)
 

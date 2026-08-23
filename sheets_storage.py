@@ -373,7 +373,34 @@ def _norm_key_cell(v):
     return format(f, ".6f").rstrip("0").rstrip(".")
 
 
-def _append_rows_deduped(ws, rows, key_indices):
+def _canonical_matchup_row_key(
+    row, *, event_index, round_index=None, player_indices, book_index, odds_indices
+):
+    """Canonical Sheet key for a two-way or three-way matchup row.
+
+    Sportsbook and DataGolf feeds do not guarantee participant ordering. Keep
+    each participant's odds attached while sorting by name so a flipped row is
+    the same bet, while a genuine price move remains a new observation.
+    """
+    event = _norm_key_cell(row[event_index]) if event_index < len(row) else ""
+    rnd = (
+        _norm_key_cell(row[round_index])
+        if round_index is not None and round_index < len(row)
+        else None
+    )
+    book = _norm_key_cell(row[book_index]) if book_index < len(row) else ""
+    participants = sorted(
+        (
+            _norm_key_cell(row[player_index]) if player_index < len(row) else "",
+            _norm_key_cell(row[odds_index]) if odds_index < len(row) else "",
+        )
+        for player_index, odds_index in zip(player_indices, odds_indices)
+    )
+    prefix = (event, rnd, book) if round_index is not None else (event, book)
+    return prefix + tuple(value for participant in participants for value in participant)
+
+
+def _append_rows_deduped(ws, rows, key_indices, key_fn=None):
     """Append rows, skipping any whose dedup key already exists in the tab (or earlier
     in this batch). Keeps the first occurrence — so a re-run or the second sim pass
     never writes an identical bet row again. Returns (written, skipped)."""
@@ -381,6 +408,8 @@ def _append_rows_deduped(ws, rows, key_indices):
         return 0, 0
 
     def _key(r):
+        if key_fn is not None:
+            return key_fn(r)
         return tuple(_norm_key_cell(r[i]) if i < len(r) else "" for i in key_indices)
 
     seen = {_key(r) for r in ws.get_all_values()[1:]}  # [1:] skips the header row
@@ -541,7 +570,18 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_TOURNAMENT_MU, TOURNAMENT_MU_HEADERS)
-    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["tournament_mu"])
+    written, skipped = _append_rows_deduped(
+        ws,
+        rows,
+        _DEDUP_KEYS["tournament_mu"],
+        key_fn=lambda row: _canonical_matchup_row_key(
+            row,
+            event_index=3,
+            player_indices=(4, 5),
+            book_index=8,
+            odds_indices=(10, 11),
+        ),
+    )
     print(f"  [storage] Wrote {written} tournament matchup rows to '{TAB_TOURNAMENT_MU}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
@@ -817,7 +857,19 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
-    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["round_mu"])
+    written, skipped = _append_rows_deduped(
+        ws,
+        rows,
+        _DEDUP_KEYS["round_mu"],
+        key_fn=lambda row: _canonical_matchup_row_key(
+            row,
+            event_index=3,
+            round_index=4,
+            player_indices=(5, 6),
+            book_index=9,
+            odds_indices=(11, 12),
+        ),
+    )
     print(f"  [storage] Wrote {written} R{sim_round} matchup rows to '{TAB_ROUND_MU}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
@@ -891,7 +943,19 @@ def store_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup=N
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_3BALL, ROUND_3BALL_HEADERS)
-    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["round_3ball"])
+    written, skipped = _append_rows_deduped(
+        ws,
+        rows,
+        _DEDUP_KEYS["round_3ball"],
+        key_fn=lambda row: _canonical_matchup_row_key(
+            row,
+            event_index=3,
+            round_index=4,
+            player_indices=(5, 6, 7),
+            book_index=11,
+            odds_indices=(13, 14, 15),
+        ),
+    )
     print(f"  [storage] Wrote {written} R{sim_round} 3-ball rows to '{TAB_ROUND_3BALL}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
