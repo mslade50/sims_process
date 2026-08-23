@@ -31,6 +31,31 @@ import os
 import sys
 
 
+class MatchupCoverageError(RuntimeError):
+    """Fresh sportsbook rows could not all be joined to the active fair tape."""
+
+
+def _require_complete_matchup_pricing(matchup_df):
+    """Reject a partial repricing instead of silently dropping unjoined lines."""
+    required = ("my_odds_p1", "my_odds_p2", "my_odds_p1_tl", "my_odds_p2_tl")
+    missing_columns = [column for column in required if column not in matchup_df.columns]
+    if missing_columns:
+        raise MatchupCoverageError(
+            "BLOCKED — matchup repricing lacks fair columns: "
+            + ", ".join(missing_columns)
+        )
+    unpriced = matchup_df[list(required)].isna().any(axis=1)
+    if bool(unpriced.any()):
+        mismatches = matchup_df.attrs.get("name_mismatches") or {}
+        names = ", ".join(sorted(str(name) for name in mismatches)[:8])
+        detail = f"; unmatched names: {names}" if names else ""
+        raise MatchupCoverageError(
+            f"BLOCKED — {int(unpriced.sum())}/{len(matchup_df)} fresh matchup "
+            f"line(s) have no active simulation fair{detail}"
+        )
+    return matchup_df
+
+
 def _setup_env():
     root = os.path.dirname(os.path.abspath(__file__))
     if root not in sys.path:
@@ -247,6 +272,7 @@ def main():
 
     # ── 3-4. Price from the table + edges + combined/sharp filter ─────────
     matchup_df = rc.price_from_h2h(matchup_df, lookup, known, repl=NAME_REPL)
+    _require_complete_matchup_pricing(matchup_df)
     matchup_df = rc.calculate_edges(matchup_df)
     combined, sharp = rc.build_matchup_outputs(
         matchup_df, sim_round, pred_lookup, sample_lookup, wx_lookup=wx_lookup

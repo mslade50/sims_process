@@ -120,6 +120,29 @@ class TelegramTransportTests(unittest.TestCase):
                 rc.send_telegram("bet", required=True)
         self.assertNotIn("never-print-this-token", str(caught.exception))
 
+
+class PricingCoverageTests(unittest.TestCase):
+    def test_partial_fair_join_is_blocked_before_filtering(self):
+        priced = pd.DataFrame({
+            "my_odds_p1": [0.55, None],
+            "my_odds_p2": [0.45, None],
+            "my_odds_p1_tl": [0.52, None],
+            "my_odds_p2_tl": [0.42, None],
+        })
+        priced.attrs["name_mismatches"] = {"misspelled player": {"betcris"}}
+
+        with self.assertRaisesRegex(reprice.MatchupCoverageError, "1/2 fresh matchup"):
+            reprice._require_complete_matchup_pricing(priced)
+
+    def test_complete_fair_join_is_accepted(self):
+        priced = pd.DataFrame({
+            "my_odds_p1": [0.55],
+            "my_odds_p2": [0.45],
+            "my_odds_p1_tl": [0.52],
+            "my_odds_p2_tl": [0.42],
+        })
+        self.assertIs(reprice._require_complete_matchup_pricing(priced), priced)
+
     def test_matchup_alert_reports_success_only_after_api_acceptance(self):
         with patch.dict(os.environ, {
             "TELEGRAM_BOT_TOKEN": "secret-token",

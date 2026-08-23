@@ -138,6 +138,7 @@ def require_pricing_pipeline_healthy(
     threeball_error=None,
     score_line_error=None,
     matchup_book_counts=None,
+    matchup_name_mismatches=None,
     require_complete_email=False,
     require_live_tournament=False,
     tournament_error=None,
@@ -153,6 +154,15 @@ def require_pricing_pipeline_healthy(
         raise SimulationHealthError(
             f"BLOCKED — round matchup pricing did not complete: {matchup_error}"
         ) from matchup_error
+
+    if matchup_name_mismatches:
+        names = ", ".join(
+            sorted(str(name) for name in matchup_name_mismatches)[:8]
+        )
+        raise SimulationHealthError(
+            "BLOCKED — fresh round-matchup lines contain player names that "
+            f"did not join the active simulation field: {names}"
+        )
 
     if require_complete_email:
         counts = matchup_book_counts or {}
@@ -5383,10 +5393,14 @@ def main():
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
     matchup_book_counts = {b: 0 for b in SHARP_BOOKS}  # sharp-book line counts for email banner
     matchup_pricing_error = None
+    matchup_name_mismatches = {}
     try:
         from odds_loader import load_matchup_odds
         matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY, round=sim_round)
         matchup_df = price_matchups(matchup_df, sim_dict)
+        matchup_name_mismatches = dict(
+            matchup_df.attrs.get("name_mismatches") or {}
+        )
         matchup_df = calculate_edges(matchup_df)
         if "Bookmaker" in matchup_df.columns and not matchup_df.empty:
             _vc = matchup_df["Bookmaker"].astype(str).str.lower().value_counts()
@@ -6089,6 +6103,7 @@ def main():
             threeball_error=threeball_pricing_error,
             score_line_error=score_line_pricing_error,
             matchup_book_counts=matchup_book_counts,
+            matchup_name_mismatches=matchup_name_mismatches,
             require_complete_email=_round_email_required(),
             require_live_tournament=(round_num >= 1 and not args.skip_tournament_sim),
             tournament_error=tournament_pipeline_error,

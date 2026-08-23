@@ -134,6 +134,13 @@ def test_required_report_rejects_missing_sharp_book_coverage(round_module):
         )
 
 
+def test_round_delivery_rejects_any_unjoined_matchup_name(round_module):
+    with pytest.raises(round_module.SimulationHealthError, match="did not join"):
+        round_module.require_pricing_pipeline_healthy(
+            matchup_name_mismatches={"misspelled player": {"betcris"}},
+        )
+
+
 def test_zero_qualifying_edges_are_valid_when_inputs_completed(round_module):
     # The gate cares about source lines successfully priced, not how many rows
     # survived the model's edge thresholds.
