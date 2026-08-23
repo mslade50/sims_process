@@ -117,6 +117,7 @@ SCORE_EDGES_HEADERS = [
     "player", "line", "book", "best_side",
     "mkt_under", "mkt_over", "fair_under", "fair_over",
     "edge_under", "edge_over", "best_edge",
+    "result", "actual_score", "units_won",
 ]
 
 BASE_RATES_HEADERS = ["category", "parameter", "base_rate", "this_week", "delta", "notes"]
@@ -315,19 +316,49 @@ def update_round_config_weather(weather_by_round, start_round,
 def _get_or_create_tab(spreadsheet, tab_name, headers):
     """
     Get an existing tab or create it with header row.
-    If the tab exists but its header row is missing columns from `headers`,
-    prints a warning so the mismatch is caught early.
+    A legacy tab may be migrated only by appending expected trailing columns
+    when its existing header is an exact prefix of ``headers``.  Existing tabs
+    whose first expected columns are exact may also retain unrelated trailing
+    audit/reporting columns.  Any reorder, rename, or missing-in-the-middle
+    drift fails closed before rows can be appended under the wrong columns.
     Returns the gspread Worksheet.
     """
     try:
         ws = spreadsheet.worksheet(tab_name)
-        # Check for header drift — warn if existing tab is missing expected columns
         existing_headers = ws.row_values(1)
-        missing = [h for h in headers if h not in existing_headers]
-        if missing:
-            print(f"  [storage] WARNING: '{tab_name}' header is missing columns: {missing}")
-            print(f"  [storage]   Expected {len(headers)} cols, found {len(existing_headers)}")
-            print(f"  [storage]   Run fix_tournament_mu_headers.py to repair")
+        if existing_headers == headers[:len(existing_headers)]:
+            # Exact legacy prefix: appending only the known trailing schema is a
+            # deterministic, non-destructive migration (e.g. Score Edges adding
+            # result/actual_score/units_won at columns Q:S).
+            missing_trailing = headers[len(existing_headers):]
+            if missing_trailing:
+                col_count = getattr(ws, "col_count", None)
+                if isinstance(col_count, int) and col_count < len(headers):
+                    ws.resize(cols=len(headers))
+                cells = [
+                    gspread.Cell(
+                        row=1,
+                        col=len(existing_headers) + offset,
+                        value=value,
+                    )
+                    for offset, value in enumerate(missing_trailing, start=1)
+                ]
+                ws.update_cells(cells, value_input_option="RAW")
+                print(
+                    f"  [storage] Migrated '{tab_name}' header with trailing "
+                    f"columns: {missing_trailing}"
+                )
+        elif (
+            len(existing_headers) >= len(headers)
+            and existing_headers[:len(headers)] == headers
+        ):
+            # Expected schema is intact; preserve intentionally appended columns.
+            pass
+        else:
+            raise RuntimeError(
+                f"BLOCKED — '{tab_name}' header drift is not a safe trailing "
+                f"migration (expected prefix {headers!r}, found {existing_headers!r})"
+            )
     except gspread.exceptions.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(
             title=tab_name, rows=1000, cols=len(headers)
@@ -350,11 +381,11 @@ def _append_rows(ws, rows):
 # columns. So a re-run or the second (regressed) sim pass never writes a bet twice;
 # the FIRST write (your pre-regression bet) is the one kept.
 _DEDUP_KEYS = {
-    "tournament_mu": [3, 4, 5, 8, 10, 11],     # event_id, player_1, player_2, bookmaker, p1_odds, p2_odds
-    "round_mu":      [3, 4, 5, 6, 9, 11, 12],  # event_id, round, player_1, player_2, bookmaker, p1_odds, p2_odds
-    "round_3ball":   [3, 4, 5, 6, 7, 11, 13, 14, 15],  # event_id, round, player_1/2/3, bookmaker, p1/p2/p3_odds
+    "tournament_mu": [3, 4, 5, 8, 10, 11, 16],     # event_id, players, bookmaker, odds, bet_on
+    "round_mu":      [3, 4, 5, 6, 9, 11, 12, 17],  # event_id, round, players, bookmaker, odds, bet_on
+    "round_3ball":   [3, 4, 5, 6, 7, 11, 13, 14, 15, 22],  # event_id, round, players, bookmaker, odds, bet_on
     "finish_pos":    [3, 4, 6, 7, 8],          # event_id, player_name, market_type, sportsbook, decimal_odds
-    "score_edges":   [3, 4, 5, 6, 7, 9, 10],   # event_id, round, player, line, book, mkt_under, mkt_over
+    "score_edges":   [3, 4, 5, 6, 7, 8, 9, 10],  # event_id, round, player, line, book, best_side, odds
 }
 
 
@@ -373,14 +404,33 @@ def _norm_key_cell(v):
     return format(f, ".6f").rstrip("0").rstrip(".")
 
 
+def is_excluded_or_invalid_result(value):
+    """Return whether a stored audit row is ineligible to suppress a new bet.
+
+    Bad-run rows are preserved in Sheets/the ledger for auditability by marking
+    their result ``excluded_*`` (the established production convention).  Also
+    recognize the equivalent ``invalid``/``invalid_*`` spellings so a manually
+    invalidated row cannot become a permanent dedup tombstone.
+    """
+    status = str(value or "").strip().lower()
+    return (
+        status == "excluded"
+        or status.startswith("excluded_")
+        or status == "invalid"
+        or status.startswith("invalid_")
+    )
+
+
 def _canonical_matchup_row_key(
-    row, *, event_index, round_index=None, player_indices, book_index, odds_indices
+    row, *, event_index, round_index=None, player_indices, book_index, odds_indices,
+    bet_on_index
 ):
     """Canonical Sheet key for a two-way or three-way matchup row.
 
     Sportsbook and DataGolf feeds do not guarantee participant ordering. Keep
     each participant's odds attached while sorting by name so a flipped row is
-    the same bet, while a genuine price move remains a new observation.
+    the same bet.  ``bet_on`` is also part of the identity: unchanged prices can
+    produce a genuinely new bet when the model edge flips to the other player.
     """
     event = _norm_key_cell(row[event_index]) if event_index < len(row) else ""
     rnd = (
@@ -396,14 +446,22 @@ def _canonical_matchup_row_key(
         )
         for player_index, odds_index in zip(player_indices, odds_indices)
     )
+    bet_on = _norm_key_cell(row[bet_on_index]) if bet_on_index < len(row) else ""
     prefix = (event, rnd, book) if round_index is not None else (event, book)
-    return prefix + tuple(value for participant in participants for value in participant)
+    return (
+        prefix
+        + tuple(value for participant in participants for value in participant)
+        + (bet_on,)
+    )
 
 
-def _append_rows_deduped(ws, rows, key_indices, key_fn=None):
+def _append_rows_deduped(ws, rows, key_indices, key_fn=None, result_index=None):
     """Append rows, skipping any whose dedup key already exists in the tab (or earlier
     in this batch). Keeps the first occurrence — so a re-run or the second sim pass
-    never writes an identical bet row again. Returns (written, skipped)."""
+    never writes an identical eligible bet row again. Existing rows marked
+    excluded/invalid are audit records, not dedup tombstones. Returns
+    ``(written, skipped)``.
+    """
     if not rows:
         return 0, 0
 
@@ -412,7 +470,15 @@ def _append_rows_deduped(ws, rows, key_indices, key_fn=None):
             return key_fn(r)
         return tuple(_norm_key_cell(r[i]) if i < len(r) else "" for i in key_indices)
 
-    seen = {_key(r) for r in ws.get_all_values()[1:]}  # [1:] skips the header row
+    existing_rows = ws.get_all_values()[1:]  # [1:] skips the header row
+    if result_index is not None:
+        existing_rows = [
+            row for row in existing_rows
+            if not is_excluded_or_invalid_result(
+                row[result_index] if result_index < len(row) else ""
+            )
+        ]
+    seen = {_key(r) for r in existing_rows}
     fresh, skipped = [], 0
     for row in rows:
         k = _key(row)
@@ -580,7 +646,9 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
             player_indices=(4, 5),
             book_index=8,
             odds_indices=(10, 11),
+            bet_on_index=16,
         ),
+        result_index=TOURNAMENT_MU_HEADERS.index("result"),
     )
     print(f"  [storage] Wrote {written} tournament matchup rows to '{TAB_TOURNAMENT_MU}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
@@ -778,7 +846,12 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
     if tab == TAB_LIVE:
         expected_headers = [h for h in FINISH_POS_HEADERS if h not in CLV_COLS]
     ws = _get_or_create_tab(spreadsheet, tab, expected_headers)
-    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["finish_pos"])
+    written, skipped = _append_rows_deduped(
+        ws,
+        rows,
+        _DEDUP_KEYS["finish_pos"],
+        result_index=FINISH_POS_HEADERS.index("result"),
+    )
     print(f"  [storage] Wrote {written} finish position rows to '{tab}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
@@ -868,7 +941,9 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             player_indices=(5, 6),
             book_index=9,
             odds_indices=(11, 12),
+            bet_on_index=17,
         ),
+        result_index=ROUND_MU_HEADERS.index("result"),
     )
     print(f"  [storage] Wrote {written} R{sim_round} matchup rows to '{TAB_ROUND_MU}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
@@ -954,7 +1029,9 @@ def store_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup=N
             player_indices=(5, 6, 7),
             book_index=11,
             odds_indices=(13, 14, 15),
+            bet_on_index=22,
         ),
+        result_index=ROUND_3BALL_HEADERS.index("result"),
     )
     print(f"  [storage] Wrote {written} R{sim_round} 3-ball rows to '{TAB_ROUND_3BALL}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
@@ -1006,12 +1083,20 @@ def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=
             _safe(r.get("Edge_Under"), round_digits=1),  # edge_under
             _safe(r.get("Edge_Over"), round_digits=1),   # edge_over
             _safe(r.get("Best_Edge"), round_digits=1),   # best_edge
+            "",                                          # result (grading)
+            "",                                          # actual_score (grading)
+            "",                                          # units_won (grading)
         ])
 
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
     ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
-    written, skipped = _append_rows_deduped(ws, rows, _DEDUP_KEYS["score_edges"])
+    written, skipped = _append_rows_deduped(
+        ws,
+        rows,
+        _DEDUP_KEYS["score_edges"],
+        result_index=SCORE_EDGES_HEADERS.index("result"),
+    )
     print(f"  [storage] Wrote {written} score edge rows to '{TAB_SCORE_EDGES}'"
           + (f" ({skipped} duplicate rows skipped)" if skipped else ""))
 
@@ -1231,8 +1316,18 @@ def _append_to_ledger(records):
         if col in combined.columns:
             combined[col] = combined[col].astype(str).str.lower().str.strip()
 
-    # Keep first occurrence (existing rows win over new)
-    combined = combined.drop_duplicates(subset=LEDGER_DEDUP_COLS, keep="first")
+    # Keep the first *eligible* occurrence (existing valid rows win over new).
+    # Audit-preserved excluded/invalid rows remain in the ledger, but must not
+    # become tombstones that prevent a corrected bet from being recorded later.
+    if "result" in combined.columns:
+        invalid_mask = combined["result"].map(is_excluded_or_invalid_result)
+    else:
+        invalid_mask = pd.Series(False, index=combined.index, dtype=bool)
+    eligible_duplicate = pd.Series(False, index=combined.index, dtype=bool)
+    eligible_duplicate.loc[~invalid_mask] = combined.loc[~invalid_mask].duplicated(
+        subset=LEDGER_DEDUP_COLS, keep="first"
+    )
+    combined = combined.loc[~eligible_duplicate].copy()
 
     # Atomic write
     fd, tmp_path = tempfile.mkstemp(suffix=".parquet", dir=ledger_dir)
@@ -1498,6 +1593,11 @@ def update_ledger_grades(graded_bets):
     for col in LEDGER_DEDUP_COLS:
         if col in ledger.columns:
             ledger[col] = ledger[col].astype(str).str.lower().str.strip()
+    eligible_ledger_rows = (
+        ~ledger["result"].map(is_excluded_or_invalid_result)
+        if "result" in ledger.columns
+        else pd.Series(True, index=ledger.index, dtype=bool)
+    )
 
     graded_ts = _now_est_iso()
     updated = 0
@@ -1537,7 +1637,8 @@ def update_ledger_grades(graded_bets):
             (ledger["bet_on"] == bet_on) &
             (ledger["opponent"] == opponent) &
             (ledger["bookmaker"] == bookmaker) &
-            (ledger["round"].astype(str) == rd)
+            (ledger["round"].astype(str) == rd) &
+            eligible_ledger_rows
         )
 
         matches = ledger.index[mask]
@@ -1632,6 +1733,11 @@ def update_ledger_clv(clv_bets):
         col: ledger[col].astype(str).str.lower().str.strip()
         for col in LEDGER_DEDUP_COLS if col in ledger.columns
     }
+    eligible_ledger_rows = (
+        ~ledger["result"].map(is_excluded_or_invalid_result)
+        if "result" in ledger.columns
+        else pd.Series(True, index=ledger.index, dtype=bool)
+    )
 
     for col in ("open_odds", "close_odds", "tot_clv", "clv"):
         if col not in ledger.columns:
@@ -1641,7 +1747,7 @@ def update_ledger_clv(clv_bets):
 
     updated = 0
     for bet in clv_bets:
-        mask = pd.Series(True, index=ledger.index)
+        mask = eligible_ledger_rows.copy()
         for col in LEDGER_DEDUP_COLS:
             if col not in key:
                 continue

@@ -298,8 +298,13 @@ def alerted_key(p1, p2, bet_on):
     return (a, b, str(bet_on).lower().strip())
 
 
-def _canonical_mu_key(p1, p2, book, o1, o2):
-    """Order-insensitive matchup identity with each price attached to its player."""
+def _canonical_mu_key(p1, p2, book, o1, o2, bet_on):
+    """Order-insensitive bet identity with each price attached to its player.
+
+    The selected side is deliberately part of the storage identity.  If the
+    fair crosses at unchanged market odds, betting the other player is a new bet
+    and must survive both Sheet dedup and Telegram alert dedup.
+    """
     def _price(value):
         try:
             number = float(value)
@@ -314,7 +319,10 @@ def _canonical_mu_key(p1, p2, book, o1, o2):
     a = (str(p1).lower().strip(), _price(o1))
     b = (str(p2).lower().strip(), _price(o2))
     lo, hi = (a, b) if a[0] <= b[0] else (b, a)
-    return (lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1])
+    return (
+        lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1],
+        str(bet_on).lower().strip(),
+    )
 
 
 def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
@@ -322,8 +330,8 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
 
     Returns (new_rows, seen_alert_keys):
       new_rows        — rows not already stored. The store key includes the odds
-                        (player_1, player_2, bookmaker, p1_odds, p2_odds), so a
-                        price move on a seen matchup still stores (feeds grading).
+                        and selected side (players, bookmaker, prices, bet_on), so
+                        either a price move or an edge flip still stores.
       seen_alert_keys — alerted_key() of every already-stored row, so the Telegram
                         layer can suppress edges previously surfaced to the user
                         and ping only pairings (or flipped sides) that are new.
@@ -331,18 +339,27 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     if combined is None or combined.empty:
         return combined, set()
 
-    from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
+    from sheets_storage import (
+        TAB_ROUND_MU,
+        ROUND_MU_HEADERS,
+        _get_or_create_tab,
+        is_excluded_or_invalid_result,
+    )
     ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
     existing = ws.get_all_records()
 
     existing_keys = set()
     seen_alert_keys = set()
     for row in existing:
+        # Invalidated bad-run rows remain visible for audit, but they are not a
+        # historical bet/alert and therefore cannot suppress a corrected retry.
+        if is_excluded_or_invalid_result(row.get("result", "")):
+            continue
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
             existing_keys.add(_canonical_mu_key(
                 row.get("player_1", ""), row.get("player_2", ""),
                 row.get("bookmaker", ""), row.get("p1_odds", ""),
-                row.get("p2_odds", ""),
+                row.get("p2_odds", ""), row.get("bet_on", ""),
             ))
             # Only a row from a Telegram-eligible book can prove this edge was
             # previously surfaced.  A soft-book row may be stored independently
@@ -360,6 +377,7 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
         key = _canonical_mu_key(
             r.get("Player 1", ""), r.get("Player 2", ""),
             r.get("Bookmaker", ""), r.get("P1 Odds", ""), r.get("P2 Odds", ""),
+            r.get("bet_on", ""),
         )
         mask.append(key not in existing_keys)
 

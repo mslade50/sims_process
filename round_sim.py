@@ -4381,66 +4381,16 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 # Reprice: dedup + store + alert helpers (for --reprice mode)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _canonical_mu_key(p1, p2, book, o1, o2):
-    """Order-insensitive dedup key for a round matchup.
-
-    The two odds sources order players oppositely (our scrape lists a matchup as
-    (Griffin, Aberg) while DataGolf lists it as (Aberg, Griffin)), so an
-    order-SENSITIVE key double-stores the same matchup under flipped orderings.
-    Canonicalize by sorting on player name while keeping each player's odds
-    attached, so both orderings collapse to one key.
-    """
-    a = (str(p1).lower().strip(), str(o1))
-    b = (str(p2).lower().strip(), str(o2))
-    lo, hi = (a, b) if a[0] <= b[0] else (b, a)
-    return (lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1])
+def _canonical_mu_key(p1, p2, book, o1, o2, bet_on):
+    """Compatibility wrapper around the cache-free canonical bet identity."""
+    from reprice_core import _canonical_mu_key as canonical_mu_key
+    return canonical_mu_key(p1, p2, book, o1, o2, bet_on)
 
 
 def _dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
-    """Split `combined` against the Round Matchups sheet for this event+round.
-
-    Returns (new_rows, seen_alert_keys):
-      new_rows        — rows not already stored. Dedup key: order-insensitive
-                        {players}, bookmaker, {odds} (see _canonical_mu_key), so a
-                        price move on a seen matchup still stores (feeds grading).
-      seen_alert_keys — reprice_core.alerted_key() of every already-stored row, so
-                        the Telegram layer can suppress edges previously surfaced
-                        and ping only pairings (or flipped sides) that are new.
-    """
-    from reprice_core import alerted_key
-
-    if combined is None or combined.empty:
-        return combined, set()
-
-    from sheets_storage import TAB_ROUND_MU, ROUND_MU_HEADERS, _get_or_create_tab
-    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_MU, ROUND_MU_HEADERS)
-    existing = ws.get_all_records()
-
-    existing_keys = set()
-    seen_alert_keys = set()
-    for row in existing:
-        if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
-            existing_keys.add(_canonical_mu_key(
-                row.get("player_1", ""), row.get("player_2", ""),
-                row.get("bookmaker", ""), row.get("p1_odds", ""), row.get("p2_odds", ""),
-            ))
-            seen_alert_keys.add(alerted_key(
-                row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
-
-    if not existing_keys:
-        return combined, seen_alert_keys
-
-    mask = []
-    for _, r in combined.iterrows():
-        key = _canonical_mu_key(
-            r.get("Player 1", ""), r.get("Player 2", ""),
-            r.get("Bookmaker", ""), r.get("P1 Odds", ""), r.get("P2 Odds", ""),
-        )
-        mask.append(key not in existing_keys)
-
-    new_rows = combined[mask].copy()
-    print(f"  [reprice] Matchups: {len(combined)} total, {len(new_rows)} new (deduped {len(combined) - len(new_rows)})")
-    return new_rows, seen_alert_keys
+    """Use the hardened cache-free dedup contract for legacy ``--reprice``."""
+    from reprice_core import dedup_round_matchups
+    return dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
 
 
 def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
@@ -4448,17 +4398,28 @@ def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
     if score_edges is None or score_edges.empty:
         return score_edges
 
-    from sheets_storage import TAB_SCORE_EDGES, SCORE_EDGES_HEADERS, _get_or_create_tab
+    from sheets_storage import (
+        TAB_SCORE_EDGES,
+        SCORE_EDGES_HEADERS,
+        _get_or_create_tab,
+        _norm_key_cell,
+        is_excluded_or_invalid_result,
+    )
     ws = _get_or_create_tab(spreadsheet, TAB_SCORE_EDGES, SCORE_EDGES_HEADERS)
     existing = ws.get_all_records()
 
     existing_keys = set()
     for row in existing:
+        if is_excluded_or_invalid_result(row.get("result", "")):
+            continue
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
             key = (
-                str(row.get("player", "")).lower().strip(),
-                str(row.get("line", "")),
-                str(row.get("book", "")).lower().strip(),
+                _norm_key_cell(row.get("player", "")),
+                _norm_key_cell(row.get("line", "")),
+                _norm_key_cell(row.get("book", "")),
+                _norm_key_cell(row.get("best_side", "")),
+                _norm_key_cell(row.get("mkt_under", "")),
+                _norm_key_cell(row.get("mkt_over", "")),
             )
             existing_keys.add(key)
 
@@ -4468,9 +4429,12 @@ def _dedup_score_edges(score_edges, spreadsheet, event_id, sim_round):
     mask = []
     for _, r in score_edges.iterrows():
         key = (
-            str(r.get("Player", "")).lower().strip(),
-            str(r.get("Line", "")),
-            str(r.get("Book", "")).lower().strip(),
+            _norm_key_cell(r.get("Player", "")),
+            _norm_key_cell(r.get("Line", "")),
+            _norm_key_cell(r.get("Book", "")),
+            _norm_key_cell(r.get("Best_Side", "")),
+            _norm_key_cell(r.get("Mkt_Under", "")),
+            _norm_key_cell(r.get("Mkt_Over", "")),
         )
         mask.append(key not in existing_keys)
 
@@ -4489,12 +4453,19 @@ def _dedup_finish_positions(outrights_df, spreadsheet, event_id):
     if outrights_df is None or outrights_df.empty:
         return outrights_df
 
-    from sheets_storage import TAB_FINISH_POS, FINISH_POS_HEADERS, _get_or_create_tab
+    from sheets_storage import (
+        TAB_FINISH_POS,
+        FINISH_POS_HEADERS,
+        _get_or_create_tab,
+        is_excluded_or_invalid_result,
+    )
     ws = _get_or_create_tab(spreadsheet, TAB_FINISH_POS, FINISH_POS_HEADERS)
     existing = ws.get_all_records()
 
     existing_keys = set()
     for row in existing:
+        if is_excluded_or_invalid_result(row.get("result", "")):
+            continue
         if str(row.get("event_id", "")) == str(event_id):
             key = (
                 str(row.get("player_name", "")).lower().strip(),
@@ -4523,7 +4494,13 @@ def _dedup_finish_positions(outrights_df, spreadsheet, event_id):
 
 
 def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name, new_op=None):
-    """Format and send Telegram alert for newly-priced (since last reprice) bets."""
+    """Strictly deliver newly-priced bets before any corresponding storage.
+
+    Unlike the diagnostic ``_send_telegram`` helper, this path validates
+    credentials, HTTP status, and Telegram's JSON ``ok`` response.  Long alerts
+    are split before delivery.  Any rejected chunk raises and the caller must
+    leave all pending rows unstored so the workflow retry can alert them.
+    """
     lines = []
     lines.append(f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>")
     lines.append("")
@@ -4583,14 +4560,35 @@ def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name, new_op=None):
     if ((new_mu is None or new_mu.empty)
             and (new_se is None or new_se.empty)
             and (new_op is None or new_op.empty)):
-        lines.append("No new or moved bets found.")
+        return 0
 
-    _send_telegram("\n".join(lines))
+    import reprice_core as _reprice_core
+
+    messages = []
+    chunk = []
+    for line in lines:
+        candidate = "\n".join(chunk + [line])
+        if chunk and len(candidate) > _reprice_core.TELEGRAM_MESSAGE_MAX_CHARS:
+            messages.append("\n".join(chunk))
+            chunk = [line]
+        else:
+            chunk.append(line)
+    if chunk:
+        messages.append("\n".join(chunk))
+
+    for message in messages:
+        _reprice_core.send_telegram(message, required=True)
+    print(f"  [reprice] Telegram delivered {len(messages)} required message(s).")
+    return len(messages)
 
 
 def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, event_id,
-                              outrights_combined=None):
-    """Dedup against Sheets, store only new rows, send Telegram alert."""
+                              outrights_combined=None, health_check=None):
+    """Dedup, strictly deliver every required alert, then store new rows.
+
+    Alert-required rows are never written first.  A delivery failure propagates
+    to the command entrypoint and keeps the rows retryable.
+    """
     from sheets_storage import (
         get_spreadsheet,
         store_round_matchups,
@@ -4609,6 +4607,45 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
         dg_id_lookup = load_dg_id_lookup(tourney_name, name_replacements)
     except Exception:
         dg_id_lookup = {}
+
+    # Telegram filter: only sharp books, and only edges NOT previously surfaced —
+    # a price/edge-size move on an already-seen pairing+side re-stores silently;
+    # only a new pairing (or the edge flipping to the other player) pings.
+    from reprice_core import partition_matchup_alert_rows
+    _tg_mu, _ = partition_matchup_alert_rows(
+        new_mu, seen_alert_keys=seen_alert_keys
+    )
+    if _tg_mu is not None and _tg_mu.empty:
+        _tg_mu = None
+
+    # Telegram filter for outrights: only include exchange (kalshi/novig) taker
+    # rows with non-trivial edge to keep alerts actionable.
+    _tg_op = None
+    if new_op is not None and not new_op.empty:
+        _book_col = "bookmaker" if "bookmaker" in new_op.columns else "book"
+        _pricing = (
+            new_op["pricing"]
+            if "pricing" in new_op.columns
+            else pd.Series("taker", index=new_op.index)
+        )
+        _tg_op = new_op[
+            new_op[_book_col].astype(str).str.lower().isin({"kalshi", "novig"})
+            & (_pricing.astype(str).str.lower() == "taker")
+            & (pd.to_numeric(new_op["edge"], errors="coerce").fillna(0) > EDGE_THRESHOLD_TOPN)
+        ].copy()
+        if _tg_op.empty:
+            _tg_op = None
+
+    # This is the commit point: every alertable row is accepted by Telegram
+    # before the first Sheet/ledger mutation.  Failure raises and stores nothing.
+    if health_check is not None:
+        health_check()
+    _send_reprice_alert(_tg_mu, new_se, sim_round, tourney_name, new_op=_tg_op)
+
+    # Recheck after delivery as well: an accepted alert cannot authorize storage
+    # if the simulation inputs/artifacts changed while Telegram was in flight.
+    if health_check is not None:
+        health_check()
 
     if new_mu is not None and not new_mu.empty:
         store_round_matchups(
@@ -4634,44 +4671,10 @@ def _reprice_store_and_alert(combined, score_edges, sim_round, tourney_name, eve
     else:
         print("  [reprice] No new outright rows to store.")
 
-    # Telegram filter: only sharp books, and only edges NOT previously surfaced —
-    # a price/edge-size move on an already-seen pairing+side re-stores silently;
-    # only a new pairing (or the edge flipping to the other player) pings.
-    from reprice_core import alerted_key as _akey
-    TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
-    _tg_mu = None
-    if new_mu is not None and not new_mu.empty:
-        _tg_mu = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
-        if seen_alert_keys and not _tg_mu.empty:
-            _fresh = [_akey(r.get("Player 1", ""), r.get("Player 2", ""), r.get("bet_on", ""))
-                      not in seen_alert_keys for _, r in _tg_mu.iterrows()]
-            _n_drop = len(_tg_mu) - sum(_fresh)
-            if _n_drop:
-                print(f"  [reprice] Alert: suppressed {_n_drop} previously-seen edge(s) "
-                      f"(price moved, same bet)")
-            _tg_mu = _tg_mu[_fresh]
-        if _tg_mu.empty:
-            _tg_mu = None
-
-    # Telegram filter for outrights: only include exchange (kalshi/novig) taker
-    # rows with non-trivial edge to keep alerts actionable.
-    _tg_op = None
-    if new_op is not None and not new_op.empty:
-        _book_col = "bookmaker" if "bookmaker" in new_op.columns else "book"
-        _tg_op = new_op[
-            new_op[_book_col].astype(str).str.lower().isin({"kalshi", "novig"})
-            & (new_op.get("pricing", "taker").astype(str).str.lower() == "taker")
-            & (pd.to_numeric(new_op["edge"], errors="coerce").fillna(0) > EDGE_THRESHOLD_TOPN)
-        ].copy()
-        if _tg_op.empty:
-            _tg_op = None
-
-    _send_reprice_alert(_tg_mu, new_se, sim_round, tourney_name, new_op=_tg_op)
-
     n_mu = len(new_mu) if new_mu is not None and not new_mu.empty else 0
     n_se = len(new_se) if new_se is not None and not new_se.empty else 0
     n_op = len(new_op) if new_op is not None and not new_op.empty else 0
-    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges + {n_op} outrights. Telegram sent.")
+    print(f"  [reprice] Done. Stored {n_mu} matchups + {n_se} score edges + {n_op} outrights after required alert delivery.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5860,15 +5863,13 @@ def main():
     # ── Step 6a: --reprice exits here (dedup + store + Telegram + email) ──
     if args.reprice:
         _require_betting_health()
-        print(f"\n  [reprice] Dedup + store + alert...")
-        try:
+        if args.dry_run:
+            print("\n  [reprice] Dry run: skipping dedup, alerts, and all bet storage.")
+        else:
+            print(f"\n  [reprice] Dedup + strict alert-before-store...")
             _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id,
-                                      outrights_combined=outrights_combined)
-        except SimulationHealthError:
-            raise
-        except Exception as e:
-            print(f"  [reprice] Warning: {e}")
-            import traceback; traceback.print_exc()
+                                      outrights_combined=outrights_combined,
+                                      health_check=_require_betting_health)
 
         if not args.dry_run:
             _require_betting_health()

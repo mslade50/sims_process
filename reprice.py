@@ -54,6 +54,8 @@ def _deliver_then_store_matchups(
     spreadsheet,
     rc_module,
     store_func,
+    alert_func=None,
+    health_check=None,
 ):
     """Enforce alert-before-storage for newly qualifying sharp-book rows.
 
@@ -72,9 +74,19 @@ def _deliver_then_store_matchups(
         new_mu, seen_alert_keys=seen_alert_keys
     )
 
+    def require_current_health():
+        if health_check is not None:
+            health_check()
+
     if alert_rows is not None and not alert_rows.empty:
+        # Re-hash the bound fair bundle at the actual delivery boundary, not
+        # only earlier in main() before Sheet reads and dedup work.  Keep this
+        # outside the delivery exception handler: a failed health gate can never
+        # fall through to the independently storable-row recovery path.
+        require_current_health()
         try:
-            delivered = rc_module.send_matchup_alert(
+            deliver_alert = alert_func or rc_module.send_matchup_alert
+            delivered = deliver_alert(
                 alert_rows, sim_round, tourney, seen_alert_keys=None
             )
             if delivered != len(alert_rows):
@@ -86,6 +98,7 @@ def _deliver_then_store_matchups(
             # the sharp alert on retry because dedup_round_matchups only derives
             # seen_alert_keys from Telegram-eligible books.
             if no_alert_rows is not None and not no_alert_rows.empty:
+                require_current_health()
                 store_func(
                     no_alert_rows, sim_round, tourney, event_id,
                     dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
@@ -94,6 +107,10 @@ def _deliver_then_store_matchups(
                       "alert-required rows were not stored.")
             raise
 
+    # A successful alert does not authorize storage from an artifact that was
+    # replaced while Telegram was in flight.  Revalidate immediately before the
+    # concrete Sheet/ledger mutation (also covers soft-only batches).
+    require_current_health()
     store_func(
         new_mu, sim_round, tourney, event_id,
         dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
@@ -252,6 +269,15 @@ def main():
     spreadsheet = get_spreadsheet()
     new_mu, seen_alert_keys = rc.dedup_round_matchups(combined, spreadsheet, event_id, sim_round)
 
+    # Keep the concrete mutation behind the immediately preceding health gate;
+    # the delivery helper receives this adapter so its alert-before-store policy
+    # remains dependency-injectable and offline-testable.
+    def store_health_checked_round_matchups(*store_args, **store_kwargs):
+        return store_round_matchups(*store_args, **store_kwargs)
+
+    def send_health_checked_matchup_alert(*alert_args, **alert_kwargs):
+        return rc.send_matchup_alert(*alert_args, **alert_kwargs)
+
     try:
         dg_id_lookup = load_dg_id_lookup(tourney, NAME_REPL)
     except Exception:
@@ -271,7 +297,9 @@ def main():
         dg_id_lookup=dg_id_lookup,
         spreadsheet=spreadsheet,
         rc_module=rc,
-        store_func=store_round_matchups,
+        store_func=store_health_checked_round_matchups,
+        alert_func=send_health_checked_matchup_alert,
+        health_check=require_pricing_health,
     )
 
     alert_status = (

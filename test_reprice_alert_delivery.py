@@ -4,12 +4,15 @@ import os
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
 
 import reprice
 import reprice_core as rc
+import round_sim
+import sheets_storage
 
 
 def _rows():
@@ -37,6 +40,18 @@ def _rows():
             "Fair_p2": -110,
         },
     ])
+
+
+def _score_rows(side="Under"):
+    return pd.DataFrame([{
+        "Player": "alpha & one",
+        "Line": 68.5,
+        "Book": "fanduel",
+        "Best_Side": side,
+        "Mkt_Under": -110,
+        "Mkt_Over": -110,
+        "Best_Edge": 7.0,
+    }])
 
 
 class _Response:
@@ -151,6 +166,7 @@ class AlertPartitionAndRetryTests(unittest.TestCase):
         fake_storage.TAB_ROUND_MU = "Round Matchups"
         fake_storage.ROUND_MU_HEADERS = []
         fake_storage._get_or_create_tab = lambda *_args, **_kwargs: ws
+        fake_storage.is_excluded_or_invalid_result = lambda value: False
 
         sharp = _rows().iloc[[0]].copy()
         with patch.dict(sys.modules, {"sheets_storage": fake_storage}):
@@ -178,6 +194,7 @@ class AlertPartitionAndRetryTests(unittest.TestCase):
         fake_storage.TAB_ROUND_MU = "Round Matchups"
         fake_storage.ROUND_MU_HEADERS = []
         fake_storage._get_or_create_tab = lambda *_args, **_kwargs: ws
+        fake_storage.is_excluded_or_invalid_result = lambda value: False
 
         sharp_price_move = _rows().iloc[[0]].copy()
         with patch.dict(sys.modules, {"sheets_storage": fake_storage}):
@@ -255,6 +272,191 @@ class SideEffectOrderingTests(unittest.TestCase):
         )
         self.assertEqual(calls, [("store", ["fanduel"])])
         self.assertEqual((stored, alerted), (1, 0))
+
+    def test_health_is_rechecked_at_delivery_and_storage_boundaries(self):
+        calls = []
+        fake_rc = types.SimpleNamespace(
+            TelegramDeliveryError=rc.TelegramDeliveryError,
+            partition_matchup_alert_rows=rc.partition_matchup_alert_rows,
+            send_matchup_alert=lambda *_args, **_kwargs: calls.append("alert") or 1,
+        )
+
+        def store(*_args, **_kwargs):
+            calls.append("store")
+
+        reprice._deliver_then_store_matchups(
+            _rows().iloc[[0]],
+            set(),
+            health_check=lambda: calls.append("health"),
+            **self._kwargs(fake_rc, store),
+        )
+
+        self.assertEqual(calls, ["health", "alert", "health", "store"])
+
+    def test_failed_health_gate_stores_neither_sharp_nor_soft_rows(self):
+        calls = []
+        fake_rc = types.SimpleNamespace(
+            TelegramDeliveryError=rc.TelegramDeliveryError,
+            partition_matchup_alert_rows=rc.partition_matchup_alert_rows,
+            send_matchup_alert=lambda *_args, **_kwargs: calls.append("alert") or 1,
+        )
+
+        def fail_health():
+            calls.append("health")
+            raise RuntimeError("unhealthy artifact")
+
+        with self.assertRaisesRegex(RuntimeError, "unhealthy artifact"):
+            reprice._deliver_then_store_matchups(
+                _rows(),
+                set(),
+                health_check=fail_health,
+                **self._kwargs(
+                    fake_rc,
+                    lambda *_args, **_kwargs: calls.append("store"),
+                ),
+            )
+
+        self.assertEqual(calls, ["health"])
+
+
+class LegacyScoreDedupTests(unittest.TestCase):
+    @staticmethod
+    def _worksheet(record):
+        ws = Mock()
+        ws.get_all_records.return_value = [record]
+        return ws
+
+    def test_score_side_flip_is_a_new_alertable_row(self):
+        existing = {
+            "event_id": "77", "round": 4, "player": "alpha & one",
+            "line": 68.5, "book": "fanduel", "best_side": "Under",
+            "mkt_under": -110, "mkt_over": -110, "result": "",
+        }
+        with patch.object(
+            sheets_storage,
+            "_get_or_create_tab",
+            return_value=self._worksheet(existing),
+        ):
+            fresh = round_sim._dedup_score_edges(
+                _score_rows("Over"), object(), "77", 4
+            )
+
+        self.assertEqual(fresh["Best_Side"].tolist(), ["Over"])
+
+    def test_excluded_score_row_does_not_suppress_corrected_retry(self):
+        existing = {
+            "event_id": "77", "round": 4, "player": "alpha & one",
+            "line": 68.5, "book": "fanduel", "best_side": "Under",
+            "mkt_under": -110, "mkt_over": -110,
+            "result": "excluded_invalid_model",
+        }
+        with patch.object(
+            sheets_storage,
+            "_get_or_create_tab",
+            return_value=self._worksheet(existing),
+        ):
+            fresh = round_sim._dedup_score_edges(
+                _score_rows("Under"), object(), "77", 4
+            )
+
+        self.assertEqual(len(fresh), 1)
+
+
+class LegacyRoundSimRepriceTests(unittest.TestCase):
+    def _patched_dependencies(self, *, alert_side_effect, calls):
+        sharp = _rows().iloc[[0]].copy()
+        empty = pd.DataFrame()
+        patches = [
+            patch.object(round_sim, "_dedup_round_matchups", return_value=(sharp, set())),
+            patch.object(round_sim, "_dedup_score_edges", return_value=empty),
+            patch.object(round_sim, "_dedup_finish_positions", return_value=empty),
+            patch.object(
+                round_sim,
+                "_send_reprice_alert",
+                side_effect=alert_side_effect,
+            ),
+            patch.object(sheets_storage, "get_spreadsheet", return_value=object()),
+            patch.object(sheets_storage, "load_dg_id_lookup", return_value={}),
+            patch.object(
+                sheets_storage,
+                "store_round_matchups",
+                side_effect=lambda *_args, **_kwargs: calls.append("store_matchup"),
+            ),
+            patch.object(
+                sheets_storage,
+                "store_score_edges",
+                side_effect=lambda *_args, **_kwargs: calls.append("store_score"),
+            ),
+            patch.object(
+                sheets_storage,
+                "store_finish_positions",
+                side_effect=lambda *_args, **_kwargs: calls.append("store_outright"),
+            ),
+        ]
+        return patches
+
+    def test_legacy_delivery_failure_propagates_before_any_storage(self):
+        calls = []
+
+        def fail_delivery(*_args, **_kwargs):
+            calls.append("alert")
+            raise rc.TelegramDeliveryError("not accepted")
+
+        patches = self._patched_dependencies(
+            alert_side_effect=fail_delivery, calls=calls
+        )
+        for active in patches:
+            active.start()
+            self.addCleanup(active.stop)
+
+        with self.assertRaises(rc.TelegramDeliveryError):
+            round_sim._reprice_store_and_alert(
+                _rows(), pd.DataFrame(), 4, "test_event", "77",
+                health_check=lambda: calls.append("health"),
+            )
+
+        self.assertEqual(calls, ["health", "alert"])
+
+    def test_legacy_successful_delivery_precedes_storage(self):
+        calls = []
+        patches = self._patched_dependencies(
+            alert_side_effect=lambda *_args, **_kwargs: calls.append("alert") or 1,
+            calls=calls,
+        )
+        for active in patches:
+            active.start()
+            self.addCleanup(active.stop)
+
+        round_sim._reprice_store_and_alert(
+            _rows(), pd.DataFrame(), 4, "test_event", "77",
+            health_check=lambda: calls.append("health"),
+        )
+
+        self.assertEqual(
+            calls, ["health", "alert", "health", "store_matchup"]
+        )
+
+    def test_legacy_sender_uses_required_telegram_transport(self):
+        with patch.object(
+            rc,
+            "send_telegram",
+            side_effect=rc.TelegramDeliveryError("rejected"),
+        ) as send:
+            with self.assertRaises(rc.TelegramDeliveryError):
+                round_sim._send_reprice_alert(
+                    _rows().iloc[[0]], pd.DataFrame(), 4, "test_event"
+                )
+        self.assertTrue(send.call_args.kwargs["required"])
+
+    def test_legacy_entrypoint_does_not_swallow_reprice_failure(self):
+        source = (Path(__file__).resolve().parent / "round_sim.py").read_text(
+            encoding="utf-8"
+        )
+        marker = source.index("# ── Step 6a: --reprice exits here")
+        block = source[marker:source.index("# ── Step 6: Email", marker)]
+        call = block.index("_reprice_store_and_alert(")
+        assert block.index("if args.dry_run:") < call
+        assert "except Exception" not in block[:call + len("_reprice_store_and_alert(")]
 
 
 if __name__ == "__main__":
