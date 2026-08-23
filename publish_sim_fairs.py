@@ -1300,8 +1300,19 @@ def _dispatch_board_build(sha: str | None = None) -> bool:
             # for minutes after a push — the dispatched build then freezes the very
             # stale fairs it was fired to replace).
             body = {"event_type": "sim-fairs-published"}
+            client_payload = {}
             if sha:
-                body["client_payload"] = {"sha": sha}
+                client_payload["sha"] = sha
+            if (os.environ.get("BOARD_SUPPRESS_SIM_CASCADE") or "").strip().lower() in (
+                "1", "true", "yes"
+            ):
+                # Emergency/model-only refreshes must still rebuild the board from
+                # this exact fairs commit, but should not launch the board's normal
+                # downstream repricing simulation.  This is opt-in so routine
+                # publishes retain the existing cascade behavior.
+                client_payload["suppress_sim_cascade"] = True
+            if client_payload:
+                body["client_payload"] = client_payload
             resp = requests.post(
                 f"https://api.github.com/repos/{BOARD_REPO}/dispatches",
                 json=body,

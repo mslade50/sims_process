@@ -18,7 +18,10 @@ def test_board_dispatch_retries_transient_failure():
         return response
 
     with (
-        patch.dict(os.environ, {"GH_TOKEN": "test-token"}),
+        patch.dict(
+            os.environ,
+            {"GH_TOKEN": "test-token", "BOARD_SUPPRESS_SIM_CASCADE": ""},
+        ),
         patch("requests.post", side_effect=post) as post_mock,
         patch("time.sleep"),
     ):
@@ -28,6 +31,27 @@ def test_board_dispatch_retries_transient_failure():
     assert post_mock.call_args.kwargs["json"] == {
         "event_type": "sim-fairs-published",
         "client_payload": {"sha": "abc123"},
+    }
+
+
+def test_board_dispatch_can_suppress_sim_cascade_for_pinned_publish():
+    response = SimpleNamespace(status_code=204, text="")
+
+    with (
+        patch.dict(
+            os.environ,
+            {"GH_TOKEN": "test-token", "BOARD_SUPPRESS_SIM_CASCADE": "1"},
+        ),
+        patch("requests.post", return_value=response) as post_mock,
+    ):
+        assert psf._dispatch_board_build("fresh-fairs-sha") is True
+
+    assert post_mock.call_args.kwargs["json"] == {
+        "event_type": "sim-fairs-published",
+        "client_payload": {
+            "sha": "fresh-fairs-sha",
+            "suppress_sim_cascade": True,
+        },
     }
 
 
