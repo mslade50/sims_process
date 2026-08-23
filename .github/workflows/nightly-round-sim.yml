@@ -18,7 +18,7 @@ jobs:
   round-sim:
     runs-on: [self-hosted, Windows, X64, golf-sim]
     permissions:
-      contents: write   # publish_sim_fairs pushes round_h2h_r{N} to main
+      contents: write   # publish_sim_fairs atomically pushes the complete live package
     env:
       RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
 
@@ -74,25 +74,23 @@ jobs:
         }
         Get-ChildItem $oddsDir
 
-    - name: Run nightly round sim backup
+    - name: Run and validate complete nightly live simulation
+      id: live_sim
       shell: powershell
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
-        EMAIL_USER: ${{ secrets.EMAIL_USER }}
-        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: |
         & $env:RUNNER_PYTHON nightly_round_sim.py
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    # ── Publish the compact round-H2H fair table to the repo so reprice.py can
-    # price matchups WITHOUT restoring the 60 MB sim cache. nightly_round_sim.py
-    # runs round_sim.py --sim-only, which returns before round_sim's own publish
-    # hook, so we publish the H2H table explicitly here. Reads the just-created
-    # local sim_cache_r{N}.parquet; pushes round_h2h_r{N}.parquet (+ _meta.json)
-    # to main via git plumbing (needs contents: write above).
-    - name: Publish round H2H fair table
+    # Publish one atomic git package: live outrights + tournament H2H, exact
+    # round-score PMFs/H2H, and paired tournament/made-cut tapes. The simulation
+    # ran under --dry-run, so this step is the only external success-side effect.
+    # The pinned board refresh is model-only: it preserves frozen book quotes and
+    # does not launch reprice/store/Telegram automation.
+    - name: Publish complete live market package
+      if: steps.live_sim.outputs.should_publish == 'true'
       shell: powershell
       env:
         # GH_TOKEN lets _dispatch_board_build fire the sim-fairs-published
@@ -106,6 +104,12 @@ jobs:
         # credentials; without this env it falls back to credentials.json (absent
         # in CI) and the whole publish step dies (broke every run 7/17-7/24).
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        # A backup is successful only after the commit reaches main and the pinned
+        # board build accepts the dispatch. No silent local-only success.
+        REQUIRE_SIM_FAIRS_PUBLISH: '1'
+        # Rebuild the board from these fairs without cascading into bet storage or
+        # routine Telegram alerts. The board's freeze logic keeps book odds fixed.
+        BOARD_SUPPRESS_SIM_CASCADE: '1'
         # CI runners have no git user.name/email, so publish's `git commit-tree`
         # dies ('Committer identity unknown') and the push is silently skipped —
         # every CI publish before 7/24 no-opped this way. Identity via env keeps
@@ -115,7 +119,9 @@ jobs:
         GIT_COMMITTER_NAME: github-actions[bot]
         GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
       run: |
-        & $env:RUNNER_PYTHON publish_sim_fairs.py --round-h2h-only
+        & $env:RUNNER_PYTHON publish_sim_fairs.py `
+          --require-complete-live `
+          --expected-round "${{ steps.live_sim.outputs.sim_round }}"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Telegram on failure
       if: failure()

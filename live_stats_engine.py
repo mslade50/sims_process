@@ -2483,6 +2483,12 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip email sending (skill update still runs)")
     parser.add_argument(
+        "--no-sheet-writes",
+        action="store_true",
+        help=("Build local skill/weather prediction artifacts without writing "
+              "round actuals or expected scores back to Google Sheets"),
+    )
+    parser.add_argument(
         "--automation",
         action="store_true",
         help=(
@@ -2520,11 +2526,16 @@ def main():
     # Step 1: Always run skill update
     run_skill_update(round_num, dry_run=args.dry_run)
 
-    # Step 1b: Write actuals for the completed round
-    try:
-        write_actuals_to_sheet(round_num)
-    except Exception as e:
-        print(f"\n[warn] Actuals write failed: {e}")
+    # Step 1b: Write actuals for the completed round. The nightly backup is a
+    # read-only model refresh; its workflow passes --no-sheet-writes so a retry
+    # cannot mutate the human-controlled weekly config.
+    if args.no_sheet_writes:
+        print("\n  [no-sheet-writes] Skipping round actuals write")
+    else:
+        try:
+            write_actuals_to_sheet(round_num)
+        except Exception as e:
+            print(f"\n[warn] Actuals write failed: {e}")
 
     # Step 2: Attempt weather/predictions for next round
     if round_num < 4:
@@ -2542,7 +2553,7 @@ def main():
     # Step 3: Build the Sheet expectation from the exact active-field file
     # just created above. In automation mode, also synchronize the primary
     # expected_score_1 consumed by round_sim.
-    if round_num < 4:
+    if round_num < 4 and not args.no_sheet_writes:
         try:
             update_expected_scores(round_num, sync_primary=args.automation)
         except Exception as e:
@@ -2551,6 +2562,8 @@ def main():
             import traceback; traceback.print_exc()
             if args.automation:
                 raise
+    elif round_num < 4:
+        print("\n  [no-sheet-writes] Skipping expected-score Sheet update")
 
 
 def update_expected_scores(completed_round, sync_primary=False):

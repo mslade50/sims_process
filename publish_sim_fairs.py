@@ -471,30 +471,79 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
     logger.info("outrights: " + ", ".join(f"{k}={len(v)}" for k, v in out.items() if k != "make_cut"))
     logger.info("outrights_nodh: " + ", ".join(f"{k}={len(v)}" for k, v in out_nodh.items()))
 
-    # make_cut: prefer the exact simulated cut prob persisted by new_sim.py
-    # (true cut: top-N + ties + 10-shot rule). Fall back to a rank-prob estimate
-    # using prob_ndh (raw min-rank, so ties AT the cut are counted) — NOT prob_u
-    # (dead-heat spread, which pushes tie mass past the cut and undercounts).
-    mc_file = _find(f"make_cut_probs_{tourney}.csv", f"{tourney}/make_cut_probs_{tourney}.csv")
-    if mc_file is not None:
-        df = pd.read_csv(mc_file)
-        for _, r in df.iterrows():
-            p = r["make_cut"]
-            if pd.notna(p) and p > 0:
-                out["make_cut"][_norm(r["player_name"], repl)] = round(float(min(p, 1.0)), 5)
-        logger.info(f"make_cut from {mc_file.name} (exact sim cut): {len(out['make_cut'])}")
+    # make_cut: a LIVE outright family must use the made-cut mask from the SAME
+    # remaining-tournament simulation as final_scores_live. The old priority
+    # order selected make_cut_probs_{tourney}.csv first, which is pre-event and
+    # could silently mix a fresh live winner/top-N family with week-start cut
+    # probabilities. Never fall back across that provenance boundary.
+    if use_live:
+        import numpy as np
+
+        mc_path = _made_cut_path(tourney, use_live=True)
+        fs_path, pn_path, _ = _tournament_score_paths(tourney, use_live=True)
+        if mc_path is None or fs_path is None or pn_path is None:
+            logger.warning(
+                "make_cut live pair missing — refusing pre-event make-cut fallback"
+            )
+        else:
+            mask = np.load(mc_path, mmap_mode="r")
+            fs_shape = np.load(fs_path, mmap_mode="r").shape
+            names = json.loads(Path(pn_path).read_text(encoding="utf-8"))
+            if mask.ndim != 2 or mask.shape != fs_shape or mask.shape[0] != len(names):
+                logger.warning(
+                    f"make_cut live pair mismatch: mask={mask.shape}, "
+                    f"final_scores={fs_shape}, names={len(names)} — refusing fallback"
+                )
+            else:
+                mask_values = np.asarray(mask)
+                probs = mask_values.astype(float).mean(axis=1)
+                if (not np.isfinite(mask_values).all()
+                        or not np.isin(mask_values, (0, 1)).all()
+                        or not np.isfinite(probs).all()
+                        or ((probs < 0) | (probs > 1)).any()):
+                    logger.warning(
+                        "make_cut live mask produced invalid probabilities — refusing fallback"
+                    )
+                else:
+                    for nm, p in zip(names, probs):
+                        if p > 0:
+                            out["make_cut"][_norm(nm, repl)] = round(float(p), 5)
+                    logger.info(
+                        f"make_cut from {mc_path.name} (paired live mask): "
+                        f"{len(out['make_cut'])}"
+                    )
     else:
-        rk = _find(f"rank_probs_live_{tourney}.parquet", f"{tourney}/rank_probs_live_{tourney}.parquet",
-                   f"rank_probs_updated_{tourney}.parquet", f"{tourney}/rank_probs_updated_{tourney}.parquet")
-        if rk is not None:
-            rp = pd.read_parquet(rk)
-            col = "prob_ndh" if "prob_ndh" in rp.columns else "prob_u"
-            if {"player_name", "rank"} <= set(rp.columns) and col in rp.columns:
-                mc = rp[rp["rank"] <= cut_line].groupby("player_name")[col].sum()
-                for nm, p in mc.items():
-                    if p > 0:
-                        out["make_cut"][_norm(nm, repl)] = round(float(min(p, 1.0)), 5)
-                logger.info(f"make_cut from {rk.name} [{col}] (cut<={cut_line}): {len(out['make_cut'])}")
+        # Pre-event: prefer the exact cut simulation persisted by new_sim.py
+        # (true cut: top-N + ties + 10-shot rule). Fall back to a rank-prob
+        # estimate using raw min-rank probability when the exact file is absent.
+        mc_file = _find(
+            f"make_cut_probs_{tourney}.csv",
+            f"{tourney}/make_cut_probs_{tourney}.csv",
+        )
+        if mc_file is not None:
+            df = pd.read_csv(mc_file)
+            for _, r in df.iterrows():
+                p = r["make_cut"]
+                if pd.notna(p) and p > 0:
+                    out["make_cut"][_norm(r["player_name"], repl)] = round(
+                        float(min(p, 1.0)), 5
+                    )
+            logger.info(
+                f"make_cut from {mc_file.name} (exact sim cut): "
+                f"{len(out['make_cut'])}"
+            )
+        else:
+            rk = _find(f"rank_probs_live_{tourney}.parquet", f"{tourney}/rank_probs_live_{tourney}.parquet",
+                       f"rank_probs_updated_{tourney}.parquet", f"{tourney}/rank_probs_updated_{tourney}.parquet")
+            if rk is not None:
+                rp = pd.read_parquet(rk)
+                col = "prob_ndh" if "prob_ndh" in rp.columns else "prob_u"
+                if {"player_name", "rank"} <= set(rp.columns) and col in rp.columns:
+                    mc = rp[rp["rank"] <= cut_line].groupby("player_name")[col].sum()
+                    for nm, p in mc.items():
+                        if p > 0:
+                            out["make_cut"][_norm(nm, repl)] = round(float(min(p, 1.0)), 5)
+                    logger.info(f"make_cut from {rk.name} [{col}] (cut<={cut_line}): {len(out['make_cut'])}")
 
     return ({k: v for k, v in out.items() if v},
             {k: v for k, v in out_nodh.items() if v})
@@ -921,6 +970,81 @@ def _upload_matchup_tape_release(tourney, event_id, repl) -> bool:
         return False
 
 
+def _upload_release_tape_family(payload: dict, repl: dict, *, strict: bool = False) -> bool:
+    """Upload the three full-resolution live release assets as one contract.
+
+    GitHub Releases do not offer a multi-asset transaction, so consumers still
+    validate the embedded event/sim timestamps and fall back to the atomic git
+    tapes during a partial replacement. In strict nightly mode, any failed asset
+    aborts before the new git fairs commit/board dispatch can advance.
+    """
+    import io
+    import pyarrow.parquet as pq
+
+    tourney = payload["tourney"]
+    event_id = payload.get("event_id")
+    use_live = payload.get("outrights_source") == "live"
+    failures = []
+
+    def _abort_strict():
+        if strict and failures:
+            raise RuntimeError(
+                "release tape family incomplete: " + "; ".join(failures)
+            )
+
+    try:
+        if not _upload_full_tape_release(
+            tourney,
+            event_id,
+            payload.get("generated_at"),
+            repl,
+            use_live=use_live,
+        ):
+            failures.append("full tournament tape")
+    except Exception as exc:
+        failures.append(f"full tournament tape ({exc})")
+    _abort_strict()
+
+    try:
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        full_mask = (
+            _build_made_cut_mask(
+                tourney,
+                event_id,
+                repl,
+                max_draws=None,
+                use_live=use_live,
+            )
+            if token
+            else None
+        )
+        if full_mask is None or not token:
+            failures.append("full made-cut tape")
+        else:
+            buf = io.BytesIO()
+            pq.write_table(full_mask, buf)
+            _upload_release_asset(MADE_CUT_ASSET, buf.getvalue(), token)
+            logger.info(
+                f"made_cut mask: uploaded -> release {FULL_TAPE_TAG}/{MADE_CUT_ASSET}"
+            )
+    except Exception as exc:
+        failures.append(f"full made-cut tape ({exc})")
+    _abort_strict()
+
+    try:
+        if not _upload_matchup_tape_release(tourney, event_id, repl):
+            failures.append("live matchup tape")
+    except Exception as exc:
+        failures.append(f"live matchup tape ({exc})")
+    _abort_strict()
+
+    if failures:
+        message = "release tape family incomplete: " + "; ".join(failures)
+        logger.warning(f"{message} (non-fatal; board uses atomic git tapes)")
+        return False
+    return True
+
+
 def _cache_meta(tourney: str, rnd) -> dict:
     """Read the sim_cache meta sidecar (carries pred_lookup + wx_lookup)."""
     if not rnd:
@@ -1257,6 +1381,53 @@ def build_payload() -> dict:
         "matchups_sim_run_at": matchup_run_at,
     }
     return payload
+
+
+def _validate_complete_live_payload(payload: dict, expected_round: int | None = None) -> None:
+    """Fail closed when an automated backup is not a complete live package.
+
+    Routine/interactively-triggered publishes retain their historical partial-
+    artifact carry-forward behavior. The nightly backup opts into this stricter
+    contract because its purpose is to replace every live market from one run.
+    """
+    problems = []
+    if payload.get("outrights_source") != "live":
+        problems.append(
+            f"outrights_source={payload.get('outrights_source')!r} (expected 'live')"
+        )
+    if payload.get("matchups_source") != "final_scores_live":
+        problems.append(
+            f"matchups_source={payload.get('matchups_source')!r} "
+            "(expected 'final_scores_live')"
+        )
+    if expected_round is not None and int(payload.get("round") or -1) != int(expected_round):
+        problems.append(
+            f"round={payload.get('round')!r} (expected {int(expected_round)})"
+        )
+    for key in ("event_id", "tourney", "sim_run_at", "outrights_sim_run_at",
+                "matchups_sim_run_at"):
+        if not payload.get(key):
+            problems.append(f"missing {key}")
+    if not payload.get("field"):
+        problems.append("empty field")
+
+    outrights = payload.get("outrights") or {}
+    for market in ("winner", "top_5", "top_10", "top_20", "make_cut"):
+        if not outrights.get(market):
+            problems.append(f"empty outrights.{market}")
+    outrights_nodh = payload.get("outrights_nodh") or {}
+    for market in ("top_5", "top_10", "top_20"):
+        if not outrights_nodh.get(market):
+            problems.append(f"empty outrights_nodh.{market}")
+    if not payload.get("matchups"):
+        problems.append("empty tournament matchups")
+    if not payload.get("round_scores"):
+        problems.append("empty round score PMFs")
+
+    if problems:
+        raise RuntimeError(
+            "complete-live publish contract failed: " + "; ".join(problems)
+        )
 
 
 # ─── publish (commit to repo; board fetches via SIMS_PROCESS_PAT) ──────────────
@@ -1643,11 +1814,18 @@ def _git_push(
             pass
 
 
-def publish(push: bool = True) -> dict:
+def publish(
+    push: bool = True,
+    *,
+    require_complete_live: bool = False,
+    expected_round: int | None = None,
+) -> dict:
     """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
     payload = build_payload()
+    if require_complete_live:
+        _validate_complete_live_payload(payload, expected_round=expected_round)
     with open(LOCAL_OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
@@ -1674,7 +1852,14 @@ def publish(push: bool = True) -> dict:
         _pq.write_table(_tbl, LOCAL_SAMPLES)
         files.append("round_samples.parquet")
         logger.info(f"Wrote {LOCAL_SAMPLES}")
-    files.extend(write_round_h2h(payload["tourney"], payload.get("round"), _name_replacements()))
+    elif require_complete_live:
+        raise RuntimeError("complete-live publish has no paired round sample tape")
+    round_h2h_files = write_round_h2h(
+        payload["tourney"], payload.get("round"), _name_replacements()
+    )
+    if require_complete_live and not round_h2h_files:
+        raise RuntimeError("complete-live publish could not build round H2H fairs")
+    files.extend(round_h2h_files)
     files.extend(write_round_3ball(payload["tourney"], payload.get("round"), _name_replacements()))
 
     # Tournament finish tape -> committed to this repo (git transport, exactly like
@@ -1721,47 +1906,18 @@ def publish(push: bool = True) -> dict:
             raise
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
 
-    # FULL-resolution tape -> GitHub Release asset (build.py fetches it for the 100k
-    # server-side solve). Uses GH_TOKEN; no R2 / no per-machine creds.
-    try:
-        if push:
-            _upload_full_tape_release(
-                payload["tourney"],
-                payload.get("event_id"),
-                payload.get("generated_at"),
-                _name_replacements(),
-                use_live=live_tournament,
-            )
-            # full-res made-cut mask pairs with the full tape (same draw axis)
-            import os as _os
-            _tok = _os.environ.get("GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
-            full_mask = _build_made_cut_mask(
-                payload["tourney"],
-                payload.get("event_id"),
-                _name_replacements(),
-                max_draws=None,
-                use_live=live_tournament,
-            ) if _tok else None
-            if full_mask is not None:
-                import io
-                buf = io.BytesIO()
-                pq.write_table(full_mask, buf)
-                _upload_release_asset(MADE_CUT_ASSET, buf.getvalue(), _tok)
-                logger.info(f"made_cut mask: uploaded -> release {FULL_TAPE_TAG}/{MADE_CUT_ASSET}")
-    except Exception as e:
-        logger.warning(f"full tape release upload failed (non-fatal): {e}")
-
-    # LIVE matchup tape -> release asset (kalshi_maker prices H2H matchups from it
-    # on machines that never ran round_sim, e.g. the VPS).
-    try:
-        if push:
-            _upload_matchup_tape_release(payload["tourney"], payload.get("event_id"),
-                                         _name_replacements())
-    except Exception as e:
-        logger.warning(f"matchup tape release upload failed (non-fatal): {e}")
+    # Full tournament, made-cut, and matchup release tapes are best-effort for
+    # ordinary publishes. The strict nightly backup requires all three before it
+    # may advance the git fairs commit, so the 100k optimizer/maker cannot lag.
+    if push:
+        _upload_release_tape_family(
+            payload,
+            _name_replacements(),
+            strict=require_complete_live,
+        )
 
     if push:
-        strict_publish = (
+        strict_publish = require_complete_live or (
             os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or ""
         ).strip().lower() in ("1", "true", "yes")
         _git_push(files, require_dispatch=strict_publish)
@@ -1776,7 +1932,25 @@ def main():
                     help="Build + push ONLY the round H2H artifact (for the cache-free "
                          "repricer). Skips the sim_fairs.json rebuild so a --sim-only "
                          "backup run can ship it without clobbering the board's fairs.")
+    ap.add_argument(
+        "--require-complete-live",
+        action="store_true",
+        help=("Require live outrights, tournament H2H, round score PMFs, and paired "
+              "round/tournament tapes; also require push + board dispatch success."),
+    )
+    ap.add_argument(
+        "--expected-round",
+        type=int,
+        help="Expected live round for --require-complete-live (fails on stale/higher caches)",
+    )
     args = ap.parse_args()
+
+    if args.round_h2h_only and args.require_complete_live:
+        ap.error("--round-h2h-only cannot be combined with --require-complete-live")
+    if args.no_push and args.require_complete_live:
+        ap.error("--no-push cannot be combined with --require-complete-live")
+    if args.expected_round is not None and not args.require_complete_live:
+        ap.error("--expected-round requires --require-complete-live")
 
     if args.round_h2h_only:
         si = _sim_inputs()
@@ -1811,6 +1985,10 @@ def main():
         return
 
     payload = build_payload()
+    if args.require_complete_live:
+        _validate_complete_live_payload(
+            payload, expected_round=args.expected_round
+        )
     o = payload["outrights"]
     ondh = payload.get("outrights_nodh") or {}
     logger.info(f"event {payload['event_id']} ({payload['tourney']}) @ {payload['generated_at']}")
@@ -1824,7 +2002,11 @@ def main():
 
     if args.dry_run:
         return
-    publish(push=not args.no_push)
+    publish(
+        push=not args.no_push,
+        require_complete_live=args.require_complete_live,
+        expected_round=args.expected_round,
+    )
 
 
 if __name__ == "__main__":

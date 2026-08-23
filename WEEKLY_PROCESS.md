@@ -541,10 +541,24 @@ python midweek_round_automation.py --dry-run
 sim. This runs the sim on the Windows self-hosted runner and saves the cache to Actions
 cache, so the overnight `reprice.yml` workflow can load it and re-price with
 fresh odds for CLV checking. The nightly workflow also runs on schedule at
-02:45 UTC (9:45 PM EST / 10:45 PM EDT on Thu/Fri/Sat) as a fallback: it reads the already-current completed
-round from the Sheet, runs `live_stats_engine.py` and `round_sim.py --sim-only`,
-then publishes the compact H2H fair table. If the Sheet round is stale, the
-event-driven midweek workflow must advance it first.
+02:45 UTC (9:45 PM EST / 10:45 PM EDT on Thu/Fri/Sat) as a fallback. It reads the
+already-current completed round from the Sheet, runs
+`live_stats_engine.py --dry-run --no-sheet-writes`, then runs the full
+`round_sim.py --dry-run`. The live-stats stage always regenerates the target
+round prediction file; an existing root/dashboard copy is never trusted by the
+backup. This deliberately creates both the round cache and a
+fresh remaining-tournament simulation without sending email, storing bets,
+writing Sheet config, or firing routine Telegram alerts. Before publishing, it
+requires fresh and aligned round PMFs, rank probabilities, final-score,
+made-cut, and R2/R3 standings tapes. The strict publisher atomically ships live
+outrights, tournament/round matchup fairs, round score PMFs, and paired portfolio
+tapes. It also requires all three full-resolution release assets (tournament,
+made-cut, and live matchup) before advancing the git fairs, then requests a
+pinned model-only board refresh that preserves frozen book odds and suppresses
+the bet-alert cascade. A stale R0 Sheet pointer,
+incomplete artifact family, failed push, or failed board dispatch fails the job
+and sends the workflow's single failure alert. The event-driven midweek workflow
+must advance the Sheet round first.
 
 ---
 
