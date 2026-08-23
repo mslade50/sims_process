@@ -58,12 +58,16 @@ function parsePointer(pointerResult) {
   ) {
     throw new Error("odds-screen publication pointer declares no files");
   }
+  for (const filename of Object.keys(pointer.files)) {
+    requireBinding(pointer, filename);
+  }
   return pointer;
 }
 
-async function readActivePointer(env) {
+async function readActivePointer(env, { missingOk = false } = {}) {
   const pointerResult = await readObject(env, "meta.json");
   if (!pointerResult) {
+    if (missingOk) return null;
     throw new Error("odds-screen publication pointer is missing");
   }
   return { pointer: parsePointer(pointerResult), pointerResult };
@@ -172,9 +176,12 @@ export default {
         return jsonResponse(snapshot, 200, snapshot.generation);
       }
       if (filename === "meta.json") {
-        const result = await readObject(env, "meta.json");
-        if (!result) return jsonResponse({ error: "not published" }, 404);
-        return serveR2Object({ ...result, pointer: JSON.parse(new TextDecoder().decode(result.bytes)) }, "no-store");
+        const active = await readActivePointer(env, { missingOk: true });
+        if (!active) return jsonResponse({ error: "not published" }, 404);
+        return serveR2Object(
+          { ...active.pointerResult, pointer: active.pointer },
+          "no-store",
+        );
       }
       // Market membership is declared by the pointer, not duplicated in this
       // Worker. A future payload can therefore become readable in the same

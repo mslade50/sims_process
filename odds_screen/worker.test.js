@@ -71,6 +71,46 @@ test("missing or corrupt activated objects fail closed", async () => {
   );
 });
 
+test("meta serves original validated bytes and rejects a corrupt pointer", async () => {
+  const market = Buffer.from("{}\n");
+  const binding = {
+    key: "generations/generation-1/round_matchups.json",
+    sha256: createHash("sha256").update(market).digest("hex"),
+    size: market.length,
+  };
+  const pointerFor = (marketBinding) => Buffer.from(
+    `${JSON.stringify({
+      schema_version: "odds-screen-generation/v1",
+      generation: "generation-1",
+      files: { "round_matchups.json": marketBinding },
+    }, null, 2)}\n`,
+  );
+  const envFor = (pointer) => ({
+    ODDS_DATA: {
+      async get(key) {
+        assert.equal(key, "odds_data/meta.json");
+        return object(pointer);
+      },
+    },
+  });
+
+  const validPointer = pointerFor(binding);
+  const validResponse = await worker.fetch(
+    new Request("https://example.test/odds_data/meta.json?generation=ignored"),
+    envFor(validPointer),
+  );
+  assert.equal(validResponse.status, 200);
+  assert.deepEqual(Buffer.from(await validResponse.arrayBuffer()), validPointer);
+
+  const corruptPointer = pointerFor({ ...binding, key: "round_matchups.json" });
+  const corruptResponse = await worker.fetch(
+    new Request("https://example.test/odds_data/meta.json"),
+    envFor(corruptPointer),
+  );
+  assert.equal(corruptResponse.status, 503);
+  assert.match((await corruptResponse.json()).error, /safe binding/);
+});
+
 test("snapshot reads the active pointer once and returns every bound payload", async () => {
   const payloads = {
     "meta.json": Buffer.from(JSON.stringify({ event_id: "123", round: 4 })),
