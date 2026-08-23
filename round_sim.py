@@ -33,6 +33,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
+from category_distribution_guard import require_complete_category_distributions
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
 from sim_health_gate import (
     SimulationHealthError,
@@ -319,38 +320,35 @@ def _load_catfirst_dists(player_names):
             f"Required category-first distributions not found: {DISTS_FILE_V2}"
         )
 
-    dists = pd.read_csv(DISTS_FILE_V2)
-    dists['player_name'] = (
-        dists['player_name'].astype(str).str.lower().str.strip()
-        .replace(name_replacements)
+    dists, active_players = require_complete_category_distributions(
+        pd.read_csv(DISTS_FILE_V2),
+        player_names,
+        CAT_ORDER,
+        name_replacements=name_replacements,
+        source_label=DISTS_FILE_V2,
     )
-
-    need_cols = {'player_name', 'category_clean', 'mean', 'std', 'skew', 'n_eff'}
-    missing = need_cols - set(dists.columns)
-    if missing:
-        raise ValueError(
-            f"{DISTS_FILE_V2} missing required category-first columns: "
-            f"{sorted(missing)}"
-        )
 
     mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean')
     std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
     skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
     neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
-    global_mu  = dists.groupby('category_clean')['mean'].mean()
-    global_std = dists.groupby('category_clean')['std'].median()
 
     # Use the same frozen pre-event shot dispersion in every round. This is
     # applied before course multipliers and does not change category means.
     std_w = apply_shot_dispersion_overlay(
         std_w,
-        player_names,
+        active_players,
         CAT_ORDER,
         tourney=tourney,
         event_id=_event_id,
         dists_path=DISTS_FILE_V2,
     )
-    global_std = std_w.median()
+    active_stds = std_w.loc[active_players, CAT_ORDER].to_numpy(dtype=float)
+    if not np.isfinite(active_stds).all() or np.any(active_stds <= 0.0):
+        raise ValueError(
+            "Shot-dispersion overlay produced invalid active-field category "
+            "standard deviations"
+        )
 
     # Load correlation matrix and Cholesky
     R = load_corr_matrix(CAT_ORDER)
@@ -361,19 +359,13 @@ def _load_catfirst_dists(player_names):
         L_corr = cholesky(R)
 
     player_cf_params = []
-    effective_skew = np.zeros((len(player_names), 4), dtype=float)
+    effective_skew = np.zeros((len(active_players), 4), dtype=float)
 
-    for idx, player in enumerate(player_names):
-        # Build category means/stds
-        if player in mu_w.index:
-            mu_row = mu_w.loc[player].reindex(CAT_ORDER)
-            std_row = std_w.loc[player].reindex(CAT_ORDER)
-        else:
-            mu_row = pd.Series(index=CAT_ORDER, dtype=float)
-            std_row = pd.Series(index=CAT_ORDER, dtype=float)
-
-        mu = mu_row.fillna(global_mu.reindex(CAT_ORDER)).to_numpy(dtype=float)
-        std = std_row.fillna(global_std.reindex(CAT_ORDER)).to_numpy(dtype=float).clip(1e-6)
+    for idx, player in enumerate(active_players):
+        # Coverage was validated above; direct lookup prevents field-wide
+        # fallback values from changing an active player's production model.
+        mu = mu_w.loc[player, CAT_ORDER].to_numpy(dtype=float)
+        std = std_w.loc[player, CAT_ORDER].to_numpy(dtype=float)
 
         # Apply course variance multipliers
         std_course = std * _course_mults_cf
@@ -382,14 +374,8 @@ def _load_catfirst_dists(player_names):
 
         # Per-player effective skewness (confidence-weighted blend)
         for j, cat in enumerate(CAT_ORDER):
-            p_skew = (skew_w.at[player, cat]
-                      if player in skew_w.index and cat in skew_w.columns
-                         and pd.notna(skew_w.at[player, cat])
-                      else 0.0)
-            p_neff = (neff_w.at[player, cat]
-                      if player in neff_w.index and cat in neff_w.columns
-                         and pd.notna(neff_w.at[player, cat])
-                      else 0.0)
+            p_skew = float(skew_w.at[player, cat])
+            p_neff = float(neff_w.at[player, cat])
             confidence = min(p_neff / SKEW_CONFIDENCE_N_CF, 1.0)
             blend_w = SKEW_BLEND_MAX_CF * confidence
             effective_skew[idx, j] = (1 - blend_w) * _course_skew_cf[j] + blend_w * p_skew

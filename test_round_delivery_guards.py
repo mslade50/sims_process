@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import types
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -112,6 +113,60 @@ def test_category_first_inputs_never_fall_back_to_legacy(round_module, monkeypat
     monkeypatch.setattr(round_module, "DISTS_FILE_V2", str(malformed))
     with pytest.raises(ValueError, match="required category-first columns"):
         round_module._load_catfirst_dists(["alpha"])
+
+
+def _category_dists(players):
+    return pd.DataFrame([
+        {
+            "player_name": player,
+            "category_clean": category,
+            "mean": 0.1,
+            "std": 1.0,
+            "skew": 0.0,
+            "n_eff": 25.0,
+        }
+        for player in players
+        for category in ("sg_ott", "sg_app", "sg_arg", "sg_putt")
+    ])
+
+
+def test_round_category_dists_require_complete_finite_active_field(
+    round_module, monkeypatch, tmp_path
+):
+    dists_path = tmp_path / "dists.csv"
+    monkeypatch.setattr(round_module, "DISTS_FILE_V2", str(dists_path))
+    monkeypatch.setattr(
+        round_module,
+        "apply_shot_dispersion_overlay",
+        lambda stds, *_args, **_kwargs: stds,
+    )
+    monkeypatch.setattr(round_module, "load_corr_matrix", lambda _cats: np.eye(4))
+
+    _category_dists(["unrelated"]).to_csv(dists_path, index=False)
+    with pytest.raises(ValueError, match="missing active-field category coverage"):
+        round_module._load_catfirst_dists(["alpha"])
+
+    incomplete = _category_dists(["alpha"])
+    incomplete = incomplete[incomplete["category_clean"] != "sg_putt"]
+    incomplete.to_csv(dists_path, index=False)
+    with pytest.raises(ValueError, match="alpha/sg_putt"):
+        round_module._load_catfirst_dists(["alpha"])
+
+    non_finite = _category_dists(["alpha"])
+    non_finite.loc[
+        non_finite["category_clean"] == "sg_app", "mean"
+    ] = np.inf
+    non_finite.to_csv(dists_path, index=False)
+    with pytest.raises(ValueError, match="non-finite active-field values"):
+        round_module._load_catfirst_dists(["alpha"])
+
+    _category_dists(["alpha"]).to_csv(dists_path, index=False)
+    params, skew, correlation = round_module._load_catfirst_dists(["alpha"])
+    assert len(params) == 1
+    assert np.isfinite(params[0][0]).all()
+    assert np.isfinite(params[0][1]).all()
+    assert np.isfinite(skew).all()
+    np.testing.assert_array_equal(correlation, np.eye(4))
 
 
 def test_production_correlation_matrix_never_falls_back(round_module, monkeypatch, tmp_path):

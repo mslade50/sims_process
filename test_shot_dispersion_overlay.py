@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
@@ -94,6 +95,51 @@ def test_overlay_is_noop_outside_configured_event(tmp_path):
         CATS,
         tourney="next_week",
         event_id=29,
+        dists_path=tmp_path / "not-needed.csv",
+        config_path=config_path,
+    )
+
+    assert actual is base
+
+
+@pytest.mark.parametrize(
+    "contents, error_type, pattern",
+    [
+        (None, FileNotFoundError, "required"),
+        ("not-json", ValueError, "invalid JSON"),
+        ('{"weights": {}}', ValueError, "explicit boolean enabled"),
+        ('{"enabled": "false"}', ValueError, "explicit boolean enabled"),
+    ],
+)
+def test_missing_or_invalid_config_is_fatal(tmp_path, contents, error_type, pattern):
+    base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha"])
+    config_path = tmp_path / "shot_dispersion_config.json"
+    if contents is not None:
+        config_path.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(error_type, match=pattern):
+        apply_shot_dispersion_overlay(
+            base,
+            ["alpha"],
+            CATS,
+            tourney="test",
+            event_id=1,
+            dists_path=tmp_path / "not-needed.csv",
+            config_path=config_path,
+        )
+
+
+def test_explicit_disabled_config_is_a_valid_opt_out(tmp_path):
+    base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha"])
+    config_path = tmp_path / "shot_dispersion_config.json"
+    config_path.write_text('{"enabled": false}', encoding="utf-8")
+
+    actual = apply_shot_dispersion_overlay(
+        base,
+        ["alpha"],
+        CATS,
+        tourney="test",
+        event_id=1,
         dists_path=tmp_path / "not-needed.csv",
         config_path=config_path,
     )

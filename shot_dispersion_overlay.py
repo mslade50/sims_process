@@ -38,9 +38,22 @@ def _load_config(config_path: str | os.PathLike[str] | None) -> tuple[dict, Path
     if not path.is_absolute():
         path = REPO_ROOT / path
     if not path.exists():
-        return {}, path
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle), path
+        raise FileNotFoundError(
+            "shot_dispersion_config.json is required; set enabled=false in a "
+            "readable config for a deliberate opt-out"
+        )
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except Exception as exc:
+        raise ValueError(
+            f"Shot-dispersion config is unreadable or invalid JSON: {path}"
+        ) from exc
+    if not isinstance(config, dict) or not isinstance(config.get("enabled"), bool):
+        raise ValueError(
+            "shot_dispersion_config.json must contain an explicit boolean enabled"
+        )
+    return config, path
 
 
 def apply_shot_dispersion_overlay(
@@ -61,16 +74,16 @@ def apply_shot_dispersion_overlay(
 
         new_var = (1 - weight) * production_var + weight * scaled_shot_var
 
-    If the config is absent, disabled, or for another event, ``std_w`` is
-    returned unchanged. Once enabled for the active event, validation is
-    intentionally fail-closed.
+    An explicit ``enabled: false`` or a config for another event returns
+    ``std_w`` unchanged. Missing, unreadable, or structurally invalid config is
+    always fatal so production cannot silently lose this tracked model input.
     """
     config, resolved_config_path = _load_config(config_path)
     disabled_by_env = os.getenv("SHOT_DISPERSION_DISABLE", "").strip().lower()
     if disabled_by_env in {"1", "true", "yes", "on"}:
         print("[shot-dispersion] Disabled by SHOT_DISPERSION_DISABLE")
         return std_w
-    if not config or not bool(config.get("enabled", False)):
+    if not config["enabled"]:
         print(f"[shot-dispersion] Disabled ({resolved_config_path.name})")
         return std_w
 

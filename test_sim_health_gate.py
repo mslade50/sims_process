@@ -310,6 +310,122 @@ def test_event_scoped_overlay_hashes_do_not_block_a_different_week():
     assert manifest["approval"]["status"] == "approved"
 
 
+def test_absent_shot_config_cannot_approve_or_revalidate_a_live_tape():
+    absent_overlay = {
+        **OVERLAY,
+        "status": "config_absent",
+        "config_sha256": None,
+        "distribution_sha256": None,
+    }
+    rejected = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=absent_overlay,
+        generated_at=NOW,
+    )
+    assert rejected["approval"]["status"] == "rejected"
+    assert any(
+        "config_absent" in error for error in rejected["checks"]["errors"]
+    )
+
+    missing_provenance = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        generated_at=NOW,
+    )
+    assert missing_provenance["approval"]["status"] == "rejected"
+
+    formerly_approved = _manifest()
+    report = shg.validate_simulation_manifest(
+        formerly_approved,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.7,
+        sim_dict=_tape(),
+        model_players=_players(),
+        current_overlay=absent_overlay,
+        now=NOW + timedelta(minutes=5),
+    )
+    assert not report.ok
+    assert any(
+        "current shot-dispersion overlay provenance is unsafe: config_absent"
+        in error
+        for error in report.errors
+    )
+
+
+def test_explicit_disabled_shot_config_remains_health_safe():
+    disabled_overlay = {
+        **OVERLAY,
+        "status": "disabled_in_config",
+        "config_sha256": "disabled-config",
+    }
+    manifest = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=disabled_overlay,
+        generated_at=NOW,
+    )
+    assert manifest["approval"]["status"] == "approved"
+
+
+def test_structurally_invalid_shot_config_is_unsafe_for_cached_pricing(tmp_path):
+    config_path = tmp_path / "shot_dispersion_config.json"
+    config_path.write_text('{"enabled": "false"}', encoding="utf-8")
+    provenance = shg.collect_overlay_provenance(
+        tourney="test_event",
+        event_id=77,
+        dists_path=None,
+        selected_model="category_first",
+        config_path=config_path,
+    )
+    assert provenance["status"] == "invalid_config"
+
+    manifest = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=provenance,
+        generated_at=NOW,
+    )
+    assert manifest["approval"]["status"] == "rejected"
+    assert any(
+        "invalid_config" in error for error in manifest["checks"]["errors"]
+    )
+
+
 def test_stale_or_wrong_event_manifest_fails_closed():
     tape = _tape()
     stale = _manifest(tape, generated_at=NOW - timedelta(hours=19))

@@ -18,6 +18,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime, timezone
 from numpy.linalg import cholesky
+from category_distribution_guard import require_complete_category_distributions
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
 # --- CLI flags (parsed early so the rest of the script can branch on them) ---
@@ -670,6 +671,7 @@ def _simulation_source_contract(repo_dir):
     """Hash the Python/Rust sources and optional overlay inputs that shape draws."""
     required_sources = (
         "new_sim.py",
+        "category_distribution_guard.py",
         "sim_inputs.py",
         "sheet_config.py",
         "api_utils.py",
@@ -1097,15 +1099,14 @@ dists, _DISTS_SHA256 = _read_stable_csv(
     DISTS_FILE,
     read_csv=pd.read_csv,
 )
-dists['player_name'] = (
-    dists['player_name'].astype(str).str.lower().str.strip()
-    .replace(name_replacements)
+dists, player_names = require_complete_category_distributions(
+    dists,
+    player_names,
+    CAT_ORDER,
+    name_replacements=name_replacements,
+    source_label=DISTS_FILE,
+    extra_numeric_columns=("n",),
 )
-
-need_cols = {'player_name', 'category_clean', 'mean', 'std', 'skew', 'n_eff'}
-missing = need_cols - set(dists.columns)
-if missing:
-    raise ValueError(f"{DISTS_FILE} missing columns: {missing}")
 
 # V2 reads RAW (un-scaled) distributions — course variance scaling is applied
 # via COURSE_CAT_MULTS below, so using 'mean'/'std' avoids double-counting.
@@ -1116,8 +1117,6 @@ mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean
 std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
 skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
 neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
-global_mu  = dists.groupby('category_clean')['mean'].mean()
-global_std = dists.groupby('category_clean')['std'].median()
 
 # BMW 2026: replace most of each player's production category variance with
 # the leakage-safe, pre-event shot-level estimate. The helper is event-scoped,
@@ -1131,7 +1130,12 @@ std_w = apply_shot_dispersion_overlay(
     event_id=_event_id,
     dists_path=DISTS_FILE,
 )
-global_std = std_w.median()
+active_stds = std_w.loc[player_names, CAT_ORDER].to_numpy(dtype=float)
+if not np.isfinite(active_stds).all() or np.any(active_stds <= 0.0):
+    raise ValueError(
+        "Shot-dispersion overlay produced invalid active-field category "
+        "standard deviations"
+    )
 
 R, _CORR_FILE_CONTRACT = load_corr_matrix(CAT_ORDER, return_source=True)
 try:
@@ -1148,11 +1152,10 @@ my_pred_series = preds.set_index('player_name')['my_pred']
 player_params_v2 = []
 recenter_diffs = []
 for p in player_names:
-    mu_row  = mu_w.loc[p].reindex(CAT_ORDER) if p in mu_w.index else pd.Series(index=CAT_ORDER, dtype=float)
-    std_row = std_w.loc[p].reindex(CAT_ORDER) if p in std_w.index else pd.Series(index=CAT_ORDER, dtype=float)
-
-    mu  = mu_row.fillna(global_mu.reindex(CAT_ORDER)).to_numpy(dtype=float)
-    std = std_row.fillna(global_std.reindex(CAT_ORDER)).to_numpy(dtype=float).clip(1e-6)
+    # Active-field coverage was validated above; never synthesize player inputs
+    # from global category statistics in the production final pass.
+    mu = mu_w.loc[p, CAT_ORDER].to_numpy(dtype=float)
+    std = std_w.loc[p, CAT_ORDER].to_numpy(dtype=float)
 
     # Re-center: shift each category equally so sum(mu) == my_pred
     cat_sum = mu.sum()
@@ -1177,16 +1180,8 @@ SKEW_CONFIDENCE_N = 100.0   # n_eff at which player reaches full confidence
 effective_skew = np.zeros((n_players, 4), dtype=float)
 for i, p in enumerate(player_names):
     for j, cat in enumerate(CAT_ORDER):
-        # Player-specific skew (fall back to 0 if missing)
-        p_skew = (skew_w.at[p, cat]
-                  if p in skew_w.index and cat in skew_w.columns
-                     and pd.notna(skew_w.at[p, cat])
-                  else 0.0)
-        # Effective sample size
-        p_neff = (neff_w.at[p, cat]
-                  if p in neff_w.index and cat in neff_w.columns
-                     and pd.notna(neff_w.at[p, cat])
-                  else 0.0)
+        p_skew = float(skew_w.at[p, cat])
+        p_neff = float(neff_w.at[p, cat])
         # Confidence ramp: 0 → SKEW_BLEND_MAX as n_eff → SKEW_CONFIDENCE_N
         confidence = min(p_neff / SKEW_CONFIDENCE_N, 1.0)
         blend_w = SKEW_BLEND_MAX * confidence

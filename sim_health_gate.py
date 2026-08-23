@@ -35,6 +35,15 @@ SCORE_RANGE = (40.0, 110.0)
 CENTERING_TOLERANCE_STROKES = 0.12
 PLAYER_CENTERING_MAX_TOLERANCE = 0.16
 PLAYER_CENTERING_RMSE_TOLERANCE = 0.08
+SAFE_OVERLAY_STATUSES = frozenset({
+    "active",
+    "not_applicable_to_event",
+    "disabled_in_config",
+})
+
+
+def _overlay_status_is_unsafe(overlay: Mapping[str, Any]) -> bool:
+    return overlay.get("status") not in SAFE_OVERLAY_STATUSES
 
 
 class SimulationHealthError(RuntimeError):
@@ -385,6 +394,16 @@ def collect_overlay_provenance(
                 "config_path": config.name,
                 "error": str(exc),
             }
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("enabled"), bool)
+        ):
+            return {
+                "status": "invalid_config",
+                "used_by_selected_tape": False,
+                "config_path": config.name,
+                "error": "config must contain an explicit boolean enabled",
+            }
 
     active_event = (
         bool(payload.get("enabled", False))
@@ -657,7 +676,7 @@ def build_simulation_manifest(
         errors.append("production round-score skew calibration was disabled")
 
     overlay_record = dict(overlay or {})
-    if overlay_record.get("status") in {"invalid_config", "disabled_by_environment", "configured_but_not_selected"}:
+    if _overlay_status_is_unsafe(overlay_record):
         errors.append(f"shot-dispersion overlay provenance is unsafe: {overlay_record.get('status')}")
     if overlay_record.get("configured_for_active_event") and not overlay_record.get("used_by_selected_tape"):
         errors.append("active-event shot-dispersion overlay was not used by the selected tape")
@@ -943,8 +962,18 @@ def validate_simulation_manifest(
             if abs(actual_max - float(scoring.get("player_centering_max_error"))) > 1e-9:
                 errors.append("exact tape per-player centering max differs from manifest")
 
+    stored_overlay = (payload.get("model") or {}).get("shot_dispersion_overlay") or {}
+    if _overlay_status_is_unsafe(stored_overlay):
+        errors.append(
+            "stored shot-dispersion overlay provenance is unsafe: "
+            f"{stored_overlay.get('status')}"
+        )
     if current_overlay is not None:
-        stored_overlay = (payload.get("model") or {}).get("shot_dispersion_overlay") or {}
+        if _overlay_status_is_unsafe(current_overlay):
+            errors.append(
+                "current shot-dispersion overlay provenance is unsafe: "
+                f"{current_overlay.get('status')}"
+            )
         for key in (
             "status", "used_by_selected_tape", "config_sha256",
             "feature_sha256", "distribution_sha256",

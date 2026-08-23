@@ -11,8 +11,11 @@ import math
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+
+from category_distribution_guard import require_complete_category_distributions
 
 
 SOURCE_PATH = Path(__file__).with_name("new_sim.py")
@@ -96,6 +99,63 @@ def test_variance_inputs_cannot_silently_disappear(tmp_path):
     latent, config = load_inputs(Inputs(), str(config_path))
     assert latent == 0.0
     assert config == {"enabled": False}
+
+
+def _pretournament_category_dists(players):
+    return pd.DataFrame([
+        {
+            "player_name": player,
+            "category_clean": category,
+            "mean": 0.1,
+            "std": 1.0,
+            "skew": 0.0,
+            "n_eff": 25.0,
+            "n": 50,
+        }
+        for player in players
+        for category in ("sg_ott", "sg_app", "sg_arg", "sg_putt")
+    ])
+
+
+def test_pretournament_category_dists_require_complete_finite_active_field():
+    with pytest.raises(ValueError, match="missing active-field category coverage"):
+        require_complete_category_distributions(
+            _pretournament_category_dists(["unrelated"]),
+            ["alpha"],
+            ["sg_ott", "sg_app", "sg_arg", "sg_putt"],
+            source_label="this_week_dists_v2.csv",
+            extra_numeric_columns=("n",),
+        )
+
+    invalid = _pretournament_category_dists(["alpha"])
+    invalid.loc[invalid["category_clean"] == "sg_putt", "std"] = np.nan
+    with pytest.raises(ValueError, match="non-finite active-field values"):
+        require_complete_category_distributions(
+            invalid,
+            ["alpha"],
+            ["sg_ott", "sg_app", "sg_arg", "sg_putt"],
+            source_label="this_week_dists_v2.csv",
+            extra_numeric_columns=("n",),
+        )
+
+    clean, active = require_complete_category_distributions(
+        _pretournament_category_dists(["Alpha"]),
+        ["ALPHA"],
+        ["sg_ott", "sg_app", "sg_arg", "sg_putt"],
+        source_label="this_week_dists_v2.csv",
+        extra_numeric_columns=("n",),
+    )
+    assert active == ["alpha"]
+    assert len(clean[clean["player_name"] == "alpha"]) == 4
+
+    calls = [
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "require_complete_category_distributions"
+    ]
+    assert len(calls) == 1
 
 
 def _tee_time_functions():
@@ -517,6 +577,14 @@ def test_current_input_contract_names_every_requested_cache_dependency():
         "model_ready_inputs",
     ):
         assert required_name in source
+
+    source_contract_node = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_simulation_source_contract"
+    )
+    assert "category_distribution_guard.py" in ast.unparse(source_contract_node)
 
 
 def test_cache_rejects_changed_input_contract(tmp_path):
