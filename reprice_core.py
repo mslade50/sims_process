@@ -251,14 +251,11 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
     ]
 
     sharp = combined[combined["Bookmaker"].str.lower().isin(SHARP_BOOKS)].copy()
-    sharp["matchup_key"] = [
-        "-".join(sorted([p1, p2]))
-        for p1, p2 in zip(sharp["Player 1"], sharp["Player 2"])
-    ]
-    sharp = sharp.sort_values("edge_on", ascending=False).drop_duplicates(
-        "matchup_key", keep="first"
-    )
-    sharp = sharp.drop(columns="matchup_key")
+    # Every sportsbook quote is a separately actionable bet.  The historical
+    # pair-only dedup silently dropped (for example) a qualifying BetCris quote
+    # whenever the same golfers also had a slightly larger BetOnline edge.  Only
+    # collapse literal feed duplicates, including reversed player ordering.
+    sharp = retain_unique_actionable_quotes(sharp, player_count=2)
 
     for out in [combined, sharp]:
         out["p1_pred"] = out["p1_pred"].round(2)
@@ -305,24 +302,72 @@ def _canonical_mu_key(p1, p2, book, o1, o2, bet_on):
     fair crosses at unchanged market odds, betting the other player is a new bet
     and must survive both Sheet dedup and Telegram alert dedup.
     """
-    def _price(value):
-        try:
-            number = float(value)
-            if not np.isfinite(number):
-                return ""
-            if number == int(number):
-                return str(int(number))
-            return format(number, ".6f").rstrip("0").rstrip(".")
-        except (TypeError, ValueError, OverflowError):
-            return str(value).strip().lower()
-
-    a = (str(p1).lower().strip(), _price(o1))
-    b = (str(p2).lower().strip(), _price(o2))
+    a = (str(p1).lower().strip(), _canonical_quote_price(o1))
+    b = (str(p2).lower().strip(), _canonical_quote_price(o2))
     lo, hi = (a, b) if a[0] <= b[0] else (b, a)
     return (
         lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1],
         str(bet_on).lower().strip(),
     )
+
+
+def _canonical_quote_price(value):
+    """Stable text identity for an American-odds value."""
+    try:
+        number = float(value)
+        if not np.isfinite(number):
+            return ""
+        if number == int(number):
+            return str(int(number))
+        return format(number, ".6f").rstrip("0").rstrip(".")
+    except (TypeError, ValueError, OverflowError):
+        return str(value).strip().lower()
+
+
+def _canonical_actionable_quote_key(row, player_count):
+    """Canonical identity of one actionable 2-ball or 3-ball quote.
+
+    Player order from an upstream feed is irrelevant, but each price remains
+    attached to its player.  Book, settlement rule, and selected side are part
+    of the identity because any of them makes the row a distinct wager.
+    """
+    quoted_players = tuple(sorted(
+        (
+            str(row.get(f"Player {idx}", "")).lower().strip(),
+            _canonical_quote_price(row.get(f"P{idx} Odds", "")),
+        )
+        for idx in range(1, player_count + 1)
+    ))
+    return (
+        str(row.get("Bookmaker", "")).lower().strip(),
+        str(row.get("Ties", "")).lower().strip(),
+        str(row.get("bet_on", "")).lower().strip(),
+        quoted_players,
+    )
+
+
+def retain_unique_actionable_quotes(frame, *, player_count):
+    """Keep every distinct book/side/price while collapsing true feed repeats.
+
+    When duplicate representations disagree slightly on calculated edge, the
+    highest-edge copy wins deterministically.  Stable sorting preserves source
+    order for exact ties.
+    """
+    if frame is None or frame.empty:
+        return frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+    if player_count not in (2, 3):
+        raise ValueError("player_count must be 2 or 3")
+
+    unique = frame.copy()
+    unique["_actionable_quote_key"] = unique.apply(
+        lambda row: _canonical_actionable_quote_key(row, player_count), axis=1
+    )
+    unique = (
+        unique.sort_values("edge_on", ascending=False, kind="mergesort")
+        .drop_duplicates("_actionable_quote_key", keep="first")
+        .drop(columns="_actionable_quote_key")
+    )
+    return unique
 
 
 def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):

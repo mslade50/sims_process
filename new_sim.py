@@ -4332,12 +4332,11 @@ if not df_match.empty:
             sharp_filename = os.path.join(matchup_dir, f"sharp_filtered_{tourney}_{timestamp}.csv")
             sharp_df.to_csv(sharp_filename, index=False)
         else:
-            sharp_df['matchup_key'] = sharp_df.apply(
-                lambda r: '-'.join(sorted([r['Player 1'].lower(), r['Player 2'].lower()])),
-                axis=1
-            )
-            sharp_df = sharp_df.sort_values('edge_on', ascending=False).drop_duplicates('matchup_key', keep='first')
-            sharp_df = sharp_df.drop(columns=['matchup_key', 'Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
+            # A quote at each sportsbook is separately actionable.  Collapse
+            # only literal/reversed feed duplicates, never the whole pairing.
+            from reprice_core import retain_unique_actionable_quotes
+            sharp_df = retain_unique_actionable_quotes(sharp_df, player_count=2)
+            sharp_df = sharp_df.drop(columns=['Sample_P1', 'Sample_P2', 'my_pred_p1', 'my_pred_p2'], errors='ignore')
             if 'sample_on' not in sharp_df.columns and 'sample_on' in combined_df.columns:
                 sharp_df = sharp_df.merge(
                     combined_df[['Player 1', 'Player 2', 'Bookmaker', 'sample_on']],

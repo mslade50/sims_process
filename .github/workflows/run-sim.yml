@@ -49,16 +49,14 @@ jobs:
         & $env:RUNNER_PYTHON -m pip install pytz
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    - name: Install sims_kernel Rust wheel
+    - name: Install and verify production sims_kernel
       shell: powershell
       run: |
         & $env:RUNNER_PYTHON -m pip install --force-reinstall --no-deps `
           "https://github.com/mslade50/sims_process/releases/download/wheels-latest/sims_kernel-0.2.0-cp310-abi3-win_amd64.whl"
-        if ($LASTEXITCODE -ne 0) {
-          Write-Warning "sims_kernel unavailable; round_sim will use the Python fallback"
-          exit 0
-        }
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         & $env:RUNNER_PYTHON -c "import sims_kernel as k; print('sims_kernel', k.version(), k.selftest())"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     
     - name: Fetch scraped odds from golf_scraping repo
       shell: powershell
@@ -92,6 +90,11 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        # A run is not complete if its report never reached SMTP.  round_sim
+        # sends the report before any ordinary full-run bet storage.
+        REQUIRE_ROUND_SIM_EMAIL: '1'
+        # Never change simulation math because a kernel call happened to fail.
+        REQUIRE_SIMS_KERNEL: '1'
         GIT_AUTHOR_NAME: github-actions[bot]
         GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         GIT_COMMITTER_NAME: github-actions[bot]

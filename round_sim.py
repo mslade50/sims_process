@@ -105,6 +105,16 @@ MIN_PRED_FOR_CARD = -0.5      # exclude players with pred below this
 EMAIL_FROM = os.getenv("EMAIL_USER")
 EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
 
+
+class EmailDeliveryError(RuntimeError):
+    """A required round report was not accepted by the mail transport."""
+
+
+def _round_email_required():
+    return os.getenv("REQUIRE_ROUND_SIM_EMAIL", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
 # Matchup email filter thresholds
 EMAIL_MIN_PRED = 0.75
 EMAIL_MIN_SAMPLE = 20
@@ -156,6 +166,25 @@ RNG_CF = np.random.default_rng(789)  # separate seed for catfirst draws
 # (tournament cascade seed 42 + single-round score card seed 789) run via the Rust
 # sims_kernel; the Python draws remain as a flagged fallback.
 _USE_PYTHON = False
+
+
+def _rust_kernel_required():
+    """Whether production automation forbids an implicit engine change."""
+    return os.getenv("REQUIRE_SIMS_KERNEL", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _handle_rust_kernel_failure(component, error):
+    if _rust_kernel_required():
+        raise RuntimeError(
+            f"{component} failed while REQUIRE_SIMS_KERNEL=1; refusing to "
+            "silently switch simulation engines"
+        ) from error
+    print(
+        f"  [rust] WARNING: {component} failed ({error!r}); falling back to "
+        "the Python reference. Pass --use-python to select it explicitly."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -844,8 +873,7 @@ def simulate_remaining_rounds(
             return (np.ascontiguousarray(_fs).astype(int), np.ascontiguousarray(_mc),
                     np.ascontiguousarray(_r2).astype(int), np.ascontiguousarray(_r3).astype(int))
         except Exception as _rust_err:
-            print(f"  [rust] WARNING: run_remaining_rounds failed ({_rust_err!r}); "
-                  f"falling back to Python cascade. Pass --use-python to silence.")
+            _handle_rust_kernel_failure("run_remaining_rounds", _rust_err)
     elif centered_live_r4 and not _USE_PYTHON:
         print("  [rust] Bypassing legacy cascade so centered live R4 inputs are honored")
 
@@ -1192,8 +1220,7 @@ def compute_finish_probabilities(final_scores, player_names, made_cut_mask, num_
                   f"({n_players} players x {num_sims:,} sims)")
             return finish_probs, rank_probs
         except Exception as _rust_err:
-            print(f"  [rust] WARNING: aggregate_round failed ({_rust_err!r}); "
-                  f"falling back to pandas. Pass --use-python to silence.")
+            _handle_rust_kernel_failure("aggregate_round", _rust_err)
 
     # Win probabilities (playoff tiebreaker: random winner)
     simulated_winners = []
@@ -2423,8 +2450,7 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
                 print(f"  [rust] catfirst {len(sim_dict)} players × {num_sims:,} via run_single_round")
                 return sim_dict, cat_mu_lookup
         except Exception as _rust_err:
-            print(f"  [rust] WARNING: run_single_round failed ({_rust_err!r}); "
-                  f"falling back to Python catfirst. Pass --use-python to silence.")
+            _handle_rust_kernel_failure("run_single_round", _rust_err)
 
     sim_dict = {}
     cat_mu_lookup = {}
@@ -2777,16 +2803,10 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
         ~((combined["edge_on"] < 5) & (combined["pred_on"] < 1))
     ]
 
-    # --- Sharp: pinnacle / betonline / betcris, deduplicate by highest edge ---
+    # --- Sharp: keep each separately actionable sharp-book quote ---
     sharp = combined[combined["Bookmaker"].str.lower().isin(SHARP_BOOKS)].copy()
-    sharp["matchup_key"] = [
-        "-".join(sorted([p1, p2]))
-        for p1, p2 in zip(sharp["Player 1"], sharp["Player 2"])
-    ]
-    sharp = sharp.sort_values("edge_on", ascending=False).drop_duplicates(
-        "matchup_key", keep="first"
-    )
-    sharp = sharp.drop(columns="matchup_key")
+    from reprice_core import retain_unique_actionable_quotes
+    sharp = retain_unique_actionable_quotes(sharp, player_count=2)
 
     # --- Clean up display columns ---
     for out in [combined, sharp]:
@@ -2900,8 +2920,8 @@ def build_3ball_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=Non
     """Filter/annotate 3-ball rows into (combined, email) frames.
 
     combined = all tracked books passing the same edge/sample/pred gate as
-    matchups. email = the subset limited to EMAIL_3BALL_BOOKS, deduped per
-    threesome by highest edge (FanDuel/DraftKings are tracked but never alerted).
+    matchups. email = the subset limited to EMAIL_3BALL_BOOKS, with only literal
+    feed duplicates collapsed (FanDuel/DraftKings are tracked but never alerted).
     """
     if df is None or df.empty:
         print("  No 3-ball lines matched the active simulation field.")
@@ -2942,13 +2962,11 @@ def build_3ball_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=Non
     ]
     combined = combined[~((combined["edge_on"] < 5) & (combined["pred_on"] < 1))]
 
-    # --- Email: trusted books only, dedup per threesome by highest edge ---
+    # --- Email: trusted books only; every distinct quote remains actionable ---
     email = combined[combined["Bookmaker"].str.lower().isin(EMAIL_3BALL_BOOKS)].copy()
     if not email.empty:
-        email["_key"] = ["-".join(sorted([a, b, c])) for a, b, c in
-                         zip(email["Player 1"], email["Player 2"], email["Player 3"])]
-        email = email.sort_values("edge_on", ascending=False).drop_duplicates("_key", keep="first")
-        email = email.drop(columns="_key")
+        from reprice_core import retain_unique_actionable_quotes
+        email = retain_unique_actionable_quotes(email, player_count=3)
 
     for out in (combined, email):
         for i in (1, 2, 3):
@@ -4257,7 +4275,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
                          win_positive_top10=None, win_negative_top10=None,
                          wx_lookup=None, score_edges=None, kalshi_mids=None,
                          ancillary_df=None, ancillary_csv_path=None,
-                         matchup_book_counts=None, threeball_df=None):
+                         matchup_book_counts=None, threeball_df=None,
+                         required=False):
     """
     Send round sim email with:
         - HTML body: filtered sharp matchup table + finish position edges
@@ -4265,12 +4284,18 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
         - Attachment 1: full matchup + score card Excel workbook
         - Attachment 2: BetOnline all matchups CSV (unfiltered)
 
-    Non-blocking: prints warning on failure but doesn't crash.
+    Returns True only after SMTP accepts the message.  Interactive runs remain
+    best-effort by default; production automation passes ``required=True`` so a
+    missing/failed report stops the run before bet storage.
     """
     password = os.getenv("EMAIL_PASSWORD")
-    if not password:
-        print("  Warning: GMAIL_APP_PASSWORD not set. Skipping email.")
-        return
+    recipients = [str(address).strip() for address in EMAIL_TO if str(address).strip()]
+    if not password or not EMAIL_FROM or not recipients:
+        message = "Round sim email credentials or recipients are not configured"
+        if required:
+            raise EmailDeliveryError(message)
+        print(f"  Warning: {message}. Skipping email.")
+        return False
 
     try:
         html = build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp,
@@ -4286,7 +4311,7 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
         msg["From"] = EMAIL_FROM
-        msg["To"] = ", ".join(EMAIL_TO)
+        msg["To"] = ", ".join(recipients)
 
         # HTML body
         msg.attach(MIMEText(html, "html"))
@@ -4368,13 +4393,17 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, password)
-            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+            server.sendmail(EMAIL_FROM, recipients, msg.as_string())
 
         print("  Round sim email sent")
+        return True
 
     except Exception as e:
+        if required:
+            raise EmailDeliveryError("Round sim email delivery failed") from e
         print(f"  Warning: Email failed: {e}")
         print("    (Sim outputs still saved — email is non-blocking)")
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5893,6 +5922,7 @@ def main():
                 kalshi_mids=kalshi_mids,
                 matchup_book_counts=matchup_book_counts,
                 threeball_df=email_3b,
+                required=_round_email_required(),
             )
 
         print(f"\n{'='*60}\n  Done (--reprice).\n{'='*60}")
@@ -5923,6 +5953,7 @@ def main():
             ancillary_csv_path=ancillary_csv_path,
             matchup_book_counts=matchup_book_counts,
             threeball_df=email_3b,
+            required=_round_email_required(),
         )
     else:
         print(f"\n  [dry-run] Skipping email")
