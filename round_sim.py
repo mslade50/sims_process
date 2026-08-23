@@ -6297,8 +6297,13 @@ def main():
             except SimulationHealthError:
                 raise
             except Exception as e:
-                print(f"[storage] Warning: Failed: {e}")
+                # Storage is a required output, not post-run diagnostics.  Each
+                # store_* call is idempotent, so propagating the failure lets the
+                # workflow retry any missing Sheet/ledger half without turning a
+                # partial dual-write into a green run.
+                print(f"[storage] FAILED: {e}")
                 import traceback; traceback.print_exc()
+                raise
         else:
             print("[storage] Skipped - before Monday 3 PM EST cutoff.")
     else:

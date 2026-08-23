@@ -61,3 +61,11 @@ def test_midweek_workflow_requires_fairs_publish_and_dispatch():
     ).read_text(encoding="utf-8")
 
     assert "REQUIRE_SIM_FAIRS_PUBLISH: '1'" in workflow
+
+
+def test_manual_run_workflow_requires_fairs_publish_and_dispatch():
+    workflow = (
+        psf.PROJECT_ROOT / ".github" / "workflows" / "run-sim.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "REQUIRE_SIM_FAIRS_PUBLISH: '1'" in workflow

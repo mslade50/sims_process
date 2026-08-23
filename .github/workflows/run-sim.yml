@@ -95,6 +95,9 @@ jobs:
         REQUIRE_ROUND_SIM_EMAIL: '1'
         # Never change simulation math because a kernel call happened to fail.
         REQUIRE_SIMS_KERNEL: '1'
+        # A successful manual production run must also publish its exact fairs
+        # and receive the pinned board-build dispatch.
+        REQUIRE_SIM_FAIRS_PUBLISH: '1'
         GIT_AUTHOR_NAME: github-actions[bot]
         GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         GIT_COMMITTER_NAME: github-actions[bot]

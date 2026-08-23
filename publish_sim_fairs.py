@@ -2816,7 +2816,7 @@ def publish(
             _require_strict_release_manifest_current(
                 strict_release_manifest, strict_release
             )
-        _git_push(
+        pushed = _git_push(
             files,
             require_dispatch=strict_publish,
             allow_origin_carry=not require_complete_live,
@@ -2827,6 +2827,11 @@ def publish(
                 else None
             ),
         )
+        if strict_publish and not pushed:
+            # _git_push currently raises on every required transport failure.
+            # Keep the caller-side contract explicit so a future refactor cannot
+            # accidentally turn a false return into a successful production run.
+            raise RuntimeError("required sim-fairs publication was not accepted")
     return payload
 
 
