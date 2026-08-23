@@ -22,6 +22,7 @@ from push_odds_screen import (
     _fetch_scraped_guarded,
     _load_committed_release_contract,
     _oriented_h2h_probability,
+    _require_threeball_group_binding,
     _upload_atomic_payload_bundle,
     _validate_odds_screen_payloads,
     _validate_sim_fairs_semantics,
@@ -257,12 +258,22 @@ def _write_strict_release(
     pd.DataFrame(
         columns=["player_a", "player_b", "player_c", "p_a", "p_b", "p_c"]
     ).to_parquet(root / "round_3ball_r4.parquet", index=False)
+    tee_group_source = {
+        "status": "no_groups_offered",
+        "groups": [],
+        "round": 4,
+        "requested_event_id": "99",
+        "event_identity_verified": True,
+        "simulation_field_overlap": 1.0,
+        "simulation_tee_time_coverage": 1.0,
+    }
     threeball_meta = {
         "event_id": "99",
         "tourney": "test_event",
         "round": 4,
         "status": "no_groups_offered",
         "num_groups": 0,
+        "tee_group_source": tee_group_source,
     }
     (root / "round_3ball_r4_meta.json").write_text(
         json.dumps(threeball_meta), encoding="utf-8"
@@ -287,13 +298,7 @@ def _write_strict_release(
                 "event_id": "99",
                 "round": 4,
                 "num_groups": 0,
-                "tee_group_source": {
-                    "round": 4,
-                    "requested_event_id": "99",
-                    "event_identity_verified": True,
-                    "simulation_field_overlap": 1.0,
-                    "simulation_tee_time_coverage": 1.0,
-                },
+                "tee_group_source": tee_group_source,
             },
         }
     )
@@ -510,6 +515,20 @@ class PushOddsScreenOutputTests(unittest.TestCase):
 
 
 class CommittedReleaseContractTests(unittest.TestCase):
+    def test_threeball_prices_must_match_declared_tee_groups(self):
+        tee_source = {
+            "status": "groups",
+            "groups": [["a", "b", "c"], ["d", "e", "f"]],
+        }
+        with self.assertRaisesRegex(OddsScreenContractError, "priced groups"):
+            _require_threeball_group_binding(
+                threeball_meta={"tee_group_source": tee_source},
+                tee_source=tee_source,
+                status="groups",
+                active_field={"a", "b", "c", "d", "e", "f"},
+                priced_groups={("a", "b", "d"), ("c", "e", "f")},
+            )
+
     def test_producer_approved_h2h_rounding_overshoot_is_normalized(self):
         probabilities = _oriented_h2h_probability(
             {("a", "b"): (0.02813, 0.97188)}, "a", "b"
@@ -900,6 +919,51 @@ class CommittedReleaseContractTests(unittest.TestCase):
                     _build_outrights(
                         "test_event", {}, event_id=99, release=release
                     )
+
+    def test_betcris_last_first_name_joins_sealed_outright_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root)
+            release = _load_committed_release_contract(
+                expected_tourney="test_event",
+                expected_event_id=99,
+                expected_round=4,
+                project_root=root,
+                verify_git=False,
+            )
+            for market in ("winner", "top_5", "top_10", "top_20"):
+                release["fairs"]["outrights"][market] = {
+                    "scheffler, scottie": 0.6,
+                    "other, player": 0.4,
+                }
+            for market in ("top_5", "top_10", "top_20"):
+                release["fairs"]["outrights_nodh"][market] = {
+                    "scheffler, scottie": 0.6,
+                    "other, player": 0.4,
+                }
+            betcris = {
+                "lines": [
+                    {
+                        "market_type": market,
+                        "player": "Scheffler, Scottie",
+                        "odds": 150,
+                    }
+                    for market in ("winner", "top_5", "top_10", "top_20")
+                ]
+            }
+            with patch(
+                "push_odds_screen._fetch_dg_outrights", return_value={}
+            ), patch(
+                "push_odds_screen._fetch_scraped_guarded", return_value=betcris
+            ):
+                markets = _build_outrights(
+                    "test_event", {}, event_id=99, release=release
+                )
+            for rows in markets.values():
+                scheffler = next(
+                    row for row in rows if row["player"] == "scheffler, scottie"
+                )
+                self.assertEqual(scheffler["books"]["betcris"]["yes"], 150)
 
             betcris = {
                 "lines": [

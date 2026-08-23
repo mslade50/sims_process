@@ -422,6 +422,48 @@ def _validate_release_assets(manifest: dict) -> None:
             )
 
 
+def _require_threeball_group_binding(
+    *,
+    threeball_meta: dict,
+    tee_source: dict,
+    status: str,
+    active_field: set[str],
+    priced_groups: set[tuple[str, str, str]],
+) -> None:
+    """Bind priced threesomes to the exact event-scoped tee-time contract."""
+    if threeball_meta.get("tee_group_source") != tee_source:
+        raise OddsScreenContractError(
+            "round 3-ball metadata and contract tee-group sources disagree"
+        )
+    if tee_source.get("status") != status:
+        raise OddsScreenContractError(
+            "round 3-ball status disagrees with its tee-group source"
+        )
+    raw_groups = tee_source.get("groups")
+    if not isinstance(raw_groups, list):
+        raise OddsScreenContractError("round 3-ball tee-group source has no groups")
+    source_groups = set()
+    for raw_group in raw_groups:
+        if not isinstance(raw_group, (list, tuple)) or len(raw_group) != 3:
+            raise OddsScreenContractError("round 3-ball source group is malformed")
+        canonical = tuple(
+            sorted(str(player or "").strip().lower() for player in raw_group)
+        )
+        if (
+            len(set(canonical)) != 3
+            or not set(canonical).issubset(active_field)
+            or canonical in source_groups
+        ):
+            raise OddsScreenContractError(
+                "round 3-ball tee-group source is outside the sealed field"
+            )
+        source_groups.add(canonical)
+    if source_groups != priced_groups:
+        raise OddsScreenContractError(
+            "round 3-ball priced groups do not match the tee-group source"
+        )
+
+
 def _validate_non_h2h_release_artifacts(
     project_root: Path,
     *,
@@ -630,6 +672,7 @@ def _validate_non_h2h_release_artifacts(
     }
     if not required_threeball.issubset(threeball.columns):
         raise OddsScreenContractError("round 3-ball table is malformed")
+    seen_groups = set()
     if status == "no_groups_offered":
         if (
             not threeball.empty
@@ -642,7 +685,6 @@ def _validate_non_h2h_release_artifacts(
     elif threeball.empty:
         raise OddsScreenContractError("round 3-ball groups contract has no rows")
     else:
-        seen_groups = set()
         grouped_players = set()
         for row in threeball[list(required_threeball)].itertuples(index=False):
             players = (str(row.player_a), str(row.player_b), str(row.player_c))
@@ -671,6 +713,13 @@ def _validate_non_h2h_release_artifacts(
             raise OddsScreenContractError(
                 "round 3-ball group count does not match its contract"
             )
+    _require_threeball_group_binding(
+        threeball_meta=threeball_meta,
+        tee_source=tee_source,
+        status=status,
+        active_field=active_field,
+        priced_groups=seen_groups,
+    )
     return {"tournament_samples": tournament}
 
 
@@ -1496,14 +1545,6 @@ def _norm(name: str, replacements: dict) -> str:
     return replacements.get(name, name)
 
 
-def _first_last(name: str) -> str:
-    """Convert ``last, first`` to the Betcris ``first last`` join form."""
-    if "," in name:
-        last, first = [p.strip() for p in name.split(",", 1)]
-        return f"{first} {last}"
-    return name
-
-
 def _american_to_prob(odds: float) -> float:
     """Convert American odds to implied probability."""
     if odds >= 100:
@@ -1997,7 +2038,7 @@ def _build_outrights(
     for line in (betcris_payload or {}).get("lines", []):
         market = str(line.get("market_type") or "").strip().lower()
         raw_player = str(line.get("player") or line.get("player_name") or "")
-        player = _norm(_first_last(raw_player), repl)
+        player = _norm(raw_player, repl)
         american = _parse_american_odds(line.get("odds"))
         if market in ("winner", "top_5", "top_10", "top_20") and player and american:
             betcris_scraped.setdefault(market, {})[player] = american
