@@ -34,6 +34,18 @@ from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
+from sim_health_gate import (
+    SimulationHealthError,
+    build_simulation_manifest,
+    collect_overlay_provenance,
+    names_sha256,
+    parse_utc,
+    require_bound_artifact,
+    require_live_tournament_alignment,
+    require_market_outputs_healthy,
+    require_simulation_healthy,
+    write_bound_artifact_manifest,
+)
 
 from score_centering import (
     CENTERING_VERSION,
@@ -2229,7 +2241,8 @@ def _send_telegram(text):
 # Sim cache (for --sim-only / --price-only / --reprice)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=None):
+def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=None,
+                   health_manifest=None):
     """Persist sim_dict to parquet + JSON sidecar so --price-only / --reprice
     can skip re-running the simulation.
 
@@ -2238,6 +2251,14 @@ def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=Non
       {tourney}/sim_cache_r{N}_meta.json — round, expected_avg, pred_lookup, wx_lookup
     """
     import json as _json
+    if (
+        not health_manifest
+        or (health_manifest.get("approval") or {}).get("status") != "approved"
+        or not (health_manifest.get("checks") or {}).get("passed")
+    ):
+        raise SimulationHealthError(
+            "Refusing to save a reusable sim cache without an approved health manifest"
+        )
     out_dir = f"./{tourney}"
     os.makedirs(out_dir, exist_ok=True)
 
@@ -2257,6 +2278,7 @@ def save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, wx_lookup=Non
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "pred_lookup": {k: round(float(v), 4) for k, v in pred_lookup.items()},
         "wx_lookup": {k: round(float(v), 6) for k, v in (wx_lookup or {}).items()},
+        "health_manifest": health_manifest,
     }
     meta_path = os.path.join(out_dir, f"sim_cache_r{sim_round}_meta.json")
     with open(meta_path, "w") as f:
@@ -4693,6 +4715,12 @@ def main():
     parser.add_argument("--score-est", type=float, default=None,
                         help="Override expected score estimate (only valid with --price-only/--reprice). "
                              "Shifts every cached score by (new - cached_expected_avg) and re-prices.")
+    parser.add_argument(
+        "--health-approved-by",
+        default=None,
+        help="Named operator approving a CLI-configured betting run. Required for "
+             "non-dry-run --cli runs; never bypasses failed health checks.",
+    )
     args = parser.parse_args()
 
     global _USE_PYTHON
@@ -4709,6 +4737,7 @@ def main():
 
     # ── Config ───────────────────────────────────────────────────────────
     sheet_config = None
+    expected_avg_authority = "cli" if args.cli else "sheet"
     if not args.cli:
         try:
             sheet_config = _cfg  # reuse config loaded at import time
@@ -4727,6 +4756,7 @@ def main():
             expected_avg = sheet_config.get("expected_score_1")
             if expected_avg is None:
                 expected_avg = PAR
+                expected_avg_authority = "sheet_missing_fallback"
                 print(f"  Warning: No expected_score_1 in sheet, using PAR={PAR}")
             elif abs(expected_avg) > 50:
                 # Full expected score entered (e.g. 68.7), use as-is
@@ -4741,12 +4771,46 @@ def main():
             sim_round = args.sim_round
             expected_avg = args.expected_avg or PAR
             round_num = sim_round - 1
+            expected_avg_authority = "cli"
     else:
         if args.sim_round is None:
             parser.error("--sim-round is required in CLI mode")
         sim_round = args.sim_round
-        expected_avg = args.expected_avg or PAR
+        if args.expected_avg is None:
+            _sheet_expected = _cfg.get("expected_score_1")
+            if _sheet_expected is None:
+                expected_avg = PAR
+                expected_avg_authority = "sheet_missing_fallback"
+            else:
+                expected_avg = (
+                    float(_sheet_expected)
+                    if abs(float(_sheet_expected)) > 50
+                    else PAR + float(_sheet_expected)
+                )
+                expected_avg_authority = "sheet"
+                print(f"  CLI round uses Sheet expected_score_1={expected_avg}")
+        else:
+            expected_avg = float(args.expected_avg)
+            expected_avg_authority = "cli"
         round_num = sim_round - 1
+
+    # Preserve the authoritative target before an in-memory --score-est shift.
+    # The gate later requires the shifted tape to equal this value exactly.
+    configured_expected_avg = float(expected_avg)
+
+    # Event identity has two weekly sources (Sheet runtime config and
+    # sim_inputs data/model config). They must agree before any cache can be
+    # approved; otherwise a correctly-shaped old field can be mislabeled as
+    # the new event.
+    import sim_inputs as _health_sim_inputs
+    _source_tourney = str(getattr(_health_sim_inputs, "tourney", "")).strip().lower()
+    _source_event_ids = getattr(_health_sim_inputs, "event_ids", []) or []
+    _source_event_id = _source_event_ids[0] if _source_event_ids else None
+    if _source_tourney != str(tourney).strip().lower() or str(_source_event_id) != str(_event_id):
+        raise SimulationHealthError(
+            "BLOCKED — Sheet/sim_inputs event split-brain: "
+            f"sheet={tourney}/{_event_id}, sim_inputs={_source_tourney}/{_source_event_id}"
+        )
 
     # ── Load sim cache early if --price-only / --reprice ─────────────────
     cached_sim_dict = None
@@ -4890,7 +4954,35 @@ def main():
     else:
         print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
 
+    # Behavioral centering authority: the simulator's expected field mean is
+    # the mean of each player's course baseline minus their centered SG
+    # advantage. This catches tapes produced at (say) 69.7 but merely labelled
+    # 68.7 in metadata.
+    expected_field_mean = float(expected_avg)
+    expected_player_means = {
+        str(player): float(expected_avg) for player in model_preds.get("player_name", [])
+    }
+    _score_adv_col = f"scores_r{sim_round}"
+    if not model_preds.empty and _score_adv_col in model_preds.columns:
+        _base_scores = (
+            pd.to_numeric(model_preds["course_score_adj"], errors="coerce").fillna(expected_avg)
+            if "course_score_adj" in model_preds.columns
+            else pd.Series(float(expected_avg), index=model_preds.index)
+        )
+        _advantages = pd.to_numeric(model_preds[_score_adv_col], errors="coerce")
+        if _advantages.isna().any():
+            raise SimulationHealthError(
+                f"BLOCKED — {_score_adv_col} contains missing/non-numeric values"
+            )
+        expected_field_mean = float((_base_scores - _advantages).mean())
+        expected_player_means = dict(zip(
+            model_preds["player_name"], (_base_scores - _advantages).astype(float)
+        ))
+        print(f"  Centering target: {expected_field_mean:.4f} strokes (player-input implied)")
+
     # ── Step 1: Simulate scores (or load from cache) ─────────────────────
+    active_health_manifest = None
+    approved_cache_saved = False
     if args.price_only:
         sim_dict = cached_sim_dict
         cat_mu_lookup = {}
@@ -4901,6 +4993,77 @@ def main():
                 for p, scores in sim_dict.items()
             }
             print(f"  [score-est] Shifted {len(sim_dict)} cached arrays by {score_shift_delta:+.3f} strokes")
+
+        parent_health = (cached_meta or {}).get("health_manifest")
+        if not parent_health:
+            raise SimulationHealthError(
+                "BLOCKED — sim cache has no health manifest; run a fresh full simulation"
+            )
+        parent_model = parent_health.get("model") or {}
+        selected_model = parent_model.get("selected", "category_first")
+        overlay = collect_overlay_provenance(
+            tourney=tourney,
+            event_id=_event_id,
+            dists_path=(parent_model.get("shot_dispersion_overlay") or {}).get("distribution_file"),
+            selected_model=selected_model,
+        )
+        # Validate the unmodified parent tape before authorising any derived
+        # score-est repricing; a derived manifest can never launder a stale or
+        # mismatched cache into a fresh approval.
+        require_simulation_healthy(
+            parent_health,
+            tourney=tourney,
+            event_id=_event_id,
+            sim_round=sim_round,
+            configured_expected_avg=(parent_health.get("scoring") or {}).get("expected_avg"),
+            sim_dict=cached_sim_dict,
+            model_players=list((cached_meta or {}).get("pred_lookup") or cached_sim_dict),
+            current_overlay=overlay,
+        )
+        if score_shift_delta != 0.0:
+            active_health_manifest = build_simulation_manifest(
+                sim_dict,
+                tourney=tourney,
+                event_id=_event_id,
+                sim_round=sim_round,
+                expected_avg=expected_avg,
+                model_players=list(pred_lookup),
+                expected_avg_authority=(
+                    "sheet_score_est"
+                    if expected_avg_authority == "sheet"
+                    else expected_avg_authority
+                ),
+                expected_field_mean=(
+                    float((parent_health.get("scoring") or {}).get("implied_field_mean"))
+                    + score_shift_delta
+                ),
+                expected_player_means={
+                    name: float(value) + score_shift_delta
+                    for name, value in (
+                        (parent_health.get("scoring") or {}).get("player_expected_means") or {}
+                    ).items()
+                },
+                selected_model=selected_model,
+                skew_calibrated=bool(parent_model.get("skew_calibrated")),
+                overlay=overlay,
+                prediction_path=pred_file_path,
+                generated_at=parse_utc((parent_health.get("source") or {}).get("generated_at")),
+                manual_approved_by=args.health_approved_by,
+                manual_approval_required=(args.cli or expected_avg_authority == "cli"),
+                parent_manifest=parent_health,
+            )
+        else:
+            active_health_manifest = parent_health
+        require_simulation_healthy(
+            active_health_manifest,
+            tourney=tourney,
+            event_id=_event_id,
+            sim_round=sim_round,
+            configured_expected_avg=configured_expected_avg,
+            sim_dict=sim_dict,
+            model_players=list(pred_lookup),
+            current_overlay=overlay,
+        )
     else:
         print(f"\n  Simulating R{sim_round} scores...")
         # Category-first is the default; --legacy falls back to N(mu, STD_DEV) draws
@@ -4923,11 +5086,58 @@ def main():
                 from skew_calibration import calibrate_round_skew
                 sim_dict = calibrate_round_skew(sim_dict)
 
-        # Persist sim_dict so future --price-only / --reprice runs can skip the sim
-        save_sim_cache(sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup)
+        selected_model = "legacy" if args.legacy else "category_first"
+        overlay = collect_overlay_provenance(
+            tourney=tourney,
+            event_id=_event_id,
+            dists_path=DISTS_FILE_V2,
+            selected_model=selected_model,
+        )
+        active_health_manifest = build_simulation_manifest(
+            sim_dict,
+            tourney=tourney,
+            event_id=_event_id,
+            sim_round=sim_round,
+            expected_avg=expected_avg,
+            model_players=model_preds["player_name"].tolist(),
+            expected_avg_authority=expected_avg_authority,
+            expected_field_mean=expected_field_mean,
+            expected_player_means=expected_player_means,
+            selected_model=selected_model,
+            skew_calibrated=not args.no_skew_cal,
+            overlay=overlay,
+            prediction_path=pred_file_path,
+            manual_approved_by=args.health_approved_by,
+            manual_approval_required=(args.cli or expected_avg_authority == "cli"),
+        )
+        try:
+            require_simulation_healthy(
+                active_health_manifest,
+                tourney=tourney,
+                event_id=_event_id,
+                sim_round=sim_round,
+                configured_expected_avg=configured_expected_avg,
+                sim_dict=sim_dict,
+                model_players=model_preds["player_name"].tolist(),
+                current_overlay=overlay,
+            )
+        except SimulationHealthError:
+            if not args.dry_run:
+                raise
+            print("  [sim-health] Dry-run diagnostics continue; rejected cache will not be written")
+        else:
+            # Only approved tapes may become reusable/publishable caches.
+            save_sim_cache(
+                sim_dict, sim_round, expected_avg, pred_lookup, _wx_lookup,
+                health_manifest=active_health_manifest,
+            )
+            approved_cache_saved = True
 
         if args.sim_only:
-            print(f"\n  Sim complete (--sim-only). Cache saved for --price-only / --reprice.")
+            if approved_cache_saved:
+                print("\n  Sim complete (--sim-only). Approved cache saved for --price-only / --reprice.")
+            else:
+                print("\n  Sim diagnostics complete (--sim-only). No reusable cache was written.")
             print(f"{'='*60}\n")
             return
 
@@ -5056,6 +5266,10 @@ def main():
     win_negative_top10 = pd.DataFrame()
     ancillary_edges = pd.DataFrame()
     ancillary_csv_path = None
+    tournament_health = None
+    tournament_health_path = f"tournament_live_{tourney}_health.json"
+    tournament_health_files = {}
+    tournament_field_players = []
 
     if not args.skip_tournament_sim and not args.price_only and round_num >= 1:
         print(f"\n  Running tournament simulation (R{round_num} complete -> R4)...")
@@ -5143,6 +5357,31 @@ def main():
                 np.save(f"standings_r2_live_{tourney}.npy", r1_r2_standings)
                 np.save(f"standings_r3_live_{tourney}.npy", r1_r3_standings)
                 np.save(f"made_cut_live_{tourney}.npy", made_cut_mask)
+
+                # Bind the exact live outright tape, its row ordering, and the
+                # probability table to the same approved round simulation. A
+                # later --reprice run may use these files only if every byte
+                # still matches this detached manifest.
+                tournament_field_players = list(player_names)
+                tournament_health_files = {
+                    "final_scores": f"final_scores_live_{tourney}.npy",
+                    "player_names": f"player_names_live_{tourney}.json",
+                    "made_cut": f"made_cut_live_{tourney}.npy",
+                    "finish_probs": "simulated_probs_live.csv",
+                    "finish_probs_event": f"top_finish_probs_live_{tourney}.csv",
+                }
+                tournament_health = write_bound_artifact_manifest(
+                    tournament_health_path,
+                    kind="live_tournament_tape",
+                    simulation_manifest=active_health_manifest,
+                    files=tournament_health_files,
+                    extra={
+                        "field_player_set_sha256": names_sha256(player_names),
+                        "num_players": len(player_names),
+                        "num_sims": int(final_scores.shape[1]),
+                    },
+                )
+                print(f"    Saved {tournament_health_path} (content-bound live tape)")
 
                 # ── Price ancillary Kalshi markets (round leaders/top-N, playoff) ──
                 # Graceful: never let this break the existing pipeline.
@@ -5279,6 +5518,8 @@ def main():
             else:
                 print(f"    No player data found for tournament sim")
 
+        except SimulationHealthError:
+            raise
         except Exception as e:
             print(f"    Warning: Tournament simulation failed: {e}")
             import traceback
@@ -5299,6 +5540,42 @@ def main():
             print(f"  [reprice-outrights] No cached finish_probs found — skipping Kalshi/Novig pricing.")
         else:
             try:
+                import json as _health_json
+                if not os.path.exists(tournament_health_path):
+                    raise SimulationHealthError(
+                        "BLOCKED — cached live outright probabilities have no content-bound health manifest"
+                    )
+                with open(tournament_health_path, encoding="utf-8") as _hf:
+                    tournament_health = _health_json.load(_hf)
+                tournament_health_files = {
+                    "final_scores": f"final_scores_live_{tourney}.npy",
+                    "player_names": f"player_names_live_{tourney}.json",
+                    "made_cut": f"made_cut_live_{tourney}.npy",
+                    "finish_probs": "simulated_probs_live.csv",
+                    "finish_probs_event": f"top_finish_probs_live_{tourney}.csv",
+                }
+                with open(tournament_health_files["player_names"], encoding="utf-8") as _nf:
+                    tournament_field_players = _health_json.load(_nf)
+                _bound_sim = tournament_health.get("simulation_manifest") or {}
+                _bound_parent = (_bound_sim.get("source") or {}).get("parent_manifest_sha256")
+                _active_parent = (active_health_manifest.get("source") or {}).get("parent_manifest_sha256")
+                _allowed_source_ids = {
+                    active_health_manifest.get("manifest_sha256"), _active_parent,
+                }
+                if _bound_sim.get("manifest_sha256") not in _allowed_source_ids:
+                    raise SimulationHealthError(
+                        "BLOCKED — cached live outright tape comes from a different round simulation"
+                    )
+                require_bound_artifact(
+                    tournament_health,
+                    kind="live_tournament_tape",
+                    files=tournament_health_files,
+                    tourney=tourney,
+                    event_id=_event_id,
+                    sim_round=sim_round,
+                    configured_expected_avg=(_bound_sim.get("scoring") or {}).get("expected_avg"),
+                    current_overlay=overlay,
+                )
                 finish_probs = pd.read_csv(_fp_path)
                 finish_probs["player_name"] = (
                     finish_probs["player_name"].astype(str).str.lower().str.strip().replace(name_replacements)
@@ -5332,6 +5609,8 @@ def main():
                                 outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
                 except Exception as e:
                     print(f"    Warning: NoVig pricing failed: {e}")
+            except SimulationHealthError:
+                raise
             except Exception as e:
                 print(f"  [reprice-outrights] Failed: {e}")
                 import traceback
@@ -5479,17 +5758,83 @@ def main():
         score_edges=score_edges,
     )
 
+    def _require_betting_health():
+        """Re-check exact artifacts immediately before any bet side effect."""
+        require_simulation_healthy(
+            active_health_manifest,
+            tourney=tourney,
+            event_id=_event_id,
+            sim_round=sim_round,
+            configured_expected_avg=configured_expected_avg,
+            sim_dict=sim_dict,
+            model_players=list(pred_lookup),
+            current_overlay=overlay,
+        )
+        if finish_probs is not None and not finish_probs.empty:
+            if not tournament_health or not tournament_health_files:
+                raise SimulationHealthError(
+                    "BLOCKED — outright prices are not bound to an approved live tournament tape"
+                )
+            _bound_sim = tournament_health.get("simulation_manifest") or {}
+            _active_parent = (active_health_manifest.get("source") or {}).get(
+                "parent_manifest_sha256"
+            )
+            if _bound_sim.get("manifest_sha256") not in {
+                active_health_manifest.get("manifest_sha256"), _active_parent,
+            }:
+                raise SimulationHealthError(
+                    "BLOCKED — round and outright outputs come from different simulations"
+                )
+            _bound_report = require_bound_artifact(
+                tournament_health,
+                kind="live_tournament_tape",
+                files=tournament_health_files,
+                tourney=tourney,
+                event_id=_event_id,
+                sim_round=sim_round,
+                configured_expected_avg=(_bound_sim.get("scoring") or {}).get("expected_avg"),
+                current_overlay=overlay,
+            )
+            if names_sha256(tournament_field_players) != (
+                (tournament_health.get("extra") or {}).get("field_player_set_sha256")
+            ):
+                raise SimulationHealthError(
+                    "BLOCKED — live tournament player ordering/field does not match its manifest"
+                )
+            require_live_tournament_alignment(
+                final_scores_path=tournament_health_files["final_scores"],
+                player_names_path=tournament_health_files["player_names"],
+                made_cut_path=tournament_health_files["made_cut"],
+                finish_probs=finish_probs,
+                artifact_manifest=tournament_health,
+            )
+            require_market_outputs_healthy(
+                finish_probs=finish_probs,
+                expected_players=tournament_field_players,
+                bound_artifact_report=_bound_report,
+            )
+
+    if args.dry_run:
+        try:
+            _require_betting_health()
+        except SimulationHealthError as _health_err:
+            print(f"  [sim-health] Dry-run side-effect verdict: {_health_err}")
+
     # ── Step 6a: --reprice exits here (dedup + store + Telegram + email) ──
     if args.reprice:
+        _require_betting_health()
         print(f"\n  [reprice] Dedup + store + alert...")
         try:
             _reprice_store_and_alert(combined, score_edges, sim_round, tourney, _event_id,
                                       outrights_combined=outrights_combined)
+        except SimulationHealthError:
+            raise
         except Exception as e:
             print(f"  [reprice] Warning: {e}")
             import traceback; traceback.print_exc()
 
         if not args.dry_run:
+            _require_betting_health()
             print(f"\n  [reprice] Sending email...")
             send_round_sim_email(
                 sharp_df=sharp,
@@ -5517,6 +5862,7 @@ def main():
 
     # ── Step 6: Email ────────────────────────────────────────────────────
     if not args.dry_run:
+        _require_betting_health()
         print(f"\n  Sending email...")
         send_round_sim_email(
             sharp_df=sharp,
@@ -5545,6 +5891,7 @@ def main():
 
     # ── Storage ──────────────────────────────────────────────────────────────
     if not args.dry_run and not args.no_store:
+        _require_betting_health()
         from sheets_storage import (
             is_valid_run_time,
             get_spreadsheet,
@@ -5595,6 +5942,8 @@ def main():
                     )
 
                 print("[storage] Done.")
+            except SimulationHealthError:
+                raise
             except Exception as e:
                 print(f"[storage] Warning: Failed: {e}")
                 import traceback; traceback.print_exc()
@@ -5630,6 +5979,8 @@ def main():
             print("  Publishing sim fairs + round samples for the odds board...")
             publish_sim_fairs.publish()
             print(f"{'='*60}")
+        except SimulationHealthError:
+            raise
         except Exception as e:
             print(f"  [publish_sim_fairs] Warning: {e}")
             if (os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or "").strip().lower() in (

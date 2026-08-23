@@ -130,16 +130,19 @@ def main():
     # ── 1. Load the committed round-H2H fair table ───────────────────────
     pq = os.path.join(root, f"round_h2h_r{sim_round}.parquet")
     mj = os.path.join(root, f"round_h2h_r{sim_round}_meta.json")
-    if not os.path.exists(pq) or not os.path.exists(mj):
+    hj = os.path.join(root, f"round_h2h_r{sim_round}_health.json")
+    if not os.path.exists(pq) or not os.path.exists(mj) or not os.path.exists(hj):
         msg = (f"Reprice: no round-H2H fairs for R{sim_round} {tourney}. "
-               f"Run the sim first.")
+               f"The exact tape/meta health bundle is incomplete; run the sim first.")
         print(f"  {msg}")
         if not args.dry_run:
             rc.send_telegram(msg)
-        return 0
+        return 1
 
     with open(mj) as f:
         meta = json.load(f)
+    with open(hj) as f:
+        health = json.load(f)
     if str(meta.get("round")) != str(sim_round) or meta.get("tourney") != tourney:
         msg = (f"Reprice: round-H2H artifact is R{meta.get('round')} "
                f"{meta.get('tourney')}, expected R{sim_round} {tourney}. "
@@ -147,9 +150,66 @@ def main():
         print(f"  {msg}")
         if not args.dry_run:
             rc.send_telegram(msg)
-        return 0
+        return 1
 
     h2h_df = pd.read_parquet(pq)
+    from sim_health_gate import (
+        collect_overlay_provenance,
+        configured_round_expected_avg,
+        require_bound_artifact,
+        require_h2h_probability_table,
+    )
+    configured_avg = configured_round_expected_avg(cfg)
+    simulation_health = health.get("simulation_manifest") or {}
+    health_model = simulation_health.get("model") or {}
+    overlay = collect_overlay_provenance(
+        tourney=tourney,
+        event_id=event_id,
+        dists_path=(health_model.get("shot_dispersion_overlay") or {}).get("distribution_file"),
+        selected_model=health_model.get("selected", "category_first"),
+    )
+
+    def require_pricing_health():
+        report = require_bound_artifact(
+            health,
+            kind="published_round_h2h",
+            files={"h2h_parquet": pq, "h2h_meta": mj},
+            tourney=tourney,
+            event_id=event_id,
+            sim_round=sim_round,
+            configured_expected_avg=configured_avg,
+            current_overlay=overlay,
+        )
+        require_h2h_probability_table(h2h_df, simulation_health)
+        if meta.get("source_manifest_sha256") != report.facts.get("simulation_manifest_id"):
+            from sim_health_gate import SimulationHealthError
+            raise SimulationHealthError(
+                "BLOCKED — H2H metadata references a different simulation manifest"
+            )
+        sim_event = simulation_health.get("event") or {}
+        sim_source = simulation_health.get("source") or {}
+        sim_shape = simulation_health.get("simulation") or {}
+        sim_scoring = simulation_health.get("scoring") or {}
+        semantic_pairs = (
+            (meta.get("tourney"), str(meta.get("event_id")), str(meta.get("round"))),
+            (sim_event.get("tourney"), str(sim_event.get("event_id")), str(sim_event.get("round"))),
+        )
+        if semantic_pairs[0] != semantic_pairs[1]:
+            from sim_health_gate import SimulationHealthError
+            raise SimulationHealthError("BLOCKED — H2H metadata event/round is not source-aligned")
+        if (
+            int(meta.get("num_players", -1)) != int(sim_shape.get("num_players", -2))
+            or int(meta.get("num_sims", -1)) != int(sim_shape.get("num_sims", -2))
+            or float(meta.get("expected_avg", float("nan")))
+            != float(sim_scoring.get("expected_avg", float("nan")))
+            or meta.get("sim_run_at") != sim_source.get("generated_at")
+        ):
+            from sim_health_gate import SimulationHealthError
+            raise SimulationHealthError("BLOCKED — H2H metadata shape/scoring/timestamp is not source-aligned")
+        return report
+
+    # Diagnose bad artifacts before spending time/network on current odds.
+    require_pricing_health()
     lookup, known = rc.build_h2h_lookup(h2h_df)
     pred_lookup = {k: float(v) for k, v in (meta.get("pred") or {}).items()}
     sample_lookup = {k: float(v) for k, v in (meta.get("sample") or {}).items()}
@@ -182,6 +242,9 @@ def main():
         return 0
 
     # ── 5. Dedup against Sheets + store only new rows ─────────────────────
+    # Re-hash the exact parquet/meta immediately before the first side effect;
+    # a stale/mixed file can never store or alert even if it changed mid-run.
+    require_pricing_health()
     from sheets_storage import get_spreadsheet, store_round_matchups, load_dg_id_lookup
     spreadsheet = get_spreadsheet()
     new_mu, seen_alert_keys = rc.dedup_round_matchups(combined, spreadsheet, event_id, sim_round)

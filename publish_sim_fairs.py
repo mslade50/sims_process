@@ -41,6 +41,13 @@ from r1_prediction_artifact import (
     manifest_path_for,
     validate_r1_prediction_frame,
 )
+from sim_health_gate import (
+    SimulationHealthError,
+    collect_overlay_provenance,
+    require_h2h_probability_table,
+    require_simulation_healthy,
+    write_bound_artifact_manifest,
+)
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 logger = logging.getLogger(__name__)
@@ -1117,6 +1124,32 @@ def _build_round_h2h(tourney: str, rnd, repl: dict):
     import numpy as np
 
     cache = pd.read_parquet(f)                       # index = player, cols = sim indices
+    cmeta = _cache_meta(tourney, rnd)
+    simulation_health = cmeta.get("health_manifest")
+    if not simulation_health:
+        raise SimulationHealthError(
+            f"round H2H publish blocked: {f.name} has no simulation health manifest"
+        )
+    cache_dict = {player: cache.loc[player].to_numpy() for player in cache.index}
+    event = simulation_health.get("event") or {}
+    configured_event_id = getattr(_sim_inputs(), "event_ids", [None])[0]
+    model = simulation_health.get("model") or {}
+    current_overlay = collect_overlay_provenance(
+        tourney=tourney,
+        event_id=configured_event_id,
+        dists_path=(model.get("shot_dispersion_overlay") or {}).get("distribution_file"),
+        selected_model=model.get("selected", "category_first"),
+    )
+    require_simulation_healthy(
+        simulation_health,
+        tourney=tourney,
+        event_id=configured_event_id,
+        sim_round=rnd,
+        configured_expected_avg=(simulation_health.get("scoring") or {}).get("expected_avg"),
+        sim_dict=cache_dict,
+        model_players=list(cache.index),
+        current_overlay=current_overlay,
+    )
     names = [_norm(p, repl) for p in cache.index]
     order = sorted(range(len(names)), key=lambda i: names[i])
     players = [names[i] for i in order]
@@ -1142,7 +1175,6 @@ def _build_round_h2h(tourney: str, rnd, repl: dict):
     df["p_a_lt_b"] = df["p_a_lt_b"].astype("float32")
     df["p_tie"] = df["p_tie"].astype("float32")
 
-    cmeta = _cache_meta(tourney, rnd)
     pred = {_norm(k, repl): round(float(v), 4)
             for k, v in (cmeta.get("pred_lookup") or {}).items()}
     wx = {_norm(k, repl): round(float(v), 6)
@@ -1150,8 +1182,11 @@ def _build_round_h2h(tourney: str, rnd, repl: dict):
     meta = {
         "tourney": tourney,
         "round": rnd,
+        "event_id": str(event.get("event_id")),
         "num_players": n,
         "num_sims": sims,
+        "expected_avg": (simulation_health.get("scoring") or {}).get("expected_avg"),
+        "source_manifest_sha256": simulation_health.get("manifest_sha256"),
         "pred": pred,
         "sample": _sample_lookup(tourney, repl),
         "wx": wx,
@@ -1169,16 +1204,30 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
         logger.info("round_h2h: no sim cache; skipping")
         return []
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    cache_f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
-    if cache_f is not None:
-        meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
+    cache_meta = _cache_meta(tourney, rnd)
+    simulation_health = cache_meta.get("health_manifest")
+    meta["sim_run_at"] = (simulation_health.get("source") or {}).get("generated_at")
     pq = f"round_h2h_r{rnd}.parquet"
     mj = f"round_h2h_r{rnd}_meta.json"
     df.to_parquet(PROJECT_ROOT / pq, index=False)
     with open(PROJECT_ROOT / mj, "w", encoding="utf-8") as f:
         json.dump(meta, f)
-    logger.info(f"Wrote {pq} + {mj}")
-    return [pq, mj]
+    require_h2h_probability_table(df, simulation_health)
+    health = f"round_h2h_r{rnd}_health.json"
+    write_bound_artifact_manifest(
+        PROJECT_ROOT / health,
+        kind="published_round_h2h",
+        simulation_manifest=simulation_health,
+        files={"h2h_parquet": PROJECT_ROOT / pq, "h2h_meta": PROJECT_ROOT / mj},
+        extra={
+            "num_pairs": len(df),
+            "num_players": meta["num_players"],
+            "num_sims": meta["num_sims"],
+            "source_manifest_sha256": meta["source_manifest_sha256"],
+        },
+    )
+    logger.info(f"Wrote {pq} + {mj} + {health}")
+    return [pq, mj, health]
 
 
 DATAGOLF_BASE = "https://feeds.datagolf.com"

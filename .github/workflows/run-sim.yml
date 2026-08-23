@@ -101,7 +101,10 @@ jobs:
         $expectedAvg = "${{ github.event.inputs.expected_avg }}"
         $simArgs = @()
         if ($simRound) {
-          $simArgs += @("--cli", "--sim-round", $simRound)
+          $simArgs += @(
+            "--cli", "--sim-round", $simRound,
+            "--health-approved-by", "github:${{ github.actor }}"
+          )
         }
         if ($expectedAvg) {
           $simArgs += @("--expected-avg", $expectedAvg)

@@ -560,6 +560,19 @@ incomplete artifact family, failed push, or failed board dispatch fails the job
 and sends the workflow's single failure alert. The event-driven midweek workflow
 must advance the Sheet round first.
 
+**Bet-side health gate:** every round tape now carries a content-addressed
+health manifest. Before any betting email, Sheets write, or Telegram bet alert,
+the pipeline rechecks the active event/round, exact scoring-average target,
+empirical field centering (within 0.12 strokes), player coverage (minimum 20 and
+exact model/tape field alignment), simulation count and probability mass,
+shot-dispersion provenance, and an 18-hour freshness limit. The lightweight
+repricer additionally verifies byte-for-byte hashes for its H2H parquet and
+metadata; cached live outright files are bound the same way. A failed check
+exits nonzero and cannot be downgraded to a warning. Sheet-driven runs receive
+automatic approval after all checks pass. CLI runs that can email/store require
+`--health-approved-by <operator>`; this names the approver but never bypasses a
+failed invariant. The manual `run-sim.yml` workflow supplies the GitHub actor.
+
 ---
 
 ## Phase 5: Friday (Round 2)
