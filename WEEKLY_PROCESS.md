@@ -181,12 +181,12 @@ Run the skill model outside this repo. It produces:
 
 - **`pre_course_fit_{tourney}.csv`** — baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` for the first-pass sim.
 
-**`final_predictions_{tourney}.csv`** is NOT generated externally — it is produced by `mkt_regress.py` (see Phase 3.2) after the first sim pass. `new_sim.py` uses `final_predictions` if it exists, otherwise falls back to `pre_course_fit`.
+**`final_predictions_{tourney}.csv`** is NOT generated externally — it is produced by `mkt_regress.py` (see Phase 3.2) after the calibration pass. Pass selection is explicit: `--calibration-pass` requires `pre_course_fit_{tourney}.csv`, while `--final-pass` requires `final_predictions_{tourney}.csv`. A no-flag run is calibration-only; file existence never authorizes external delivery because tournament slugs repeat across years.
 
 **Downstream consumers:**
 - `scoring_baseline.py` — reads `pre_course_fit` for field strength adjustment
 - `cat_dists_player.py` (runs in sim_prep) — uses `pre_course_fit` as the field and checks it for hot players missing the sample cut
-- `new_sim.py` — reads predictions for Monte Carlo sim (prefers `final_predictions`, falls back to `pre_course_fit`)
+- `new_sim.py` — reads the pass-bound prediction artifact (`pre_course_fit` for calibration; `final_predictions` only with `--final-pass`)
 - `mkt_regress.py` — reads first-pass sim outputs + market odds, produces `final_predictions`
 - `live_stats_engine.py` — reads `final_predictions` for round=0 baseline (live rounds only)
 - `sheets_storage.py` — reads `pre_course_fit` for `dg_id` lookup
@@ -341,25 +341,42 @@ The tournament sim is a **two-pass process**: first pass uses raw predictions, m
 
 ### 3.1 First Pass: Run Tournament Sim
 ```bash
-python new_sim.py
+python new_sim.py --calibration-pass
 ```
 
-`new_sim.py` reads `final_predictions_{tourney}.csv` if it exists, otherwise falls back to `pre_course_fit_{tourney}.csv`. On the first pass, only `pre_course_fit` exists.
+The calibration pass reads exactly `pre_course_fit_{tourney}.csv`, even if generated files from an earlier run still exist. It writes local simulation/pricing artifacts for `mkt_regress.py`, then exits before email, Sheets/ledger storage, dashboard pushes, or sim-fairs publication.
+
+Both passes require fresh DataGolf R1 and R2 tee-time payloads with at least
+98% field coverage and no more than one missing player. Retained prediction-file
+tee times and DataGolf's synthetic 10 AM fill are not accepted. If tee times
+legitimately have not been posted, an early computation-only calibration may be
+run with `python new_sim.py --calibration-pass --allow-missing-tee-times`; this
+clears retained times and explicitly uses zero wave differentiation. The escape
+is prohibited for `--final-pass`, `--price-only`, and `--reprice`.
 
 **What this does:**
-- **DG override** (before sim, first pass only): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Skipped on second pass (when `final_predictions` exists). `live_stats_engine.py` does NOT apply threshold overrides — manual list only.
+- **DG override** (before sim, first pass only): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Skipped on the explicit final pass. `live_stats_engine.py` does NOT apply threshold overrides — manual list only.
 - Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total (category-first approach)
 - Uses `COURSE_CAT_MULTS` from Google Sheet to scale per-category variance
 - Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
+- Uses the Rust tournament-draw kernel by default; a kernel failure stops the run instead of silently changing math. Use `--use-python` only as an explicit operator choice.
 - Fetches betting odds from DataGolf matchup/outright APIs
 - Runs Monte Carlo tournament simulation (matchups + finish positions)
 - Produces `pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`, matchup CSVs
 
-**Storage only runs after Monday 3 PM EST** (time gate in `is_valid_run_time()`).
+**The calibration pass never stores bets or publishes anything.** The Monday 3 PM EST storage time gate applies only to the explicit final pass.
 
 **Simx edge decomposition:** The email reports a **Simx** column for matchups — this is the edge difference between the full category-first sim and a simple Normal CDF analytical model (`edge_on - edge_no_wx`). It captures the value added by skewness, correlation, and course variance multipliers. Stored as `wx_edge` in Sheets and the Parquet ledger for tracking. When weather arrays are populated, the true weather contribution can be isolated as `Wx = total_wx_edge - Simx_baseline` (where Simx_baseline is from a no-weather run).
 
 **Weekly setup** — `COURSE_CAT_MULTS` is auto-set: `scoring_baseline.py` writes the `cat_mult_*`/`cat_skew_*` param rows to the Sheet's `round_config` tab when it runs, and `new_sim.py` reads them from the sheet config. Just make sure `scoring_baseline.py` ran for the current course before simming; hand-edit the sheet cells only to deliberately override.
+
+`WEEK_LATENT_SD`, a readable `shot_dispersion_config.json` with an explicit
+boolean `enabled`, and
+`permanent_data/sg_cat_corr_tour_within_player_pearson.csv` are required model
+inputs. Missing values/files stop the run; use `--no-week-latent`,
+`enabled: false`/`SHOT_DISPERSION_DISABLE`, or a deliberate config edit to turn
+an overlay off. Older correlation matrices and identity are never silent
+production fallbacks.
 
 ### 3.2 Market Regression
 ```bash
@@ -385,15 +402,33 @@ python mkt_regress.py
 
 ### 3.3 Second Pass: Re-Run Tournament Sim
 ```bash
-python new_sim.py
+python new_sim.py --final-pass
 ```
 
-Now picks up `final_predictions_{tourney}.csv` (regressed predictions). This is the **final sim** — edges, matchups, and finish positions are all based on market-regressed predictions.
+This requires `final_predictions_{tourney}.csv` and is the **only normal pass allowed to deliver externally**. Edges, matchups, and finish positions are all based on market-regressed predictions.
 
+- Requires SMTP acceptance of the main tournament report before storing any bets
 - **Auto-saves to Google Sheets** (Tournament Matchups, Finish Positions tabs)
 - **Auto-writes to Parquet ledger** (`permanent_data/bet_ledger.parquet`)
+- Requires the sim-fairs git push and pinned odds-board build dispatch; either failure makes the run fail
 - Stores all tournament matchups with edge > 3% (no pred/sample gate). Low-confidence bets are visible on the `/fragility` dashboard page. Email filters still apply (pred > 0.75, sample >= 20).
 - Uses single Google auth via `get_spreadsheet()` (1 connection, not 4)
+
+The final pass needs `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_RECIPIENTS`, Google credentials, and a `GH_TOKEN` that can push the fairs commit and dispatch the board build. A missing credential or rejected recipient is a failed run, not a warning.
+
+Cached modes also require explicit final-pass authority **and a cache sealed by an earlier full final pass**. Calibration caches are rejected even when filenames/field shape happen to match. After a successful `python new_sim.py --final-pass`, use `python new_sim.py --final-pass --price-only` for strict cached pricing plus normal delivery, or `python new_sim.py --final-pass --reprice` for the existing email-only refresh that deliberately skips repeat storage and sim-fairs publication.
+
+The cache seal binds the event/course, ordered player field, simulation count,
+exact final-prediction bytes, pass type, every cached pricing artifact, and a
+canonical hash of all draw inputs. That input contract includes the effective
+model/category arrays, distribution and correlation bytes, weather/dew, course
+multipliers/skew, cut rules, week latent, simulation flags, skill-update
+coefficients, shot-dispersion inputs, and relevant Python/Rust source hashes.
+Cached commands must repeat non-default simulation flags used for the full run.
+The prediction file is hashed before and after reading and rechecked with the
+complete contract immediately before delivery. Seals expire after seven days
+and at the next UTC ISO week, so a repeated tournament slug cannot reuse a prior
+edition's tape.
 
 **Verify bet storage:**
 ```python
@@ -789,9 +824,9 @@ python write_base_rates.py                       # Step 5: Base rates reference 
 python hole_baselines.py                         # ETR only: exact-course hole profile
 
 # Pre-tournament sim (two-pass)
-python new_sim.py                                # First pass (pre_course_fit preds)
+python new_sim.py --calibration-pass             # First pass (pre_course_fit; local artifacts only)
 python mkt_regress.py                            # Market regression -> final_predictions
-python new_sim.py                                # Second pass (regressed preds)
+python new_sim.py --final-pass                   # Second pass (strict email/storage/publish)
 
 # Live rounds
 python live_stats_engine.py                      # Skill update (reads round from Sheet)

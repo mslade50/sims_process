@@ -4,6 +4,9 @@
 # ============================
 
 import argparse
+import hashlib
+import json
+import math
 import os
 import sys
 import numpy as np
@@ -13,23 +16,39 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-from datetime import datetime
+from datetime import datetime, timezone
 from numpy.linalg import cholesky
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
 # --- CLI flags (parsed early so the rest of the script can branch on them) ---
-# --sim-only:    run sim, save cache, exit before pricing/email/storage.
-# --price-only:  load cached sim outputs, skip Monte Carlo, run pricing + email
-#                + storage against fresh API/scraped odds.
-# --reprice:     like --price-only but route Sheets storage through dedup so
-#                only newly-priced rows get appended.
+# --sim-only:    run sim, save cache, exit before pricing/email/storage/publish.
+# --price-only:  with --final-pass, load cached sim outputs, then run the strict
+#                pricing/email/storage/publication path.
+# --reprice:     with --final-pass, load cache + fresh odds and email the report;
+#                intentionally skip repeat bet storage and sim-fairs publication.
 _parser = argparse.ArgumentParser(description="Pre-tournament category-first sim")
 _parser.add_argument("--sim-only", action="store_true",
-                     help="Run sim, save cache, exit before pricing/email")
+                     help=("Run sim, save cache, and exit before pricing or any "
+                           "external delivery"))
 _parser.add_argument("--price-only", action="store_true",
-                     help="Skip sim (load cache), run pricing + email + storage")
+                     help=("With --final-pass, skip sim (load cache) and run "
+                           "strict pricing + email + storage + publication"))
 _parser.add_argument("--reprice", action="store_true",
-                     help="Like --price-only but dedup against existing Sheets rows")
+                     help=("With --final-pass, load cache and email refreshed "
+                           "prices without re-storing or publishing"))
+_pass_group = _parser.add_mutually_exclusive_group()
+_pass_group.add_argument(
+    "--calibration-pass",
+    action="store_true",
+    help=("Use the default raw/pre-sim calibration input and prohibit email, bet "
+          "storage, dashboard pushes, and sim-fairs publication."),
+)
+_pass_group.add_argument(
+    "--final-pass",
+    action="store_true",
+    help=("Require final_predictions_<tourney>.csv and run the strict "
+          "email/storage/sim-fairs delivery path."),
+)
 _parser.add_argument("--use-python", action="store_true",
                      help="Use the legacy Python draw cascade instead of the Rust "
                           "sims_kernel, which is now the PRODUCTION DEFAULT. The "
@@ -42,11 +61,81 @@ _parser.add_argument("--no-week-latent", action="store_true",
 _parser.add_argument("--no-skew-cal", action="store_true",
                      help="Disable the 72-hole totals skew top-up "
                           "(skew_calibration.calibrate_total_skew).")
+_parser.add_argument(
+    "--allow-missing-tee-times",
+    action="store_true",
+    help=("Calibration-only escape for an event whose R1/R2 tee times are not "
+          "published yet. Never reuses retained tee-time columns and is "
+          "prohibited for final delivery."),
+)
 args = _parser.parse_args()
 if args.reprice:
     args.price_only = True
 if args.sim_only and args.price_only:
     _parser.error("Cannot use --sim-only and --price-only/--reprice together")
+
+
+def _select_prediction_input(
+    final_path,
+    pre_course_path,
+    *,
+    requested_pass="calibration",
+    path_exists=os.path.exists,
+):
+    """Select the prediction artifact and classify the two-pass run.
+
+    Calibration deliberately ignores stale generated artifacts and always uses
+    pre_course_fit. Final mode refuses to downgrade when its regressed artifact
+    is absent. There is intentionally no auto-final mode: tournament slugs repeat
+    annually, so file existence alone is not authorization to publish.
+    """
+    if requested_pass not in {"calibration", "final"}:
+        raise ValueError(f"Unknown tournament-sim pass: {requested_pass!r}")
+
+    if requested_pass == "final":
+        if not path_exists(final_path):
+            raise FileNotFoundError(
+                f"Final pass requires regressed predictions at {final_path!r}"
+            )
+        return final_path, "final"
+
+    if not path_exists(pre_course_path):
+        raise FileNotFoundError(
+            f"Calibration pass requires raw predictions at {pre_course_path!r}"
+        )
+    return pre_course_path, "calibration"
+
+
+def _load_required_variance_inputs(sim_inputs_module, config_path):
+    """Require tracked variance inputs; explicit values control opt-outs."""
+    if not hasattr(sim_inputs_module, "WEEK_LATENT_SD"):
+        raise RuntimeError(
+            "sim_inputs.py must define WEEK_LATENT_SD; use --no-week-latent "
+            "to disable it deliberately"
+        )
+    try:
+        week_latent_sd = float(sim_inputs_module.WEEK_LATENT_SD)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("WEEK_LATENT_SD must be a finite non-negative number") from exc
+    if not math.isfinite(week_latent_sd) or week_latent_sd < 0:
+        raise RuntimeError("WEEK_LATENT_SD must be a finite non-negative number")
+
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            shot_config = json.load(handle)
+    except Exception as exc:
+        raise RuntimeError(
+            "shot_dispersion_config.json is required and must be readable; "
+            "set enabled=false (or SHOT_DISPERSION_DISABLE) for a deliberate opt-out"
+        ) from exc
+    if (
+        not isinstance(shot_config, dict)
+        or not isinstance(shot_config.get("enabled"), bool)
+    ):
+        raise RuntimeError(
+            "shot_dispersion_config.json must contain an explicit boolean enabled"
+        )
+    return week_latent_sd, shot_config
 
 # --- Weekly-changing config from Google Sheet ---
 from sheet_config import load_config
@@ -83,9 +172,13 @@ from sim_inputs import (
     coefficients_r3, coefficients_r3_mid, coefficients_r3_high,
 )
 import sim_inputs as _sim_inputs_mod
-# Week-level form latent sigma (SG/round); getattr so a stale synced
-# sim_inputs copy degrades to latent-off instead of crashing the sim.
-WEEK_LATENT_SD = float(getattr(_sim_inputs_mod, "WEEK_LATENT_SD", 0.0))
+# Week-level form and shot-dispersion inputs are production model inputs. Their
+# absence is not equivalent to an explicit off-state.
+WEEK_LATENT_SD, _SHOT_DISPERSION_CONFIG = _load_required_variance_inputs(
+    _sim_inputs_mod,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "shot_dispersion_config.json"),
+)
 
 # Tour-wide baseline skewness (PGA, 2019-2025 — stable, update rarely)
 BASELINE_CAT_SKEW = {
@@ -159,8 +252,16 @@ OUTRIGHTS_URL = "https://feeds.datagolf.com/betting-tools/outrights"
 
 # Email config
 EMAIL_FROM = os.getenv("EMAIL_USER")
-EMAIL_TO = os.getenv("EMAIL_RECIPIENTS", "").split(",")
+EMAIL_TO = [
+    address.strip()
+    for address in os.getenv("EMAIL_RECIPIENTS", "").split(",")
+    if address.strip()
+]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+
+class EmailDeliveryError(RuntimeError):
+    """The required tournament report was not accepted by SMTP."""
 
 # Tournament sim email filter thresholds
 EMAIL_MU_MIN_PRED = 0.75
@@ -172,27 +273,40 @@ MIN_DIST_ROUNDS = 20  # minimum rounds in player distribution (from cat_dists_pl
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 
-# Input predictions. Preference order:
-#   1. final_predictions_{tourney}.csv  (post-mkt_regress, second-pass input)
-#   2. pre_sim_summary_{tourney}.csv    (pre_sim_skill output: pred with manual
-#                                         boosts + DG blend + sheet boosts baked in)
-#   3. pre_course_fit_{tourney}.csv     (raw external skill, last-resort fallback
-#                                         if pre_sim_skill hasn't been run)
+# Input predictions are pass-bound, never selected from generated-file presence:
+#   calibration -> pre_course_fit_{tourney}.csv
+#   final       -> final_predictions_{tourney}.csv (requires --final-pass)
 _final_pred_path = f"final_predictions_{tourney}.csv"
-_pre_sim_path = f"pre_sim_summary_{tourney}.csv"
 _pre_course_path = f"pre_course_fit_{tourney}.csv"
-if os.path.exists(_final_pred_path):
-    PRED_PATH = _final_pred_path
-elif os.path.exists(_pre_sim_path):
-    PRED_PATH = _pre_sim_path
-else:
-    PRED_PATH = _pre_course_path
+_requested_pass = (
+    "final" if args.final_pass else "calibration"
+)
+try:
+    PRED_PATH, RUN_PASS = _select_prediction_input(
+        _final_pred_path,
+        _pre_course_path,
+        requested_pass=_requested_pass,
+    )
+except (FileNotFoundError, ValueError) as _pass_error:
+    _parser.error(str(_pass_error))
+
+if args.price_only and RUN_PASS != "final":
+    _parser.error(
+        "--price-only/--reprice require --final-pass and regressed predictions"
+    )
+if args.allow_missing_tee_times and RUN_PASS != "calibration":
+    _parser.error(
+        "--allow-missing-tee-times is calibration-only and cannot authorize "
+        "final delivery or a final cache"
+    )
 print(f"[info] Using predictions from: {PRED_PATH}")
+print(f"[pass] Tournament simulation pass: {RUN_PASS}")
 
 # Per-player category distribution file (course-shaped)
 DISTS_FILE = "this_week_dists_v2.csv"
 
-# Tour-level category correlation fallbacks
+# Required production category correlation. Older matrices remain listed only
+# for provenance/reference; they are not numerically interchangeable fallbacks.
 CORR_PREFS = [
     "permanent_data/sg_cat_corr_tour_within_player_pearson.csv",
     "permanent_data/sg_cat_corr_tour_spearman.csv",
@@ -284,6 +398,111 @@ def calculate_avg_wind(teetime, wind_data):
     minutes = np.arange(start_idx, end_idx, 1/60.0)
     return float(np.mean(np.interp(minutes, np.arange(len(wind_data)), wind_data)))
 
+
+def _load_required_tee_times(
+    predictions,
+    *,
+    fetcher,
+    api_key,
+    name_map,
+    allow_missing=False,
+    min_coverage=0.98,
+    max_missing=1,
+    parse_teetime=parse_time,
+):
+    """Replace retained tee times with fresh R1/R2 API data or fail closed."""
+    if predictions.empty:
+        raise RuntimeError("Cannot validate tee-time coverage for an empty field")
+    result = predictions.copy()
+    expected_names = set(result["player_name"].astype(str).str.lower().str.strip())
+    fresh_by_round = {}
+
+    for round_column in ("r1_teetime", "r2_teetime"):
+        try:
+            fresh = fetcher(
+                api_key,
+                teetime_col=round_column,
+                fill_missing_teetimes=False,
+            )
+        except Exception as exc:
+            if not allow_missing:
+                raise RuntimeError(
+                    f"Fresh {round_column} fetch failed; refusing to use retained "
+                    "or zero-weather tee times"
+                ) from exc
+            fresh = None
+            print(
+                f"[teetimes] EXPLICIT CALIBRATION OVERRIDE: {round_column} "
+                f"fetch failed ({exc})"
+            )
+
+        valid_payload = (
+            isinstance(fresh, pd.DataFrame)
+            and not fresh.empty
+            and {"player_name", round_column}.issubset(fresh.columns)
+        )
+        if not valid_payload and not allow_missing:
+            raise RuntimeError(
+                f"Fresh {round_column} payload is missing or malformed; refusing "
+                "to use retained or zero-weather tee times"
+            )
+
+        # Drop retained prediction columns before considering the API result.
+        result = result.drop(columns=[round_column], errors="ignore")
+        if valid_payload:
+            fresh = fresh[["player_name", round_column]].copy()
+            fresh["player_name"] = (
+                fresh["player_name"].astype(str).str.lower().str.strip()
+                .replace(name_map)
+            )
+            if fresh["player_name"].duplicated().any():
+                duplicates = sorted(
+                    fresh.loc[
+                        fresh["player_name"].duplicated(keep=False), "player_name"
+                    ].unique()
+                )
+                raise RuntimeError(
+                    f"Fresh {round_column} payload has duplicate players: "
+                    + ", ".join(duplicates[:10])
+                )
+            result = result.merge(fresh, on="player_name", how="left")
+            fresh_by_round[round_column] = fresh
+        else:
+            result[round_column] = None
+            fresh_by_round[round_column] = None
+
+        valid_mask = result[round_column].map(
+            lambda value: parse_teetime(value) is not None
+        )
+        valid_count = int(valid_mask.sum())
+        missing_names = sorted(
+            expected_names
+            - set(result.loc[valid_mask, "player_name"].astype(str))
+        )
+        coverage = valid_count / len(expected_names)
+        coverage_ok = coverage >= min_coverage and len(missing_names) <= max_missing
+        if not coverage_ok and not allow_missing:
+            raise RuntimeError(
+                f"Fresh {round_column} coverage is {valid_count}/{len(expected_names)} "
+                f"({coverage:.1%}); require at least {min_coverage:.0%} with no "
+                f"more than {max_missing} missing player(s). Missing: "
+                + ", ".join(missing_names[:10])
+            )
+        if coverage_ok:
+            print(
+                f"[teetimes] Fresh {round_column}: {valid_count}/"
+                f"{len(expected_names)} valid tee times"
+            )
+        else:
+            print(
+                f"[teetimes] EXPLICIT CALIBRATION OVERRIDE: {round_column} has "
+                f"{valid_count}/{len(expected_names)} valid tee times; missing "
+                + ", ".join(missing_names[:10])
+            )
+
+    return result, fresh_by_round
+
+
 def prob_to_american(p):
     if pd.isna(p) or p <= 0: return None
     if p >= 1: return -100
@@ -314,13 +533,393 @@ def format_units(stake_dollars):
     u = stake_dollars / 200.0
     return f"{u:.2f}u" if u < 0.3 else f"{u:.1f}u"
 
-def load_corr_matrix(cat_order):
-    for fn in CORR_PREFS:
-        if os.path.exists(fn):
-            R = pd.read_csv(fn, index_col=0)
-            R = R.loc[cat_order, cat_order]
-            return R.values
-    return np.eye(len(cat_order))
+
+def _delivery_enabled_for_pass(run_pass):
+    """Only regressed final-pass outputs may leave the local process."""
+    if run_pass not in {"calibration", "final"}:
+        raise ValueError(f"Unknown tournament-sim pass: {run_pass!r}")
+    return run_pass == "final"
+
+
+def _store_tournament_bet_frames(
+    *,
+    matchup_frames,
+    finish_frames,
+    tourney_name,
+    event_id,
+    dg_id_lookup,
+    spreadsheet,
+    store_matchups,
+    store_finishes,
+):
+    """Store every actionable bet frame and propagate any dual-write failure."""
+    for frame in matchup_frames:
+        if frame is None or frame.empty:
+            continue
+        store_matchups(
+            frame,
+            tourney_name,
+            event_id,
+            dg_id_lookup=dg_id_lookup,
+            spreadsheet=spreadsheet,
+        )
+    for frame in finish_frames:
+        if frame is None or frame.empty:
+            continue
+        store_finishes(
+            frame,
+            tourney_name,
+            event_id,
+            dg_id_lookup=dg_id_lookup,
+            spreadsheet=spreadsheet,
+        )
+
+
+def _publish_sim_fairs_required(publisher=None):
+    """Require both the sim-fairs git push and pinned board-build dispatch."""
+    previous = os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH")
+    os.environ["REQUIRE_SIM_FAIRS_PUBLISH"] = "1"
+    try:
+        if publisher is None:
+            import publish_sim_fairs as publisher
+        receipt = publisher.publish(push=True)
+        if not isinstance(receipt, dict) or not receipt:
+            raise RuntimeError(
+                "required sim-fairs publisher returned no publication receipt"
+            )
+        return receipt
+    finally:
+        if previous is None:
+            os.environ.pop("REQUIRE_SIM_FAIRS_PUBLISH", None)
+        else:
+            os.environ["REQUIRE_SIM_FAIRS_PUBLISH"] = previous
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_stable_csv(path, *, read_csv, hasher=_sha256_file):
+    """Read a CSV only when the exact bytes remain stable across the read."""
+    before_sha256 = hasher(path)
+    frame = read_csv(path)
+    after_sha256 = hasher(path)
+    if before_sha256 != after_sha256:
+        raise RuntimeError(
+            f"Input changed while it was being read: {path!r}; rerun from scratch"
+        )
+    return frame, before_sha256
+
+
+def _contract_json_value(value):
+    """Convert numpy/path/container values into deterministic JSON values."""
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, os.PathLike):
+        return os.fspath(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _contract_json_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_contract_json_value(item) for item in value]
+    if hasattr(value, "tolist"):
+        return _contract_json_value(value.tolist())
+    if hasattr(value, "item"):
+        return _contract_json_value(value.item())
+    raise TypeError(
+        f"Simulation input contract cannot serialize {type(value).__name__}"
+    )
+
+
+def _canonical_contract_sha256(contract):
+    canonical = json.dumps(
+        _contract_json_value(contract),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _file_contract(path, *, required=True, contract_path=None):
+    normalized_path = os.path.normpath(
+        str(contract_path if contract_path is not None else path)
+    ).replace("\\", "/")
+    if not os.path.isfile(path):
+        if required:
+            raise FileNotFoundError(
+                f"Required simulation-contract file is missing: {path!r}"
+            )
+        return {"path": normalized_path, "present": False}
+    return {
+        "path": normalized_path,
+        "present": True,
+        "size": os.path.getsize(path),
+        "sha256": _sha256_file(path),
+    }
+
+
+def _simulation_source_contract(repo_dir):
+    """Hash the Python/Rust sources and optional overlay inputs that shape draws."""
+    required_sources = (
+        "new_sim.py",
+        "sim_inputs.py",
+        "sheet_config.py",
+        "api_utils.py",
+        "shot_dispersion_overlay.py",
+        "shot_dispersion_config.json",
+        "skew_calibration.py",
+    )
+    optional_sources = (
+        "rust/Cargo.toml",
+        "rust/Cargo.lock",
+        "rust/src/lib.rs",
+        "rust/src/agg.rs",
+        "rust/src/cascade.rs",
+        "rust/src/ops.rs",
+        "rust/src/rng.rs",
+        "rust/src/round_cascade.rs",
+    )
+    contracts = {}
+    for relative_path in required_sources:
+        contracts[relative_path] = _file_contract(
+            os.path.join(repo_dir, relative_path),
+            contract_path=relative_path,
+        )
+    for relative_path in optional_sources:
+        contracts[relative_path] = _file_contract(
+            os.path.join(repo_dir, relative_path),
+            required=False,
+            contract_path=relative_path,
+        )
+
+    overlay_config_path = os.path.join(repo_dir, "shot_dispersion_config.json")
+    if os.path.isfile(overlay_config_path):
+        with open(overlay_config_path, encoding="utf-8") as handle:
+            overlay_config = json.load(handle)
+        feature_path = overlay_config.get("feature_file")
+        if feature_path:
+            resolved_feature = (
+                str(feature_path)
+                if os.path.isabs(str(feature_path))
+                else os.path.join(repo_dir, str(feature_path))
+            )
+            contracts["shot_dispersion_feature"] = _file_contract(
+                resolved_feature,
+                required=False,
+                contract_path=str(feature_path),
+            )
+    return contracts
+
+
+def _sim_cache_identity(
+    *,
+    tourney_name,
+    event_id,
+    course_id,
+    run_pass,
+    prediction_path,
+    prediction_sha256,
+    input_contract_sha256,
+    player_names,
+    simulations,
+    contract_time=None,
+):
+    contract_time = contract_time or datetime.now(timezone.utc)
+    if contract_time.tzinfo is None:
+        raise ValueError("Cache contract time must be timezone-aware")
+    contract_time = contract_time.astimezone(timezone.utc)
+    iso_year, iso_week, _iso_weekday = contract_time.isocalendar()
+    normalized_players = sorted(
+        str(player).lower().strip() for player in player_names
+    )
+    field_bytes = json.dumps(
+        normalized_players, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return {
+        "schema_version": 2,
+        "tourney": str(tourney_name).lower().strip(),
+        "event_id": str(event_id),
+        "course_id": str(course_id),
+        "run_pass": str(run_pass),
+        "prediction_path": os.path.normpath(str(prediction_path)).replace("\\", "/"),
+        "prediction_sha256": str(prediction_sha256),
+        "input_contract_sha256": str(input_contract_sha256),
+        "field_sha256": hashlib.sha256(field_bytes).hexdigest(),
+        "field_count": len(normalized_players),
+        "simulations": int(simulations),
+        "cache_iso_year": int(iso_year),
+        "cache_iso_week": int(iso_week),
+    }
+
+
+def _write_sim_cache_manifest(
+    manifest_path,
+    identity,
+    artifact_paths,
+    *,
+    generated_at=None,
+):
+    artifacts = {}
+    for name, path in artifact_paths.items():
+        if path is None:
+            artifacts[name] = None
+            continue
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"Cannot seal sim cache; artifact {name!r} is missing at {path!r}"
+            )
+        artifacts[name] = {
+            "filename": os.path.basename(path),
+            "size": os.path.getsize(path),
+            "sha256": _sha256_file(path),
+        }
+
+    generated_at = generated_at or datetime.now(timezone.utc)
+    if generated_at.tzinfo is None:
+        raise ValueError("Cache generation time must be timezone-aware")
+    generated_at_utc = generated_at.astimezone(timezone.utc)
+    payload = {
+        **identity,
+        "generated_at_utc": generated_at_utc.isoformat().replace("+00:00", "Z"),
+        "artifacts": artifacts,
+    }
+    tmp_path = f"{manifest_path}.tmp-{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp_path, manifest_path)
+    return payload
+
+
+def _validate_sim_cache_manifest(
+    manifest_path,
+    expected_identity,
+    artifact_paths,
+    *,
+    now=None,
+    max_age_seconds=7 * 24 * 60 * 60,
+):
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except Exception as exc:
+        raise RuntimeError(
+            "Sim cache has no readable provenance manifest; run a fresh full "
+            "--final-pass before using --price-only/--reprice"
+        ) from exc
+
+    generated_at_text = manifest.get("generated_at_utc")
+    try:
+        generated_at = datetime.fromisoformat(
+            str(generated_at_text).replace("Z", "+00:00")
+        )
+        if generated_at.tzinfo is None:
+            raise ValueError("timestamp has no timezone")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Sim cache has no valid UTC generation timestamp") from exc
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("Cache validation time must be timezone-aware")
+    age_seconds = (
+        now.astimezone(timezone.utc) - generated_at.astimezone(timezone.utc)
+    ).total_seconds()
+    if age_seconds < -300:
+        raise RuntimeError("Sim cache generation timestamp is implausibly in the future")
+    if age_seconds > max_age_seconds:
+        raise RuntimeError(
+            "Sim cache is older than 7 days; run a fresh full --final-pass"
+        )
+
+    identity_mismatches = {
+        key: (manifest.get(key), expected)
+        for key, expected in expected_identity.items()
+        if manifest.get(key) != expected
+    }
+    if identity_mismatches:
+        details = ", ".join(
+            f"{key}={actual!r} (expected {expected!r})"
+            for key, (actual, expected) in sorted(identity_mismatches.items())
+        )
+        raise RuntimeError(
+            "Sim cache provenance does not match this final input: " + details
+        )
+
+    sealed_artifacts = manifest.get("artifacts")
+    if not isinstance(sealed_artifacts, dict) or set(sealed_artifacts) != set(artifact_paths):
+        raise RuntimeError("Sim cache manifest has an incomplete artifact family")
+
+    for name, path in artifact_paths.items():
+        sealed = sealed_artifacts[name]
+        if sealed is None:
+            if name != "made_cut":
+                raise RuntimeError(
+                    f"Sim cache artifact {name!r} is unsealed in the manifest"
+                )
+            if path is not None and os.path.exists(path):
+                raise RuntimeError(
+                    "Sim cache contains a stale made-cut artifact that was not "
+                    "sealed by this run"
+                )
+            continue
+        if not isinstance(sealed, dict) or not os.path.isfile(path):
+            raise RuntimeError(f"Sim cache artifact {name!r} is missing")
+        if sealed.get("filename") != os.path.basename(path):
+            raise RuntimeError(f"Sim cache artifact {name!r} has the wrong filename")
+        actual_size = os.path.getsize(path)
+        actual_hash = _sha256_file(path)
+        if sealed.get("size") != actual_size or sealed.get("sha256") != actual_hash:
+            raise RuntimeError(f"Sim cache artifact {name!r} failed hash validation")
+    return manifest
+
+
+def _verify_final_delivery_inputs(
+    *,
+    prediction_path,
+    prediction_sha256,
+    input_contract_sha256,
+    contract_builder,
+):
+    if _sha256_file(prediction_path) != prediction_sha256:
+        raise RuntimeError(
+            "Final prediction file changed after it was loaded; refusing delivery"
+        )
+    current_contract_sha256 = _canonical_contract_sha256(contract_builder())
+    if current_contract_sha256 != input_contract_sha256:
+        raise RuntimeError(
+            "Simulation inputs changed after the cache contract was captured; "
+            "refusing delivery"
+        )
+
+
+def load_corr_matrix(cat_order, *, return_source=False):
+    if not CORR_PREFS:
+        raise RuntimeError("No production category-correlation path is configured")
+    fn = CORR_PREFS[0]
+    if not os.path.isfile(fn):
+        raise FileNotFoundError(
+            "Required production category-correlation file is missing: "
+            f"{fn!r}; refusing to substitute an older matrix or identity"
+        )
+    R, _corr_sha256 = _read_stable_csv(
+        fn,
+        read_csv=lambda path: pd.read_csv(path, index_col=0),
+    )
+    R = R.loc[cat_order, cat_order]
+    source = _file_contract(fn)
+    if source["sha256"] != _corr_sha256:
+        raise RuntimeError(
+            f"Correlation input changed after it was read: {fn!r}"
+        )
+    values = R.values
+    return (values, source) if return_source else values
 
 def rank_positions_from_strokes(strokes_asc_int):
     s = pd.Series(strokes_asc_int)
@@ -334,7 +933,11 @@ def ensure_array(x, shape):
 
 
 # --- Load predictions ---
-model_preds = pd.read_csv(PRED_PATH).rename(columns={'pred': 'my_pred'})
+model_preds, _PREDICTION_SHA256 = _read_stable_csv(
+    PRED_PATH,
+    read_csv=pd.read_csv,
+)
+model_preds = model_preds.rename(columns={'pred': 'my_pred'})
 
 model_preds['player_name'] = (
     model_preds['player_name'].astype(str).str.lower().str.strip()
@@ -371,11 +974,11 @@ elif _sheet_archetype_boosts:
 else:
     _precomputed_arch_map = None
 
-# --- Manual boosts from Google Sheet (pre_course_fit fallback only) ---
+# --- Manual boosts from Google Sheet (calibration input only) ---
 # pre_sim_skill.py already bakes sheet boosts into pre_sim_summary's pred
 # (tracked in its 'sheet_boost' column), and final_predictions inherits them
-# through init_sim_skill -> mkt_regress. Only the raw pre_course_fit fallback
-# has never seen them — re-applying on the pre_sim_summary path double-boosts.
+# through init_sim_skill -> mkt_regress. The raw pre_course_fit calibration
+# input has not seen them yet.
 if _sheet_manual_boosts and PRED_PATH == _pre_course_path:
     _boost_applied = 0
     for name, boost in _sheet_manual_boosts.items():
@@ -388,8 +991,6 @@ if _sheet_manual_boosts and PRED_PATH == _pre_course_path:
         else:
             print(f"[boost] Warning: {name} not found in field")
     print(f"[boost] Applied {_boost_applied} manual boosts from Sheet")
-elif _sheet_manual_boosts and PRED_PATH == _pre_sim_path:
-    print("[boost] Skipping manual boosts (already baked into pre_sim_summary by pre_sim_skill)")
 elif _sheet_manual_boosts:
     print("[boost] Second pass - skipping manual boosts (already baked into final_predictions)")
 
@@ -418,36 +1019,18 @@ if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
     pcf['player_name'] = pcf['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     model_preds = model_preds.merge(pcf, on='player_name', how='left')
 
-# --- Fetch tee times from DataGolf API ---
-for rnd_col in ['r1_teetime', 'r2_teetime']:
-    fu = fetch_field_updates(API_KEY, teetime_col=rnd_col)
-    if fu is not None and not fu.empty:
-        model_preds = model_preds.drop(columns=[rnd_col], errors='ignore')
-        model_preds = model_preds.merge(fu[['player_name', rnd_col]], on='player_name', how='left')
-        n_with_tt = model_preds[rnd_col].notna().sum()
-        print(f"[teetimes] Fetched {rnd_col}: {n_with_tt}/{len(model_preds)} players have tee times")
-    else:
-        print(f"[teetimes] WARNING: Could not fetch {rnd_col} from API")
-
-# --- Field mismatch check: stop if pred file has players not in DG field ---
-if fu is not None and not fu.empty:
-    dg_field = set(fu['player_name'].str.lower().str.strip())
-    our_field = set(model_preds['player_name'].str.lower().str.strip())
-    missing_from_dg = our_field - dg_field
-    extra_in_dg = dg_field - our_field
-    if missing_from_dg:
-        print(f"\n[FIELD MISMATCH] {len(missing_from_dg)} players in predictions but NOT in DG field:")
-        for p in sorted(missing_from_dg):
-            pred_val = model_preds.loc[model_preds['player_name'] == p, 'my_pred'].values
-            print(f"  {p}  (pred={pred_val[0]:.3f})" if len(pred_val) else f"  {p}")
-        if extra_in_dg:
-            print(f"\n[FIELD MISMATCH] {len(extra_in_dg)} players in DG field but NOT in predictions:")
-            for p in sorted(extra_in_dg):
-                print(f"  {p}")
-        print(f"\n[STOPPED] Re-run pre_course_fit generation with updated field, then re-run this sim.")
-        raise SystemExit(1)
-    if extra_in_dg:
-        print(f"[field] {len(extra_in_dg)} DG field players not in predictions (OK — likely late adds without skill data)")
+# --- Fetch fresh tee times from DataGolf API ---
+# The API helper's historical 10 AM fill is explicitly disabled here so missing
+# R1/R2 times cannot masquerade as fresh zero-weather data. A calibration-only
+# CLI escape exists for the legitimate pre-posting window and never reuses
+# retained prediction columns.
+model_preds, _fresh_tee_times = _load_required_tee_times(
+    model_preds,
+    fetcher=fetch_field_updates,
+    api_key=API_KEY,
+    name_map=name_replacements,
+    allow_missing=args.allow_missing_tee_times,
+)
 
 # Write tee times back to pre_course_fit file
 if os.path.exists(_pre_course_path):
@@ -510,7 +1093,10 @@ my_pred_lookup = dict(zip(model_preds['player_name'], model_preds['my_pred']))
 if not os.path.exists(DISTS_FILE):
     raise FileNotFoundError(f"Missing {DISTS_FILE}. Build it earlier.")
 
-dists = pd.read_csv(DISTS_FILE)
+dists, _DISTS_SHA256 = _read_stable_csv(
+    DISTS_FILE,
+    read_csv=pd.read_csv,
+)
 dists['player_name'] = (
     dists['player_name'].astype(str).str.lower().str.strip()
     .replace(name_replacements)
@@ -547,7 +1133,7 @@ std_w = apply_shot_dispersion_overlay(
 )
 global_std = std_w.median()
 
-R = load_corr_matrix(CAT_ORDER)
+R, _CORR_FILE_CONTRACT = load_corr_matrix(CAT_ORDER, return_source=True)
 try:
     L_corr = cholesky(R)
 except np.linalg.LinAlgError:
@@ -628,6 +1214,152 @@ round_std = indexer['std'].reindex(player_names).to_numpy(dtype=float)  # for va
 field_skill = float(np.nanmean(my_pred_base))
 print(f"[skill] field_skill (mean my_pred over field) = {field_skill:.4f}")
 
+# Cache reuse is allowed only for the exact simulation contract assembled here.
+# Keep this outside the draw block so --price-only can independently reconstruct
+# and validate the same contract before loading a score tape.
+WEEK_LATENT = 0.0 if args.no_week_latent else WEEK_LATENT_SD
+
+
+def _current_sim_input_contract():
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    source_files = _simulation_source_contract(repo_dir)
+
+    dists_contract = _file_contract(DISTS_FILE)
+    if dists_contract["sha256"] != _DISTS_SHA256:
+        raise RuntimeError(
+            f"Distribution input changed after it was read: {DISTS_FILE!r}"
+        )
+
+    corr_contract = dict(_CORR_FILE_CONTRACT)
+    if corr_contract.get("present"):
+        current_corr = _file_contract(corr_contract["path"])
+        if current_corr["sha256"] != corr_contract["sha256"]:
+            raise RuntimeError("Correlation input changed after it was read")
+        corr_contract = current_corr
+    elif any(os.path.isfile(path) for path in CORR_PREFS):
+        raise RuntimeError(
+            "A preferred correlation input appeared after the fallback was selected"
+        )
+
+    if args.use_python:
+        kernel_contract = {
+            "requested": "python",
+            "sims_kernel_available": None,
+            "sims_kernel_version": None,
+        }
+    else:
+        try:
+            import sims_kernel as _contract_kernel
+            kernel_contract = {
+                "requested": "rust",
+                "sims_kernel_available": True,
+                "sims_kernel_version": str(_contract_kernel.version()),
+            }
+            kernel_path = getattr(_contract_kernel, "__file__", None)
+            if kernel_path:
+                kernel_contract["binary"] = _file_contract(
+                    kernel_path,
+                    required=False,
+                    contract_path="sims_kernel_binary",
+                )
+        except Exception as exc:
+            kernel_contract = {
+                "requested": "rust",
+                "sims_kernel_available": False,
+                "sims_kernel_error_type": type(exc).__name__,
+            }
+
+    return {
+        "contract_version": 1,
+        "sheet_config": _cfg,
+        "effective_weather": {
+            "wind_r1": wind_1,
+            "wind_r2": wind_2,
+            "dew_r1": dewpoint_1,
+            "dew_r2": dewpoint_2,
+            "wind_factor": float(WIND_FACTOR_SIM),
+            "dew_calculation": float(dew_calculation),
+        },
+        "course_shape": {
+            "category_order": CAT_ORDER,
+            "category_multipliers": COURSE_CAT_MULTS,
+            "category_skew": COURSE_CAT_SKEW,
+            "effective_multipliers": course_mults,
+            "effective_course_skew": course_skew,
+            "baseline_category_skew": BASELINE_CAT_SKEW,
+        },
+        "simulation_options": {
+            "simulations": int(SIMULATIONS),
+            "std_dev": float(STD_DEV),
+            "cut_line": int(CUT_LINE),
+            "use_10_shot_rule": bool(USE_10_SHOT_RULE),
+            "week_latent_sd_config": float(WEEK_LATENT_SD),
+            "week_latent_sd_effective": float(WEEK_LATENT),
+            "use_python": bool(args.use_python),
+            "no_week_latent": bool(args.no_week_latent),
+            "no_skew_cal": bool(args.no_skew_cal),
+            "allow_missing_tee_times": bool(args.allow_missing_tee_times),
+            "shot_dispersion_disable": os.getenv(
+                "SHOT_DISPERSION_DISABLE", ""
+            ).strip().lower(),
+            "shot_dispersion_config": _SHOT_DISPERSION_CONFIG,
+            "rng_seed": 456,
+            "week_latent_rng_seed": 789,
+            "weather_category_split": WEATHER_CAT_SPLIT,
+            "category_clip": CLIP_CAT,
+            "skew_blend_max": float(SKEW_BLEND_MAX),
+            "skew_confidence_n": float(SKEW_CONFIDENCE_N),
+            "kernel": kernel_contract,
+        },
+        "skill_update_coefficients": {
+            "r1_high": coefficients_r1_high,
+            "r1_midh": coefficients_r1_midh,
+            "r1_midl": coefficients_r1_midl,
+            "r1_low": coefficients_r1_low,
+            "r2": coefficients_r2,
+            "r2_6_30": coefficients_r2_6_30,
+            "r2_30_up": coefficients_r2_30_up,
+            "r3": coefficients_r3,
+            "r3_mid": coefficients_r3_mid,
+            "r3_high": coefficients_r3_high,
+        },
+        "model_ready_inputs": {
+            "player_names": player_names,
+            "category_mu": np.stack(
+                [mu for (mu, _std_course) in player_params_v2]
+            ),
+            "category_std": np.stack(
+                [std_course for (_mu, std_course) in player_params_v2]
+            ),
+            "effective_skew": effective_skew,
+            "correlation": R,
+            "cholesky": L_corr,
+            "my_pred_base": my_pred_base,
+            "r1_mu": r1_mu,
+            "r2_mu": r2_mu,
+            "r3_mu": r3_mu,
+            "r4_mu": r4_mu,
+            "round_std": round_std,
+            "weather_delta_r1": weather_delta_r1,
+            "weather_delta_r2": weather_delta_r2,
+            "field_skill": field_skill,
+        },
+        "data_files": {
+            "distributions": dists_contract,
+            "correlation": corr_contract,
+        },
+        "source_files": source_files,
+    }
+
+
+_SIM_INPUT_CONTRACT_SHA256 = _canonical_contract_sha256(
+    _current_sim_input_contract()
+)
+print(
+    "[sim-cache] Input contract: "
+    f"{_SIM_INPUT_CONTRACT_SHA256[:12]}..."
+)
+
 print(f"\n[sim] {n_players} players, {SIMULATIONS:,} simulations")
 
 
@@ -642,7 +1374,6 @@ if not args.price_only:
     # unchanged (round products don't reprice — only the cross-round linkage).
     # Drawn from a SEPARATE RNG stream so latent-off stays bit-identical to the
     # pre-latent cascade (the seed-456 stream is never touched by this block).
-    WEEK_LATENT = 0.0 if args.no_week_latent else WEEK_LATENT_SD
     if WEEK_LATENT > 0.0:
         _round_var = np.array([std_c @ R @ std_c for (_mu_i, std_c) in player_params_v2])
         _latent_shrink = np.sqrt(np.clip(1.0 - WEEK_LATENT**2 / _round_var, 0.05, 1.0))
@@ -699,10 +1430,10 @@ if not args.price_only:
 
     # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy Python draw) ───
     # Compute final_scores + per-category SG means via the Rust sims_kernel up
-    # front (inputs map 1:1 to the seed-456 dump-hook contract). On --use-python
-    # or any Rust error, leave final_scores=None so the legacy Python draw below
-    # runs as the fallback (and still emits validation diagnostics). Everything
-    # downstream consumes only final_scores + win prob + the per-category means.
+    # front (inputs map 1:1 to the seed-456 dump-hook contract). A production
+    # Rust failure is fatal: silently switching numerical implementations makes
+    # an otherwise identical rerun non-reproducible. The legacy Python cascade
+    # below runs only when the operator explicitly passes --use-python.
     final_scores = None
     _rust_cat_means = None
     if not args.use_python:
@@ -739,11 +1470,12 @@ if not args.price_only:
             print(f"[rust] final_scores + cat-means from sims_kernel.run_pretournament "
                   f"v{_sk.version()} (shape={final_scores.shape}, dtype={final_scores.dtype})")
         except Exception as _rust_err:
-            print(f"[rust] WARNING: Rust kernel unavailable/failed ({_rust_err!r}); "
-                  f"falling back to Python draw output. Pass --use-python to silence.")
-            final_scores = None
-            _rust_cat_means = None
-    _python_drew = final_scores is None
+            raise RuntimeError(
+                "Production sims_kernel.run_pretournament failed; rerun only "
+                "after fixing the Rust kernel, or explicitly authorize the "
+                "legacy implementation with --use-python"
+            ) from _rust_err
+    _python_drew = bool(args.use_python)
 
     if _python_drew:
         cats_r1 = np.empty((n_players, SIMULATIONS, 4), dtype=float)
@@ -1378,15 +2110,49 @@ if not args.price_only:
     import json as _sim_json
     _cache_dir = f"./{tourney}"
     os.makedirs(_cache_dir, exist_ok=True)
-    np.save(os.path.join(_cache_dir, "final_scores.npy"), final_scores)
-    with open(os.path.join(_cache_dir, "player_names.json"), "w") as _f:
+    _fs_path = os.path.join(_cache_dir, "final_scores.npy")
+    _pn_path = os.path.join(_cache_dir, "player_names.json")
+    _mc_path = os.path.join(_cache_dir, "made_cut.npy")
+    _rp_path = f"rank_probs_updated_{tourney}.parquet"
+    _topn_path = f"top_finish_probs_{tourney}.csv"
+    _fe_path = f"finish_equity_{tourney}.csv"
+    _cache_manifest_path = os.path.join(_cache_dir, "sim_cache_manifest.json")
+    np.save(_fs_path, final_scores)
+    with open(_pn_path, "w") as _f:
         _sim_json.dump(list(player_names), _f)
     # Made-cut mask on the SAME draw axis as final_scores — published so the board
     # prices make_cut off the tournament joint instead of an independent copula
     # draw. None only on a pre-mask Rust wheel.
     if made_cut_mask is not None:
-        np.save(os.path.join(_cache_dir, "made_cut.npy"), made_cut_mask)
-    print(f"[sim-cache] Saved final_scores + player_names"
+        np.save(_mc_path, made_cut_mask)
+    elif os.path.exists(_mc_path):
+        raise RuntimeError(
+            "Fresh sim produced no made-cut mask but a stale made_cut.npy is "
+            "present; refusing to seal or publish a mixed cache"
+        )
+    _cache_artifact_paths = {
+        "final_scores": _fs_path,
+        "player_names": _pn_path,
+        "made_cut": _mc_path if made_cut_mask is not None else None,
+        "rank_probs": _rp_path,
+        "top_finish_probs": _topn_path,
+        "finish_equity": _fe_path,
+    }
+    _cache_identity = _sim_cache_identity(
+        tourney_name=tourney,
+        event_id=_event_id,
+        course_id=_course_id,
+        run_pass=RUN_PASS,
+        prediction_path=PRED_PATH,
+        prediction_sha256=_PREDICTION_SHA256,
+        input_contract_sha256=_SIM_INPUT_CONTRACT_SHA256,
+        player_names=player_names,
+        simulations=final_scores.shape[1],
+    )
+    _write_sim_cache_manifest(
+        _cache_manifest_path, _cache_identity, _cache_artifact_paths
+    )
+    print(f"[sim-cache] Saved sealed final_scores + player_names"
           f"{' + made_cut' if made_cut_mask is not None else ''} to {_cache_dir}")
 else:
     # ─── Load cached sim outputs (--price-only / --reprice) ─────
@@ -1397,16 +2163,49 @@ else:
     _rp_path = f"rank_probs_updated_{tourney}.parquet"
     _topn_path = f"top_finish_probs_{tourney}.csv"
     _fe_path = f"finish_equity_{tourney}.csv"
-    if not (os.path.exists(_fs_path) and os.path.exists(_pn_path)
-            and os.path.exists(_rp_path) and os.path.exists(_topn_path)
-            and os.path.exists(_fe_path)):
-        raise FileNotFoundError(
-            "Missing one or more sim cache files. Run new_sim.py without "
-            "--price-only / --reprice first to populate the cache."
-        )
+    _mc_path = os.path.join(_cache_dir, "made_cut.npy")
+    _cache_manifest_path = os.path.join(_cache_dir, "sim_cache_manifest.json")
+    _cache_artifact_paths = {
+        "final_scores": _fs_path,
+        "player_names": _pn_path,
+        "made_cut": _mc_path,
+        "rank_probs": _rp_path,
+        "top_finish_probs": _topn_path,
+        "finish_equity": _fe_path,
+    }
+    _expected_cache_identity = _sim_cache_identity(
+        tourney_name=tourney,
+        event_id=_event_id,
+        course_id=_course_id,
+        run_pass=RUN_PASS,
+        prediction_path=PRED_PATH,
+        prediction_sha256=_PREDICTION_SHA256,
+        input_contract_sha256=_SIM_INPUT_CONTRACT_SHA256,
+        player_names=model_preds["player_name"].tolist(),
+        simulations=SIMULATIONS,
+    )
+    _validate_sim_cache_manifest(
+        _cache_manifest_path,
+        _expected_cache_identity,
+        _cache_artifact_paths,
+    )
     final_scores = np.load(_fs_path)
     with open(_pn_path) as _f:
         player_names = _sim_json.load(_f)
+    _expected_players = sorted(
+        model_preds["player_name"].astype(str).str.lower().str.strip().tolist()
+    )
+    _cached_players = sorted(str(player).lower().strip() for player in player_names)
+    if _cached_players != _expected_players:
+        raise RuntimeError("Sim cache player field does not match final predictions")
+    if (
+        final_scores.ndim != 2
+        or final_scores.shape[0] != len(player_names)
+        or final_scores.shape[1] != SIMULATIONS
+    ):
+        raise RuntimeError(
+            "Sim cache score tape shape does not match its field/simulation contract"
+        )
     n_players = len(player_names)
     topn_df = pd.read_csv(_topn_path)
     finish_equity_df = pd.read_csv(_fe_path)
@@ -3395,13 +4194,19 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
 def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
                           attachment_paths=None, wx_lookup=None, kalshi_df=None,
                           novig_df=None, kalshi_mu_df=None, novig_mu_df=None,
-                          arch_map=None, sb_lines_lookup=None):
+                          arch_map=None, sb_lines_lookup=None, required=False):
     if not EMAIL_PASSWORD:
-        print("  [warn] EMAIL_PASSWORD not set. Skipping email.")
-        return
-    if not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
-        print("  [warn] EMAIL_FROM or EMAIL_TO not configured. Skipping email.")
-        return
+        message = "EMAIL_PASSWORD not set; tournament report cannot be sent"
+        if required:
+            raise EmailDeliveryError(message)
+        print(f"  [warn] {message}. Skipping email.")
+        return False
+    if not EMAIL_FROM or not EMAIL_TO:
+        message = "EMAIL_FROM or EMAIL_TO not configured; tournament report cannot be sent"
+        if required:
+            raise EmailDeliveryError(message)
+        print(f"  [warn] {message}. Skipping email.")
+        return False
 
     try:
         html = build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
@@ -3431,45 +4236,26 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+            refused = server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+        if refused:
+            raise EmailDeliveryError(
+                "Tournament report was refused for recipient(s): "
+                + ", ".join(sorted(str(address) for address in refused))
+            )
 
         print("  [ok] Tournament sim email sent")
+        return True
 
     except Exception as e:
+        if required:
+            if isinstance(e, EmailDeliveryError):
+                raise
+            raise EmailDeliveryError(
+                f"Required tournament sim email failed: {e}"
+            ) from e
         print(f"  [warn] Email failed: {e}")
         print("    (Sim outputs still saved -- email is non-blocking)")
-
-    # Store qualifying exchange bets to Google Sheets
-    _exch_bets = getattr(build_tournament_email_html, '_exchange_bets', [])
-    _exch_mu = getattr(build_tournament_email_html, '_exchange_mu_replacements', [])
-    if _exch_bets or _exch_mu:
-        try:
-            from sheets_storage import get_spreadsheet, store_finish_positions, store_tournament_matchups, load_dg_id_lookup
-            _exch_ss = get_spreadsheet()
-            _exch_dg = load_dg_id_lookup(tourney, name_replacements)
-
-            # Store exchange outright bets
-            if _exch_bets:
-                _exch_store_df = pd.DataFrame(_exch_bets)
-                store_finish_positions(
-                    _exch_store_df, tourney, _event_id,
-                    dg_id_lookup=_exch_dg,
-                    spreadsheet=_exch_ss,
-                )
-                print(f"  [ok] Stored {len(_exch_bets)} exchange outright bets to Sheets")
-
-            # Store exchange matchup replacements
-            if _exch_mu:
-                _exch_mu_df = pd.DataFrame(_exch_mu)
-                store_tournament_matchups(
-                    _exch_mu_df, tourney, _event_id,
-                    dg_id_lookup=_exch_dg,
-                    spreadsheet=_exch_ss,
-                )
-                print(f"  [ok] Stored {len(_exch_mu)} exchange matchup bets to Sheets")
-
-        except Exception as _se:
-            print(f"  [warn] Exchange Sheets storage failed: {_se}")
+        return False
 
 
 def _compute_sb_priority_keys(combined_finish_df, kalshi_df=None, novig_df=None):
@@ -4353,9 +5139,31 @@ if not df_match.empty:
 else:
     print("[warn] No valid tournament matchups found.")
 
-# --- Emails: always send. Finish positions, outrights, and exchange edges do
-# not depend on matchup markets, and Monday runs typically have no matchup
-# boards posted yet — the sharp-matchup table is simply omitted when empty.
+# Re-hash the exact final prediction artifact and the complete current input
+# contract immediately before any external side effect. This closes the window
+# between reading inputs/sealing the cache and authorizing delivery.
+if RUN_PASS == "final":
+    _verify_final_delivery_inputs(
+        prediction_path=PRED_PATH,
+        prediction_sha256=_PREDICTION_SHA256,
+        input_contract_sha256=_SIM_INPUT_CONTRACT_SHA256,
+        contract_builder=_current_sim_input_contract,
+    )
+
+# Calibration is computation-only by contract. Keep this gate immediately before
+# the first external side effect so a raw/stale prediction artifact can never send
+# email, store bets, push dashboard data, or publish odds-board fairs.
+if not _delivery_enabled_for_pass(RUN_PASS):
+    print(
+        "\n[calibration] Local simulation and pricing artifacts complete. "
+        "External delivery is disabled; run mkt_regress.py, then rerun with "
+        "--final-pass."
+    )
+    sys.exit(0)
+
+# --- Final-pass emails. The main report is required before any bet storage or
+# board publication. Monday runs can legitimately have no matchup board yet, so
+# the sharp-matchup table is omitted when empty rather than treated as a failure.
 _sharp_for_email = (
     sharp_df
     if ('sharp_df' in dir() and isinstance(sharp_df, pd.DataFrame) and not sharp_df.empty)
@@ -4422,6 +5230,13 @@ send_tournament_email(
     novig_mu_df=_novig_mu_df if not _novig_mu_df.empty else None,
     arch_map=_arch_map,
     sb_lines_lookup=_all_sb_lines_lookup,
+    required=True,
+)
+_exchange_bets_for_storage = list(
+    getattr(build_tournament_email_html, '_exchange_bets', [])
+)
+_exchange_matchups_for_storage = list(
+    getattr(build_tournament_email_html, '_exchange_mu_replacements', [])
 )
 
 # Email 2: exchange-only opportunities — pre-compute the sportsbook
@@ -4471,11 +5286,9 @@ try:
 except Exception as _spe:
     print(f"  [warn] Sportsbook priority email failed: {_spe}")
 
-# --- Storage: always attempt (finish positions don't depend on matchups) ---
-# In --reprice mode, skip Sheets storage entirely. Pricing + emails still run
-# (so the user sees fresh edges) but we don't append duplicate rows to the
-# Tournament Matchups / Finish Positions tabs. The bet ledger has its own
-# dedup but the Sheet tabs do not, so a naive re-store would double-count.
+# --- Storage: always attempt on a normal final pass. In --reprice mode, pricing
+# and emails still run, but repeat bet storage and sim-fairs publication are
+# intentionally skipped.
 if args.reprice:
     print("\n[reprice] Skipping Sheets storage (re-priced rows not re-appended).")
     sys.exit(0)
@@ -4488,7 +5301,13 @@ from sheets_storage import (
     load_dg_id_lookup,
 )
 
-if is_valid_run_time() and not os.getenv("SKIP_STORAGE"):
+if os.getenv("SKIP_STORAGE"):
+    print("[storage] Explicitly skipped because SKIP_STORAGE is set.")
+elif not is_valid_run_time():
+    raise RuntimeError(
+        "Final delivery pass reached bet storage before the Monday 3 PM EST cutoff"
+    )
+else:
     print("\n[storage] Saving to Google Sheets...")
     try:
         # Single auth for all store calls
@@ -4523,28 +5342,53 @@ if is_valid_run_time() and not os.getenv("SKIP_STORAGE"):
                     combined_finish_df['player_name'].astype(str).str.lower().str.strip().map(_arch_map).fillna("")
                 )
 
-        # 1. Tournament matchups (only if matchup data exists)
-        if 'combined_df' in dir() and not combined_df.empty:
-            store_tournament_matchups(
-                combined_df, tourney, _event_id,
-                dg_id_lookup=dg_id_lookup,
-                spreadsheet=spreadsheet,
-            )
+        _main_matchups_for_storage = (
+            combined_df
+            if 'combined_df' in dir() and not combined_df.empty
+            else None
+        )
+        _main_finish_for_storage = (
+            combined_finish_df
+            if 'combined_finish_df' in dir() and not combined_finish_df.empty
+            else None
+        )
+        _exchange_matchups_df = (
+            pd.DataFrame(_exchange_matchups_for_storage)
+            if _exchange_matchups_for_storage
+            else None
+        )
+        _exchange_finish_df = (
+            pd.DataFrame(_exchange_bets_for_storage)
+            if _exchange_bets_for_storage
+            else None
+        )
 
-        # 2. Finish position bets
-        if 'combined_finish_df' in dir() and not combined_finish_df.empty:
-            store_finish_positions(
-                combined_finish_df, tourney, _event_id,
-                dg_id_lookup=dg_id_lookup,
-                spreadsheet=spreadsheet,
+        _store_tournament_bet_frames(
+            matchup_frames=[_main_matchups_for_storage, _exchange_matchups_df],
+            finish_frames=[_main_finish_for_storage, _exchange_finish_df],
+            tourney_name=tourney,
+            event_id=_event_id,
+            dg_id_lookup=dg_id_lookup,
+            spreadsheet=spreadsheet,
+            store_matchups=store_tournament_matchups,
+            store_finishes=store_finish_positions,
+        )
+        if _exchange_matchups_for_storage:
+            print(
+                f"  [ok] Stored {len(_exchange_matchups_for_storage)} "
+                "exchange matchup bets"
+            )
+        if _exchange_bets_for_storage:
+            print(
+                f"  [ok] Stored {len(_exchange_bets_for_storage)} "
+                "exchange outright bets"
             )
 
         print("[storage] Done.")
     except Exception as e:
         print(f"[storage] FAILED: {e}")
         import traceback; traceback.print_exc()
-else:
-    print("[storage] Skipped — before Monday 3 PM EST cutoff.")
+        raise
 
 # Push dashboard data to Render
 try:
@@ -4562,14 +5406,12 @@ try:
 except Exception as e:
     print(f"  [dashboard push] Warning: {e}")
 
-# Publish compact sim fair probabilities to R2 for the golf odds board
-try:
-    import publish_sim_fairs
-    print(f"\n{'='*60}")
-    print("  Publishing sim fairs to R2 (odds board)...")
-    publish_sim_fairs.publish()
-    print(f"{'='*60}")
-except Exception as e:
-    print(f"  [publish_sim_fairs] Warning: {e}")
+# Publish compact sim fair probabilities to R2 for the golf odds board. Strict
+# mode requires both the git push and the pinned board-build dispatch; failures
+# propagate so the final pass cannot report success with a stale public board.
+print(f"\n{'='*60}")
+print("  Publishing sim fairs to R2 (odds board)...")
+_publish_sim_fairs_required()
+print(f"{'='*60}")
 
 print("\n[done] Sim complete.")
