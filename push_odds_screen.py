@@ -16,6 +16,7 @@ Env vars:
 """
 
 import json
+import hashlib
 import logging
 import os
 import sys
@@ -85,7 +86,13 @@ def _write_payload_files(payloads: dict, output_dir: Path) -> list[Path]:
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(data, handle, default=str, separators=(",", ":"))
+                json.dump(
+                    data,
+                    handle,
+                    default=str,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -103,6 +110,135 @@ def _write_payload_files(payloads: dict, output_dir: Path) -> list[Path]:
         written.append(target)
         logger.info(f"Wrote {target} ({target.stat().st_size} bytes)")
     return written
+
+
+def _json_bytes(data: dict) -> bytes:
+    return (
+        json.dumps(data, default=str, separators=(",", ":"), sort_keys=True)
+        + "\n"
+    ).encode("utf-8")
+
+
+def _build_atomic_payload_bundle(payloads: dict, generation: str | None = None):
+    """Build immutable odds-screen objects plus the pointer readers fetch first.
+
+    Market objects are never overwritten in place.  A failed upload leaves the
+    old root ``meta.json`` pointer untouched, so readers keep one complete prior
+    generation instead of combining new markets with stale metadata.
+    """
+    encoded = {name: _json_bytes(data) for name, data in sorted(payloads.items())}
+    content_digest = hashlib.sha256(
+        b"".join(name.encode("utf-8") + b"\0" + data for name, data in encoded.items())
+    ).hexdigest()
+    if generation is None:
+        raw_time = str((payloads.get("meta.json") or {}).get("last_updated") or "")
+        time_part = "".join(ch for ch in raw_time if ch.isdigit())[:14] or "unstamped"
+        generation = f"{time_part}-{content_digest[:16]}"
+    if not generation or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in generation):
+        raise ValueError("odds-screen generation must contain only letters, digits, '-' or '_'")
+
+    base = f"generations/{generation}"
+    file_bindings = {
+        name: {
+            "key": f"{base}/{name}",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+        }
+        for name, data in encoded.items()
+    }
+    meta = dict(payloads.get("meta.json") or {})
+    pointer = {
+        **meta,
+        "schema_version": "odds-screen-generation/v1",
+        "generation": generation,
+        "content_sha256": content_digest,
+        "files": file_bindings,
+    }
+    return {
+        "generation": generation,
+        "encoded": encoded,
+        "pointer": pointer,
+        "pointer_bytes": _json_bytes(pointer),
+    }
+
+
+def _write_atomic_payload_bundle(
+    payloads: dict, output_dir: Path, generation: str | None = None
+) -> list[Path]:
+    """Write versioned objects first and root meta.json publication pointer last."""
+    bundle = _build_atomic_payload_bundle(payloads, generation=generation)
+    generation_dir = Path(output_dir) / "generations" / bundle["generation"]
+    # Reuse the fsync + os.replace writer for each immutable generation object.
+    decoded = {
+        name: json.loads(data.decode("utf-8"))
+        for name, data in bundle["encoded"].items()
+    }
+    written = _write_payload_files(decoded, generation_dir)
+    written.extend(_write_payload_files({"meta.json": bundle["pointer"]}, output_dir))
+    return written
+
+
+def _atomic_upload_plan(output_dir: Path) -> list[tuple[str, Path]]:
+    """Verify and enumerate every pointer binding, with meta.json strictly last."""
+    output_dir = Path(output_dir)
+    pointer_path = output_dir / "meta.json"
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    if pointer.get("schema_version") != "odds-screen-generation/v1":
+        raise RuntimeError("odds-screen pointer schema is missing or invalid")
+    generation = str(pointer.get("generation") or "")
+    prefix = f"generations/{generation}/"
+    files = pointer.get("files") or {}
+    if not files:
+        raise RuntimeError("odds-screen pointer declares no generation files")
+    plan = []
+    declared_paths = set()
+    for name, binding in sorted(files.items()):
+        key = str(binding.get("key") or "")
+        if not key.startswith(prefix) or Path(key).name != name:
+            raise RuntimeError(f"unsafe odds-screen pointer binding: {name}")
+        path = output_dir / Path(key)
+        if not path.is_file():
+            raise RuntimeError(f"declared odds-screen generation file is missing: {key}")
+        data = path.read_bytes()
+        if len(data) != int(binding.get("size") or -1):
+            raise RuntimeError(f"odds-screen generation size mismatch: {key}")
+        if hashlib.sha256(data).hexdigest() != binding.get("sha256"):
+            raise RuntimeError(f"odds-screen generation hash mismatch: {key}")
+        declared_paths.add(path.resolve())
+        plan.append((key, path))
+    actual_paths = {
+        path.resolve()
+        for path in (output_dir / "generations" / generation).glob("*.json")
+    }
+    if actual_paths != declared_paths:
+        raise RuntimeError("odds-screen generation contains undeclared or omitted JSON files")
+    plan.append(("meta.json", pointer_path))
+    return plan
+
+
+def _upload_atomic_payload_bundle(client, payloads: dict, generation: str | None = None):
+    """Stage one complete R2 generation, then atomically advance root meta.json."""
+    bundle = _build_atomic_payload_bundle(payloads, generation=generation)
+    for name, data in bundle["encoded"].items():
+        key = f"generations/{bundle['generation']}/{name}"
+        client.put_object(
+            Bucket=R2_BUCKET,
+            Key=f"{R2_PREFIX}/{key}",
+            Body=data,
+            ContentType="application/json",
+        )
+        logger.info(f"Uploaded {key} ({len(data)} bytes)")
+    # Consumer-visible commit point. Never execute this if any staged write fails.
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=f"{R2_PREFIX}/meta.json",
+        Body=bundle["pointer_bytes"],
+        ContentType="application/json",
+    )
+    logger.info(
+        f"Published odds-screen generation {bundle['generation']} via meta.json"
+    )
+    return bundle["pointer"]
 
 
 def _fetch_scraped_guarded(market: str, *, round=None) -> "dict | None":
@@ -699,16 +835,16 @@ def main():
         return
 
     if args.output_dir:
-        _write_payload_files(payloads, args.output_dir)
-        logger.info(f"Done — wrote {len(payloads)} files for external publication")
+        written = _write_atomic_payload_bundle(payloads, args.output_dir)
+        logger.info(
+            f"Done — staged {len(written) - 1} immutable files and wrote meta.json last"
+        )
         return
 
     # Upload to R2
     client = _get_r2_client()
-    for key, data in payloads.items():
-        _upload_json(client, key, data)
-
-    logger.info(f"Done — uploaded {len(payloads)} files to R2")
+    pointer = _upload_atomic_payload_bundle(client, payloads)
+    logger.info(f"Done — published atomic generation {pointer['generation']}")
 
 
 if __name__ == "__main__":

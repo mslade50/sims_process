@@ -92,8 +92,9 @@ jobs:
         # repository_dispatch at golf_scraping from CI (without it the dispatch
         # silently no-ops and only laptop publishes trigger a board build).
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
-        # _tee_groups needs DataGolf for real tee-time threesomes; without it the
-        # 3-ball publish silently returns no groups.
+        # Strict R2-R4 publishing needs DataGolf to seal the current tee-group
+        # contract; a missing/incomplete response now fails instead of retaining
+        # or implying an older 3-ball artifact.
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         # publish_sim_fairs imports sim_inputs -> coeff_loader, which needs sheet
         # credentials; without this env it falls back to credentials.json (absent

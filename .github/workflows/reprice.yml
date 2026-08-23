@@ -79,14 +79,15 @@ jobs:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
         python push_odds_screen.py --output-dir "$RUNNER_TEMP/odds-screen"
-        for file in "$RUNNER_TEMP"/odds-screen/*.json; do
+        find "$RUNNER_TEMP/odds-screen" -type f -name '*.json' -print0 | while IFS= read -r -d '' file; do
           python -m json.tool "$file" >/dev/null
           test -s "$file"
         done
 
     # Wrangler uses the same scoped Cloudflare API token as the working CLV
-    # transport. Upload meta.json last so it remains the publication marker.
-    # Any exhausted retry fails the workflow and triggers the failure alert.
+    # transport. Every market lives under an immutable generation key. Root
+    # meta.json is the only consumer-visible pointer and is uploaded last; a
+    # partial retry therefore leaves readers on the prior complete generation.
     - name: Publish odds screen payloads to R2
       if: steps.window.outputs.skip != 'true' && inputs.dry_run != true
       env:
@@ -95,11 +96,12 @@ jobs:
       run: |
         set -euo pipefail
         upload() {
-          name="$1"
+          key="$1"
+          source="$2"
           for attempt in 1 2 3; do
             if npx --yes wrangler@4 r2 object put \
-              "golf-odds-data/odds_data/$name" \
-              --file "$RUNNER_TEMP/odds-screen/$name" \
+              "golf-odds-data/odds_data/$key" \
+              --file "$source" \
               --content-type application/json \
               --remote; then
               return 0
@@ -108,13 +110,14 @@ jobs:
               sleep $((attempt * 5))
             fi
           done
-          echo "Failed to publish $name after 3 attempts" >&2
+          echo "Failed to publish $key after 3 attempts" >&2
           return 1
         }
-        for name in round_matchups.json tournament_matchups.json score_lines.json outrights.json; do
-          upload "$name"
-        done
-        upload meta.json
+        python -c 'import os; from pathlib import Path; from push_odds_screen import _atomic_upload_plan; root=Path(os.environ["RUNNER_TEMP"])/"odds-screen"; print("\n".join(f"{key}\t{path}" for key,path in _atomic_upload_plan(root)))' \
+          > "$RUNNER_TEMP/odds-screen-upload-plan.tsv"
+        while IFS=$'\t' read -r key source; do
+          upload "$key" "$source"
+        done < "$RUNNER_TEMP/odds-screen-upload-plan.tsv"
     - name: Telegram on failure
       if: failure()
       env:

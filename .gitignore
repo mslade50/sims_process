@@ -189,6 +189,8 @@ cleanup_backup_*.tar.gz
 !deploy/
 !cloudflare_dashboard/
 !cloudflare_dashboard/**
+!odds_screen/
+!odds_screen/**
 
 # Rust sim-kernel crate (PyO3 extension); rust/.gitignore handles target/, *.pyd/.so, oracle .npy
 !rust/

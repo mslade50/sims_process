@@ -552,8 +552,17 @@ writing Sheet config, or firing routine Telegram alerts. Before publishing, it
 requires fresh and aligned round PMFs, rank probabilities, final-score,
 made-cut, and R2/R3 standings tapes. The strict publisher atomically ships live
 outrights, tournament/round matchup fairs, round score PMFs, and paired portfolio
-tapes. It also requires all three full-resolution release assets (tournament,
-made-cut, and live matchup) before advancing the git fairs, then requests a
+tapes. Immediately before both transports it re-hashes the exact files bound by
+`tournament_live_<tourney>_health.json`; a changed finish CSV, final-score tape,
+name sidecar, or made-cut mask aborts. Full-resolution release tapes are uploaded
+under immutable, hash-versioned names, and `sim_release_manifest.json` binds those
+objects and every git artifact to the same approved simulation. The git commit is
+the activation pointer, so a partial release upload is invisible to consumers.
+Strict R2-R4 publishing also requires a conclusive DataGolf tee-group fetch (three
+bounded attempts) with tee times for 100% of the active simulation field (cut and
+withdrawn players are already excluded from that cache): it publishes either current 3-ball fairs or a current
+event/round `no_groups_offered` contract and empty parquet, never a prior-round
+file by omission. It then requests a
 pinned model-only board refresh that preserves frozen book odds and suppresses
 the bet-alert cascade. A stale R0 Sheet pointer,
 incomplete artifact family, failed push, or failed board dispatch fails the job
@@ -585,6 +594,13 @@ rebuilds the remaining-tournament/finish tape, binds both the score PMF and live
 tape to the exact derived health manifest, and only then promotes the shifted
 round cache. Missing inputs, a stale parent tape, or any partial artifact family
 fails closed with a full-simulation requirement.
+
+**Odds-screen R2 publication:** `push_odds_screen.py` writes each refresh beneath
+`odds_data/generations/<generation>/` with byte hashes. The reprice workflow
+uploads every immutable object first and updates root `odds_data/meta.json` last.
+The odds-screen Worker keeps the legacy fixed market URLs but resolves them through
+that pointer and verifies size/SHA-256 before returning data. Missing or corrupt
+activated objects return 503; readers never fall back to an overwritten fixed key.
 
 ---
 

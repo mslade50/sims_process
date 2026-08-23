@@ -1,0 +1,8 @@
+name = "golf-odds-screen"
+main = "worker.js"
+compatibility_date = "2026-08-23"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "ODDS_DATA"
+bucket_name = "golf-odds-data"

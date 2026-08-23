@@ -410,7 +410,7 @@ _SIM_FAIRS_CACHE = None
 _SIM_FAIRS_META = {}
 
 
-def _fetch_sim_fairs_github():
+def _fetch_published_json_github(filename):
     repo = os.getenv("SIMS_PROCESS_REPO", "mslade50/sims_process")
     branch = os.getenv("SIMS_PROCESS_BRANCH", "main")
     token = os.getenv("SIMS_PROCESS_PAT") or os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
@@ -419,22 +419,30 @@ def _fetch_sim_fairs_github():
         headers = {"Accept": "application/vnd.github.raw+json", "User-Agent": _BROWSER_UA}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        url = f"https://api.github.com/repos/{repo}/contents/sim_fairs.json?ref={branch}"
+        url = f"https://api.github.com/repos/{repo}/contents/{filename}?ref={branch}"
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"  [probs] GitHub sim_fairs fetch failed ({e})")
+        print(f"  [probs] GitHub {filename} fetch failed ({e})")
         return None
 
 
-def _read_sim_fairs_local():
-    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_fairs.json")
+def _read_published_json_local(filename):
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     try:
         with open(local, encoding="utf-8") as f:
             return _json.load(f)
     except Exception:
         return None
+
+
+def _fetch_sim_fairs_github():
+    return _fetch_published_json_github("sim_fairs.json")
+
+
+def _read_sim_fairs_local():
+    return _read_published_json_local("sim_fairs.json")
 
 
 def _fetch_sim_fairs(force=False):
@@ -471,7 +479,15 @@ def _fetch_sim_fairs(force=False):
     _SIM_FAIRS_META = {"source": source, "generated_at": (payload or {}).get("generated_at"),
                        "sim_run_at": (payload or {}).get("sim_run_at"),
                        "round": (payload or {}).get("round"),
-                       "tourney": (payload or {}).get("tourney")}
+                       "tourney": (payload or {}).get("tourney"),
+                       "event_id": (payload or {}).get("event_id"),
+                       "release_generation": (payload or {}).get("release_generation"),
+                       "simulation_manifest_sha256": (payload or {}).get(
+                           "simulation_manifest_sha256"
+                       ),
+                       "live_tournament_manifest_sha256": (payload or {}).get(
+                           "live_tournament_manifest_sha256"
+                       )}
     return payload
 
 
@@ -526,6 +542,67 @@ _MATCHUP_TAPE_CACHE = os.path.join("permanent_data", "matchup_tape_cache.parquet
 _MATCHUP_TAPE_CACHE_META = os.path.join("permanent_data", "matchup_tape_cache_meta.json")
 
 
+def _sealed_manifest_id(payload):
+    unsigned = {key: value for key, value in (payload or {}).items()
+                if key != "manifest_sha256"}
+    raw = _json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _load_release_generation_manifest():
+    """Resolve the release generation bound to the already-selected sim fairs.
+
+    GitHub release assets are staged before the atomic git commit.  The maker must
+    therefore learn an asset name from that commit's sealed manifest, never by
+    selecting the newest/fixed release name independently.
+    """
+    generation = _SIM_FAIRS_META.get("release_generation")
+    if not generation:
+        return None  # legacy/ordinary publish; caller may use the fixed asset
+    source = _SIM_FAIRS_META.get("source")
+    readers = (
+        [_fetch_published_json_github]
+        if source == "github"
+        else [_read_published_json_local]
+        if source == "local"
+        else [_fetch_published_json_github, _read_published_json_local]
+    )
+    manifest = None
+    for reader in readers:
+        candidate = reader("sim_release_manifest.json")
+        if candidate and candidate.get("generation") == generation:
+            manifest = candidate
+            break
+    if not manifest:
+        print(f"    [matchups] release manifest for generation {generation} missing")
+        return None
+    if manifest.get("manifest_sha256") != _sealed_manifest_id(manifest):
+        print("    [matchups] release generation manifest has an invalid content hash")
+        return None
+    comparisons = {
+        "tourney": _SIM_FAIRS_META.get("tourney"),
+        "event_id": _SIM_FAIRS_META.get("event_id"),
+        "round": _SIM_FAIRS_META.get("round"),
+        "simulation_manifest_sha256": _SIM_FAIRS_META.get(
+            "simulation_manifest_sha256"
+        ),
+        "live_tournament_manifest_sha256": _SIM_FAIRS_META.get(
+            "live_tournament_manifest_sha256"
+        ),
+    }
+    for key, expected in comparisons.items():
+        if expected is not None and str(manifest.get(key)) != str(expected):
+            print(
+                f"    [matchups] release manifest {key}={manifest.get(key)!r} "
+                f"does not match sim fairs {expected!r}"
+            )
+            return None
+    return manifest
+
+
 def _load_matchup_tape_file(path, want_tourney):
     """Parse a matchup-tape parquet -> (scores (players, draws), names, meta dict).
     Fail-closed on tourney mismatch or malformed shape: wrong-event or wrong-name
@@ -565,13 +642,32 @@ def _fetch_matchup_tape_release():
         r = requests.get(f"https://api.github.com/repos/{repo}/releases/tags/sim-data",
                          headers=H, timeout=15)
         r.raise_for_status()
+        release_manifest = _load_release_generation_manifest()
+        generation = _SIM_FAIRS_META.get("release_generation")
+        if generation and release_manifest is None:
+            print("    [matchups] strict release generation is not consumable — skipping")
+            return None, None
+        binding = (
+            ((release_manifest or {}).get("release_assets") or {}).get(
+                "matchup_scores_live"
+            )
+            if release_manifest
+            else None
+        )
+        if generation and not binding:
+            print("    [matchups] strict release manifest has no matchup tape binding")
+            return None, None
+        asset_name = (binding or {}).get("name") or _MATCHUP_TAPE_ASSET
         asset = next((a for a in r.json().get("assets", [])
-                      if a.get("name") == _MATCHUP_TAPE_ASSET), None)
+                      if a.get("name") == asset_name), None)
         if asset is None:
-            print(f"    [matchups] no {_MATCHUP_TAPE_ASSET} on the sim-data release "
+            print(f"    [matchups] no {asset_name} on the sim-data release "
                   f"— skipping matchups")
             return None, None
-        cache_key = f"{asset.get('id')}:{asset.get('updated_at')}"
+        cache_key = (
+            f"{asset.get('id')}:{asset.get('updated_at')}:"
+            f"{(binding or {}).get('sha256') or 'legacy'}"
+        )
         try:
             with open(_MATCHUP_TAPE_CACHE_META, encoding="utf-8") as f:
                 cached_key = _json.load(f).get("key")
@@ -582,18 +678,53 @@ def _fetch_matchup_tape_release():
                               headers={**H, "Accept": "application/octet-stream"},
                               timeout=300)
             dr.raise_for_status()
+            if binding:
+                actual_hash = hashlib.sha256(dr.content).hexdigest()
+                if actual_hash != binding.get("sha256"):
+                    raise RuntimeError(
+                        "downloaded matchup tape hash does not match release manifest"
+                    )
+                if int(binding.get("size") or -1) != len(dr.content):
+                    raise RuntimeError(
+                        "downloaded matchup tape size does not match release manifest"
+                    )
             os.makedirs(os.path.dirname(_MATCHUP_TAPE_CACHE), exist_ok=True)
             fd, tmp = _tempfile.mkstemp(dir=os.path.dirname(_MATCHUP_TAPE_CACHE))
             with os.fdopen(fd, "wb") as f:
                 f.write(dr.content)
             os.replace(tmp, _MATCHUP_TAPE_CACHE)
             with open(_MATCHUP_TAPE_CACHE_META, "w", encoding="utf-8") as f:
-                _json.dump({"key": cache_key}, f)
+                _json.dump(
+                    {
+                        "key": cache_key,
+                        "generation": generation,
+                        "sha256": (binding or {}).get("sha256"),
+                    },
+                    f,
+                )
             print(f"    [matchups] downloaded matchup tape "
                   f"({len(dr.content) // 1_000_000}MB, updated {asset.get('updated_at')})")
         scores, names, md = _load_matchup_tape_file(_MATCHUP_TAPE_CACHE, tourney)
         if scores is None:
             return None, None
+        if binding:
+            with open(_MATCHUP_TAPE_CACHE, "rb") as handle:
+                cached_hash = hashlib.sha256(handle.read()).hexdigest()
+            if cached_hash != binding.get("sha256"):
+                print("    [matchups] cached release tape hash changed — skipping")
+                return None, None
+            for meta_key, expected in (
+                ("simulation_manifest_sha256", release_manifest.get(
+                    "simulation_manifest_sha256")),
+                ("live_tournament_manifest_sha256", release_manifest.get(
+                    "live_tournament_manifest_sha256")),
+            ):
+                if str(md.get(meta_key) or "") != str(expected or ""):
+                    print(
+                        f"    [matchups] release tape {meta_key} does not match "
+                        "the activated generation — skipping"
+                    )
+                    return None, None
         tape_ts = maker_guard.parse_fairs_ts(md.get("sim_run_at"))
         fairs_ts = maker_guard.parse_fairs_ts(_SIM_FAIRS_META.get("sim_run_at"))
         if tape_ts is None or (fairs_ts and tape_ts < fairs_ts - 12 * 3600):

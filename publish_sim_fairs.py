@@ -26,6 +26,7 @@ Hook: new_sim.py calls publish_sim_fairs.publish() at the end of a run
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -45,11 +46,16 @@ from score_reprice import FRACTIONAL_SCORE_REPRICE_METHOD
 from sim_health_gate import (
     SimulationHealthError,
     collect_overlay_provenance,
+    file_sha256,
+    names_sha256,
     require_bound_artifact,
     require_exact_simulation_source,
     require_h2h_probability_table,
+    require_live_tournament_alignment,
     require_round_score_probability_table,
     require_simulation_healthy,
+    seal_manifest,
+    utc_stamp as health_utc_stamp,
     write_bound_artifact_manifest,
 )
 
@@ -78,6 +84,8 @@ FULL_TAPE_ASSET = "tournament_samples_full.parquet"
 MATCHUP_TAPE_ASSET = "matchup_scores_live.parquet"
 MATCHUP_TAPE_DRAWS = 25000  # H2H prob SE ~0.3pp at 25k draws vs the maker's 5pp gate
 MADE_CUT_ASSET = "tournament_made_cut_full.parquet"
+STRICT_RELEASE_MANIFEST = PROJECT_ROOT / "sim_release_manifest.json"
+STRICT_RELEASE_SCHEMA = "complete-live-package/v1"
 
 
 def sync_r1_prediction_artifact(source=None, destination=None, payload=None):
@@ -929,7 +937,14 @@ def _upload_full_tape_release(
         return False
 
 
-def _upload_release_asset(asset_name: str, data: bytes, token: str) -> None:
+def _upload_release_asset(
+    asset_name: str,
+    data: bytes,
+    token: str,
+    *,
+    immutable: bool = False,
+    _conflict_rechecks: int = 3,
+) -> None:
     """Replace one asset on this repo's `sim-data` release (created if absent).
     Delete-then-upload — asset names must be unique on a release."""
     import requests
@@ -945,9 +960,48 @@ def _upload_release_asset(asset_name: str, data: bytes, token: str) -> None:
     rel = r.json()
     for a in rel.get("assets", []):
         if a.get("name") == asset_name:
-            requests.delete(f"{api}/repos/{GH_REPO}/releases/assets/{a['id']}", headers=H, timeout=30)
+            if immutable:
+                if int(a.get("size") or -1) != len(data):
+                    raise RuntimeError(
+                        f"immutable release asset {asset_name} already exists with "
+                        "different size"
+                    )
+                existing = requests.get(
+                    a["url"],
+                    headers={**H, "Accept": "application/octet-stream"},
+                    timeout=600,
+                )
+                existing.raise_for_status()
+                if hashlib.sha256(existing.content).hexdigest() != hashlib.sha256(data).hexdigest():
+                    raise RuntimeError(
+                        f"immutable release asset {asset_name} already exists with "
+                        "different content"
+                    )
+                logger.info(f"immutable release asset already staged: {asset_name}")
+                return
+            deleted = requests.delete(
+                f"{api}/repos/{GH_REPO}/releases/assets/{a['id']}",
+                headers=H,
+                timeout=30,
+            )
+            deleted.raise_for_status()
     up = f"https://uploads.github.com/repos/{GH_REPO}/releases/{rel['id']}/assets?name={asset_name}"
     ur = requests.post(up, headers={**H, "Content-Type": "application/octet-stream"}, data=data, timeout=600)
+    if immutable and ur.status_code == 422:
+        # Concurrent/idempotent retry: another invocation may have won the upload
+        # after our release metadata GET. Re-enter the verify-only path; it never
+        # deletes a version-addressed object.
+        if _conflict_rechecks <= 0:
+            ur.raise_for_status()
+        import time
+        time.sleep(1)
+        return _upload_release_asset(
+            asset_name,
+            data,
+            token,
+            immutable=True,
+            _conflict_rechecks=_conflict_rechecks - 1,
+        )
     ur.raise_for_status()
 
 
@@ -995,6 +1049,138 @@ def _build_live_matchup_tape(tourney: str, event_id, repl: dict, max_draws=MATCH
     return tbl
 
 
+def _parquet_bytes(table) -> bytes:
+    """Serialize an Arrow table once so hashes and uploaded bytes cannot diverge."""
+    import io
+    import pyarrow.parquet as pq
+
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer)
+    return buffer.getvalue()
+
+
+def _downsample_arrow_draws(table, max_draws: int):
+    """Fixed-stride downsample of a player-row Arrow tape, preserving metadata.
+
+    The index column is not guaranteed to have a stable name across pyarrow
+    versions, so retain every non-draw column and select draw columns by their
+    numeric names.  Both finish and made-cut git fallbacks are derived from the
+    exact full-resolution tables uploaded by the strict publisher.
+    """
+    import numpy as np
+
+    draw_columns = [name for name in table.column_names if str(name).isdigit()]
+    if len(draw_columns) <= max_draws:
+        return table
+    positions = np.linspace(0, len(draw_columns) - 1, max_draws).round().astype(int)
+    selected = {draw_columns[int(index)] for index in positions}
+    keep = [name for name in table.column_names if name not in draw_columns or name in selected]
+    return table.select(keep)
+
+
+def _build_strict_release_package(payload: dict, repl: dict, live_health: dict) -> dict:
+    """Build one immutable, versioned release family from the bound live tape.
+
+    The old fixed release names were replaced one at a time.  A failure between
+    those replacements exposed a finish tape from one run beside a made-cut mask
+    from another.  Strict publishing now serializes every asset first, names them
+    by the approved simulation generation, and exposes them only when the matching
+    git manifest is committed.
+    """
+    simulation_manifest = live_health.get("simulation_manifest") or {}
+    simulation_id = str(simulation_manifest.get("manifest_sha256") or "")
+    live_health_id = str(live_health.get("manifest_sha256") or "")
+    if not simulation_id or not live_health_id:
+        raise SimulationHealthError("strict release package has no sealed simulation provenance")
+
+    source_generated_at = (simulation_manifest.get("source") or {}).get("generated_at")
+    package_generated_at = live_health.get("generated_at") or source_generated_at
+    if not package_generated_at:
+        raise SimulationHealthError(
+            "strict release package has no stable source generation timestamp"
+        )
+    event_id = payload.get("event_id")
+    tourney = payload["tourney"]
+    full_finish = _build_tournament_samples(
+        tourney,
+        event_id,
+        source_generated_at,
+        repl,
+        max_draws=None,
+        use_live=True,
+    )
+    full_mask = _build_made_cut_mask(
+        tourney, event_id, repl, max_draws=None, use_live=True
+    )
+    matchup = _build_live_matchup_tape(tourney, event_id, repl)
+    if full_finish is None or full_mask is None or matchup is None:
+        raise RuntimeError("strict release package could not build every live tape")
+
+    provenance = {
+        b"simulation_manifest_sha256": simulation_id.encode(),
+        b"live_tournament_manifest_sha256": live_health_id.encode(),
+        b"sim_run_at": str(source_generated_at or payload.get("sim_run_at") or "").encode(),
+    }
+    full_finish = full_finish.replace_schema_metadata(
+        {**(full_finish.schema.metadata or {}), **provenance}
+    )
+    full_mask = full_mask.replace_schema_metadata(
+        {**(full_mask.schema.metadata or {}), **provenance}
+    )
+    matchup = matchup.replace_schema_metadata(
+        {**(matchup.schema.metadata or {}), **provenance}
+    )
+
+    if full_finish.num_rows != full_mask.num_rows:
+        raise RuntimeError("strict release finish and made-cut player axes disagree")
+    finish_draws = len([c for c in full_finish.column_names if str(c).isdigit()])
+    mask_draws = len([c for c in full_mask.column_names if str(c).isdigit()])
+    if finish_draws <= 0 or finish_draws != mask_draws:
+        raise RuntimeError("strict release finish and made-cut draw axes disagree")
+
+    generation = (
+        f"event-{event_id}-r{int(payload.get('round') or 0)}-"
+        f"{simulation_id[:12]}-{live_health_id[:12]}"
+    )
+    tables = {
+        "tournament_samples_full": full_finish,
+        "tournament_made_cut_full": full_mask,
+        "matchup_scores_live": matchup,
+    }
+    stems = {
+        "tournament_samples_full": "tournament_samples_full",
+        "tournament_made_cut_full": "tournament_made_cut_full",
+        "matchup_scores_live": "matchup_scores_live",
+    }
+    assets = {}
+    for label, table in tables.items():
+        data = _parquet_bytes(table)
+        digest = hashlib.sha256(data).hexdigest()
+        name = f"{stems[label]}.{generation}.{digest[:16]}.parquet"
+        assets[label] = {
+            "name": name,
+            "sha256": digest,
+            "size": len(data),
+            "data": data,
+        }
+
+    return {
+        "schema_version": STRICT_RELEASE_SCHEMA,
+        "generation": generation,
+        "event_id": str(event_id),
+        "tourney": str(tourney),
+        "round": int(payload.get("round") or 0),
+        # Source timestamp, not publish wall-clock: an idempotent retry of the
+        # same bound tape yields the same package identity and sealed manifest.
+        "generated_at": str(package_generated_at),
+        "simulation_manifest_sha256": simulation_id,
+        "live_tournament_manifest_sha256": live_health_id,
+        "assets": assets,
+        "git_tournament_samples": _downsample_arrow_draws(full_finish, TOURN_SAMPLE_N),
+        "git_made_cut": _downsample_arrow_draws(full_mask, TOURN_SAMPLE_N),
+    }
+
+
 def _upload_matchup_tape_release(tourney, event_id, repl) -> bool:
     """Upload the live matchup tape as a release asset so the maker can price
     H2H matchups on machines that never ran round_sim (final_scores_live is
@@ -1024,7 +1210,13 @@ def _upload_matchup_tape_release(tourney, event_id, repl) -> bool:
         return False
 
 
-def _upload_release_tape_family(payload: dict, repl: dict, *, strict: bool = False) -> bool:
+def _upload_release_tape_family(
+    payload: dict,
+    repl: dict,
+    *,
+    strict: bool = False,
+    prepared: dict | None = None,
+) -> bool:
     """Upload the three full-resolution live release assets as one contract.
 
     GitHub Releases do not offer a multi-asset transaction, so consumers still
@@ -1039,6 +1231,34 @@ def _upload_release_tape_family(payload: dict, repl: dict, *, strict: bool = Fal
     event_id = payload.get("event_id")
     use_live = payload.get("outrights_source") == "live"
     failures = []
+
+    # A prepared strict package is immutable and version-addressed. Uploading
+    # these objects is only staging: no consumer knows the generation until the
+    # matching sim_release_manifest.json lands in the atomic git commit below.
+    if strict and prepared is not None:
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if not token:
+            raise RuntimeError("release tape family incomplete: GH_TOKEN is missing")
+        expected = {
+            "tournament_samples_full",
+            "tournament_made_cut_full",
+            "matchup_scores_live",
+        }
+        if set(prepared.get("assets") or {}) != expected:
+            raise RuntimeError("release tape family incomplete: versioned asset set is incomplete")
+        for label, asset in prepared.get("assets", {}).items():
+            data = asset.get("data")
+            if not isinstance(data, bytes):
+                raise RuntimeError(f"release tape family incomplete: {label} has no bytes")
+            if hashlib.sha256(data).hexdigest() != asset.get("sha256"):
+                raise RuntimeError(f"release tape family incomplete: {label} hash changed")
+            if len(data) != int(asset.get("size") or -1):
+                raise RuntimeError(f"release tape family incomplete: {label} size changed")
+            _upload_release_asset(asset["name"], data, token, immutable=True)
+            logger.info(
+                f"strict release staged {asset['name']} ({len(data) // 1_000_000}MB)"
+            )
+        return True
 
     def _abort_strict():
         if strict and failures:
@@ -1111,6 +1331,251 @@ def _cache_meta(tourney: str, rnd) -> dict:
             return json.load(fh)
     except Exception:
         return {}
+
+
+def _strict_live_health_files(tourney: str) -> dict[str, Path]:
+    return {
+        "final_scores": PROJECT_ROOT / f"final_scores_live_{tourney}.npy",
+        "player_names": PROJECT_ROOT / f"player_names_live_{tourney}.json",
+        "made_cut": PROJECT_ROOT / f"made_cut_live_{tourney}.npy",
+        "finish_probs": PROJECT_ROOT / "simulated_probs_live.csv",
+        "finish_probs_event": PROJECT_ROOT / f"top_finish_probs_live_{tourney}.csv",
+    }
+
+
+def _load_and_validate_strict_live_health(payload: dict) -> tuple[dict, dict[str, Path]]:
+    """Re-hash the exact live outright family used by strict nightly publish.
+
+    This deliberately runs more than once: once before release bytes are built,
+    once immediately before versioned release upload, and once immediately before
+    the git generation pointer advances. A file touched by a concurrent process in
+    any of those windows fails the publish instead of creating a mixed generation.
+    """
+    tourney = str(payload.get("tourney") or "")
+    sim_round = int(payload.get("round") or 0)
+    event_id = payload.get("event_id")
+    manifest_path = PROJECT_ROOT / f"tournament_live_{tourney}_health.json"
+    if not manifest_path.is_file():
+        raise SimulationHealthError(
+            f"complete-live publish has no {manifest_path.name}"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SimulationHealthError(
+            f"complete-live health manifest is unreadable: {exc}"
+        ) from exc
+    source = manifest.get("simulation_manifest") or {}
+    model = source.get("model") or {}
+    overlay = collect_overlay_provenance(
+        tourney=tourney,
+        event_id=event_id,
+        dists_path=(model.get("shot_dispersion_overlay") or {}).get(
+            "distribution_file"
+        ),
+        selected_model=model.get("selected", "category_first"),
+    )
+    files = _strict_live_health_files(tourney)
+    require_bound_artifact(
+        manifest,
+        kind="live_tournament_tape",
+        files=files,
+        tourney=tourney,
+        event_id=event_id,
+        sim_round=sim_round,
+        configured_expected_avg=(source.get("scoring") or {}).get("expected_avg"),
+        current_overlay=overlay,
+    )
+
+    cache_health = (_cache_meta(tourney, sim_round).get("health_manifest") or {})
+    if cache_health.get("manifest_sha256") != source.get("manifest_sha256"):
+        raise SimulationHealthError(
+            "complete-live tournament tape and round cache come from different simulations"
+        )
+
+    finish = pd.read_csv(files["finish_probs"])
+    finish_event = pd.read_csv(files["finish_probs_event"])
+    try:
+        pd.testing.assert_frame_equal(
+            finish.reset_index(drop=True),
+            finish_event.reset_index(drop=True),
+            check_dtype=False,
+        )
+    except AssertionError as exc:
+        raise SimulationHealthError(
+            "complete-live finish probability files disagree"
+        ) from exc
+    require_live_tournament_alignment(
+        final_scores_path=files["final_scores"],
+        player_names_path=files["player_names"],
+        made_cut_path=files["made_cut"],
+        finish_probs=finish,
+        artifact_manifest=manifest,
+    )
+    return manifest, files
+
+
+def _write_strict_release_manifest(
+    prepared: dict,
+    *,
+    files: list[str],
+) -> dict:
+    """Seal release assets and exact git artifacts into one generation pointer."""
+    git_files = {}
+    for relative in sorted(dict.fromkeys(files)):
+        path = PROJECT_ROOT / relative
+        if not path.is_file():
+            raise RuntimeError(f"strict publish package file is missing: {relative}")
+        git_files[relative] = {
+            "sha256": file_sha256(path),
+            "size": path.stat().st_size,
+        }
+    assets = {
+        label: {key: value for key, value in asset.items() if key != "data"}
+        for label, asset in sorted((prepared.get("assets") or {}).items())
+    }
+    manifest = seal_manifest(
+        {
+            "schema_version": prepared["schema_version"],
+            "generation": prepared["generation"],
+            "generated_at": prepared["generated_at"],
+            "event_id": prepared["event_id"],
+            "tourney": prepared["tourney"],
+            "round": prepared["round"],
+            "simulation_manifest_sha256": prepared[
+                "simulation_manifest_sha256"
+            ],
+            "live_tournament_manifest_sha256": prepared[
+                "live_tournament_manifest_sha256"
+            ],
+            "release_assets": assets,
+            "git_files": git_files,
+        }
+    )
+    STRICT_RELEASE_MANIFEST.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    return manifest
+
+
+def _require_strict_release_manifest_current(
+    manifest: dict,
+    prepared: dict,
+) -> None:
+    """Fail if any staged release byte or git artifact changed after sealing."""
+    if seal_manifest(manifest).get("manifest_sha256") != manifest.get(
+        "manifest_sha256"
+    ):
+        raise RuntimeError("strict release manifest content hash is invalid")
+    for key in (
+        "schema_version",
+        "generation",
+        "event_id",
+        "tourney",
+        "round",
+        "generated_at",
+        "simulation_manifest_sha256",
+        "live_tournament_manifest_sha256",
+    ):
+        if str(manifest.get(key) or "") != str(prepared.get(key) or ""):
+            raise RuntimeError(f"strict release manifest core binding changed: {key}")
+    expected_assets = {
+        label: {key: asset.get(key) for key in ("name", "sha256", "size")}
+        for label, asset in sorted((prepared.get("assets") or {}).items())
+    }
+    if (manifest.get("release_assets") or {}) != expected_assets:
+        raise RuntimeError("strict release manifest asset bindings changed")
+    for label, asset in (prepared.get("assets") or {}).items():
+        if hashlib.sha256(asset["data"]).hexdigest() != asset.get("sha256"):
+            raise RuntimeError(f"strict release asset changed after sealing: {label}")
+        if len(asset["data"]) != int(asset.get("size") or -1):
+            raise RuntimeError(f"strict release asset size changed after sealing: {label}")
+    for relative, binding in (manifest.get("git_files") or {}).items():
+        path = PROJECT_ROOT / relative
+        if not path.is_file() or file_sha256(path) != binding.get("sha256"):
+            raise RuntimeError(f"strict git package changed after sealing: {relative}")
+
+
+def _require_strict_git_blob_snapshot(
+    manifest: dict,
+    files: list[str] | tuple[str, ...],
+    blob_bytes: dict[str, bytes],
+) -> None:
+    """Verify the exact blobs staged for commit, closing the disk/hash TOCTOU gap."""
+    pointer = STRICT_RELEASE_MANIFEST.relative_to(PROJECT_ROOT).as_posix()
+    expected_files = set((manifest.get("git_files") or {}).keys()) | {pointer}
+    if set(files) != expected_files or set(blob_bytes) != expected_files:
+        raise RuntimeError("strict git blob snapshot is incomplete or has carry-over files")
+    for relative, binding in (manifest.get("git_files") or {}).items():
+        data = blob_bytes[relative]
+        if len(data) != int(binding.get("size") or -1):
+            raise RuntimeError(f"strict staged git blob size mismatch: {relative}")
+        if hashlib.sha256(data).hexdigest() != binding.get("sha256"):
+            raise RuntimeError(f"strict staged git blob hash mismatch: {relative}")
+    try:
+        staged_pointer = json.loads(blob_bytes[pointer].decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError("strict staged release pointer is unreadable") from exc
+    if staged_pointer.get("manifest_sha256") != manifest.get("manifest_sha256"):
+        raise RuntimeError("strict staged release pointer generation changed")
+    if seal_manifest(staged_pointer).get("manifest_sha256") != staged_pointer.get(
+        "manifest_sha256"
+    ):
+        raise RuntimeError("strict staged release pointer content hash is invalid")
+
+
+def _require_strict_git_package_from_disk() -> dict:
+    """Re-verify the sealed git half inside every push/rebuild attempt."""
+    if not STRICT_RELEASE_MANIFEST.is_file():
+        raise RuntimeError("strict git package has no sim_release_manifest.json")
+    manifest = json.loads(STRICT_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+    if seal_manifest(manifest).get("manifest_sha256") != manifest.get(
+        "manifest_sha256"
+    ):
+        raise RuntimeError("strict release manifest content hash is invalid")
+    if manifest.get("schema_version") != STRICT_RELEASE_SCHEMA:
+        raise RuntimeError("strict release manifest schema is invalid")
+    for key in (
+        "generation",
+        "event_id",
+        "tourney",
+        "round",
+        "generated_at",
+        "simulation_manifest_sha256",
+        "live_tournament_manifest_sha256",
+    ):
+        if manifest.get(key) in (None, ""):
+            raise RuntimeError(f"strict release manifest is missing {key}")
+    expected_assets = {
+        "tournament_samples_full",
+        "tournament_made_cut_full",
+        "matchup_scores_live",
+    }
+    if set(manifest.get("release_assets") or {}) != expected_assets:
+        raise RuntimeError("strict release manifest asset set is incomplete")
+    for label, binding in (manifest.get("release_assets") or {}).items():
+        if (
+            not binding.get("name")
+            or not binding.get("sha256")
+            or int(binding.get("size") or 0) <= 0
+        ):
+            raise RuntimeError(f"strict release manifest binding is incomplete: {label}")
+    for relative, binding in (manifest.get("git_files") or {}).items():
+        path = PROJECT_ROOT / relative
+        if not path.is_file() or file_sha256(path) != binding.get("sha256"):
+            raise RuntimeError(f"strict git package changed after sealing: {relative}")
+    fairs = json.loads(LOCAL_OUT.read_text(encoding="utf-8"))
+    for key, manifest_key in (
+        ("release_generation", "generation"),
+        ("simulation_manifest_sha256", "simulation_manifest_sha256"),
+        (
+            "live_tournament_manifest_sha256",
+            "live_tournament_manifest_sha256",
+        ),
+    ):
+        if str(fairs.get(key) or "") != str(manifest.get(manifest_key) or ""):
+            raise RuntimeError(f"strict sim fairs do not bind release {key}")
+    return manifest
 
 
 def _sample_lookup(tourney: str, repl: dict) -> dict:
@@ -1280,13 +1745,39 @@ def write_round_h2h(tourney: str, rnd, repl: dict | None = None) -> list:
 DATAGOLF_BASE = "https://feeds.datagolf.com"
 
 
-def _tee_groups(rnd, repl, tour: str = "pga"):
-    """R{rnd} tee-time threesomes from DataGolf field-updates, as lists of normalized
-    player names. Groups are split by (course, start_hole, teetime) so a split-tee
-    start doesn't merge two groups. Only size-3 groups (3-balls) are returned —
-    twosomes are round matchups (round_h2h). [] if tee times aren't posted / no key."""
+def _event_id_token(value) -> str | None:
+    """Comparable event ID text across DG's int/string/occasionally-float JSON."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    try:
+        numeric = float(text)
+        if numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return text
+
+
+def _fetch_tee_group_contract(
+    rnd,
+    repl,
+    tour: str = "pga",
+    *,
+    event_id=None,
+    max_attempts: int = 3,
+    retry_delay_seconds: float = 1.0,
+):
+    """Fetch a conclusive current-round tee-group result with bounded retries.
+
+    An empty DataGolf field is not evidence that no 3-balls are offered.  It is a
+    source failure and must exhaust retries.  A non-empty current field with no
+    size-three tee groups is conclusive (normally R4 twosomes) and may be sealed as
+    an explicit ``no_groups_offered`` contract.
+    """
     import os
     import requests
+    import time
     from collections import defaultdict
     try:
         from dotenv import load_dotenv
@@ -1295,25 +1786,115 @@ def _tee_groups(rnd, repl, tour: str = "pga"):
         pass
     key = os.getenv("DATAGOLF_API_KEY")
     if not key:
-        logger.info("round_3ball: no DATAGOLF_API_KEY; skipping")
-        return []
+        raise RuntimeError("round_3ball: DATAGOLF_API_KEY is missing")
+    last_error = "unknown DataGolf failure"
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        try:
+            response = requests.get(
+                f"{DATAGOLF_BASE}/field-updates",
+                params={"tour": tour, "file_format": "json", "key": key},
+                timeout=20,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP {response.status_code}")
+            payload = response.json() or {}
+            response_event = payload.get("event_id")
+            if (
+                event_id is not None
+                and response_event is not None
+                and _event_id_token(response_event) != _event_id_token(event_id)
+            ):
+                raise RuntimeError(
+                    f"event_id {response_event} does not match {event_id}"
+                )
+            field = payload.get("field") or []
+            if not isinstance(field, list) or not field:
+                raise RuntimeError("DataGolf returned an empty field")
+            grouped = defaultdict(list)
+            tee_time_names = []
+            for player in field:
+                tee_time = next(
+                    (
+                        item
+                        for item in (player.get("teetimes") or [])
+                        if int(item.get("round_num") or -1) == int(rnd)
+                    ),
+                    None,
+                )
+                if not tee_time or not tee_time.get("teetime"):
+                    continue
+                normalised_name = _norm(player.get("player_name", ""), repl)
+                if normalised_name:
+                    tee_time_names.append(normalised_name)
+                grouped[
+                    (
+                        tee_time.get("course_num"),
+                        tee_time.get("start_hole"),
+                        tee_time.get("teetime"),
+                    )
+                ].append(normalised_name)
+            groups = sorted(
+                [sorted(group) for group in grouped.values() if len(group) == 3]
+            )
+            group_sizes = sorted(len(group) for group in grouped.values())
+            if not groups:
+                pair_groups = sum(size == 2 for size in group_sizes)
+                if not tee_time_names or pair_groups < 2 or any(
+                    size > 2 for size in group_sizes
+                ):
+                    raise RuntimeError(
+                        "current-round tee times are incomplete; cannot conclude "
+                        "that no 3-ball groups are offered"
+                    )
+            return {
+                "status": "groups" if groups else "no_groups_offered",
+                "groups": groups,
+                "field_players": len(field),
+                "tee_time_players": len(tee_time_names),
+                "tee_time_names": sorted(tee_time_names),
+                "group_sizes": group_sizes,
+                "field_names": sorted(
+                    _norm(player.get("player_name", ""), repl)
+                    for player in field
+                    if _norm(player.get("player_name", ""), repl)
+                ),
+                "round": int(rnd),
+                "event_id": _event_id_token(event_id),
+                "requested_event_id": _event_id_token(event_id),
+                "source_event_id": (
+                    _event_id_token(response_event)
+                    if response_event is not None
+                    else None
+                ),
+                "event_identity_basis": (
+                    "datagolf_event_id"
+                    if response_event is not None
+                    else "pending_field_overlap"
+                ),
+                "tour": str(tour),
+                "fetched_at": health_utc_stamp(),
+                "attempts": attempt,
+            }
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning(
+                f"round_3ball tee-time fetch attempt {attempt}/{max_attempts} "
+                f"failed: {exc}"
+            )
+            if attempt < max_attempts and retry_delay_seconds:
+                time.sleep(float(retry_delay_seconds) * attempt)
+    raise RuntimeError(
+        f"round_3ball DataGolf fetch failed after {max_attempts} attempts: {last_error}"
+    )
+
+
+def _tee_groups(rnd, repl, tour: str = "pga"):
+    """Compatibility wrapper for ordinary best-effort publishes."""
     try:
-        r = requests.get(f"{DATAGOLF_BASE}/field-updates",
-                         params={"tour": tour, "file_format": "json", "key": key}, timeout=20)
-        if r.status_code != 200:
-            return []
-        field = (r.json() or {}).get("field") or []
-    except Exception as e:
-        logger.warning(f"round_3ball tee-time fetch failed: {e!r}")
+        return _fetch_tee_group_contract(rnd, repl, tour=tour)["groups"]
+    except Exception as exc:
+        logger.warning(f"round_3ball tee-time fetch failed: {exc}")
         return []
-    groups = defaultdict(list)
-    for p in field:
-        tt = next((t for t in (p.get("teetimes") or []) if t.get("round_num") == rnd), None)
-        if not tt or not tt.get("teetime"):
-            continue
-        groups[(tt.get("course_num"), tt.get("start_hole"), tt.get("teetime"))].append(
-            _norm(p.get("player_name", ""), repl))
-    return [sorted(g) for g in groups.values() if len(g) == 3]
 
 
 def _nball_fairs(arrs):
@@ -1324,7 +1905,14 @@ def _nball_fairs(arrs):
     return (is_min / is_min.sum(axis=0)).mean(axis=1)   # one prob per row (player)
 
 
-def _build_round_3balls(tourney: str, rnd, repl: dict, tour: str = "pga"):
+def _build_round_3balls(
+    tourney: str,
+    rnd,
+    repl: dict,
+    tour: str = "pga",
+    *,
+    tee_contract: dict | None = None,
+):
     """Exact 3-ball fairs for the ACTUAL R{rnd} tee-time threesomes, from the FULL
     sim cache (all draws) — only the ~groups that exist, not every triple. Returns
     (df[player_a,b,c, p_a,b,c], meta) or (None, None)."""
@@ -1333,10 +1921,20 @@ def _build_round_3balls(tourney: str, rnd, repl: dict, tour: str = "pga"):
     f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if f is None:
         return None, None
-    groups = _tee_groups(rnd, repl, tour=tour)
+    groups = (
+        tee_contract.get("groups", [])
+        if tee_contract is not None
+        else _tee_groups(rnd, repl, tour=tour)
+    )
     if not groups:
         logger.info(f"round_3ball (R{rnd}): no threesomes (2-ball round or tee times unposted)")
-        return None, None
+        return None, {
+            "tourney": tourney,
+            "round": int(rnd),
+            "num_groups": 0,
+            "status": (tee_contract or {}).get("status", "unavailable"),
+            "tee_group_source": tee_contract or {},
+        }
     import numpy as np
     cache = pd.read_parquet(f)
     idx = {_norm(p, repl): p for p in cache.index}
@@ -1358,25 +1956,93 @@ def _build_round_3balls(tourney: str, rnd, repl: dict, tour: str = "pga"):
         return None, None
     df = pd.DataFrame(rows)
     meta = {"tourney": tourney, "round": rnd, "num_groups": len(rows),
-            "num_sims": int(cache.shape[1]), "skipped": skipped}
+            "num_sims": int(cache.shape[1]), "skipped": skipped,
+            "tee_group_source": tee_contract or {}}
     logger.info(f"round_3ball (R{rnd}): {len(rows)} threesomes from {cache.shape[1]} sims "
                 f"({skipped} skipped — player not in sim)")
     return df, meta
 
 
-def write_round_3ball(tourney: str, rnd, repl: dict | None = None,
-                      tour: str | None = None) -> list:
+def write_round_3ball(
+    tourney: str,
+    rnd,
+    repl: dict | None = None,
+    tour: str | None = None,
+    *,
+    require_contract: bool = False,
+    event_id=None,
+) -> list:
     """Build + write round_3ball_r{N}.parquet (+ _meta.json). Returns the repo-relative
-    file list (empty if no live threesomes / no sim cache for the round).
+    file list (ordinary mode is empty with no groups; strict R2-R4 writes a sealed
+    current no-groups marker and empty parquet instead).
     `tour` defaults to sim_inputs.tour so non-PGA weeks fetch the right field
     (a pga-hardcoded fetch made 3-ball parquets silently absent every euro week)."""
     repl = repl if repl is not None else _name_replacements()
     if tour is None:
         tour = getattr(_sim_inputs(), "tour", "pga") or "pga"
-    df, meta = _build_round_3balls(tourney, rnd, repl, tour=tour)
-    if df is None:
+    strict_round = require_contract and int(rnd or 0) in (2, 3, 4)
+    tee_contract = None
+    if strict_round:
+        tee_contract = _fetch_tee_group_contract(
+            rnd, repl, tour=tour, event_id=event_id, max_attempts=3
+        )
+        cache_path = _find_fresh(
+            f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet"
+        )
+        if cache_path is None:
+            raise RuntimeError("complete-live 3-ball contract has no current round cache")
+        cache_players = {
+            _norm(name, repl)
+            # An empty column projection still restores pandas' persisted index,
+            # avoiding a second read of the full 100k-draw cache merely to prove
+            # that DataGolf and the simulation describe the same field.
+            for name in pd.read_parquet(cache_path, columns=[]).index
+        }
+        source_players = set(tee_contract.get("field_names") or [])
+        overlap = len(cache_players & source_players) / max(1, len(cache_players))
+        missing_from_field = sorted(cache_players - source_players)
+        if missing_from_field:
+            raise RuntimeError(
+                "complete-live 3-ball DataGolf field does not match the simulation "
+                f"event ({overlap:.0%} player coverage; "
+                f"{len(missing_from_field)} active sim player(s) missing)"
+            )
+        tee_players = set(tee_contract.get("tee_time_names") or [])
+        tee_overlap = len(cache_players & tee_players) / max(1, len(cache_players))
+        missing_tee_times = sorted(cache_players - tee_players)
+        if missing_tee_times:
+            raise RuntimeError(
+                "complete-live 3-ball DataGolf tee times are incomplete for the "
+                f"simulation field ({tee_overlap:.0%} coverage; "
+                f"{len(missing_tee_times)} active sim player(s) missing). The cache "
+                "already excludes cut/withdrawn players, so partial coverage cannot "
+                "seal a group contract."
+            )
+        if tee_contract.get("event_identity_basis") == "pending_field_overlap":
+            tee_contract["event_identity_basis"] = "simulation_field_overlap"
+        tee_contract["event_identity_verified"] = True
+        tee_contract["simulation_field_overlap"] = round(overlap, 6)
+        tee_contract["simulation_tee_time_coverage"] = round(tee_overlap, 6)
+        tee_contract["field_player_set_sha256"] = names_sha256(source_players)
+    df, meta = _build_round_3balls(
+        tourney, rnd, repl, tour=tour, tee_contract=tee_contract
+    )
+    if df is None and not (
+        strict_round and (meta or {}).get("status") == "no_groups_offered"
+    ):
         return []
+    if df is None:
+        df = pd.DataFrame(
+            columns=["player_a", "player_b", "player_c", "p_a", "p_b", "p_c"]
+        )
+    if strict_round and int((meta or {}).get("skipped") or 0) > 0:
+        raise RuntimeError(
+            "complete-live 3-ball contract is incomplete: one or more DataGolf "
+            "groups are absent from the simulation field"
+        )
     meta["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    meta["event_id"] = str(event_id) if event_id is not None else None
+    meta["status"] = "groups" if not df.empty else "no_groups_offered"
     cache_f = _find_fresh(f"{tourney}/sim_cache_r{rnd}.parquet", f"sim_cache_r{rnd}.parquet")
     if cache_f is not None:
         meta["sim_run_at"] = _utc_stamp(cache_f.stat().st_mtime)
@@ -1385,6 +2051,24 @@ def write_round_3ball(tourney: str, rnd, repl: dict | None = None,
     df.to_parquet(PROJECT_ROOT / pq, index=False)
     with open(PROJECT_ROOT / mj, "w", encoding="utf-8") as f:
         json.dump(meta, f)
+    if strict_round:
+        cache_health = _cache_meta(tourney, rnd).get("health_manifest") or {}
+        contract = f"round_3ball_r{rnd}_contract.json"
+        write_bound_artifact_manifest(
+            PROJECT_ROOT / contract,
+            kind="published_round_3ball",
+            simulation_manifest=cache_health,
+            files={"threeball_parquet": PROJECT_ROOT / pq, "threeball_meta": PROJECT_ROOT / mj},
+            extra={
+                "status": meta["status"],
+                "event_id": str(event_id),
+                "round": int(rnd),
+                "num_groups": int(meta.get("num_groups") or 0),
+                "tee_group_source": tee_contract,
+            },
+        )
+        logger.info(f"Wrote {pq} + {mj} + {contract} ({meta['status']})")
+        return [pq, mj, contract]
     logger.info(f"Wrote {pq} + {mj}")
     return [pq, mj]
 
@@ -1604,7 +2288,13 @@ def _dispatch_board_build(sha: str | None = None) -> bool:
 
 
 def _git_push(
-    files=("sim_fairs.json",), *, require_dispatch: bool = False, _rebuilds: int = 1
+    files=("sim_fairs.json",),
+    *,
+    require_dispatch: bool = False,
+    allow_origin_carry: bool = True,
+    strict_live_payload: dict | None = None,
+    strict_live_manifest_id: str | None = None,
+    _rebuilds: int = 1,
 ) -> bool:
     """Publish the given repo-relative files to origin/main WITHOUT touching the
     local working tree, index, or branches. Builds one commit on top of origin/main
@@ -1643,6 +2333,33 @@ def _git_push(
             raise RuntimeError("sim_fairs publish: no origin/main")
         return False
 
+    strict_package_id = None
+    strict_package_manifest = None
+    if not allow_origin_carry:
+        missing = [fp for fp in files if not (PROJECT_ROOT / fp).is_file()]
+        if missing:
+            raise RuntimeError(
+                "strict sim publish package is missing: " + ", ".join(missing)
+            )
+        strict_package_manifest = _require_strict_git_package_from_disk()
+        strict_package_id = strict_package_manifest.get("manifest_sha256")
+
+    def _revalidate_strict_publication() -> None:
+        """Recheck mutable disk/live inputs at the last possible push boundary."""
+        if allow_origin_carry:
+            return
+        current_package = _require_strict_git_package_from_disk()
+        if current_package.get("manifest_sha256") != strict_package_id:
+            raise RuntimeError("strict release package changed while building git commit")
+        if strict_live_payload is not None:
+            current_health, _ = _load_and_validate_strict_live_health(
+                strict_live_payload
+            )
+            if current_health.get("manifest_sha256") != strict_live_manifest_id:
+                raise RuntimeError(
+                    "live tournament generation changed at git publication boundary"
+                )
+
     blobs = {}  # repo path -> blob, only for files that actually changed
     for fp in files:
         if not (PROJECT_ROOT / fp).exists():
@@ -1650,7 +2367,24 @@ def _git_push(
         blob = git("hash-object", "-w", fp).stdout.strip()
         if blob and git("rev-parse", f"{base}:{fp}").stdout.strip() != blob:
             blobs[fp] = blob
+    if strict_package_manifest is not None:
+        staged_bytes = {}
+        for fp in sorted(set(files)):
+            blob = blobs.get(fp) or git("rev-parse", f"{base}:{fp}").stdout.strip()
+            if not blob:
+                raise RuntimeError(f"strict publish could not resolve staged blob: {fp}")
+            raw = subprocess.run(
+                ["git", "-C", str(PROJECT_ROOT), "cat-file", "blob", blob],
+                capture_output=True,
+            )
+            if raw.returncode != 0:
+                raise RuntimeError(f"strict publish could not read staged blob: {fp}")
+            staged_bytes[fp] = raw.stdout
+        _require_strict_git_blob_snapshot(
+            strict_package_manifest, files, staged_bytes
+        )
     if not blobs:
+        _revalidate_strict_publication()
         logger.info("sim publish: nothing changed on origin/main")
         dispatched = _dispatch_board_build(sha=base)
         if require_dispatch and not dispatched:
@@ -1715,7 +2449,7 @@ def _git_push(
         # publish ship fresh round data without relabeling stale outright/H2H content
         # as output from that round run.
         # PUBLISH_ALLOW_SHRINK=1 forces a raw publish (no backfill; strips allowed).
-        if (origin_pay and local_pay
+        if (allow_origin_carry and origin_pay and local_pay
                 and origin_pay.get("event_id") == local_pay.get("event_id")
                 and (os.environ.get("PUBLISH_ALLOW_SHRINK") or "").strip().lower()
                     not in ("1", "true", "yes")):
@@ -1857,6 +2591,7 @@ def _git_push(
         pushed = False
         last_error = ""
         for attempt in range(1, 4):
+            _revalidate_strict_publication()
             p = git("push", "origin", f"{commit}:main")
             if p.returncode == 0:
                 pushed = True
@@ -1880,6 +2615,9 @@ def _git_push(
                     return _git_push(
                         files,
                         require_dispatch=require_dispatch,
+                        allow_origin_carry=allow_origin_carry,
+                        strict_live_payload=strict_live_payload,
+                        strict_live_manifest_id=strict_live_manifest_id,
                         _rebuilds=_rebuilds - 1,
                     )
             if attempt < 3:
@@ -1920,8 +2658,24 @@ def publish(
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
     payload = build_payload()
+    strict_live_health = None
+    strict_release = None
     if require_complete_live:
         _validate_complete_live_payload(payload, expected_round=expected_round)
+        strict_live_health, _ = _load_and_validate_strict_live_health(
+            payload
+        )
+        strict_release = _build_strict_release_package(
+            payload, _name_replacements(), strict_live_health
+        )
+        payload["simulation_manifest_sha256"] = strict_release[
+            "simulation_manifest_sha256"
+        ]
+        payload["live_tournament_manifest_sha256"] = strict_release[
+            "live_tournament_manifest_sha256"
+        ]
+        payload["release_generation"] = strict_release["generation"]
+        payload["generated_at"] = strict_release["generated_at"]
     with open(LOCAL_OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     logger.info(f"Wrote {LOCAL_OUT}")
@@ -1956,7 +2710,15 @@ def publish(
     if require_complete_live and not round_h2h_files:
         raise RuntimeError("complete-live publish could not build round H2H fairs")
     files.extend(round_h2h_files)
-    files.extend(write_round_3ball(payload["tourney"], payload.get("round"), _name_replacements()))
+    files.extend(
+        write_round_3ball(
+            payload["tourney"],
+            payload.get("round"),
+            _name_replacements(),
+            require_contract=require_complete_live,
+            event_id=payload.get("event_id"),
+        )
+    )
 
     # Tournament finish tape -> committed to this repo (git transport, exactly like
     # round_samples.parquet) so the board fetches it from GitHub. A live outright
@@ -1966,12 +2728,16 @@ def publish(
     live_tournament = payload.get("outrights_source") == "live"
     try:
         import pyarrow.parquet as pq
-        tape = _build_tournament_samples(
-            payload["tourney"],
-            payload.get("event_id"),
-            payload.get("generated_at"),
-            _name_replacements(),
-            use_live=live_tournament,
+        tape = (
+            strict_release["git_tournament_samples"]
+            if strict_release is not None
+            else _build_tournament_samples(
+                payload["tourney"],
+                payload.get("event_id"),
+                payload.get("generated_at"),
+                _name_replacements(),
+                use_live=live_tournament,
+            )
         )
         if live_tournament and tape is None:
             raise RuntimeError(
@@ -1983,11 +2749,15 @@ def publish(
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
         # Made-cut mask on the same draw axis (git downsample; board prices make_cut
         # off the joint). Full-res copy rides the release with the full tape below.
-        mask = _build_made_cut_mask(
-            payload["tourney"],
-            payload.get("event_id"),
-            _name_replacements(),
-            use_live=live_tournament,
+        mask = (
+            strict_release["git_made_cut"]
+            if strict_release is not None
+            else _build_made_cut_mask(
+                payload["tourney"],
+                payload.get("event_id"),
+                _name_replacements(),
+                use_live=live_tournament,
+            )
         )
         if live_tournament and mask is None:
             raise RuntimeError(
@@ -2002,21 +2772,61 @@ def publish(
             raise
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
 
+    strict_release_manifest = None
+    if strict_release is not None:
+        health_relative = (
+            PROJECT_ROOT / f"tournament_live_{payload['tourney']}_health.json"
+        ).relative_to(PROJECT_ROOT).as_posix()
+        files.append(health_relative)
+        strict_release_manifest = _write_strict_release_manifest(
+            strict_release, files=files
+        )
+        files.append(STRICT_RELEASE_MANIFEST.relative_to(PROJECT_ROOT).as_posix())
+
     # Full tournament, made-cut, and matchup release tapes are best-effort for
     # ordinary publishes. The strict nightly backup requires all three before it
     # may advance the git fairs commit, so the 100k optimizer/maker cannot lag.
     if push:
+        if require_complete_live:
+            current_health, _ = _load_and_validate_strict_live_health(payload)
+            if current_health.get("manifest_sha256") != strict_live_health.get(
+                "manifest_sha256"
+            ):
+                raise RuntimeError("live tournament generation changed before release upload")
+            _require_strict_release_manifest_current(
+                strict_release_manifest, strict_release
+            )
         _upload_release_tape_family(
             payload,
             _name_replacements(),
             strict=require_complete_live,
+            prepared=strict_release,
         )
 
     if push:
         strict_publish = require_complete_live or (
             os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or ""
         ).strip().lower() in ("1", "true", "yes")
-        _git_push(files, require_dispatch=strict_publish)
+        if require_complete_live:
+            current_health, _ = _load_and_validate_strict_live_health(payload)
+            if current_health.get("manifest_sha256") != strict_live_health.get(
+                "manifest_sha256"
+            ):
+                raise RuntimeError("live tournament generation changed before git publish")
+            _require_strict_release_manifest_current(
+                strict_release_manifest, strict_release
+            )
+        _git_push(
+            files,
+            require_dispatch=strict_publish,
+            allow_origin_carry=not require_complete_live,
+            strict_live_payload=payload if require_complete_live else None,
+            strict_live_manifest_id=(
+                strict_live_health.get("manifest_sha256")
+                if require_complete_live
+                else None
+            ),
+        )
     return payload
 
 
