@@ -2,11 +2,12 @@
 
 Fetches scraped odds from GitHub (same pattern as odds_loader.py), reads
 fair price CSVs from disk, joins into unified JSON per market type, and
-uploads to an R2 bucket via the S3-compatible API.
+either writes publish-ready files or uploads them to R2.
 
 Usage:
     python push_odds_screen.py             # Upload all markets
     python push_odds_screen.py --dry-run   # Print JSON to stdout, skip upload
+    python push_odds_screen.py --output-dir /tmp/odds-screen
 
 Env vars:
     CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY  (for R2 upload)
@@ -18,6 +19,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
@@ -64,6 +66,43 @@ def _upload_json(client, key: str, data: dict):
         ContentType="application/json",
     )
     logger.info(f"Uploaded {key} ({len(body)} bytes)")
+
+
+def _write_payload_files(payloads: dict, output_dir: Path) -> list[Path]:
+    """Atomically write publish-ready JSON files for an external uploader.
+
+    GitHub Actions uses this path with Wrangler's scoped Cloudflare API token.
+    Keeping generation separate from transport means a failed upload cannot be
+    mistaken for a successful odds-screen refresh.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for key, data in payloads.items():
+        target = output_dir / key
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(output_dir), prefix=f".{key}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, default=str, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, target)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+            raise
+        written.append(target)
+        logger.info(f"Wrote {target} ({target.stat().st_size} bytes)")
+    return written
 
 
 def _fetch_scraped_guarded(market: str, *, round=None) -> "dict | None":
@@ -576,7 +615,15 @@ def _build_outrights(tourney: str, repl: dict) -> dict:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Upload odds screen data to R2")
-    parser.add_argument("--dry-run", action="store_true", help="Print JSON, skip upload")
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument(
+        "--dry-run", action="store_true", help="Print JSON, skip upload"
+    )
+    output_mode.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write publish-ready JSON files here and skip the built-in R2 upload",
+    )
     args = parser.parse_args()
 
     # Load config from Sheet
@@ -649,6 +696,11 @@ def main():
             print(f"  {key}")
             print(f"{'='*60}")
             print(json.dumps(data, indent=2, default=str)[:2000])
+        return
+
+    if args.output_dir:
+        _write_payload_files(payloads, args.output_dir)
+        logger.info(f"Done — wrote {len(payloads)} files for external publication")
         return
 
     # Upload to R2
