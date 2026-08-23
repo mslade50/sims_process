@@ -18,9 +18,13 @@ KEEP IN SYNC with round_sim.py:
   - calculate_edges                        (round_sim.py:2339)
   - build_matchup_outputs                  (round_sim.py:2416)
   - _dedup_round_matchups                  (round_sim.py:3707)
-  - _send_telegram                         (round_sim.py:1928)
+  - Telegram message formatting            (round_sim.py:1928)
+
+The cache-free reprice transport is intentionally stricter than round_sim's
+best-effort sender: a bet row cannot be stored until Telegram accepts its alert.
 """
 
+import html
 import os
 from collections import defaultdict
 
@@ -33,6 +37,11 @@ SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 # Only sharp books generate Telegram matchup alerts (mirror round_sim:3942).
 TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
+TELEGRAM_MESSAGE_MAX_CHARS = 3500
+
+
+class TelegramDeliveryError(RuntimeError):
+    """A required Telegram message was not accepted by the Telegram API."""
 
 
 # ── odds helpers (mirror round_sim.py:1910-1925) ───────────────────────────────
@@ -335,8 +344,13 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
                 row.get("bookmaker", ""), row.get("p1_odds", ""),
                 row.get("p2_odds", ""),
             ))
-            seen_alert_keys.add(alerted_key(
-                row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
+            # Only a row from a Telegram-eligible book can prove this edge was
+            # previously surfaced.  A soft-book row may be stored independently
+            # while a sharp-book alert is failing; counting it here would suppress
+            # the sharp alert on the workflow retry.
+            if str(row.get("bookmaker", "")).lower().strip() in TELEGRAM_BOOKS:
+                seen_alert_keys.add(alerted_key(
+                    row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
 
     if not existing_keys:
         return combined, seen_alert_keys
@@ -355,27 +369,117 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
     return new_rows, seen_alert_keys
 
 
-# ── Telegram (mirror of round_sim._send_telegram + matchup section) ─────────────
-def send_telegram(text, chat_id=None):
-    """Send a Telegram message. Non-blocking — logs warning on failure."""
+# ── Telegram (strict for bet delivery; best-effort for diagnostics) ───────────
+def _telegram_failure(reason, required):
+    message = f"Telegram delivery failed: {reason}"
+    if required:
+        raise TelegramDeliveryError(message)
+    print(f"  Warning: {message}")
+    return False
+
+
+def send_telegram(text, chat_id=None, *, required=False):
+    """Send one Telegram message and return whether Telegram accepted it.
+
+    A successful HTTP request is not sufficient: Telegram can return HTTP 200
+    with ``{"ok": false}``.  Required bet alerts therefore validate credentials,
+    the HTTP status, JSON response, and API ``ok`` flag, then raise on any failure.
+    Diagnostic notices retain their historical best-effort behavior by leaving
+    ``required=False``.
+    """
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
-        return
+        return _telegram_failure("missing bot token or chat ID", required)
     try:
-        requests.post(
+        response = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=10,
         )
     except Exception:
-        print("  Warning: Telegram alert failed")
+        # Do not include the requests exception in logs: its URL contains the bot
+        # token, which must never be exposed in a workflow traceback.
+        return _telegram_failure("request error", required)
+
+    status = getattr(response, "status_code", None)
+    if not isinstance(status, int) or not 200 <= status < 300:
+        return _telegram_failure(f"HTTP {status if status is not None else 'unknown'}", required)
+
+    try:
+        payload = response.json()
+    except Exception:
+        return _telegram_failure("invalid JSON response", required)
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        description = payload.get("description") if isinstance(payload, dict) else None
+        reason = "Telegram API returned ok=false"
+        if description:
+            reason += f" ({description})"
+        return _telegram_failure(reason, required)
+    return True
 
 
 def _fmt_odds(v):
     if isinstance(v, (int, float)) and not pd.isna(v):
         return f"+{int(v)}" if v > 0 else str(int(v))
     return str(v)
+
+
+def partition_matchup_alert_rows(new_mu, seen_alert_keys=None):
+    """Split new rows into (must_alert_before_store, may_store_without_alert).
+
+    Sharp-book rows need a Telegram delivery only when their pairing+side has not
+    already been alerted.  Soft books and sharp price moves for an already-alerted
+    side are safe to store without another notification.
+    """
+    if new_mu is None or new_mu.empty:
+        return new_mu, new_mu
+
+    seen = seen_alert_keys or set()
+    needs_alert = []
+    for _, row in new_mu.iterrows():
+        book = str(row.get("Bookmaker", "")).lower().strip()
+        key = alerted_key(
+            row.get("Player 1", ""), row.get("Player 2", ""), row.get("bet_on", "")
+        )
+        needs_alert.append(book in TELEGRAM_BOOKS and key not in seen)
+
+    mask = np.asarray(needs_alert, dtype=bool)
+    return new_mu.iloc[mask].copy(), new_mu.iloc[~mask].copy()
+
+
+def _matchup_alert_messages(tg, sim_round, tourney_name, max_chars=TELEGRAM_MESSAGE_MAX_CHARS):
+    """Build conservative Telegram-sized HTML messages for matchup rows."""
+    title = html.escape(str(tourney_name).replace("_", " ").title())
+    header = f"<b>R{sim_round} Reprice — {title}</b>\n\n"
+    entries = []
+    for _, r in tg.iterrows():
+        bet = html.escape(str(r.get("bet_on", "?")))
+        edge = html.escape(str(r.get("edge_on", "?")))
+        book = html.escape(str(r.get("Bookmaker", "?")))
+        is_p1 = str(r.get("bet_on", "")).lower() == str(r.get("Player 1", "")).lower()
+        opp = html.escape(str(r.get("Player 2", "") if is_p1 else r.get("Player 1", "")))
+        mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
+        fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
+        entries.append(
+            f"  {bet} vs {opp}\n"
+            f"    {book} {html.escape(_fmt_odds(mkt_odds))} "
+            f"(fair {html.escape(_fmt_odds(fair_odds))}) edge={edge}%"
+        )
+
+    messages = []
+    chunk = []
+    for entry in entries:
+        label = f"<b>New Matchups ({len(tg)}):</b>\n"
+        candidate = header + label + "\n".join(chunk + [entry])
+        if chunk and len(candidate) > max_chars:
+            messages.append(header + label + "\n".join(chunk))
+            chunk = [entry]
+        else:
+            chunk.append(entry)
+    if chunk:
+        messages.append(header + f"<b>New Matchups ({len(tg)}):</b>\n" + "\n".join(chunk))
+    return messages
 
 
 def send_matchup_alert(new_mu, sim_round, tourney_name, seen_alert_keys=None):
@@ -385,33 +489,28 @@ def send_matchup_alert(new_mu, sim_round, tourney_name, seen_alert_keys=None):
     scrape, so a 'nothing new' ping every time would be noise). `seen_alert_keys`
     (from dedup_round_matchups) suppresses edges the user has already been shown:
     a re-store caused by a price/edge-size move on a previously-seen bet doesn't
-    re-alert — only a new pairing, or the edge flipping to the other player, does."""
+    re-alert — only a new pairing, or the edge flipping to the other player, does.
+    Returns the number of rows delivered and raises ``TelegramDeliveryError`` if
+    any required message is not accepted.
+    """
+    tg, _ = partition_matchup_alert_rows(new_mu, seen_alert_keys=seen_alert_keys)
     if new_mu is None or new_mu.empty:
-        return
-    tg = new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]
-    if seen_alert_keys and not tg.empty:
-        fresh = [alerted_key(r.get("Player 1", ""), r.get("Player 2", ""), r.get("bet_on", ""))
-                 not in seen_alert_keys for _, r in tg.iterrows()]
-        n_dropped = len(tg) - sum(fresh)
-        if n_dropped:
-            print(f"  [reprice] Alert: suppressed {n_dropped} previously-seen edge(s) "
-                  f"(price moved, same bet)")
-        tg = tg[fresh]
+        return 0
+    n_dropped = len(new_mu[new_mu["Bookmaker"].str.lower().isin(TELEGRAM_BOOKS)]) - len(tg)
+    if n_dropped:
+        print(f"  [reprice] Alert: suppressed {n_dropped} previously-seen edge(s) "
+              f"(price moved, same bet)")
     if tg.empty:
-        return
-
-    lines = [f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>", ""]
-    lines.append(f"<b>New Matchups ({len(tg)}):</b>")
-    for _, r in tg.iterrows():
-        bet = r.get("bet_on", "?")
-        edge = r.get("edge_on", "?")
-        book = r.get("Bookmaker", "?")
-        is_p1 = str(r.get("bet_on", "")).lower() == str(r.get("Player 1", "")).lower()
-        opp = r.get("Player 2", "") if is_p1 else r.get("Player 1", "")
-        mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
-        fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
-        lines.append(f"  {bet} vs {opp}")
-        lines.append(f"    {book} {_fmt_odds(mkt_odds)} (fair {_fmt_odds(fair_odds)}) edge={edge}%")
+        return 0
 
     round_bets_chat_id = os.getenv("TELEGRAM_ROUND_BETS_CHAT_ID", "")
-    send_telegram("\n".join(lines), chat_id=round_bets_chat_id or None)
+    messages = _matchup_alert_messages(tg, sim_round, tourney_name)
+    for message in messages:
+        send_telegram(
+            message,
+            chat_id=round_bets_chat_id or None,
+            required=True,
+        )
+    print(f"  [reprice] Telegram delivered {len(tg)} new sharp edge(s) "
+          f"in {len(messages)} message(s).")
+    return len(tg)

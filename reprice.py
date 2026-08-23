@@ -9,8 +9,9 @@ have failed in CI), this:
     2. Fetches fresh round-matchup odds          (odds_loader, GitHub -> DataGolf)
     3. Prices every offered matchup from the table  (reprice_core.price_from_h2h)
     4. Computes edges + the combined/sharp filter
-    5. Dedups against the Round Matchups sheet, stores only NEW rows
-    6. Telegram-alerts the new sharp-book edges (silent when there's nothing new)
+    5. Dedups against the Round Matchups sheet
+    6. Delivers new sharp-book Telegram alerts, then stores those rows
+       (non-alert rows may store independently)
 
 The fair table is produced by the nightly sim (publish_sim_fairs.py
 --round-h2h-only) and by live full round_sim runs, and is conclusive for H2H
@@ -40,6 +41,64 @@ def _setup_env():
     except Exception:
         pass
     return root
+
+
+def _deliver_then_store_matchups(
+    new_mu,
+    seen_alert_keys,
+    *,
+    sim_round,
+    tourney,
+    event_id,
+    dg_id_lookup,
+    spreadsheet,
+    rc_module,
+    store_func,
+):
+    """Enforce alert-before-storage for newly qualifying sharp-book rows.
+
+    Rows that do not require a new Telegram alert (soft books, or a price move
+    for an already-alerted pairing+side) remain independently storable.  If a
+    required delivery fails, only that non-alert subset is stored and the
+    exception propagates so GitHub Actions fails and retries the sharp rows.
+
+    Returns ``(submitted_to_storage, telegram_rows_delivered)``.
+    """
+    if new_mu is None or new_mu.empty:
+        print("  [reprice] No new matchup rows to store.")
+        return 0, 0
+
+    alert_rows, no_alert_rows = rc_module.partition_matchup_alert_rows(
+        new_mu, seen_alert_keys=seen_alert_keys
+    )
+
+    if alert_rows is not None and not alert_rows.empty:
+        try:
+            delivered = rc_module.send_matchup_alert(
+                alert_rows, sim_round, tourney, seen_alert_keys=None
+            )
+            if delivered != len(alert_rows):
+                raise rc_module.TelegramDeliveryError(
+                    f"Telegram accepted {delivered} of {len(alert_rows)} required alert rows"
+                )
+        except Exception:
+            # These rows never depended on an alert.  Storing them cannot suppress
+            # the sharp alert on retry because dedup_round_matchups only derives
+            # seen_alert_keys from Telegram-eligible books.
+            if no_alert_rows is not None and not no_alert_rows.empty:
+                store_func(
+                    no_alert_rows, sim_round, tourney, event_id,
+                    dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
+                )
+                print(f"  [reprice] Stored {len(no_alert_rows)} non-alert row(s); "
+                      "alert-required rows were not stored.")
+            raise
+
+    store_func(
+        new_mu, sim_round, tourney, event_id,
+        dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
+    )
+    return len(new_mu), len(alert_rows) if alert_rows is not None else 0
 
 
 def main():
@@ -132,21 +191,27 @@ def main():
     except Exception:
         dg_id_lookup = {}
 
-    if new_mu is not None and not new_mu.empty:
-        store_round_matchups(
-            new_mu, sim_round, tourney, event_id,
-            dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
-        )
-    else:
-        print("  [reprice] No new matchup rows to store.")
+    # ── 6. Required sharp alerts are accepted by Telegram before their rows
+    # are stored. A delivery exception escapes main(), failing the workflow. ──
+    n_new, n_alerted = _deliver_then_store_matchups(
+        new_mu,
+        seen_alert_keys,
+        sim_round=sim_round,
+        tourney=tourney,
+        event_id=event_id,
+        dg_id_lookup=dg_id_lookup,
+        spreadsheet=spreadsheet,
+        rc_module=rc,
+        store_func=store_round_matchups,
+    )
 
-    # ── 6. Telegram-alert new sharp edges (silent when nothing new; edges
-    # already surfaced for this pairing+side re-store silently, no re-ping) ──
-    rc.send_matchup_alert(new_mu, sim_round, tourney, seen_alert_keys=seen_alert_keys)
-
-    n_new = len(new_mu) if new_mu is not None and not new_mu.empty else 0
-    print(f"\n  [reprice] Done. Stored {n_new} new matchups. "
-          f"{'Telegram sent.' if n_new else 'No alert (nothing new).'}")
+    alert_status = (
+        f"Telegram delivered {n_alerted} new sharp edge(s)."
+        if n_alerted
+        else "No Telegram alert required."
+    )
+    print(f"\n  [reprice] Done. Submitted {n_new} new matchups to storage. "
+          f"{alert_status}")
     print(f"{'='*60}\n")
     return 0
 
