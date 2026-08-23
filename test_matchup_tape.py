@@ -97,6 +97,42 @@ mask = rng.integers(0, 2, size=(3, 40)).astype(bool)
 np.save(tdir / "final_scores.npy", fs_pre)
 np.save(tdir / "made_cut.npy", mask)
 (tdir / "player_names.json").write_text(json.dumps(names))
+
+# A live outright payload's portfolio tape must use the paired live outputs, not
+# the pre-event files above.  The values are intentionally very different.
+live_scores = rng.integers(310, 330, size=(3, 40))
+live_mask = rng.integers(0, 2, size=(3, 40)).astype(bool)
+np.save(tmp / "final_scores_live_testtourney.npy", live_scores)
+np.save(tmp / "made_cut_live_testtourney.npy", live_mask)
+ltbl = psf._build_tournament_samples(
+    "testtourney", 99, "2026-08-23 10:00:00 UTC", repl,
+    max_draws=None, use_live=True,
+)
+eq("live tournament tape values", ltbl.to_pandas().iloc[0].tolist(),
+   live_scores[0].astype("int16").tolist())
+ltmd = {k.decode(): v.decode() for k, v in ltbl.schema.metadata.items()
+        if isinstance(k, bytes) and k in (b"tourney", b"source")}
+eq("live tournament tape source", ltmd.get("source"), "final_scores_live")
+lm = psf._build_made_cut_mask(
+    "testtourney", 99, repl, max_draws=None, use_live=True,
+)
+eq("live mask values", lm.to_pandas().iloc[0].tolist(),
+   live_mask[0].astype("int8").tolist())
+lmmd = {k.decode(): v.decode() for k, v in lm.schema.metadata.items()
+        if isinstance(k, bytes) and k in (b"tourney", b"source")}
+eq("live mask source", lmmd.get("source"), "made_cut_live")
+
+# Requesting live data is fail-closed: an available pre-event pair is not a
+# substitute when the live pair is absent.
+preonly = tmp / "preonly"
+preonly.mkdir()
+np.save(preonly / "final_scores.npy", fs_pre)
+(preonly / "player_names.json").write_text(json.dumps(names))
+eq("live tape does not fall back to pre-event pair",
+   psf._build_tournament_samples(
+       "preonly", 100, "2026-08-23 10:00:00 UTC", repl, use_live=True,
+   ), None)
+
 mtbl = psf._build_made_cut_mask("testtourney", 99, repl, max_draws=None)
 eq("mask rows/draws", (mtbl.num_rows, mtbl.num_columns - 1), (3, 40))
 mdf = mtbl.to_pandas()

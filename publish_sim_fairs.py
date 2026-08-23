@@ -141,6 +141,42 @@ def _find(*candidates) -> Path | None:
     return None
 
 
+def _tournament_score_paths(tourney: str, *, use_live: bool = False):
+    """Return one internally-paired tournament score tape and name sidecar.
+
+    A live payload must never be paired with the pre-event ``final_scores`` tape:
+    the row order differs and, more importantly, the pre-event outcomes do not
+    contain completed-round scores.  Callers requesting live data therefore fail
+    closed when either half of the live pair is absent instead of falling back.
+    """
+    if use_live:
+        fs = _find(
+            f"final_scores_live_{tourney}.npy",
+            f"{tourney}/final_scores_live_{tourney}.npy",
+        )
+        pn = _find(
+            f"player_names_live_{tourney}.json",
+            f"{tourney}/player_names_live_{tourney}.json",
+        )
+        source = "final_scores_live"
+    else:
+        fs = _find(f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy")
+        pn = _find(f"{tourney}/player_names.json", f"player_names_{tourney}.json")
+        source = "final_scores"
+    if fs is None or pn is None:
+        return None, None, source
+    return fs, pn, source
+
+
+def _made_cut_path(tourney: str, *, use_live: bool = False) -> Path | None:
+    if use_live:
+        return _find(
+            f"made_cut_live_{tourney}.npy",
+            f"{tourney}/made_cut_live_{tourney}.npy",
+        )
+    return _find(f"{tourney}/made_cut.npy", f"made_cut_{tourney}.npy")
+
+
 ROUND_CACHE_MAX_AGE_DAYS = 10
 
 
@@ -273,6 +309,48 @@ def _live_dump_is_current(tourney: str, rnd, repl: dict) -> bool:
                        f"(using simulated_probs.csv)")
         return False
     return True
+
+
+def _outrights_run_at(tourney: str, *, use_live: bool) -> str | None:
+    """Timestamp the probability source for outrights, independent of round data.
+
+    ``sim_run_at`` is intentionally an aggregate freshness stamp because one payload
+    also carries round markets.  It cannot describe carried-forward outrights: a new
+    round cache would otherwise make an old outright table appear freshly simulated.
+    """
+    if use_live:
+        source = _find("simulated_probs_live.csv")
+    else:
+        source = _find(
+            "simulated_probs.csv",
+            f"{tourney}/finish_equity_{tourney}.csv",
+            f"finish_equity_{tourney}.csv",
+            f"top_finish_probs_{tourney}.csv",
+            f"{tourney}/top_finish_probs_{tourney}.csv",
+            f"{tourney}/finish_equity_live_{tourney}.csv",
+            f"finish_equity_live_{tourney}.csv",
+        )
+    return _utc_stamp(source.stat().st_mtime) if source is not None else None
+
+
+def _matchups_provenance(tourney: str, *, use_live: bool) -> tuple[str, str | None]:
+    """Return (source, sim timestamp) for tournament-long H2H probabilities."""
+    if use_live:
+        fs, pn, source = _tournament_score_paths(tourney, use_live=True)
+        if fs is not None and pn is not None:
+            return source, _utc_stamp(fs.stat().st_mtime)
+    h2h = _find(
+        f"h2h_matrix_{tourney}.parquet",
+        f"{tourney}/h2h_matrix_{tourney}.parquet",
+    )
+    return "h2h_matrix", (_utc_stamp(h2h.stat().st_mtime) if h2h is not None else None)
+
+
+def _payload_market_time(payload: dict, market: str) -> datetime | None:
+    """Read a per-market stamp, falling back for legacy payloads."""
+    return _parse_utc(
+        payload.get(f"{market}_sim_run_at") or payload.get("sim_run_at")
+    )
 
 
 # ─── builders ─────────────────────────────────────────────────────────────────
@@ -457,7 +535,7 @@ def _build_matchups_live(tourney: str, repl: dict) -> list:
     return rows
 
 
-def _build_matchups(tourney: str, repl: dict) -> list:
+def _build_matchups(tourney: str, repl: dict, *, use_live: bool = True) -> list:
     """Tournament head-to-head: [player_a, player_b, P(a beats b)] (ties pushed).
 
     Live-first: once round_sim has run, final_scores_live IS the current
@@ -467,7 +545,7 @@ def _build_matchups(tourney: str, repl: dict) -> list:
     lacking the h2h matrix published matchups=[] every live run and the shrink
     guard carried origin's PRE-EVENT full-field pairs forward all weekend
     (The Open 2026: 12,090 stale pairs shipping beside fresh live outrights)."""
-    rows = _build_matchups_live(tourney, repl)
+    rows = _build_matchups_live(tourney, repl) if use_live else []
     if rows:
         return rows
     h = _find(f"h2h_matrix_{tourney}.parquet", f"{tourney}/h2h_matrix_{tourney}.parquet")
@@ -606,7 +684,15 @@ def _build_round_samples(tourney: str, rnd, repl: dict):
     return df
 
 
-def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, max_draws=TOURN_SAMPLE_N):
+def _build_tournament_samples(
+    tourney: str,
+    event_id,
+    generated_at,
+    repl: dict,
+    max_draws=TOURN_SAMPLE_N,
+    *,
+    use_live: bool = False,
+):
     """Downsampled per-draw 72-hole FINISH tape (players x TOURN_SAMPLE_N) from the
     tournament sim's `final_scores` — the exact joint the board's portfolio optimizer
     uses for correlated Kelly on outrights + tournament matchups. Values are int16
@@ -618,11 +704,11 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, 
     import numpy as np
     import pyarrow as pa
 
-    fs = _find(f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy")
-    pn = _find(f"{tourney}/player_names.json", f"player_names_{tourney}.json")
+    fs, pn, source = _tournament_score_paths(tourney, use_live=use_live)
     if fs is None or pn is None:
-        logger.info("tournament_samples: final_scores/player_names cache not found — skipping "
-                    "(board keeps the copula)")
+        kind = "live " if use_live else ""
+        logger.info(f"tournament_samples: paired {kind}final_scores/player_names cache "
+                    "not found — skipping (board keeps the copula)")
         return None
     scores = np.load(fs)                                  # (n_players, n_sims)
     names = json.loads(Path(pn).read_text())
@@ -644,14 +730,21 @@ def _build_tournament_samples(tourney: str, event_id, generated_at, repl: dict, 
             b"generated_at": str(generated_at).encode(),
             b"sim_run_at": _utc_stamp(fs.stat().st_mtime).encode(),
             b"tourney": str(tourney).encode(),
-            b"source": b"final_scores"}
+            b"source": source.encode()}
     tbl = tbl.replace_schema_metadata(meta)
     logger.info(f"tournament_samples: {df.shape[0]} players x {df.shape[1]} draws "
                 f"(event {event_id})")
     return tbl
 
 
-def _build_made_cut_mask(tourney: str, event_id, repl: dict, max_draws=TOURN_SAMPLE_N):
+def _build_made_cut_mask(
+    tourney: str,
+    event_id,
+    repl: dict,
+    max_draws=TOURN_SAMPLE_N,
+    *,
+    use_live: bool = False,
+):
     """Made-cut mask on the SAME draw axis as the tournament finish tape — same
     players (index), same fixed-stride downsample — so the board can price
     make_cut off the joint instead of an independent copula draw (same-golfer
@@ -662,12 +755,12 @@ def _build_made_cut_mask(tourney: str, event_id, repl: dict, max_draws=TOURN_SAM
     import numpy as np
     import pyarrow as pa
 
-    mc = _find(f"{tourney}/made_cut.npy", f"made_cut_{tourney}.npy")
-    fs = _find(f"{tourney}/final_scores.npy", f"final_scores_{tourney}.npy")
-    pn = _find(f"{tourney}/player_names.json", f"player_names_{tourney}.json")
+    mc = _made_cut_path(tourney, use_live=use_live)
+    fs, pn, _ = _tournament_score_paths(tourney, use_live=use_live)
     if mc is None or fs is None or pn is None:
-        logger.info("made_cut mask: made_cut.npy/final_scores/player_names not all present "
-                    "— skipping (board keeps the copula for make_cut)")
+        kind = "live " if use_live else ""
+        logger.info(f"made_cut mask: paired {kind}made_cut/final_scores/player_names "
+                    "not all present — skipping (board keeps the copula for make_cut)")
         return None
     mask = np.load(mc)
     names = json.loads(Path(pn).read_text())
@@ -688,13 +781,15 @@ def _build_made_cut_mask(tourney: str, event_id, repl: dict, max_draws=TOURN_SAM
             b"event_id": str(event_id).encode(),
             b"sim_run_at": _utc_stamp(fs.stat().st_mtime).encode(),
             b"tourney": str(tourney).encode(),
-            b"source": b"made_cut"}
+            b"source": (b"made_cut_live" if use_live else b"made_cut")}
     tbl = tbl.replace_schema_metadata(meta)
     logger.info(f"made_cut mask: {df.shape[0]} players x {df.shape[1]} draws (event {event_id})")
     return tbl
 
 
-def _upload_full_tape_release(tourney, event_id, generated_at, repl) -> bool:
+def _upload_full_tape_release(
+    tourney, event_id, generated_at, repl, *, use_live: bool = False
+) -> bool:
     """Build the FULL-resolution finish tape (ALL sim draws, no downsample) and upload
     it as a GitHub RELEASE ASSET on this repo (tag `sim-data`), using GH_TOKEN. The
     board downloads it with its SIMS_PROCESS_PAT for the server-side full-resolution
@@ -706,7 +801,14 @@ def _upload_full_tape_release(tourney, event_id, generated_at, repl) -> bool:
     if not token:
         logger.warning("full tape: GH_TOKEN not set — skipping release upload (board uses git tape)")
         return False
-    tbl = _build_tournament_samples(tourney, event_id, generated_at, repl, max_draws=None)
+    tbl = _build_tournament_samples(
+        tourney,
+        event_id,
+        generated_at,
+        repl,
+        max_draws=None,
+        use_live=use_live,
+    )
     if tbl is None:
         return False
     try:
@@ -1120,6 +1222,7 @@ def build_payload() -> dict:
                            f"sim_run_at; run the sim before publishing")
     outrights, outrights_nodh = _build_outrights(tourney, cut_line, repl, use_live=use_live)
     _check_outright_mass(outrights, tourney)
+    matchup_source, matchup_run_at = _matchups_provenance(tourney, use_live=use_live)
     payload = {
         "event_id": event_id,
         "event_name": _resolve_event_name(event_id, tour, tourney),
@@ -1133,7 +1236,7 @@ def build_payload() -> dict:
         # (Kalshi, NoVig). The board grades those books against these instead of the
         # dead-heat `outrights` above. Older boards ignore this key (degrade to DH).
         "outrights_nodh": outrights_nodh,
-        "matchups": _build_matchups(tourney, repl),
+        "matchups": _build_matchups(tourney, repl, use_live=use_live),
         "round_scores": _build_round_scores(tourney, rnd, repl),
         # per-player skill estimate (pred, SG/round vs field) for the board's
         # skill filter. Older boards ignore this key.
@@ -1144,6 +1247,14 @@ def build_payload() -> dict:
         # tournament freeze isn't active (pre-R1) — a dead-man's switch against
         # exactly the 2026-07-15 stale-live-dump incident.
         "outrights_source": "live" if use_live else "pre",
+        # Market-specific provenance.  A partial round publish may legitimately
+        # carry these tournament-long markets forward, while the aggregate
+        # sim_run_at advances with the new round cache.  Consumers and the git
+        # merge guard can use these stamps without mistaking carried values for
+        # output from the newest round simulation.
+        "outrights_sim_run_at": _outrights_run_at(tourney, use_live=use_live),
+        "matchups_source": matchup_source,
+        "matchups_sim_run_at": matchup_run_at,
     }
     return payload
 
@@ -1319,42 +1430,98 @@ def _git_push(
                 if require_dispatch:
                     raise RuntimeError(msg)
                 return False
-        # A machine with only PARTIAL sim outputs (e.g. no tournament h2h matrix
-        # once the event is live) builds a valid, freshly-stamped payload that
-        # would empty a market origin had populated. Rather than abort the WHOLE
-        # publish (stranding the fresh markets we DID produce), MERGE per market:
-        # carry origin's value forward for any tournament-long market this machine
-        # didn't produce, and publish the fresh version of everything else.
-        # Tournament-long markets (outrights, outrights_nodh, matchups, field) are
-        # round-independent, so carrying origin's forward can never mislabel a
-        # round; round-scoped markets (round_scores/pred/round) stay local — this
-        # machine is authoritative for the round it just simmed.
+        # A machine with only PARTIAL sim outputs builds a payload whose aggregate
+        # sim_run_at is fresh because it just produced round scores, even though its
+        # tournament-long artifacts are absent or older. Preserve the origin version
+        # of those markets *with their own source/timestamp*. This lets a round-only
+        # publish ship fresh round data without relabeling stale outright/H2H content
+        # as output from that round run.
         # PUBLISH_ALLOW_SHRINK=1 forces a raw publish (no backfill; strips allowed).
         if (origin_pay and local_pay
                 and origin_pay.get("event_id") == local_pay.get("event_id")
                 and (os.environ.get("PUBLISH_ALLOW_SHRINK") or "").strip().lower()
                     not in ("1", "true", "yes")):
             carried = []  # market ids backfilled from origin (kept, not stripped)
-            # nested outright dicts: backfill per sub-market (winner/top_5/...)
-            for grp in ("outrights", "outrights_nodh"):
-                o_grp = origin_pay.get(grp)
-                if not isinstance(o_grp, dict):
-                    continue
-                l_grp = local_pay.get(grp)
-                if not isinstance(l_grp, dict):
-                    l_grp = {}
-                for sub, o_val in o_grp.items():
-                    if o_val and not l_grp.get(sub):
-                        l_grp[sub] = o_val
-                        carried.append(f"{grp}.{sub}")
-                if l_grp:
-                    local_pay[grp] = l_grp
-            # top-level list markets: matchups (tournament h2h), field (roster)
-            for key in ("matchups", "field"):
-                if origin_pay.get(key) and not local_pay.get(key):
-                    local_pay[key] = origin_pay[key]
-                    carried.append(key)
+
+            o_out = origin_pay.get("outrights")
+            l_out = local_pay.get("outrights")
+            o_nodh = origin_pay.get("outrights_nodh")
+            l_nodh = local_pay.get("outrights_nodh")
+            o_out = o_out if isinstance(o_out, dict) else {}
+            l_out = l_out if isinstance(l_out, dict) else {}
+            o_nodh = o_nodh if isinstance(o_nodh, dict) else {}
+            l_nodh = l_nodh if isinstance(l_nodh, dict) else {}
+
+            # An incomplete outright family is one partial artifact, not a safe
+            # mix-and-match opportunity: winner/top-N/make-cut must share a sim
+            # vintage. Copy the whole origin family when any populated submarket
+            # would otherwise disappear.
+            outright_incomplete = any(
+                o_val and not l_out.get(sub) for sub, o_val in o_out.items()
+            ) or any(
+                o_val and not l_nodh.get(sub) for sub, o_val in o_nodh.items()
+            )
+            o_out_time = _payload_market_time(origin_pay, "outrights")
+            l_out_time = _payload_market_time(local_pay, "outrights")
+            outright_older = (
+                o_out_time is not None
+                and (l_out_time is None or l_out_time < o_out_time)
+            )
+            # Once the same event has live-conditioned probabilities, a partial
+            # machine must not regress it to a pre-event table even if filesystem
+            # mtimes were touched out of order.
+            outright_source_regressed = (
+                origin_pay.get("outrights_source") == "live"
+                and local_pay.get("outrights_source") != "live"
+            )
+            if (o_out or o_nodh) and (
+                outright_incomplete or outright_older or outright_source_regressed
+            ):
+                if o_out:
+                    local_pay["outrights"] = o_out
+                    carried.extend(f"outrights.{sub}" for sub, val in o_out.items() if val)
+                if o_nodh:
+                    local_pay["outrights_nodh"] = o_nodh
+                    carried.extend(f"outrights_nodh.{sub}" for sub, val in o_nodh.items() if val)
+                if origin_pay.get("field"):
+                    local_pay["field"] = origin_pay["field"]
+                    carried.append("field")
+                local_pay["outrights_source"] = origin_pay.get(
+                    "outrights_source", local_pay.get("outrights_source", "pre")
+                )
+                local_pay["outrights_sim_run_at"] = origin_pay.get(
+                    "outrights_sim_run_at"
+                ) or origin_pay.get("sim_run_at")
+
+            o_match_time = _payload_market_time(origin_pay, "matchups")
+            l_match_time = _payload_market_time(local_pay, "matchups")
+            matchup_older = (
+                o_match_time is not None
+                and (l_match_time is None or l_match_time < o_match_time)
+            )
+            matchup_source_regressed = (
+                origin_pay.get("matchups_source") == "final_scores_live"
+                and local_pay.get("matchups_source") != "final_scores_live"
+            )
+            if origin_pay.get("matchups") and (
+                not local_pay.get("matchups")
+                or matchup_older
+                or matchup_source_regressed
+            ):
+                local_pay["matchups"] = origin_pay["matchups"]
+                local_pay["matchups_source"] = origin_pay.get(
+                    "matchups_source", local_pay.get("matchups_source", "h2h_matrix")
+                )
+                local_pay["matchups_sim_run_at"] = origin_pay.get(
+                    "matchups_sim_run_at"
+                ) or origin_pay.get("sim_run_at")
+                carried.append("matchups")
+
+            if origin_pay.get("field") and not local_pay.get("field"):
+                local_pay["field"] = origin_pay["field"]
+                carried.append("field")
             if carried:
+                carried = list(dict.fromkeys(carried))
                 # Stamp provenance so a payload serving backfilled markets is
                 # self-describing (debugging stale fairs starts here, not in
                 # git archaeology). Consumers ignore unknown keys.
@@ -1500,39 +1667,70 @@ def publish(push: bool = True) -> dict:
     files.extend(write_round_3ball(payload["tourney"], payload.get("round"), _name_replacements()))
 
     # Tournament finish tape -> committed to this repo (git transport, exactly like
-    # round_samples.parquet) so the board fetches it from GitHub. Gives the board the
-    # exact tournament joint for correlated-Kelly staking. Best-effort — never breaks
-    # a sim/publish run; if final_scores isn't cached the board keeps the copula.
+    # round_samples.parquet) so the board fetches it from GitHub. A live outright
+    # payload MUST ship its paired live tape + made-cut mask; falling back to the
+    # pre-event joint would make the displayed probabilities and portfolio scenarios
+    # disagree. Pre-event publishing retains the historical best-effort behavior.
+    live_tournament = payload.get("outrights_source") == "live"
     try:
         import pyarrow.parquet as pq
-        tape = _build_tournament_samples(payload["tourney"], payload.get("event_id"),
-                                         payload.get("generated_at"), _name_replacements())
+        tape = _build_tournament_samples(
+            payload["tourney"],
+            payload.get("event_id"),
+            payload.get("generated_at"),
+            _name_replacements(),
+            use_live=live_tournament,
+        )
+        if live_tournament and tape is None:
+            raise RuntimeError(
+                "live outright payload has no paired final_scores_live/player_names_live tape"
+            )
         if tape is not None:
             pq.write_table(tape, LOCAL_TOURN_SAMPLES)
             files.append("tournament_samples.parquet")
             logger.info(f"Wrote {LOCAL_TOURN_SAMPLES}")
         # Made-cut mask on the same draw axis (git downsample; board prices make_cut
         # off the joint). Full-res copy rides the release with the full tape below.
-        mask = _build_made_cut_mask(payload["tourney"], payload.get("event_id"),
-                                    _name_replacements())
+        mask = _build_made_cut_mask(
+            payload["tourney"],
+            payload.get("event_id"),
+            _name_replacements(),
+            use_live=live_tournament,
+        )
+        if live_tournament and mask is None:
+            raise RuntimeError(
+                "live outright payload has no made_cut_live mask paired to its finish tape"
+            )
         if mask is not None:
             pq.write_table(mask, PROJECT_ROOT / "tournament_made_cut.parquet")
             files.append("tournament_made_cut.parquet")
             logger.info("Wrote tournament_made_cut.parquet")
     except Exception as e:
+        if live_tournament:
+            raise
         logger.warning(f"tournament_samples publish failed (non-fatal): {e}")
 
     # FULL-resolution tape -> GitHub Release asset (build.py fetches it for the 100k
     # server-side solve). Uses GH_TOKEN; no R2 / no per-machine creds.
     try:
         if push:
-            _upload_full_tape_release(payload["tourney"], payload.get("event_id"),
-                                      payload.get("generated_at"), _name_replacements())
+            _upload_full_tape_release(
+                payload["tourney"],
+                payload.get("event_id"),
+                payload.get("generated_at"),
+                _name_replacements(),
+                use_live=live_tournament,
+            )
             # full-res made-cut mask pairs with the full tape (same draw axis)
             import os as _os
             _tok = _os.environ.get("GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
-            full_mask = _build_made_cut_mask(payload["tourney"], payload.get("event_id"),
-                                             _name_replacements(), max_draws=None) if _tok else None
+            full_mask = _build_made_cut_mask(
+                payload["tourney"],
+                payload.get("event_id"),
+                _name_replacements(),
+                max_draws=None,
+                use_live=live_tournament,
+            ) if _tok else None
             if full_mask is not None:
                 import io
                 buf = io.BytesIO()

@@ -56,6 +56,8 @@ _git(work, "remote", "add", "origin", str(bare))
 T1 = "2026-07-01 20:00:00 UTC"
 T0 = "2026-07-01 10:00:00 UTC"   # older than T1
 T2 = "2026-07-02 08:00:00 UTC"   # fresher than T1
+T3 = "2026-07-02 10:00:00 UTC"
+T4 = "2026-07-02 11:00:00 UTC"
 (work / "sim_fairs.json").write_text(json.dumps(_payload(T1)), encoding="utf-8")
 _git(work, "add", "sim_fairs.json")
 _git(work, "commit", "-m", "seed")
@@ -111,6 +113,38 @@ _git(work, "commit", "-m", "unstamped origin")
 _git(work, "push", "-f", "origin", "main")
 got = attempt(_payload(T2))
 eq("stamped beats unstamped origin", got["sim_run_at"], T2)
+
+# 7. A fresh ROUND run with fully-populated but older PRE-event tournament
+# artifacts must preserve origin's LIVE outright/H2H content and its own market
+# timestamps. The aggregate sim_run_at may advance for the fresh round markets.
+origin_live = _payload(T3)
+origin_live["outrights"]["winner"] = {"a b": 0.91, "c d": 0.09}
+origin_live["outrights_source"] = "live"
+origin_live["outrights_sim_run_at"] = T3
+origin_live["matchups"] = [["a b", "c d", 0.77]]
+origin_live["matchups_source"] = "final_scores_live"
+origin_live["matchups_sim_run_at"] = T3
+got = attempt(origin_live)
+eq("live seed pushed", got["outrights_source"], "live")
+
+round_only = _payload(T4)
+round_only["outrights"]["winner"] = {"a b": 0.11, "c d": 0.89}
+round_only["outrights_source"] = "pre"
+round_only["outrights_sim_run_at"] = T0
+round_only["matchups"] = [["a b", "c d", 0.22]]
+round_only["matchups_source"] = "h2h_matrix"
+round_only["matchups_sim_run_at"] = T0
+got = attempt(round_only)
+eq("fresh round aggregate stamp advances", got["sim_run_at"], T4)
+eq("older pre outright content rejected", got["outrights"]["winner"]["a b"], 0.91)
+eq("carried outright source stays live", got["outrights_source"], "live")
+eq("carried outright timestamp stays old", got["outrights_sim_run_at"], T3)
+eq("older pre H2H content rejected", got["matchups"], [["a b", "c d", 0.77]])
+eq("carried H2H source stays live", got["matchups_source"], "final_scores_live")
+eq("carried H2H timestamp stays old", got["matchups_sim_run_at"], T3)
+eq("outright carry is self-describing",
+   "outrights.winner" in got["carried_from_origin"], True)
+eq("H2H carry is self-describing", "matchups" in got["carried_from_origin"], True)
 
 print(f"\n{_p} passed, {_f} failed")
 shutil.rmtree(tmp, ignore_errors=True)
