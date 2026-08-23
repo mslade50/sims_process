@@ -15,6 +15,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
+from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
 # --- CLI flags (parsed early so the rest of the script can branch on them) ---
 # --sim-only:    run sim, save cache, exit before pricing/email/storage.
@@ -531,6 +532,20 @@ skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew
 neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
 global_mu  = dists.groupby('category_clean')['mean'].mean()
 global_std = dists.groupby('category_clean')['std'].median()
+
+# BMW 2026: replace most of each player's production category variance with
+# the leakage-safe, pre-event shot-level estimate. The helper is event-scoped,
+# hash-locked, and is a no-op outside its configured tournament. Apply before
+# course multipliers so the existing course variance structure is preserved.
+std_w = apply_shot_dispersion_overlay(
+    std_w,
+    player_names,
+    CAT_ORDER,
+    tourney=tourney,
+    event_id=_event_id,
+    dists_path=DISTS_FILE,
+)
+global_std = std_w.median()
 
 R = load_corr_matrix(CAT_ORDER)
 try:

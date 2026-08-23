@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "tourney": "bmw",
+  "event_id": 28,
+  "event_start": "2026-08-20",
+  "expected_field_size": 50,
+  "feature_file": "permanent_data/bmw_shot_features_prod.csv",
+  "feature_sha256": "8f385ba71da6527b277a38c95ed823d134b8e5c3101bcbd666c5bb6d9d347de9",
+  "distribution_sha256": "e6f1727b14ea82c5a6c9df30b4ea9994fb9d8e7312104f3a2176024938a27d01",
+  "weights": {
+    "sg_ott": 0.90,
+    "sg_app": 0.90,
+    "sg_arg": 0.80,
+    "sg_putt": 0.95
+  },
+  "notes": "BMW-only production shot-dispersion overlay. Values are frozen for R1-R4 and applied before course multipliers. Set enabled=false for rollback."
+}

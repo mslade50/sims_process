@@ -33,6 +33,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
 from numpy.linalg import cholesky
+from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
 from score_centering import (
     CENTERING_VERSION,
@@ -204,6 +205,18 @@ def _load_catfirst_dists(player_names):
     neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
     global_mu  = dists.groupby('category_clean')['mean'].mean()
     global_std = dists.groupby('category_clean')['std'].median()
+
+    # Use the same frozen pre-event shot dispersion in every round. This is
+    # applied before course multipliers and does not change category means.
+    std_w = apply_shot_dispersion_overlay(
+        std_w,
+        player_names,
+        CAT_ORDER,
+        tourney=tourney,
+        event_id=_event_id,
+        dists_path=DISTS_FILE_V2,
+    )
+    global_std = std_w.median()
 
     # Load correlation matrix and Cholesky
     R = load_corr_matrix(CAT_ORDER)
