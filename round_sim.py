@@ -38,12 +38,15 @@ from sim_health_gate import (
     SimulationHealthError,
     build_simulation_manifest,
     collect_overlay_provenance,
+    configured_round_scoring_baselines,
+    derive_authoritative_scoring_targets,
     names_sha256,
     parse_utc,
     require_bound_artifact,
     require_live_tournament_alignment,
     require_market_outputs_healthy,
     require_simulation_healthy,
+    sealed_cache_expected_avg,
     write_bound_artifact_manifest,
 )
 
@@ -4815,6 +4818,7 @@ def main():
     # ── Load sim cache early if --price-only / --reprice ─────────────────
     cached_sim_dict = None
     cached_meta = None
+    cached_parent_health = None
     score_shift_delta = 0.0
     if args.price_only:
         try:
@@ -4826,8 +4830,14 @@ def main():
                 return
             raise
 
+        cached_parent_health = (cached_meta or {}).get("health_manifest")
+        if not cached_parent_health:
+            raise SimulationHealthError(
+                "BLOCKED — sim cache has no sealed health manifest; run a fresh full simulation"
+            )
+
         if args.score_est is not None:
-            cached_avg = float(cached_meta.get("expected_avg", expected_avg))
+            cached_avg = sealed_cache_expected_avg(cached_meta)
             score_shift_delta = float(args.score_est) - cached_avg
             print(f"  [score-est] Overriding expected_avg: {cached_avg} -> {args.score_est} "
                   f"(delta = {score_shift_delta:+.3f}); cached scores will be shifted")
@@ -4861,39 +4871,40 @@ def main():
         model_preds["player_name"] = (
             model_preds["player_name"].str.lower().str.strip().replace(name_replacements)
         )
-        if "centering_version" in model_preds.columns:
-            versions = set(model_preds["centering_version"].dropna())
-            if versions != {CENTERING_VERSION}:
-                raise ValueError(
-                    f"Unsupported score centering in {pred_file_path}: {versions}"
-                )
-            groups = set(
-                model_preds.get("centering_group", pd.Series(["field"])).dropna()
-            )
-            if len(groups) != 1:
-                raise ValueError(
-                    f"Inconsistent centering groups in {pred_file_path}: {groups}"
-                )
-            group_col = next(iter(groups))
-            if group_col == "field":
-                group_col = None
-            skill_col = "my_pred" if sim_round == 1 else f"my_pred{sim_round}"
-            validate_field_relative_predictions(
-                model_preds,
-                skill_col=skill_col,
-                score_col=f"scores_r{sim_round}",
-                weather_col=f"weather_sg_r{sim_round}",
-                group_col=group_col,
-            )
-            print(
-                f"  Verified {CENTERING_VERSION}: scores_r{sim_round} "
-                f"is zero-mean by {group_col or 'field'}"
-            )
-        else:
-            print(
-                f"  WARNING: {pred_file_path} is a legacy uncentered file; "
+        if "centering_version" not in model_preds.columns or "centering_group" not in model_preds.columns:
+            raise SimulationHealthError(
+                f"BLOCKED — {pred_file_path} is a legacy/unmarked prediction file; "
                 "rebuild it with live_stats_engine.py"
             )
+        if model_preds[["centering_version", "centering_group"]].isna().any().any():
+            raise SimulationHealthError(
+                f"BLOCKED — {pred_file_path} has partially missing centering metadata"
+            )
+        versions = set(model_preds["centering_version"].astype(str))
+        if versions != {CENTERING_VERSION}:
+            raise SimulationHealthError(
+                f"BLOCKED — unsupported score centering in {pred_file_path}: {versions}"
+            )
+        groups = set(model_preds["centering_group"].astype(str))
+        if len(groups) != 1:
+            raise SimulationHealthError(
+                f"BLOCKED — inconsistent centering groups in {pred_file_path}: {groups}"
+            )
+        group_col = next(iter(groups))
+        if group_col == "field":
+            group_col = None
+        skill_col = "my_pred" if sim_round == 1 else f"my_pred{sim_round}"
+        validate_field_relative_predictions(
+            model_preds,
+            skill_col=skill_col,
+            score_col=f"scores_r{sim_round}",
+            weather_col=f"weather_sg_r{sim_round}",
+            group_col=group_col,
+        )
+        print(
+            f"  Verified {CENTERING_VERSION}: scores_r{sim_round} "
+            f"is zero-mean by {group_col or 'field'}"
+        )
         pred_col = find_pred_col(model_preds, sim_round)
         pred_lookup = dict(zip(model_preds["player_name"], model_preds[pred_col]))
     elif args.price_only and cached_meta and cached_meta.get("pred_lookup"):
@@ -4954,30 +4965,32 @@ def main():
     else:
         print(f"  No weather columns ({_wind_col}, {_dew_col}) — weather decomposition disabled")
 
-    # Behavioral centering authority: the simulator's expected field mean is
-    # the mean of each player's course baseline minus their centered SG
-    # advantage. This catches tapes produced at (say) 69.7 but merely labelled
-    # 68.7 in metadata.
+    # Behavioral centering authority comes directly from the active Sheet course
+    # map. The prediction CSV's course_score_adj is checked against that map but
+    # is never allowed to define its own target (a stale 69.7 column must not be
+    # able to approve a 69.7 tape merely labelled 68.7).
+    sheet_course_averages = configured_round_scoring_baselines(_cfg)
+    if expected_avg_authority == "cli" and args.expected_avg is not None:
+        if len(sheet_course_averages) > 1:
+            raise SimulationHealthError(
+                "BLOCKED — a scalar CLI expected average is ambiguous for a multi-course "
+                "event; update every Sheet course baseline and rerun"
+            )
+        active_course_averages = {"field": float(expected_avg)}
+    else:
+        active_course_averages = sheet_course_averages
     expected_field_mean = float(expected_avg)
     expected_player_means = {
         str(player): float(expected_avg) for player in model_preds.get("player_name", [])
     }
-    _score_adv_col = f"scores_r{sim_round}"
-    if not model_preds.empty and _score_adv_col in model_preds.columns:
-        _base_scores = (
-            pd.to_numeric(model_preds["course_score_adj"], errors="coerce").fillna(expected_avg)
-            if "course_score_adj" in model_preds.columns
-            else pd.Series(float(expected_avg), index=model_preds.index)
+    if not model_preds.empty:
+        expected_field_mean, expected_player_means = derive_authoritative_scoring_targets(
+            model_preds,
+            sim_round=sim_round,
+            skill_col=pred_col,
+            configured_expected_avg=configured_expected_avg,
+            course_averages=active_course_averages,
         )
-        _advantages = pd.to_numeric(model_preds[_score_adv_col], errors="coerce")
-        if _advantages.isna().any():
-            raise SimulationHealthError(
-                f"BLOCKED — {_score_adv_col} contains missing/non-numeric values"
-            )
-        expected_field_mean = float((_base_scores - _advantages).mean())
-        expected_player_means = dict(zip(
-            model_preds["player_name"], (_base_scores - _advantages).astype(float)
-        ))
         print(f"  Centering target: {expected_field_mean:.4f} strokes (player-input implied)")
 
     # ── Step 1: Simulate scores (or load from cache) ─────────────────────
@@ -4994,11 +5007,7 @@ def main():
             }
             print(f"  [score-est] Shifted {len(sim_dict)} cached arrays by {score_shift_delta:+.3f} strokes")
 
-        parent_health = (cached_meta or {}).get("health_manifest")
-        if not parent_health:
-            raise SimulationHealthError(
-                "BLOCKED — sim cache has no health manifest; run a fresh full simulation"
-            )
+        parent_health = cached_parent_health
         parent_model = parent_health.get("model") or {}
         selected_model = parent_model.get("selected", "category_first")
         overlay = collect_overlay_provenance(
@@ -5021,6 +5030,29 @@ def main():
             current_overlay=overlay,
         )
         if score_shift_delta != 0.0:
+            parent_course_averages = {
+                str(code): float(value)
+                for code, value in (
+                    (parent_health.get("scoring") or {}).get(
+                        "configured_course_averages"
+                    ) or {}
+                ).items()
+            }
+            shifted_course_averages = {
+                code: value + score_shift_delta
+                for code, value in parent_course_averages.items()
+            }
+            if (
+                set(shifted_course_averages) != set(active_course_averages)
+                or any(
+                    abs(shifted_course_averages[code] - active_course_averages[code]) > 1e-6
+                    for code in active_course_averages
+                )
+            ):
+                raise SimulationHealthError(
+                    "BLOCKED — a uniform --score-est shift does not match every active "
+                    "course baseline; run a fresh full simulation"
+                )
             active_health_manifest = build_simulation_manifest(
                 sim_dict,
                 tourney=tourney,
@@ -5043,6 +5075,7 @@ def main():
                         (parent_health.get("scoring") or {}).get("player_expected_means") or {}
                     ).items()
                 },
+                configured_course_averages=active_course_averages,
                 selected_model=selected_model,
                 skew_calibrated=bool(parent_model.get("skew_calibrated")),
                 overlay=overlay,
@@ -5060,6 +5093,7 @@ def main():
             event_id=_event_id,
             sim_round=sim_round,
             configured_expected_avg=configured_expected_avg,
+            configured_course_averages=active_course_averages,
             sim_dict=sim_dict,
             model_players=list(pred_lookup),
             current_overlay=overlay,
@@ -5103,6 +5137,7 @@ def main():
             expected_avg_authority=expected_avg_authority,
             expected_field_mean=expected_field_mean,
             expected_player_means=expected_player_means,
+            configured_course_averages=active_course_averages,
             selected_model=selected_model,
             skew_calibrated=not args.no_skew_cal,
             overlay=overlay,
@@ -5117,6 +5152,7 @@ def main():
                 event_id=_event_id,
                 sim_round=sim_round,
                 configured_expected_avg=configured_expected_avg,
+                configured_course_averages=active_course_averages,
                 sim_dict=sim_dict,
                 model_players=model_preds["player_name"].tolist(),
                 current_overlay=overlay,
@@ -5766,6 +5802,7 @@ def main():
             event_id=_event_id,
             sim_round=sim_round,
             configured_expected_avg=configured_expected_avg,
+            configured_course_averages=active_course_averages,
             sim_dict=sim_dict,
             model_players=list(pred_lookup),
             current_overlay=overlay,

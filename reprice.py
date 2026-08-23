@@ -156,10 +156,12 @@ def main():
     from sim_health_gate import (
         collect_overlay_provenance,
         configured_round_expected_avg,
+        configured_round_scoring_baselines,
         require_bound_artifact,
         require_h2h_probability_table,
     )
     configured_avg = configured_round_expected_avg(cfg)
+    configured_course_averages = configured_round_scoring_baselines(cfg)
     simulation_health = health.get("simulation_manifest") or {}
     health_model = simulation_health.get("model") or {}
     overlay = collect_overlay_provenance(
@@ -178,6 +180,7 @@ def main():
             event_id=event_id,
             sim_round=sim_round,
             configured_expected_avg=configured_avg,
+            configured_course_averages=configured_course_averages,
             current_overlay=overlay,
         )
         require_h2h_probability_table(h2h_df, simulation_health)
@@ -255,7 +258,10 @@ def main():
         dg_id_lookup = {}
 
     # ── 6. Required sharp alerts are accepted by Telegram before their rows
-    # are stored. A delivery exception escapes main(), failing the workflow. ──
+    # are stored. Re-hash once more after the Sheet reads so a long-running or
+    # shared runner cannot swap the pricing bundle between dedup and delivery.
+    # A delivery exception escapes main(), failing the workflow. ──
+    require_pricing_health()
     n_new, n_alerted = _deliver_then_store_matchups(
         new_mu,
         seen_alert_keys,

@@ -107,6 +107,163 @@ def configured_round_expected_avg(config: Mapping[str, Any]) -> float:
     return float(pars[0]) + value
 
 
+def configured_round_scoring_baselines(config: Mapping[str, Any]) -> dict[str, float]:
+    """Return the Sheet-authoritative absolute baseline for every active course.
+
+    ``expected_score_1`` is the single-course field average on ordinary weeks.
+    Multi-course weeks must provide a one-to-one ``course_codes`` mapping; an
+    incomplete/stale mapping is unsafe because a prediction file could otherwise
+    carry last week's per-course baseline while the headline average looks current.
+    """
+    raw_values = [config.get(f"expected_score_{idx}") for idx in range(1, 4)]
+    populated = [idx for idx, value in enumerate(raw_values) if value is not None]
+    if populated and populated != list(range(max(populated) + 1)):
+        raise SimulationHealthError(
+            "multi-course expected_score_N values contain a gap"
+        )
+    values = [value for value in raw_values if value is not None]
+    if not values:
+        raise SimulationHealthError("active config has no course scoring baselines")
+
+    pars = list(config.get("course_pars") or [])
+
+    def _absolute(value: Any, index: int) -> float:
+        number = float(value)
+        if abs(number) <= 50:
+            if not pars:
+                raise SimulationHealthError(
+                    "cannot resolve course scoring adjustment without course_pars"
+                )
+            par = float(pars[index] if index < len(pars) else pars[0])
+            number = par + number
+        if not math.isfinite(number) or not EXPECTED_AVG_RANGE[0] <= number <= EXPECTED_AVG_RANGE[1]:
+            raise SimulationHealthError(
+                f"configured course scoring baseline {number!r} is outside "
+                f"{EXPECTED_AVG_RANGE[0]:g}..{EXPECTED_AVG_RANGE[1]:g}"
+            )
+        return number
+
+    absolute = [_absolute(value, idx) for idx, value in enumerate(values)]
+    course_codes = [str(code).casefold().strip() for code in (config.get("course_codes") or [])]
+    if len(absolute) == 1:
+        return {"field": absolute[0]}
+    if len(course_codes) != len(absolute) or len(set(course_codes)) != len(course_codes):
+        raise SimulationHealthError(
+            "multi-course scoring config requires unique course_codes matching every "
+            "expected_score_N value"
+        )
+    return dict(zip(course_codes, absolute))
+
+
+def derive_authoritative_scoring_targets(
+    frame: Any,
+    *,
+    sim_round: int,
+    skill_col: str,
+    configured_expected_avg: float,
+    course_averages: Mapping[str, Any],
+) -> tuple[float, dict[str, float]]:
+    """Derive per-player score means from current Sheet baselines, not CSV labels.
+
+    This is deliberately independent of ``course_score_adj``. That column is an
+    output of ``live_stats_engine`` and is checked against the Sheet, but is never
+    allowed to define its own health target. Otherwise a stale 69.7 column could
+    generate a 69.7 tape, label it 68.7, and approve itself.
+    """
+    import pandas as pd
+    from score_centering import CENTERING_VERSION, validate_field_relative_predictions
+
+    if frame is None or getattr(frame, "empty", True):
+        raise SimulationHealthError("model prediction field is empty")
+    score_col = f"scores_r{int(sim_round)}"
+    weather_col = f"weather_sg_r{int(sim_round)}"
+    required = {"player_name", skill_col, score_col, weather_col, "centering_version", "centering_group"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise SimulationHealthError(
+            f"prediction artifact lacks required field-relative columns: {missing}"
+        )
+    if frame[["centering_version", "centering_group"]].isna().any().any():
+        raise SimulationHealthError(
+            f"prediction artifact is not exclusively {CENTERING_VERSION}: "
+            "centering metadata is partially missing"
+        )
+    versions = set(frame["centering_version"].dropna().astype(str))
+    if versions != {CENTERING_VERSION}:
+        raise SimulationHealthError(
+            f"prediction artifact is not exclusively {CENTERING_VERSION}: {sorted(versions)}"
+        )
+    groups = set(frame["centering_group"].dropna().astype(str))
+    if len(groups) != 1:
+        raise SimulationHealthError(f"prediction artifact has inconsistent centering groups: {groups}")
+    group_col = next(iter(groups))
+    if group_col == "field":
+        group_col = None
+    try:
+        validate_field_relative_predictions(
+            frame,
+            skill_col=skill_col,
+            score_col=score_col,
+            weather_col=weather_col,
+            group_col=group_col,
+        )
+    except ValueError as exc:
+        raise SimulationHealthError(f"invalid field-relative prediction artifact: {exc}") from exc
+
+    normalised_courses = {
+        str(code).casefold().strip(): float(value)
+        for code, value in course_averages.items()
+    }
+    if not normalised_courses:
+        raise SimulationHealthError("current Sheet has no authoritative scoring baseline")
+    for code, value in normalised_courses.items():
+        if not math.isfinite(value) or not EXPECTED_AVG_RANGE[0] <= value <= EXPECTED_AVG_RANGE[1]:
+            raise SimulationHealthError(f"invalid scoring baseline for {code!r}: {value!r}")
+
+    if set(normalised_courses) == {"field"}:
+        baseline = pd.Series(normalised_courses["field"], index=frame.index, dtype=float)
+        if abs(float(configured_expected_avg) - normalised_courses["field"]) > 1e-6:
+            raise SimulationHealthError(
+                "primary expected average disagrees with the single-course Sheet baseline"
+            )
+        if "course_score_adj" in frame.columns:
+            labelled = pd.to_numeric(frame["course_score_adj"], errors="coerce")
+            labelled = labelled[labelled.notna()]
+            if not labelled.empty and float((labelled - baseline.loc[labelled.index]).abs().max()) > 1e-6:
+                raise SimulationHealthError(
+                    "prediction course_score_adj disagrees with the current Sheet baseline"
+                )
+    else:
+        course_col = "course" if "course" in frame.columns else "course_x" if "course_x" in frame.columns else None
+        if course_col is None:
+            raise SimulationHealthError(
+                "multi-course prediction artifact has no player course assignment"
+            )
+        course_keys = frame[course_col].astype(str).str.casefold().str.strip()
+        baseline = course_keys.map(normalised_courses)
+        if baseline.isna().any():
+            unknown = sorted(set(course_keys[baseline.isna()]))
+            raise SimulationHealthError(
+                f"prediction artifact contains unmapped course codes: {unknown}"
+            )
+        if "course_score_adj" not in frame.columns:
+            raise SimulationHealthError("multi-course prediction artifact lacks course_score_adj")
+        labelled = pd.to_numeric(frame["course_score_adj"], errors="coerce")
+        if labelled.isna().any() or float((labelled - baseline).abs().max()) > 1e-6:
+            raise SimulationHealthError(
+                "prediction course_score_adj disagrees with current per-course Sheet baselines"
+            )
+
+    advantages = pd.to_numeric(frame[score_col], errors="coerce")
+    if advantages.isna().any():
+        raise SimulationHealthError(f"{score_col} contains missing/non-numeric values")
+    player_means = baseline.astype(float) - advantages.astype(float)
+    names = frame["player_name"].map(_normalise_name)
+    if names.duplicated().any():
+        raise SimulationHealthError("prediction artifact has duplicate normalised players")
+    return float(player_means.mean()), dict(zip(names, player_means.astype(float)))
+
+
 def _canonical_json(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -155,6 +312,34 @@ def tape_sha256(sim_dict: Mapping[Any, Any]) -> str:
         digest.update(np.asarray(values.shape, dtype="<i8").tobytes())
         digest.update(np.ascontiguousarray(values).tobytes())
     return digest.hexdigest()
+
+
+def sealed_cache_expected_avg(cache_meta: Mapping[str, Any] | None) -> float:
+    """Resolve a price-only shift anchor exclusively from the sealed manifest."""
+    meta = dict(cache_meta or {})
+    manifest = meta.get("health_manifest") or {}
+    if not manifest or manifest.get("manifest_sha256") != _content_id(manifest):
+        raise SimulationHealthError(
+            "sim cache has no valid sealed health manifest for expected_avg"
+        )
+    try:
+        sealed = float((manifest.get("scoring") or {}).get("expected_avg"))
+    except (TypeError, ValueError):
+        raise SimulationHealthError("sealed sim cache expected_avg is missing or invalid")
+    if not math.isfinite(sealed):
+        raise SimulationHealthError("sealed sim cache expected_avg is missing or invalid")
+    if meta.get("expected_avg") is not None:
+        try:
+            unsealed = float(meta["expected_avg"])
+        except (TypeError, ValueError):
+            raise SimulationHealthError(
+                "cache expected_avg metadata disagrees with its sealed manifest"
+            )
+        if not math.isfinite(unsealed) or abs(unsealed - sealed) > 1e-6:
+            raise SimulationHealthError(
+                "cache expected_avg metadata disagrees with its sealed manifest"
+            )
+    return sealed
 
 
 def _source_file(path: str | os.PathLike[str] | None) -> dict[str, Any] | None:
@@ -331,6 +516,7 @@ def build_simulation_manifest(
     expected_avg_authority: str,
     expected_field_mean: float | None = None,
     expected_player_means: Mapping[Any, Any] | None = None,
+    configured_course_averages: Mapping[str, Any] | None = None,
     selected_model: str = "category_first",
     skew_calibrated: bool = True,
     overlay: Mapping[str, Any] | None = None,
@@ -352,6 +538,25 @@ def build_simulation_manifest(
             f"expected scoring average {expected_avg!r} is outside "
             f"{EXPECTED_AVG_RANGE[0]:g}..{EXPECTED_AVG_RANGE[1]:g}"
         )
+    course_averages: dict[str, float] = {}
+    for raw_code, raw_value in (
+        configured_course_averages or {"field": expected}
+    ).items():
+        code = str(raw_code).casefold().strip()
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            errors.append(f"course scoring baseline for {code!r} is non-numeric")
+            continue
+        if not code or not math.isfinite(value) or not EXPECTED_AVG_RANGE[0] <= value <= EXPECTED_AVG_RANGE[1]:
+            errors.append(f"course scoring baseline for {code!r} is invalid: {raw_value!r}")
+            continue
+        course_averages[code] = value
+    if not course_averages:
+        errors.append("authoritative course scoring baselines are missing")
+    if set(course_averages) == {"field"} and math.isfinite(expected):
+        if abs(course_averages["field"] - expected) > 1e-6:
+            errors.append("single-course baseline disagrees with expected scoring average")
     try:
         centering_target = float(expected if expected_field_mean is None else expected_field_mean)
     except (TypeError, ValueError):
@@ -402,6 +607,11 @@ def build_simulation_manifest(
         expected_player_field_mean - centering_target
     ) > 1e-6:
         errors.append("aggregate centering target disagrees with per-player inputs")
+    if set(course_averages) == {"field"} and math.isfinite(centering_target):
+        if abs(centering_target - course_averages["field"]) > 1e-6:
+            errors.append(
+                "single-course behavioral target is not anchored to the current Sheet baseline"
+            )
     if not math.isfinite(player_rmse) or player_rmse > PLAYER_CENTERING_RMSE_TOLERANCE:
         errors.append(
             f"per-player tape centering RMSE {player_rmse:.4f} exceeds "
@@ -469,6 +679,9 @@ def build_simulation_manifest(
         },
         "scoring": {
             "expected_avg": expected,
+            "configured_course_averages": {
+                code: round(value, 8) for code, value in sorted(course_averages.items())
+            },
             "implied_field_mean": centering_target,
             "empirical_field_mean": empirical_mean,
             "centering_delta": centering_delta,
@@ -505,6 +718,7 @@ def validate_simulation_manifest(
     event_id: int | str,
     sim_round: int,
     configured_expected_avg: float,
+    configured_course_averages: Mapping[str, Any] | None = None,
     sim_dict: Mapping[Any, Any] | None = None,
     model_players: Iterable[Any] | None = None,
     now: datetime | None = None,
@@ -540,6 +754,36 @@ def validate_simulation_manifest(
     except (TypeError, ValueError):
         errors.append("expected scoring average is missing or invalid")
     scoring = payload.get("scoring") or {}
+    stored_course_averages = scoring.get("configured_course_averages") or {}
+    try:
+        stored_course_averages = {
+            str(code).casefold().strip(): float(value)
+            for code, value in stored_course_averages.items()
+        }
+        if not stored_course_averages or any(
+            not code
+            or not math.isfinite(value)
+            or not EXPECTED_AVG_RANGE[0] <= value <= EXPECTED_AVG_RANGE[1]
+            for code, value in stored_course_averages.items()
+        ):
+            errors.append("manifest authoritative course scoring baselines are invalid")
+        if set(stored_course_averages) == {"field"}:
+            if abs(stored_course_averages["field"] - manifest_avg) > 1e-6:
+                errors.append("manifest single-course baseline disagrees with expected average")
+        if configured_course_averages is not None:
+            active_course_averages = {
+                str(code).casefold().strip(): float(value)
+                for code, value in configured_course_averages.items()
+            }
+            if set(active_course_averages) != set(stored_course_averages) or any(
+                abs(active_course_averages[code] - stored_course_averages.get(code, math.inf)) > 1e-6
+                for code in active_course_averages
+            ):
+                errors.append(
+                    "manifest per-course scoring baselines differ from the active Sheet"
+                )
+    except (AttributeError, TypeError, ValueError):
+        errors.append("manifest authoritative course scoring baselines are missing or invalid")
     try:
         implied_mean = float(scoring.get("implied_field_mean"))
         recorded_empirical = float(scoring.get("empirical_field_mean"))
@@ -696,6 +940,7 @@ def validate_bound_artifact(
     event_id: int | str,
     sim_round: int,
     configured_expected_avg: float,
+    configured_course_averages: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
     current_overlay: Mapping[str, Any] | None = None,
@@ -728,6 +973,7 @@ def validate_bound_artifact(
         event_id=event_id,
         sim_round=sim_round,
         configured_expected_avg=configured_expected_avg,
+        configured_course_averages=configured_course_averages,
         now=now,
         max_age_hours=max_age_hours,
         current_overlay=current_overlay,

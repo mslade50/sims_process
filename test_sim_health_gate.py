@@ -81,6 +81,21 @@ def _h2h(players):
     return pd.DataFrame(rows)
 
 
+def _centered_prediction_frame(course_score=68.7):
+    players = _players()
+    skill = np.tile(np.array([-0.5, 0.5]), len(players) // 2)
+    return pd.DataFrame({
+        "player_name": players,
+        "my_pred3": skill,
+        "field_skill_mean": np.zeros(len(players)),
+        "weather_sg_r3": np.zeros(len(players)),
+        "scores_r3": skill,
+        "centering_version": "field_relative_v1",
+        "centering_group": "field",
+        "course_score_adj": np.full(len(players), course_score),
+    })
+
+
 def test_healthy_centered_tape_is_content_approved():
     tape = _tape()
     manifest = _manifest(tape)
@@ -101,6 +116,148 @@ def test_mislabeled_tape_three_tenths_off_is_rejected():
     assert manifest["approval"]["status"] == "rejected"
     assert not report.ok
     assert any("not centered" in error or "miscentered" in error for error in report.errors)
+
+
+def test_self_consistent_wrong_single_course_target_cannot_approve_itself():
+    tape = _tape(69.7)
+    manifest = _manifest(
+        tape,
+        expected_avg=68.7,
+        expected_field_mean=69.7,
+        expected_player_means={player: 69.7 for player in tape},
+        configured_course_averages={"field": 68.7},
+    )
+
+    assert manifest["approval"]["status"] == "rejected"
+    assert any(
+        "not anchored" in error
+        for error in manifest["checks"]["errors"]
+    )
+
+
+def test_authoritative_target_rejects_stale_prediction_baseline_and_partial_markers():
+    stale = _centered_prediction_frame(course_score=69.7)
+    try:
+        shg.derive_authoritative_scoring_targets(
+            stale,
+            sim_round=3,
+            skill_col="my_pred3",
+            configured_expected_avg=68.7,
+            course_averages={"field": 68.7},
+        )
+    except shg.SimulationHealthError as exc:
+        assert "course_score_adj" in str(exc)
+    else:
+        raise AssertionError("stale 69.7 prediction baseline approved under 68.7 Sheet")
+
+    partial = _centered_prediction_frame()
+    partial.loc[0, "centering_version"] = None
+    try:
+        shg.derive_authoritative_scoring_targets(
+            partial,
+            sim_round=3,
+            skill_col="my_pred3",
+            configured_expected_avg=68.7,
+            course_averages={"field": 68.7},
+        )
+    except shg.SimulationHealthError as exc:
+        assert "exclusively field_relative_v1" in str(exc)
+    else:
+        raise AssertionError("partially unmarked prediction artifact was approved")
+
+
+def test_multicourse_targets_use_exact_sheet_mapping_and_secondary_change_invalidates():
+    players = _players()
+    courses = np.array(["north"] * 10 + ["south"] * 10)
+    skill = np.tile(np.array([-0.5, 0.5]), 10)
+    baselines = np.where(courses == "north", 68.0, 70.0)
+    frame = pd.DataFrame({
+        "player_name": players,
+        "course": courses,
+        "course_score_adj": baselines,
+        "my_pred3": skill,
+        "field_skill_mean": np.zeros(20),
+        "weather_sg_r3": np.zeros(20),
+        "scores_r3": skill,
+        "centering_version": "field_relative_v1",
+        "centering_group": "course_score_adj",
+    })
+    target, player_targets = shg.derive_authoritative_scoring_targets(
+        frame,
+        sim_round=3,
+        skill_col="my_pred3",
+        configured_expected_avg=68.0,
+        course_averages={"north": 68.0, "south": 70.0},
+    )
+    assert target == 69.0
+    assert player_targets[players[0]] == 68.5
+    assert player_targets[players[-1]] == 69.5
+
+    tape = {
+        player: np.full(10_000, player_targets[player], dtype=float)
+        for player in players
+    }
+    manifest = _manifest(
+        tape,
+        expected_avg=68.0,
+        expected_field_mean=target,
+        expected_player_means=player_targets,
+        configured_course_averages={"north": 68.0, "south": 70.0},
+    )
+    report = shg.validate_simulation_manifest(
+        manifest,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.0,
+        configured_course_averages={"north": 68.0, "south": 70.3},
+        now=NOW,
+        current_overlay=OVERLAY,
+    )
+    assert manifest["approval"]["status"] == "approved", manifest["checks"]["errors"]
+    assert not report.ok
+    assert any("per-course" in error for error in report.errors)
+
+
+def test_course_baseline_config_resolves_each_course_par_and_rejects_incomplete_map():
+    resolved = shg.configured_round_scoring_baselines({
+        "expected_score_1": -1.3,
+        "expected_score_2": -2.0,
+        "expected_score_3": None,
+        "course_codes": ["N", "S"],
+        "course_pars": [70, 72],
+    })
+    assert resolved == {"n": 68.7, "s": 70.0}
+
+    try:
+        shg.configured_round_scoring_baselines({
+            "expected_score_1": 68.7,
+            "expected_score_2": 70.0,
+            "course_codes": ["N"],
+            "course_pars": [70, 72],
+        })
+    except shg.SimulationHealthError as exc:
+        assert "course_codes" in str(exc)
+    else:
+        raise AssertionError("incomplete multi-course Sheet mapping was accepted")
+
+
+def test_score_est_shift_anchor_comes_from_sealed_manifest_not_mutable_cache_label():
+    manifest = _manifest(_tape())
+    assert shg.sealed_cache_expected_avg({
+        "expected_avg": 68.7,
+        "health_manifest": manifest,
+    }) == 68.7
+
+    try:
+        shg.sealed_cache_expected_avg({
+            "expected_avg": 69.0,
+            "health_manifest": manifest,
+        })
+    except shg.SimulationHealthError as exc:
+        assert "disagrees" in str(exc)
+    else:
+        raise AssertionError("mutable cache expected_avg overrode the sealed shift anchor")
 
 
 def test_truncated_live_field_is_rejected():
@@ -294,16 +451,17 @@ def test_health_gate_precedes_every_betting_side_effect_in_entrypoints():
         "store_round_matchups("
     )
 
-    side_effect = min(
-        reprice_source.index("get_spreadsheet()"),
-        reprice_source.index("store_round_matchups("),
-        reprice_source.index("rc.send_matchup_alert("),
-    )
-    second_gate = reprice_source.index(
+    main_source = reprice_source[reprice_source.index("def main():"):]
+    sheet_read = main_source.index("get_spreadsheet()")
+    second_gate = main_source.index(
         "require_pricing_health()",
-        reprice_source.index("# ── 5. Dedup"),
+        main_source.index("# ── 5. Dedup"),
     )
-    assert second_gate < side_effect
+    assert second_gate < sheet_read
+
+    delivery = main_source.index("_deliver_then_store_matchups(")
+    final_gate = main_source.rfind("require_pricing_health()", 0, delivery)
+    assert sheet_read < final_gate < delivery
 
     workflow = (root / ".github" / "workflows" / "run-sim.yml").read_text(
         encoding="utf-8"

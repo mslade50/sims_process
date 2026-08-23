@@ -1334,6 +1334,25 @@ def _load_active_field_context(round_num, require_centered=False):
     }
 
 
+def _attach_authoritative_course_baselines(preds, course_col, course_map):
+    """Attach exact configured baselines to a multi-course prediction field."""
+    if not course_map:
+        raise RuntimeError(
+            "Multi-course field has no course_codes -> expected_score_N mapping"
+        )
+    normalised = {
+        str(code).casefold().strip(): float(value)
+        for code, value in course_map.items()
+    }
+    keys = preds[course_col].astype(str).str.casefold().str.strip()
+    result = preds.copy()
+    result["course_score_adj"] = keys.map(normalised)
+    if result["course_score_adj"].isna().any():
+        unknown = sorted(set(keys[result["course_score_adj"].isna()]))
+        raise RuntimeError(f"Unmapped course codes: {unknown}")
+    return result
+
+
 def create_pre_event_predictions():
     """
     Pre-event: Create model_predictions_r1.csv from final predictions + R1 weather.
@@ -1417,10 +1436,15 @@ def create_pre_event_predictions():
     avg_wind = preds["wind_adj1"].mean()
     avg_skill = preds["my_pred"].mean()
 
-    # Center skill and tee-time weather around the active R1 field.
+    # Bind every R1 player to the Sheet-authoritative course baseline before
+    # centering. Without this, multi-course R1 files group by course but
+    # round_sim prices every player from expected_score_1.
     centering_group = None
     if "course" in preds.columns and preds["course"].nunique(dropna=True) > 1:
-        centering_group = "course"
+        preds = _attach_authoritative_course_baselines(
+            preds, "course", COURSE_SCORE_MAP
+        )
+        centering_group = "course_score_adj"
     preds = center_player_advantages(
         preds,
         skill_col="my_pred",
@@ -2591,6 +2615,13 @@ def update_expected_scores(completed_round, sync_primary=False):
     print(f"\n{'='*60}")
     print(f"  UPDATING EXPECTED SCORES (R{completed_round + 1}-R4)")
     print(f"{'='*60}")
+
+    if sync_primary and len(COURSE_SCORE_MAP) > 1:
+        raise RuntimeError(
+            "Automated primary-only scoring updates are unsafe for a multi-course "
+            "event. Update every expected_score_N baseline atomically, then rebuild "
+            "the prediction file."
+        )
 
     api_key = os.getenv("DATAGOLF_API_KEY")
 
