@@ -241,27 +241,16 @@ RNG_CF = np.random.default_rng(789)  # separate seed for catfirst draws
 
 # Set in main() from --use-python. When False (default), the heavy sim draws
 # (tournament cascade seed 42 + single-round score card seed 789) run via the Rust
-# sims_kernel; the Python draws remain as a flagged fallback.
+# sims_kernel; the Python draws are available only through the explicit flag.
 _USE_PYTHON = False
 
 
-def _rust_kernel_required():
-    """Whether production automation forbids an implicit engine change."""
-    return os.getenv("REQUIRE_SIMS_KERNEL", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-
-
 def _handle_rust_kernel_failure(component, error):
-    if _rust_kernel_required():
-        raise RuntimeError(
-            f"{component} failed while REQUIRE_SIMS_KERNEL=1; refusing to "
-            "silently switch simulation engines"
-        ) from error
-    print(
-        f"  [rust] WARNING: {component} failed ({error!r}); falling back to "
-        "the Python reference. Pass --use-python to select it explicitly."
-    )
+    """Never let an incidental dependency failure select different sim math."""
+    raise RuntimeError(
+        f"{component} failed; refusing to silently switch simulation engines. "
+        "Fix sims_kernel or rerun with --use-python as an explicit operator choice."
+    ) from error
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -269,13 +258,23 @@ def _handle_rust_kernel_failure(component, error):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_corr_matrix(cat_order):
-    """Load category correlation matrix from file or return identity."""
-    for fn in CORR_PREFS:
-        if os.path.exists(fn):
-            R = pd.read_csv(fn, index_col=0)
-            R = R.loc[cat_order, cat_order]
-            return R.values
-    return np.eye(len(cat_order))
+    """Load the tracked production correlation matrix without model fallback."""
+    production_path = CORR_PREFS[0]
+    if not os.path.isfile(production_path):
+        raise FileNotFoundError(
+            "Required production category correlation matrix is missing: "
+            f"{production_path}"
+        )
+    R = pd.read_csv(production_path, index_col=0)
+    try:
+        values = R.loc[cat_order, cat_order].to_numpy(dtype=float)
+    except KeyError as exc:
+        raise ValueError(
+            f"Production correlation matrix lacks required categories: {cat_order}"
+        ) from exc
+    if values.shape != (len(cat_order), len(cat_order)) or not np.isfinite(values).all():
+        raise ValueError("Production correlation matrix is incomplete or non-finite")
+    return values
 
 
 def _cf_calibration_multiplier(gamma):
@@ -299,14 +298,16 @@ def _apply_skew(z, gamma):
 def _load_catfirst_dists(player_names):
     """Load v2 dists + correlation + per-player params for category-first draws.
 
-    Returns (player_cf_params, effective_skew, L_corr) or None if data unavailable.
+    Returns (player_cf_params, effective_skew, L_corr). Production never
+    substitutes the legacy normal model when these inputs are unavailable.
       player_cf_params: list of (mu, std_course) per player — mu NOT re-centered
       effective_skew: np.array (n_players, 4)
       L_corr: (4, 4) Cholesky of correlation matrix
     """
     if not os.path.exists(DISTS_FILE_V2):
-        print(f"  [catfirst] Warning: {DISTS_FILE_V2} not found")
-        return None
+        raise FileNotFoundError(
+            f"Required category-first distributions not found: {DISTS_FILE_V2}"
+        )
 
     dists = pd.read_csv(DISTS_FILE_V2)
     dists['player_name'] = (
@@ -317,8 +318,10 @@ def _load_catfirst_dists(player_names):
     need_cols = {'player_name', 'category_clean', 'mean', 'std', 'skew', 'n_eff'}
     missing = need_cols - set(dists.columns)
     if missing:
-        print(f"  [catfirst] Warning: {DISTS_FILE_V2} missing columns: {missing}")
-        return None
+        raise ValueError(
+            f"{DISTS_FILE_V2} missing required category-first columns: "
+            f"{sorted(missing)}"
+        )
 
     mu_w   = dists.pivot(index='player_name', columns='category_clean', values='mean')
     std_w  = dists.pivot(index='player_name', columns='category_clean', values='std')
@@ -2540,11 +2543,9 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
         raise ValueError(f"Column '{scores_col}' not found in predictions file.")
 
     # Load v2 distributions via shared helper
-    dists_result = _load_catfirst_dists(list(model_preds["player_name"]))
-    if dists_result is None:
-        print(f"  [catfirst] Falling back to standard sim")
-        return simulate_round_scores(model_preds, sim_round, expected_avg, num_sims)
-    player_cf_params, effective_skew, L_corr = dists_result
+    player_cf_params, effective_skew, L_corr = _load_catfirst_dists(
+        list(model_preds["player_name"])
+    )
 
     has_course_adj = "course_score_adj" in model_preds.columns
 
@@ -5571,11 +5572,9 @@ def main():
                 print(f"    Loaded {len(player_names)} players from R1-R{round_num} data")
 
                 # Load category-first distribution params
-                cf_result = _load_catfirst_dists(player_names)
-                if cf_result is None:
-                    print("    Warning: catfirst dists unavailable, skipping tournament sim")
-                    raise RuntimeError("catfirst dists unavailable")
-                player_cf_params, effective_skew, L_corr = cf_result
+                player_cf_params, effective_skew, L_corr = _load_catfirst_dists(
+                    player_names
+                )
                 print(f"    Loaded catfirst distribution parameters")
 
                 # Simulate remaining rounds

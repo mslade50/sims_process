@@ -89,19 +89,41 @@ def test_required_email_returns_receipt_after_smtp_acceptance(round_module, monk
     assert sent[0][1] == ["receiver@example.com"]
 
 
-def test_required_kernel_refuses_implicit_python_fallback(round_module, monkeypatch):
-    monkeypatch.setenv("REQUIRE_SIMS_KERNEL", "1")
-
+def test_kernel_always_refuses_implicit_python_fallback(round_module, monkeypatch):
+    monkeypatch.delenv("REQUIRE_SIMS_KERNEL", raising=False)
     with pytest.raises(RuntimeError, match="refusing to silently switch"):
         round_module._handle_rust_kernel_failure("run_single_round", ValueError("boom"))
 
 
-def test_interactive_kernel_may_use_explicitly_logged_fallback(round_module, monkeypatch):
-    monkeypatch.delenv("REQUIRE_SIMS_KERNEL", raising=False)
+def test_python_engine_requires_explicit_cli_flag(round_module):
+    source = Path(round_module.__file__).read_text(encoding="utf-8")
+    assert "if not _USE_PYTHON" in source
+    assert 'add_argument("--use-python"' in source
 
-    assert round_module._handle_rust_kernel_failure(
-        "run_single_round", ValueError("boom")
-    ) is None
+
+def test_category_first_inputs_never_fall_back_to_legacy(round_module, monkeypatch, tmp_path):
+    missing = tmp_path / "missing_dists.csv"
+    monkeypatch.setattr(round_module, "DISTS_FILE_V2", str(missing))
+    with pytest.raises(FileNotFoundError, match="Required category-first"):
+        round_module._load_catfirst_dists(["alpha"])
+
+    malformed = tmp_path / "malformed_dists.csv"
+    pd.DataFrame({"player_name": ["alpha"]}).to_csv(malformed, index=False)
+    monkeypatch.setattr(round_module, "DISTS_FILE_V2", str(malformed))
+    with pytest.raises(ValueError, match="required category-first columns"):
+        round_module._load_catfirst_dists(["alpha"])
+
+
+def test_production_correlation_matrix_never_falls_back(round_module, monkeypatch, tmp_path):
+    missing = tmp_path / "preferred_missing.csv"
+    fallback = tmp_path / "different_fallback.csv"
+    pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]], index=["a", "b"], columns=["a", "b"]
+    ).to_csv(fallback)
+    monkeypatch.setattr(round_module, "CORR_PREFS", [str(missing), str(fallback)])
+
+    with pytest.raises(FileNotFoundError, match="production category correlation"):
+        round_module.load_corr_matrix(["a", "b"])
 
 
 def test_required_report_rejects_missing_sharp_book_coverage(round_module):
