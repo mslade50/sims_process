@@ -102,3 +102,60 @@ def test_interactive_kernel_may_use_explicitly_logged_fallback(round_module, mon
     assert round_module._handle_rust_kernel_failure(
         "run_single_round", ValueError("boom")
     ) is None
+
+
+def test_required_report_rejects_missing_sharp_book_coverage(round_module):
+    with pytest.raises(round_module.SimulationHealthError, match="betonline=2/5"):
+        round_module.require_pricing_pipeline_healthy(
+            matchup_book_counts={"betcris": 8, "betonline": 2},
+            require_complete_email=True,
+        )
+
+
+def test_zero_qualifying_edges_are_valid_when_inputs_completed(round_module):
+    # The gate cares about source lines successfully priced, not how many rows
+    # survived the model's edge thresholds.
+    round_module.require_pricing_pipeline_healthy(
+        matchup_book_counts={"betcris": 5, "betonline": 5},
+        require_complete_email=True,
+        finish_probs=pd.DataFrame({"player_name": ["a"]}),
+        require_live_tournament=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs, pattern",
+    [
+        ({"matchup_error": ValueError("bad feed")}, "matchup pricing"),
+        (
+            {
+                "matchup_book_counts": {"betcris": 5, "betonline": 5},
+                "require_complete_email": True,
+                "threeball_error": ValueError("bad triples"),
+            },
+            "3-ball pricing",
+        ),
+        (
+            {
+                "matchup_book_counts": {"betcris": 5, "betonline": 5},
+                "require_complete_email": True,
+                "score_line_error": ValueError("bad props"),
+            },
+            "score-line pricing",
+        ),
+        (
+            {
+                "require_live_tournament": True,
+                "tournament_error": ValueError("bad tape"),
+            },
+            "tournament/finish pricing",
+        ),
+        (
+            {"require_live_tournament": True, "finish_probs": pd.DataFrame()},
+            "outputs are missing",
+        ),
+    ],
+)
+def test_incomplete_pricing_pipeline_fails_closed(round_module, kwargs, pattern):
+    with pytest.raises(round_module.SimulationHealthError, match=pattern):
+        round_module.require_pricing_pipeline_healthy(**kwargs)

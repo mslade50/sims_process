@@ -102,6 +102,7 @@ HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 # Email banner warns (orange) when a sharp book prices fewer than this many
 # matchup lines, and flags red at 0 ("NO LINES") — catches a book offline / barely posting.
 MATCHUP_LINE_WARN_THRESHOLD = 10
+REQUIRED_MATCHUP_BOOKS = ("betcris", "betonline")
 
 # Score card: generate fair UNDER prices at these offsets from expected avg
 SCORE_CARD_RANGE = 3.0        # +-3 strokes from expected
@@ -121,6 +122,75 @@ def _round_email_required():
     return os.getenv("REQUIRE_ROUND_SIM_EMAIL", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def _required_matchup_line_floor():
+    try:
+        value = int(os.getenv("ROUND_SIM_MIN_BOOK_MATCHUPS", "5"))
+    except (TypeError, ValueError):
+        value = 5
+    return max(1, value)
+
+
+def require_pricing_pipeline_healthy(
+    *,
+    matchup_error=None,
+    threeball_error=None,
+    score_line_error=None,
+    matchup_book_counts=None,
+    require_complete_email=False,
+    require_live_tournament=False,
+    tournament_error=None,
+    finish_probs=None,
+):
+    """Reject technically incomplete reports before any external side effect.
+
+    Zero qualifying edges is a valid model result. A loader/pricer exception,
+    insufficient required-book coverage in production, or an absent live
+    tournament family means we cannot know that the report is complete.
+    """
+    if matchup_error is not None:
+        raise SimulationHealthError(
+            f"BLOCKED — round matchup pricing did not complete: {matchup_error}"
+        ) from matchup_error
+
+    if require_complete_email:
+        counts = matchup_book_counts or {}
+        floor = _required_matchup_line_floor()
+        missing = {
+            book: int(counts.get(book, 0) or 0)
+            for book in REQUIRED_MATCHUP_BOOKS
+            if int(counts.get(book, 0) or 0) < floor
+        }
+        if missing:
+            detail = ", ".join(
+                f"{book}={count}/{floor}" for book, count in missing.items()
+            )
+            raise SimulationHealthError(
+                f"BLOCKED — required matchup-book coverage is incomplete ({detail})"
+            )
+        if threeball_error is not None:
+            raise SimulationHealthError(
+                "BLOCKED — 3-ball pricing failed, so the email would be "
+                f"incomplete: {threeball_error}"
+            ) from threeball_error
+        if score_line_error is not None:
+            raise SimulationHealthError(
+                "BLOCKED — score-line pricing failed, so the email would be "
+                f"incomplete: {score_line_error}"
+            ) from score_line_error
+
+    if require_live_tournament:
+        if tournament_error is not None:
+            raise SimulationHealthError(
+                "BLOCKED — live tournament/finish pricing did not complete: "
+                f"{tournament_error}"
+            ) from tournament_error
+        if finish_probs is None or getattr(finish_probs, "empty", True):
+            raise SimulationHealthError(
+                "BLOCKED — live tournament/finish outputs are missing; rerun the "
+                "full tournament simulation or explicitly use --skip-tournament-sim"
+            )
 
 # Matchup email filter thresholds
 EMAIL_MIN_PRED = 0.75
@@ -5311,6 +5381,7 @@ def main():
     # ── Step 2: Matchup pricing ──────────────────────────────────────────
     print(f"\n  Fetching matchup odds (scraped -> DataGolf fallback)...")
     matchup_book_counts = {b: 0 for b in SHARP_BOOKS}  # sharp-book line counts for email banner
+    matchup_pricing_error = None
     try:
         from odds_loader import load_matchup_odds
         matchup_df = load_matchup_odds("round_matchups", api_key=API_KEY, round=sim_round)
@@ -5334,6 +5405,7 @@ def main():
             matchup_df, sim_round, out_dir
         )
     except Exception as e:
+        matchup_pricing_error = e
         print(f"  Warning: Matchup pricing failed: {e}")
         combined = pd.DataFrame()
         sharp = pd.DataFrame()
@@ -5344,6 +5416,7 @@ def main():
     # 3-ball fairs are computed straight from sim_dict (P of lowest, dead-heat),
     # priced against the scraped board feed (soft books + betcris/betonline/kalshi).
     # combined_3b = all tracked books; email_3b = the alert subset (kalshi/betonline/betcris).
+    threeball_pricing_error = None
     try:
         from odds_loader import load_3ball_odds
         tb_df = load_3ball_odds(round=sim_round)
@@ -5358,6 +5431,7 @@ def main():
                 tb_df, sim_round, pred_lookup, sample_lookup, wx_lookup=_wx_lookup
             )
     except Exception as e:
+        threeball_pricing_error = e
         print(f"  Warning: 3-ball pricing failed: {e}")
         combined_3b = pd.DataFrame()
         email_3b = pd.DataFrame()
@@ -5432,11 +5506,13 @@ def main():
 
     # ── Step 3b: Price score lines vs market ─────────────────────────────
     score_edges = pd.DataFrame()
+    score_line_pricing_error = None
     try:
         market_lines = load_score_lines(sim_round)
         if market_lines:
             score_edges = price_score_lines(score_card, market_lines)
     except Exception as e:
+        score_line_pricing_error = e
         print(f"  Warning: Score line pricing failed: {e}")
 
     # ── Step 4: Tournament Simulation (NEW) ──────────────────────────────
@@ -5457,6 +5533,7 @@ def main():
     tournament_health_path = f"tournament_live_{tourney}_health.json"
     tournament_health_files = {}
     tournament_field_players = []
+    tournament_pipeline_error = None
 
     if (
         not args.skip_tournament_sim
@@ -5763,6 +5840,7 @@ def main():
         except SimulationHealthError:
             raise
         except Exception as e:
+            tournament_pipeline_error = e
             if must_refresh_live_tournament:
                 raise SimulationHealthError(
                     "BLOCKED — decimal score refresh could not rebuild the live "
@@ -5784,6 +5862,9 @@ def main():
                 _fp_path = _cand
                 break
         if _fp_path is None:
+            tournament_pipeline_error = FileNotFoundError(
+                "cached finish probabilities are missing"
+            )
             print(f"  [reprice-outrights] No cached finish_probs found — skipping Kalshi/Novig pricing.")
         else:
             try:
@@ -5855,6 +5936,7 @@ def main():
             except SimulationHealthError:
                 raise
             except Exception as e:
+                tournament_pipeline_error = e
                 print(f"  [reprice-outrights] Failed: {e}")
                 import traceback
                 traceback.print_exc()
@@ -6003,6 +6085,16 @@ def main():
 
     def _require_betting_health():
         """Re-check exact artifacts immediately before any bet side effect."""
+        require_pricing_pipeline_healthy(
+            matchup_error=matchup_pricing_error,
+            threeball_error=threeball_pricing_error,
+            score_line_error=score_line_pricing_error,
+            matchup_book_counts=matchup_book_counts,
+            require_complete_email=_round_email_required(),
+            require_live_tournament=(round_num >= 1 and not args.skip_tournament_sim),
+            tournament_error=tournament_pipeline_error,
+            finish_probs=finish_probs,
+        )
         require_simulation_healthy(
             active_health_manifest,
             tourney=tourney,
