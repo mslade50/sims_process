@@ -1131,7 +1131,8 @@ def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=
             records.append(rec)
         _append_to_ledger(records)
     except Exception as e:
-        print(f"  [ledger] Warning: score edge write failed: {e}")
+        print(f"  [ledger] Error: score edge write failed: {e}")
+        raise
 
 
 
@@ -1301,8 +1302,11 @@ def _append_to_ledger(records):
     if os.path.exists(LEDGER_PATH):
         try:
             existing = pd.read_parquet(LEDGER_PATH)
-        except Exception:
-            existing = pd.DataFrame()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Existing bet ledger at {LEDGER_PATH!r} could not be read; "
+                "refusing to overwrite it"
+            ) from exc
     else:
         existing = pd.DataFrame()
 
@@ -1398,7 +1402,8 @@ def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_look
 
         _append_to_ledger(records)
     except Exception as e:
-        print(f"  [ledger] Warning: tournament matchup write failed: {e}")
+        print(f"  [ledger] Error: tournament matchup write failed: {e}")
+        raise
 
 
 def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup, ts, bet_type="finish_position"):
@@ -1440,7 +1445,8 @@ def _ledger_write_finish_positions(combined_finish_df, tourney, event_id, dg_id_
 
         _append_to_ledger(records)
     except Exception as e:
-        print(f"  [ledger] Warning: finish position write failed: {e}")
+        print(f"  [ledger] Error: finish position write failed: {e}")
+        raise
 
 
 def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts):
@@ -1495,7 +1501,8 @@ def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_i
 
         _append_to_ledger(records)
     except Exception as e:
-        print(f"  [ledger] Warning: round matchup write failed: {e}")
+        print(f"  [ledger] Error: round matchup write failed: {e}")
+        raise
 
 
 def _ledger_write_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts):
@@ -1549,7 +1556,8 @@ def _ledger_write_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_
 
         _append_to_ledger(records)
     except Exception as e:
-        print(f"  [ledger] Warning: round 3-ball write failed: {e}")
+        print(f"  [ledger] Error: round 3-ball write failed: {e}")
+        raise
 
 
 def _safe_float(val):
