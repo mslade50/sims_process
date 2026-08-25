@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "event_id": "28",
-  "tourney": "bmw",
-  "sim_run_at": "2026-08-23 01:27:08 UTC",
-  "prediction_count": 50,
-  "active_field_count": 50,
-  "prediction_field_sha256": "9dfd54730466aa4ba7c24eae351d6b3e5408c481cbb6dd04863bc118585f99ef",
-  "active_field_sha256": "9dfd54730466aa4ba7c24eae351d6b3e5408c481cbb6dd04863bc118585f99ef",
+  "event_id": "60",
+  "tourney": "tourchamp",
+  "sim_run_at": "2026-08-25 21:22:58 UTC",
+  "prediction_count": 30,
+  "active_field_count": 30,
+  "prediction_field_sha256": "6e55d4e932b67bf4991ccd0974f156b4a2c72023d750995a3786556d45a15783",
+  "active_field_sha256": "6e55d4e932b67bf4991ccd0974f156b4a2c72023d750995a3786556d45a15783",
   "withdrawn_or_extra_players": []
 }
