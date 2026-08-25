@@ -231,12 +231,143 @@ def test_monday_tee_times_are_optional_on_the_eastern_calendar():
         if keyword.arg == "allow_missing"
     )
     assert ast.unparse(allow_keyword.value) == "_ALLOW_MISSING_TEE_TIMES"
+    optional_keyword = next(
+        keyword for keyword in tee_time_call.keywords
+        if keyword.arg == "optional_rounds"
+    )
+    assert ast.unparse(optional_keyword.value) == "_OPTIONAL_TEE_TIME_ROUNDS"
+
+
+def test_tour_championship_r2_exception_requires_exact_pre_event_identity():
+    optional_rounds = _load_definitions("_event_optional_tee_time_rounds")[
+        "_event_optional_tee_time_rounds"
+    ]
+
+    assert optional_rounds(
+        "tourchamp", 60, 688, pre_event=True
+    ) == ("r2_teetime",)
+    assert optional_rounds(
+        " TOURCHAMP ", "60", "688", pre_event=True
+    ) == ("r2_teetime",)
+
+    assert optional_rounds("other", 60, 688, pre_event=True) == ()
+    assert optional_rounds("tourchamp", 61, 688, pre_event=True) == ()
+    assert optional_rounds("tourchamp", 60, 689, pre_event=True) == ()
+    assert optional_rounds("tourchamp", 60, 688, pre_event=False) == ()
+
+
+def test_tour_championship_missing_r2_preserves_fresh_r1():
+    load_tee_times = _tee_time_functions()
+    predictions = pd.DataFrame({
+        "player_name": ["alpha", "beta", "gamma"],
+        "r1_teetime": ["stale", "stale", "stale"],
+        "r2_teetime": ["stale", "stale", "stale"],
+    })
+    fresh_r1 = pd.DataFrame({
+        "player_name": ["alpha", "beta", "gamma"],
+        "r1_teetime": [
+            "2026-08-27 11:00",
+            "2026-08-27 11:10",
+            "2026-08-27 11:20",
+        ],
+    })
+
+    def fetcher(_key, *, teetime_col, fill_missing_teetimes):
+        assert fill_missing_teetimes is False
+        return fresh_r1 if teetime_col == "r1_teetime" else None
+
+    result, fresh = load_tee_times(
+        predictions,
+        fetcher=fetcher,
+        api_key="key",
+        name_map={},
+        optional_rounds=("r2_teetime",),
+    )
+
+    assert result["r1_teetime"].tolist() == fresh_r1["r1_teetime"].tolist()
+    assert result["r2_teetime"].isna().all()
+    assert fresh["r2_teetime"] is None
+
+    with pytest.raises(RuntimeError, match="r2_teetime payload is missing"):
+        load_tee_times(
+            predictions,
+            fetcher=fetcher,
+            api_key="key",
+            name_map={},
+        )
+
+
+def test_tour_championship_r2_exception_keeps_r1_strict_and_neutralizes_partial_r2():
+    load_tee_times = _tee_time_functions()
+    predictions = pd.DataFrame({
+        "player_name": ["alpha", "beta", "gamma"],
+        "r1_teetime": ["stale", "stale", "stale"],
+        "r2_teetime": ["stale", "stale", "stale"],
+    })
+
+    with pytest.raises(RuntimeError, match="r1_teetime payload is missing"):
+        load_tee_times(
+            predictions,
+            fetcher=lambda *_args, **_kwargs: None,
+            api_key="key",
+            name_map={},
+            optional_rounds=("r2_teetime",),
+        )
+
+    payloads = {
+        "r1_teetime": pd.DataFrame({
+            "player_name": ["alpha", "beta", "gamma"],
+            "r1_teetime": [
+                "2026-08-27 11:00",
+                "2026-08-27 11:10",
+                "2026-08-27 11:20",
+            ],
+        }),
+        "r2_teetime": pd.DataFrame({
+            "player_name": ["alpha", "beta"],
+            "r2_teetime": ["2026-08-28 11:00", "2026-08-28 11:10"],
+        }),
+    }
+    result, fresh = load_tee_times(
+        predictions,
+        fetcher=lambda _key, *, teetime_col, fill_missing_teetimes: payloads[
+            teetime_col
+        ],
+        api_key="key",
+        name_map={},
+        optional_rounds=("r2_teetime",),
+    )
+    assert result["r2_teetime"].isna().all()
+    assert fresh["r2_teetime"] is None
+
+    payloads["r2_teetime"] = pd.DataFrame({
+        "player_name": ["alpha", "beta", "gamma"],
+        "r2_teetime": [
+            "2026-08-28 11:00",
+            "2026-08-28 11:10",
+            "2026-08-28 11:20",
+        ],
+    })
+    complete, fresh = load_tee_times(
+        predictions,
+        fetcher=lambda _key, *, teetime_col, fill_missing_teetimes: payloads[
+            teetime_col
+        ],
+        api_key="key",
+        name_map={},
+        optional_rounds=("r2_teetime",),
+    )
+    assert complete["r2_teetime"].tolist() == payloads[
+        "r2_teetime"
+    ]["r2_teetime"].tolist()
+    assert fresh["r2_teetime"] is not None
 
 
 def _replay_context_functions():
     namespace = _load_definitions(
         "_monday_tee_times_optional",
         "_tee_time_fallback_allowed",
+        "_event_optional_tee_time_rounds",
         "_canonical_replay_context_sha256",
         "_parse_replay_reference_time",
         "_validate_replay_effective_wind",
@@ -245,7 +376,7 @@ def _replay_context_functions():
         "_lead_days_from_reference",
         "_build_cache_replay_context",
     )
-    namespace["_REPLAY_CONTEXT_VERSION"] = 1
+    namespace["_REPLAY_CONTEXT_VERSION"] = 2
     return namespace
 
 
@@ -291,6 +422,7 @@ def test_price_only_context_preserves_the_sealed_monday_policy(tmp_path):
     context = namespace["_build_cache_replay_context"](
         reference_time=reference,
         allow_missing_tee_times=True,
+        optional_tee_time_rounds=(),
         prediction_path="final_predictions_event.csv",
         prediction_sha256="b" * 64,
         new_sim_source_contract=_source_contract_fixture(),
@@ -318,11 +450,13 @@ def test_price_only_context_preserves_the_sealed_monday_policy(tmp_path):
         expected_tourney="event",
         expected_event_id=28,
         expected_course_id=101,
+        expected_pre_event=True,
         expected_prediction_path="final_predictions_event.csv",
         now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
     )
     assert loaded_manifest["run_pass"] == "final"
     assert loaded_context["allow_missing_tee_times"] is True
+    assert loaded_context["optional_tee_time_rounds"] == []
     assert loaded_context["effective_wind"] == _effective_wind_fixture()
     assert loaded_reference == reference
 
@@ -335,6 +469,7 @@ def test_price_only_context_preserves_the_sealed_monday_policy(tmp_path):
             expected_tourney="event",
             expected_event_id=28,
             expected_course_id=101,
+            expected_pre_event=True,
             expected_prediction_path="final_predictions_event.csv",
             now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
         )
@@ -351,8 +486,71 @@ def test_price_only_context_preserves_the_sealed_monday_policy(tmp_path):
             expected_tourney="event",
             expected_event_id=28,
             expected_course_id=101,
+            expected_pre_event=True,
             expected_prediction_path="final_predictions_event.csv",
             now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
+        )
+
+
+def test_tour_championship_replay_seals_the_r2_only_exception(tmp_path):
+    namespace = _replay_context_functions()
+    reference = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+    tee_times = _tee_time_payload_fixture()
+    for row in tee_times:
+        row["r2_teetime"] = None
+    context = namespace["_build_cache_replay_context"](
+        reference_time=reference,
+        allow_missing_tee_times=False,
+        optional_tee_time_rounds=("r2_teetime",),
+        prediction_path="final_predictions_tourchamp.csv",
+        prediction_sha256="b" * 64,
+        new_sim_source_contract=_source_contract_fixture(),
+        tee_time_payload=tee_times,
+        effective_wind=_effective_wind_fixture(),
+    )
+    manifest = {
+        "tourney": "tourchamp",
+        "event_id": "60",
+        "course_id": "688",
+        "run_pass": "final",
+        "prediction_path": "final_predictions_tourchamp.csv",
+        "prediction_sha256": "b" * 64,
+        "field_count": 2,
+        "generated_at_utc": "2026-08-25T12:02:00Z",
+        "replay_context": context,
+    }
+    path = tmp_path / "sim_cache_manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    _manifest, loaded, _reference = namespace[
+        "_load_price_only_replay_context"
+    ](
+        str(path),
+        expected_tourney="tourchamp",
+        expected_event_id=60,
+        expected_course_id=688,
+        expected_pre_event=True,
+        expected_prediction_path="final_predictions_tourchamp.csv",
+        now=datetime(2026, 8, 25, 13, 0, tzinfo=timezone.utc),
+    )
+    assert loaded["allow_missing_tee_times"] is False
+    assert loaded["optional_tee_time_rounds"] == ["r2_teetime"]
+
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["replay_context"]["optional_tee_time_rounds"] = []
+    tampered["replay_context"]["context_sha256"] = namespace[
+        "_canonical_replay_context_sha256"
+    ](tampered["replay_context"])
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="disagrees with the configured event"):
+        namespace["_load_price_only_replay_context"](
+            str(path),
+            expected_tourney="tourchamp",
+            expected_event_id=60,
+            expected_course_id=688,
+            expected_pre_event=True,
+            expected_prediction_path="final_predictions_tourchamp.csv",
+            now=datetime(2026, 8, 25, 13, 0, tzinfo=timezone.utc),
         )
 
 
@@ -399,6 +597,7 @@ def test_future_cache_seals_the_exact_post_climatology_wind_tape():
     context = namespace["_build_cache_replay_context"](
         reference_time=datetime(2026, 8, 25, 2, 38, tzinfo=timezone.utc),
         allow_missing_tee_times=True,
+        optional_tee_time_rounds=(),
         prediction_path="final_predictions_event.csv",
         prediction_sha256="b" * 64,
         new_sim_source_contract=_source_contract_fixture(),
@@ -610,6 +809,17 @@ def test_price_only_replays_sha_sealed_tee_times_without_live_fetch():
     assert result["r2_teetime"].isna().all()
     assert fresh["r2_teetime"] is None
     assert not result["r1_teetime"].astype(str).str.startswith("2000").any()
+
+    tourchamp_result, tourchamp_fresh = replay(
+        predictions,
+        replay_context=replay_context,
+        name_map={},
+        allow_missing=False,
+        optional_rounds=("r2_teetime",),
+    )
+    assert tourchamp_result["r1_teetime"].notna().all()
+    assert tourchamp_result["r2_teetime"].isna().all()
+    assert tourchamp_fresh["r2_teetime"] is None
 
     with pytest.raises(RuntimeError, match="r2_teetime coverage"):
         replay(
@@ -908,6 +1118,7 @@ def test_new_final_cache_manifest_persists_self_hashed_replay_context(tmp_path):
     context = namespace["_build_cache_replay_context"](
         reference_time=CACHE_TIME,
         allow_missing_tee_times=False,
+        optional_tee_time_rounds=(),
         prediction_path=str(predictions),
         prediction_sha256=_prediction_sha256(predictions),
         new_sim_source_contract=_source_contract_fixture(),

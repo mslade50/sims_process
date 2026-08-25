@@ -381,6 +381,15 @@ An explicit early computation-only calibration may still run with
 `python new_sim.py --calibration-pass --allow-missing-tee-times`; that manual
 escape remains prohibited for `--final-pass`, `--price-only`, and `--reprice`.
 
+**TOUR Championship exception:** when the pre-event config exactly matches
+`tourney=tourchamp`, `event_id=60`, and East Lake `course_id=688`, R1 remains
+strict but R2 is allowed to be unavailable because the field is re-paired after
+Round 1. A missing or partially posted R2 payload is cleared for the entire
+field and receives zero player-specific wave adjustment; a complete fresh R2
+payload is used normally. This exemption does not apply after the event begins
+and does not weaken any other tournament's tee-time gate. The midweek
+next-round publisher still requires the real groups once each re-pair is posted.
+
 **What this does:**
 - **DG override** (before sim, first pass only): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Skipped on the explicit final pass. `live_stats_engine.py` does NOT apply threshold overrides — manual list only.
 - Draws SG categories (OTT, APP, ARG, PUTT) from a course-adjusted multivariate normal, then sums to total (category-first approach)

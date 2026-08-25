@@ -118,7 +118,36 @@ def _tee_time_fallback_allowed(run_pass, *, cli_override=False, now=None):
     )
 
 
-_REPLAY_CONTEXT_VERSION = 1
+def _event_optional_tee_time_rounds(
+    tourney,
+    event_id,
+    course_id,
+    *,
+    pre_event,
+):
+    """Return narrowly exempt tee-time rounds for a configured event.
+
+    The TOUR Championship is re-paired after every completed round, so its R2
+    tee times do not exist during the pre-tournament final pass. R1 remains a
+    strict requirement, and no other event inherits this exception.
+    """
+    try:
+        normalized_event_id = int(event_id)
+        normalized_course_id = int(course_id)
+    except (TypeError, ValueError):
+        return ()
+    normalized_tourney = str(tourney).casefold().strip()
+    if (
+        pre_event is True
+        and normalized_tourney == "tourchamp"
+        and normalized_event_id == 60
+        and normalized_course_id == 688
+    ):
+        return ("r2_teetime",)
+    return ()
+
+
+_REPLAY_CONTEXT_VERSION = 2
 
 
 def _canonical_replay_context_sha256(context):
@@ -231,6 +260,7 @@ def _load_price_only_replay_context(
     expected_tourney,
     expected_event_id,
     expected_course_id,
+    expected_pre_event,
     expected_prediction_path,
     now=None,
 ):
@@ -360,6 +390,28 @@ def _load_price_only_replay_context(
         raise RuntimeError(
             "Replay context tee-time policy disagrees with its sealed ET date"
         )
+    optional_rounds = context.get("optional_tee_time_rounds")
+    if (
+        not isinstance(optional_rounds, list)
+        or any(not isinstance(round_name, str) for round_name in optional_rounds)
+        or optional_rounds != sorted(set(optional_rounds))
+    ):
+        raise RuntimeError(
+            "Replay context event-specific tee-time policy is malformed"
+        )
+    expected_optional_rounds = list(
+        _event_optional_tee_time_rounds(
+            expected_tourney,
+            expected_event_id,
+            expected_course_id,
+            pre_event=expected_pre_event,
+        )
+    )
+    if optional_rounds != expected_optional_rounds:
+        raise RuntimeError(
+            "Replay context event-specific tee-time policy disagrees with "
+            "the configured event"
+        )
 
     overrides = context.get("source_contract_overrides")
     if not isinstance(overrides, dict) or set(overrides) != {"new_sim.py"}:
@@ -412,6 +464,7 @@ def _build_cache_replay_context(
     *,
     reference_time,
     allow_missing_tee_times,
+    optional_tee_time_rounds,
     prediction_path,
     prediction_sha256,
     new_sim_source_contract,
@@ -423,12 +476,23 @@ def _build_cache_replay_context(
         effective_wind,
         reference_time=reference_time,
     )
+    normalized_optional_rounds = sorted(set(optional_tee_time_rounds))
+    unsupported_optional_rounds = set(normalized_optional_rounds) - {
+        "r1_teetime",
+        "r2_teetime",
+    }
+    if unsupported_optional_rounds:
+        raise ValueError(
+            "Unsupported optional tee-time rounds: "
+            + ", ".join(sorted(unsupported_optional_rounds))
+        )
     context = {
         "version": _REPLAY_CONTEXT_VERSION,
         "simulation_reference_time_utc": (
             reference_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         ),
         "allow_missing_tee_times": bool(allow_missing_tee_times),
+        "optional_tee_time_rounds": normalized_optional_rounds,
         "prediction_path": os.path.normpath(str(prediction_path)).replace("\\", "/"),
         "prediction_sha256": str(prediction_sha256),
         "tee_times_source": "sealed_replay_context_payload",
@@ -552,6 +616,7 @@ COURSE_CAT_SKEW  = _cfg["course_cat_skew"]
 TOP_K            = 20  # hardcode — never changes
 _event_id        = _cfg["event_id"]
 _course_id       = _cfg["course_id"]
+_pre_event       = _cfg.get("pre_event", False) is True
 # Player adjustments from Sheet (survives sim_inputs overwrites)
 _sheet_manual_boosts = _cfg.get("manual_boosts", {})
 _sheet_archetype_boosts = _cfg.get("archetype_boosts", {})
@@ -577,6 +642,7 @@ if args.price_only:
         expected_tourney=tourney,
         expected_event_id=_event_id,
         expected_course_id=_course_id,
+        expected_pre_event=_pre_event,
         expected_prediction_path=f"final_predictions_{tourney}.csv",
     )
     _PRICE_ONLY_REPLAY_CONTEXT_SHA256 = _PRICE_ONLY_REPLAY_CONTEXT[
@@ -789,11 +855,28 @@ else:
         cli_override=args.allow_missing_tee_times,
         now=_TEE_TIME_POLICY_NOW,
     )
+_CONFIGURED_OPTIONAL_TEE_TIME_ROUNDS = _event_optional_tee_time_rounds(
+    tourney,
+    _event_id,
+    _course_id,
+    pre_event=_pre_event,
+)
+if args.price_only:
+    _OPTIONAL_TEE_TIME_ROUNDS = tuple(
+        _PRICE_ONLY_REPLAY_CONTEXT["optional_tee_time_rounds"]
+    )
+else:
+    _OPTIONAL_TEE_TIME_ROUNDS = _CONFIGURED_OPTIONAL_TEE_TIME_ROUNDS
 if _MONDAY_TEE_TIMES_OPTIONAL:
     _tee_policy_label = "SEALED MONDAY MODE" if args.price_only else "MONDAY MODE"
     print(
         f"[teetimes] {_tee_policy_label}: missing R1/R2 tee times will use zero "
         "wave adjustment and will not block final delivery."
+    )
+if _OPTIONAL_TEE_TIME_ROUNDS:
+    print(
+        "[teetimes] TOUR CHAMPIONSHIP RE-PAIR MODE: R1 remains required; "
+        "missing or partial R2 tee times will be neutralized for the full field."
     )
 print(f"[info] Using predictions from: {PRED_PATH}")
 print(f"[pass] Tournament simulation pass: {RUN_PASS}")
@@ -902,18 +985,30 @@ def _load_required_tee_times(
     api_key,
     name_map,
     allow_missing=False,
+    optional_rounds=(),
     min_coverage=0.98,
     max_missing=1,
     parse_teetime=parse_time,
 ):
-    """Use fresh R1/R2 API times or clear missing values when policy permits."""
+    """Use fresh R1/R2 API times or neutralize only policy-approved rounds."""
     if predictions.empty:
         raise RuntimeError("Cannot validate tee-time coverage for an empty field")
     result = predictions.copy()
     expected_names = set(result["player_name"].astype(str).str.lower().str.strip())
     fresh_by_round = {}
+    optional_rounds = frozenset(optional_rounds)
+    unsupported_optional_rounds = optional_rounds - {
+        "r1_teetime",
+        "r2_teetime",
+    }
+    if unsupported_optional_rounds:
+        raise ValueError(
+            "Unsupported optional tee-time rounds: "
+            + ", ".join(sorted(unsupported_optional_rounds))
+        )
 
     for round_column in ("r1_teetime", "r2_teetime"):
+        round_allows_missing = allow_missing or round_column in optional_rounds
         try:
             fresh = fetcher(
                 api_key,
@@ -921,7 +1016,7 @@ def _load_required_tee_times(
                 fill_missing_teetimes=False,
             )
         except Exception as exc:
-            if not allow_missing:
+            if not round_allows_missing:
                 raise RuntimeError(
                     f"Fresh {round_column} fetch failed; refusing to use retained "
                     "or zero-weather tee times"
@@ -937,7 +1032,7 @@ def _load_required_tee_times(
             and not fresh.empty
             and {"player_name", round_column}.issubset(fresh.columns)
         )
-        if not valid_payload and not allow_missing:
+        if not valid_payload and not round_allows_missing:
             raise RuntimeError(
                 f"Fresh {round_column} payload is missing or malformed; refusing "
                 "to use retained or zero-weather tee times"
@@ -977,7 +1072,7 @@ def _load_required_tee_times(
         )
         coverage = valid_count / len(expected_names)
         coverage_ok = coverage >= min_coverage and len(missing_names) <= max_missing
-        if not coverage_ok and not allow_missing:
+        if not coverage_ok and not round_allows_missing:
             raise RuntimeError(
                 f"Fresh {round_column} coverage is {valid_count}/{len(expected_names)} "
                 f"({coverage:.1%}); require at least {min_coverage:.0%} with no "
@@ -990,10 +1085,10 @@ def _load_required_tee_times(
                 f"{len(expected_names)} valid tee times"
             )
         else:
-            # A partially posted wave is more misleading than no wave. Monday
-            # and the explicit calibration escape therefore neutralize the
-            # entire under-covered round so every player receives the same
-            # zero, mean-centered weather adjustment.
+            # A partially posted wave is more misleading than no wave. Monday,
+            # the explicit calibration escape, and the exact event-level round
+            # exception therefore neutralize the entire under-covered round so
+            # every player receives the same zero, mean-centered adjustment.
             result[round_column] = None
             fresh_by_round[round_column] = None
             print(
@@ -1041,6 +1136,7 @@ def _load_sealed_replay_tee_times(
     replay_context,
     name_map,
     allow_missing,
+    optional_rounds=(),
 ):
     """Reapply tee times from the cache's self-hashed replay payload.
 
@@ -1081,6 +1177,7 @@ def _load_sealed_replay_tee_times(
         api_key="sealed-cache",
         name_map=name_map,
         allow_missing=allow_missing,
+        optional_rounds=optional_rounds,
     )
 
 
@@ -1695,14 +1792,16 @@ if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
 # The API helper's historical 10 AM fill is explicitly disabled here so missing
 # R1/R2 times cannot masquerade as fresh data. Monday automatically permits
 # unavailable waves for both passes and assigns them zero wave adjustment; the
-# manual CLI escape remains calibration-only outside Monday. Neither path reuses
-# retained prediction columns.
+# manual CLI escape remains calibration-only outside Monday. The exact
+# pre-event TOUR Championship identity permits only unavailable R2 because that
+# round is re-paired after R1; R1 stays strict. No path reuses retained columns.
 if args.price_only:
     model_preds, _fresh_tee_times = _load_sealed_replay_tee_times(
         model_preds,
         replay_context=_PRICE_ONLY_REPLAY_CONTEXT,
         name_map=name_replacements,
         allow_missing=_ALLOW_MISSING_TEE_TIMES,
+        optional_rounds=_OPTIONAL_TEE_TIME_ROUNDS,
     )
 else:
     model_preds, _fresh_tee_times = _load_required_tee_times(
@@ -1711,6 +1810,7 @@ else:
         api_key=API_KEY,
         name_map=name_replacements,
         allow_missing=_ALLOW_MISSING_TEE_TIMES,
+        optional_rounds=_OPTIONAL_TEE_TIME_ROUNDS,
     )
 
 # Write tee times back to pre_course_fit file
@@ -1983,6 +2083,7 @@ def _current_sim_input_contract():
             "no_week_latent": bool(args.no_week_latent),
             "no_skew_cal": bool(args.no_skew_cal),
             "allow_missing_tee_times": bool(_ALLOW_MISSING_TEE_TIMES),
+            "optional_tee_time_rounds": list(_OPTIONAL_TEE_TIME_ROUNDS),
             "shot_dispersion_disable": os.getenv(
                 "SHOT_DISPERSION_DISABLE", ""
             ).strip().lower(),
@@ -2043,6 +2144,7 @@ if RUN_PASS == "final" and not args.price_only:
     _CACHE_REPLAY_CONTEXT_FOR_WRITE = _build_cache_replay_context(
         reference_time=_SIM_REFERENCE_TIME_UTC,
         allow_missing_tee_times=_ALLOW_MISSING_TEE_TIMES,
+        optional_tee_time_rounds=_OPTIONAL_TEE_TIME_ROUNDS,
         prediction_path=PRED_PATH,
         prediction_sha256=_PREDICTION_SHA256,
         new_sim_source_contract=_SIM_INPUT_CONTRACT["source_files"]["new_sim.py"],
