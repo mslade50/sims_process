@@ -1,18 +1,10 @@
 {
-  "event": "bmw",
-  "event_id": 28,
+  "event": "tourchamp",
+  "event_id": 60,
   "year": 2026,
   "files": [
-    "model_predictions_r1.csv",
-    "model_predictions_r2.csv",
-    "model_predictions_r3.csv",
-    "model_predictions_r4.csv",
-    "r1_live_model.csv",
-    "r2_live_model.csv",
-    "r3_live_model.csv",
     "sg_dist_player.csv",
     "simulated_probs.csv",
-    "simulated_probs_live.csv",
     "this_week_dists_v2.csv"
   ]
 }
