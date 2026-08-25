@@ -163,6 +163,54 @@ def _tee_time_functions():
     return namespace["_load_required_tee_times"]
 
 
+def test_monday_tee_times_are_optional_on_the_eastern_calendar():
+    namespace = _load_definitions(
+        "_monday_tee_times_optional",
+        "_tee_time_fallback_allowed",
+    )
+    monday_optional = namespace["_monday_tee_times_optional"]
+    fallback_allowed = namespace["_tee_time_fallback_allowed"]
+
+    monday_utc = datetime(2026, 8, 25, 3, 59, tzinfo=timezone.utc)
+    tuesday_utc = datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc)
+    assert monday_optional(monday_utc) is True
+    assert monday_optional(tuesday_utc) is False
+    assert fallback_allowed("final", now=monday_utc) is True
+    assert fallback_allowed("final", now=tuesday_utc) is False
+    assert fallback_allowed(
+        "calibration", cli_override=True, now=tuesday_utc
+    ) is True
+    with pytest.raises(ValueError, match="Unknown tournament-sim pass"):
+        fallback_allowed("auto", now=monday_utc)
+
+    effective_policy = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "_ALLOW_MISSING_TEE_TIMES"
+            for target in node.targets
+        )
+    )
+    policy_source = ast.unparse(effective_policy.value)
+    assert "args.allow_missing_tee_times" in policy_source
+    assert "_tee_time_fallback_allowed" in policy_source
+
+    tee_time_call = next(
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_load_required_tee_times"
+    )
+    allow_keyword = next(
+        keyword for keyword in tee_time_call.keywords
+        if keyword.arg == "allow_missing"
+    )
+    assert ast.unparse(allow_keyword.value) == "_ALLOW_MISSING_TEE_TIMES"
+
+
 def test_fresh_r1_and_r2_tee_times_replace_retained_columns():
     load_tee_times = _tee_time_functions()
     predictions = pd.DataFrame({
@@ -255,6 +303,22 @@ def test_missing_tee_time_escape_is_calibration_only_and_clears_stale_values():
     )
     assert result["r1_teetime"].isna().all()
     assert result["r2_teetime"].isna().all()
+
+    def partial(_key, *, teetime_col, fill_missing_teetimes):
+        return pd.DataFrame({
+            "player_name": ["alpha"],
+            teetime_col: ["2026-08-20 07:10"],
+        })
+
+    partial_result, _fresh = load_tee_times(
+        predictions,
+        fetcher=partial,
+        api_key="key",
+        name_map={},
+        allow_missing=True,
+    )
+    assert partial_result["r1_teetime"].isna().all()
+    assert partial_result["r2_teetime"].isna().all()
 
     guard = next(
         node

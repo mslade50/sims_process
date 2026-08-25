@@ -65,15 +65,42 @@ _parser.add_argument("--no-skew-cal", action="store_true",
 _parser.add_argument(
     "--allow-missing-tee-times",
     action="store_true",
-    help=("Calibration-only escape for an event whose R1/R2 tee times are not "
-          "published yet. Never reuses retained tee-time columns and is "
-          "prohibited for final delivery."),
+    help=("Calibration-only escape outside Monday for an event whose R1/R2 tee "
+          "times are not published yet. Monday runs automatically permit missing "
+          "times for both passes. Retained tee-time columns are never reused."),
 )
 args = _parser.parse_args()
 if args.reprice:
     args.price_only = True
 if args.sim_only and args.price_only:
     _parser.error("Cannot use --sim-only and --price-only/--reprice together")
+
+
+def _monday_tee_times_optional(now=None):
+    """Return whether the current US/Eastern calendar day is Monday.
+
+    The standard Monday tournament run deliberately precedes complete tee-time
+    publication. Missing R1/R2 times therefore disable only the unavailable
+    wave adjustment; they do not block calibration, final delivery, or email.
+    """
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    current = datetime.now(eastern) if now is None else now
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=eastern)
+    else:
+        current = current.astimezone(eastern)
+    return current.weekday() == 0
+
+
+def _tee_time_fallback_allowed(run_pass, *, cli_override=False, now=None):
+    """Allow zero-wave fallback on Monday, or manually for calibration only."""
+    if run_pass not in {"calibration", "final"}:
+        raise ValueError(f"Unknown tournament-sim pass: {run_pass!r}")
+    return _monday_tee_times_optional(now) or (
+        run_pass == "calibration" and bool(cli_override)
+    )
 
 
 def _select_prediction_input(
@@ -300,6 +327,18 @@ if args.allow_missing_tee_times and RUN_PASS != "calibration":
         "--allow-missing-tee-times is calibration-only and cannot authorize "
         "final delivery or a final cache"
     )
+_TEE_TIME_POLICY_NOW = datetime.now(timezone.utc)
+_MONDAY_TEE_TIMES_OPTIONAL = _monday_tee_times_optional(_TEE_TIME_POLICY_NOW)
+_ALLOW_MISSING_TEE_TIMES = _tee_time_fallback_allowed(
+    RUN_PASS,
+    cli_override=args.allow_missing_tee_times,
+    now=_TEE_TIME_POLICY_NOW,
+)
+if _MONDAY_TEE_TIMES_OPTIONAL:
+    print(
+        "[teetimes] MONDAY MODE: missing R1/R2 tee times will use zero wave "
+        "adjustment and will not block final delivery."
+    )
 print(f"[info] Using predictions from: {PRED_PATH}")
 print(f"[pass] Tournament simulation pass: {RUN_PASS}")
 
@@ -411,7 +450,7 @@ def _load_required_tee_times(
     max_missing=1,
     parse_teetime=parse_time,
 ):
-    """Replace retained tee times with fresh R1/R2 API data or fail closed."""
+    """Use fresh R1/R2 API times or clear missing values when policy permits."""
     if predictions.empty:
         raise RuntimeError("Cannot validate tee-time coverage for an empty field")
     result = predictions.copy()
@@ -433,7 +472,7 @@ def _load_required_tee_times(
                 ) from exc
             fresh = None
             print(
-                f"[teetimes] EXPLICIT CALIBRATION OVERRIDE: {round_column} "
+                f"[teetimes] MISSING-TIME POLICY: {round_column} "
                 f"fetch failed ({exc})"
             )
 
@@ -495,10 +534,17 @@ def _load_required_tee_times(
                 f"{len(expected_names)} valid tee times"
             )
         else:
+            # A partially posted wave is more misleading than no wave. Monday
+            # and the explicit calibration escape therefore neutralize the
+            # entire under-covered round so every player receives the same
+            # zero, mean-centered weather adjustment.
+            result[round_column] = None
+            fresh_by_round[round_column] = None
             print(
-                f"[teetimes] EXPLICIT CALIBRATION OVERRIDE: {round_column} has "
+                f"[teetimes] MISSING-TIME POLICY: {round_column} has "
                 f"{valid_count}/{len(expected_names)} valid tee times; missing "
                 + ", ".join(missing_names[:10])
+                + "; neutralized the full round"
             )
 
     return result, fresh_by_round
@@ -1023,15 +1069,16 @@ if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
 
 # --- Fetch fresh tee times from DataGolf API ---
 # The API helper's historical 10 AM fill is explicitly disabled here so missing
-# R1/R2 times cannot masquerade as fresh zero-weather data. A calibration-only
-# CLI escape exists for the legitimate pre-posting window and never reuses
+# R1/R2 times cannot masquerade as fresh data. Monday automatically permits
+# unavailable waves for both passes and assigns them zero wave adjustment; the
+# manual CLI escape remains calibration-only outside Monday. Neither path reuses
 # retained prediction columns.
 model_preds, _fresh_tee_times = _load_required_tee_times(
     model_preds,
     fetcher=fetch_field_updates,
     api_key=API_KEY,
     name_map=name_replacements,
-    allow_missing=args.allow_missing_tee_times,
+    allow_missing=_ALLOW_MISSING_TEE_TIMES,
 )
 
 # Write tee times back to pre_course_fit file
@@ -1293,7 +1340,7 @@ def _current_sim_input_contract():
             "use_python": bool(args.use_python),
             "no_week_latent": bool(args.no_week_latent),
             "no_skew_cal": bool(args.no_skew_cal),
-            "allow_missing_tee_times": bool(args.allow_missing_tee_times),
+            "allow_missing_tee_times": bool(_ALLOW_MISSING_TEE_TIMES),
             "shot_dispersion_disable": os.getenv(
                 "SHOT_DISPERSION_DISABLE", ""
             ).strip().lower(),

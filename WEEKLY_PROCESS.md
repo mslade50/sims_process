@@ -346,13 +346,17 @@ python new_sim.py --calibration-pass
 
 The calibration pass reads exactly `pre_course_fit_{tourney}.csv`, even if generated files from an earlier run still exist. It writes local simulation/pricing artifacts for `mkt_regress.py`, then exits before email, Sheets/ledger storage, dashboard pushes, or sim-fairs publication.
 
-Both passes require fresh DataGolf R1 and R2 tee-time payloads with at least
-98% field coverage and no more than one missing player. Retained prediction-file
-tee times and DataGolf's synthetic 10 AM fill are not accepted. If tee times
-legitimately have not been posted, an early computation-only calibration may be
-run with `python new_sim.py --calibration-pass --allow-missing-tee-times`; this
-clears retained times and explicitly uses zero wave differentiation. The escape
-is prohibited for `--final-pass`, `--price-only`, and `--reprice`.
+**Monday tee-time rule (America/New_York):** missing R1 or R2 tee times are
+expected and do not block calibration, the final tournament sim, or email. Any
+round below 98% coverage (or with more than one player missing) is neutralized
+for the full field, producing zero wave differentiation and never reusing stale
+times. Complete rounds still use their fresh times.
+
+Beginning Tuesday, the final pass requires fresh DataGolf R1 and R2 tee-time
+payloads with at least 98% field coverage and no more than one missing player.
+An explicit early computation-only calibration may still run with
+`python new_sim.py --calibration-pass --allow-missing-tee-times`; that manual
+escape remains prohibited for `--final-pass`, `--price-only`, and `--reprice`.
 
 **What this does:**
 - **DG override** (before sim, first pass only): replaces `my_pred` with DataGolf's `dg_final_pred` for players with `pred < 0.5` or in `dg_override_players` list (in `sim_inputs.py`). Skipped on the explicit final pass. `live_stats_engine.py` does NOT apply threshold overrides — manual list only.
