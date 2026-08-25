@@ -198,18 +198,20 @@ def test_monday_tee_times_are_optional_on_the_eastern_calendar():
     with pytest.raises(ValueError, match="Unknown tournament-sim pass"):
         fallback_allowed("auto", now=monday_utc)
 
-    effective_policy = next(
+    effective_policy_assignments = [
         node
-        for node in TREE.body
+        for node in ast.walk(TREE)
         if isinstance(node, ast.Assign)
         and any(
             isinstance(target, ast.Name)
             and target.id == "_ALLOW_MISSING_TEE_TIMES"
             for target in node.targets
         )
+    ]
+    policy_source = "\n".join(
+        ast.unparse(node.value) for node in effective_policy_assignments
     )
-    policy_source = ast.unparse(effective_policy.value)
-    assert "args.allow_missing_tee_times" in policy_source
+    assert "_PRICE_ONLY_REPLAY_CONTEXT" in policy_source
     assert "_tee_time_fallback_allowed" in policy_source
 
     tee_time_call = next(
@@ -218,12 +220,218 @@ def test_monday_tee_times_are_optional_on_the_eastern_calendar():
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_load_required_tee_times"
+        and any(
+            keyword.arg == "allow_missing"
+            and ast.unparse(keyword.value) == "_ALLOW_MISSING_TEE_TIMES"
+            for keyword in node.keywords
+        )
     )
     allow_keyword = next(
         keyword for keyword in tee_time_call.keywords
         if keyword.arg == "allow_missing"
     )
     assert ast.unparse(allow_keyword.value) == "_ALLOW_MISSING_TEE_TIMES"
+
+
+def _replay_context_functions():
+    namespace = _load_definitions(
+        "_monday_tee_times_optional",
+        "_tee_time_fallback_allowed",
+        "_canonical_replay_context_sha256",
+        "_parse_replay_reference_time",
+        "_validate_replay_effective_wind",
+        "_load_price_only_replay_context",
+        "_round_dates_for_reference",
+        "_lead_days_from_reference",
+        "_build_cache_replay_context",
+    )
+    namespace["_REPLAY_CONTEXT_VERSION"] = 1
+    return namespace
+
+
+def _source_contract_fixture():
+    return {
+        "path": "new_sim.py",
+        "present": True,
+        "size": 1234,
+        "sha256": "a" * 64,
+    }
+
+
+def _tee_time_payload_fixture():
+    return [
+        {
+            "player_name": "alpha",
+            "r1_teetime": "2026-08-27 07:10:00",
+            "r2_teetime": "2026-08-28 12:20:00",
+        },
+        {
+            "player_name": "beta",
+            "r1_teetime": "2026-08-27 12:20:00",
+            "r2_teetime": "2026-08-28 07:10:00",
+        },
+    ]
+
+
+def _effective_wind_fixture():
+    return {
+        "wind_r1": [2.0] * 15,
+        "wind_r2": [3.0] * 15,
+        "climo_month": 8,
+        "climo_applied": False,
+        "climo_weight_r1": 0.0,
+        "climo_weight_r2": 0.0,
+        "decision": "historical_climo_unavailable",
+    }
+
+
+def test_price_only_context_preserves_the_sealed_monday_policy(tmp_path):
+    namespace = _replay_context_functions()
+    reference = datetime(2026, 8, 25, 2, 38, tzinfo=timezone.utc)
+    context = namespace["_build_cache_replay_context"](
+        reference_time=reference,
+        allow_missing_tee_times=True,
+        prediction_path="final_predictions_event.csv",
+        prediction_sha256="b" * 64,
+        new_sim_source_contract=_source_contract_fixture(),
+        tee_time_payload=_tee_time_payload_fixture(),
+        effective_wind=_effective_wind_fixture(),
+    )
+    manifest = {
+        "tourney": "event",
+        "event_id": "28",
+        "course_id": "101",
+        "run_pass": "final",
+        "prediction_path": "final_predictions_event.csv",
+        "prediction_sha256": "b" * 64,
+        "field_count": 2,
+        "generated_at_utc": "2026-08-25T02:40:00Z",
+        "replay_context": context,
+    }
+    path = tmp_path / "sim_cache_manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    loaded_manifest, loaded_context, loaded_reference = namespace[
+        "_load_price_only_replay_context"
+    ](
+        str(path),
+        expected_tourney="event",
+        expected_event_id=28,
+        expected_course_id=101,
+        expected_prediction_path="final_predictions_event.csv",
+        now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
+    )
+    assert loaded_manifest["run_pass"] == "final"
+    assert loaded_context["allow_missing_tee_times"] is True
+    assert loaded_context["effective_wind"] == _effective_wind_fixture()
+    assert loaded_reference == reference
+
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["replay_context"]["allow_missing_tee_times"] = False
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="failed hash validation"):
+        namespace["_load_price_only_replay_context"](
+            str(path),
+            expected_tourney="event",
+            expected_event_id=28,
+            expected_course_id=101,
+            expected_prediction_path="final_predictions_event.csv",
+            now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
+        )
+
+    tampered["replay_context"] = json.loads(json.dumps(context))
+    tampered["replay_context"]["effective_wind"]["wind_r1"].pop()
+    tampered["replay_context"]["context_sha256"] = namespace[
+        "_canonical_replay_context_sha256"
+    ](tampered["replay_context"])
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="exactly 15 hourly values"):
+        namespace["_load_price_only_replay_context"](
+            str(path),
+            expected_tourney="event",
+            expected_event_id=28,
+            expected_course_id=101,
+            expected_prediction_path="final_predictions_event.csv",
+            now=datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
+        )
+
+
+def test_price_only_replays_sealed_wind_without_fetching_climatology():
+    def calls_named(nodes, name):
+        return [
+            node
+            for parent in nodes
+            for node in ast.walk(parent)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ]
+
+    weather_branch = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "args.price_only"
+        and calls_named(node.orelse, "fetch_historical_hourly_wind")
+    )
+    assert not calls_named(weather_branch.body, "fetch_historical_hourly_wind")
+    assert calls_named(weather_branch.orelse, "fetch_historical_hourly_wind")
+    price_only_source = "\n".join(
+        ast.unparse(statement) for statement in weather_branch.body
+    )
+    assert '_PRICE_ONLY_REPLAY_CONTEXT[\'effective_wind\']' in price_only_source
+    assert "wind_1 = list(_EFFECTIVE_WIND_REPLAY_CONTEXT['wind_r1'])" in price_only_source
+    assert "wind_2 = list(_EFFECTIVE_WIND_REPLAY_CONTEXT['wind_r2'])" in price_only_source
+
+
+def test_future_cache_seals_the_exact_post_climatology_wind_tape():
+    namespace = _replay_context_functions()
+    effective_wind = {
+        "wind_r1": [2.1 + index / 10 for index in range(15)],
+        "wind_r2": [3.2 + index / 10 for index in range(15)],
+        "climo_month": 8,
+        "climo_applied": True,
+        "climo_weight_r1": 0.2,
+        "climo_weight_r2": 0.3,
+        "decision": "blended",
+    }
+    expected = json.loads(json.dumps(effective_wind))
+    context = namespace["_build_cache_replay_context"](
+        reference_time=datetime(2026, 8, 25, 2, 38, tzinfo=timezone.utc),
+        allow_missing_tee_times=True,
+        prediction_path="final_predictions_event.csv",
+        prediction_sha256="b" * 64,
+        new_sim_source_contract=_source_contract_fixture(),
+        tee_time_payload=_tee_time_payload_fixture(),
+        effective_wind=effective_wind,
+    )
+    effective_wind["wind_r1"][0] = 99.0
+    assert context["effective_wind"] == expected
+    assert context["context_sha256"] == namespace[
+        "_canonical_replay_context_sha256"
+    ](context)
+
+
+def test_replay_reference_makes_round_leads_wall_clock_independent():
+    namespace = _replay_context_functions()
+    reference = datetime(2026, 8, 25, 2, 38, tzinfo=timezone.utc)
+    dates = namespace["_round_dates_for_reference"](reference)
+    leads = [
+        namespace["_lead_days_from_reference"](round_date, reference)
+        for round_date in dates
+    ]
+    assert [round_date.strftime("%Y-%m-%d") for round_date in dates] == [
+        "2026-08-27",
+        "2026-08-28",
+        "2026-08-29",
+        "2026-08-30",
+    ]
+    assert leads == pytest.approx([
+        2.3486,
+        3.3486,
+        4.3486,
+        5.3486,
+    ], abs=1e-4)
 
 
 def test_fresh_r1_and_r2_tee_times_replace_retained_columns():
@@ -350,6 +558,76 @@ def test_missing_tee_time_escape_is_calibration_only_and_clears_stale_values():
     )
 
 
+def test_price_only_replays_sha_sealed_tee_times_without_live_fetch():
+    namespace = _load_definitions(
+        "parse_time",
+        "_load_required_tee_times",
+        "_normalized_replay_tee_time_payload",
+        "_load_sealed_replay_tee_times",
+    )
+    load_fresh = namespace["_load_required_tee_times"]
+    normalize = namespace["_normalized_replay_tee_time_payload"]
+    replay = namespace["_load_sealed_replay_tee_times"]
+    predictions = pd.DataFrame({
+        "player_name": ["alpha", "beta"],
+        "r1_teetime": ["2000-01-01 06:00", "2000-01-01 06:00"],
+        "r2_teetime": ["2000-01-02 06:00", "2000-01-02 06:00"],
+    })
+    fetched = {
+        "r1_teetime": pd.DataFrame({
+            "player_name": ["alpha", "beta"],
+            "r1_teetime": ["2026-08-27 07:10", "2026-08-27 12:20"],
+        }),
+        "r2_teetime": pd.DataFrame({
+            "player_name": ["alpha", "beta"],
+            "r2_teetime": [None, None],
+        }),
+    }
+
+    full_sim_model, _ = load_fresh(
+        predictions,
+        fetcher=lambda _key, *, teetime_col, fill_missing_teetimes: fetched[
+            teetime_col
+        ],
+        api_key="key",
+        name_map={},
+        allow_missing=True,
+    )
+    replay_context = {
+        "tee_times": normalize(full_sim_model),
+    }
+
+    result, fresh = replay(
+        predictions,
+        replay_context=replay_context,
+        name_map={},
+        allow_missing=True,
+    )
+    assert result["r1_teetime"].tolist() == [
+        "2026-08-27 07:10:00",
+        "2026-08-27 12:20:00",
+    ]
+    assert result["r2_teetime"].isna().all()
+    assert fresh["r2_teetime"] is None
+    assert not result["r1_teetime"].astype(str).str.startswith("2000").any()
+
+    with pytest.raises(RuntimeError, match="r2_teetime coverage"):
+        replay(
+            predictions,
+            replay_context=replay_context,
+            name_map={},
+            allow_missing=False,
+        )
+
+    replay_node = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_load_sealed_replay_tee_times"
+    )
+    assert "fetch_field_updates" not in ast.unparse(replay_node)
+
+
 def test_missing_preferred_correlation_cannot_use_fallback(tmp_path):
     namespace = _load_definitions(
         "_sha256_file",
@@ -397,6 +675,71 @@ def test_cached_pricing_modes_require_explicit_final_pass():
     )
 
 
+def test_validation_only_exits_before_h2h_pricing_or_delivery():
+    guard = next(
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "args.validate_cache_only"
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "sys"
+            and child.func.attr == "exit"
+            for child in ast.walk(node)
+        )
+    )
+    guard_calls = [
+        child
+        for child in ast.walk(guard)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "_verify_final_delivery_inputs"
+    ]
+    assert len(guard_calls) == 1
+    assert guard_calls[0].lineno < next(
+        child.lineno
+        for child in ast.walk(guard)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and isinstance(child.func.value, ast.Name)
+        and child.func.value.id == "sys"
+        and child.func.attr == "exit"
+    )
+    h2h_write = next(
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "to_parquet"
+        and any(
+            isinstance(arg, ast.Name) and arg.id == "_h2h_path"
+            for arg in node.args
+        )
+    )
+    assert guard.lineno < h2h_write.lineno
+
+    tee_time_branch = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "args.price_only"
+        and "_load_sealed_replay_tee_times" in ast.unparse(node)
+    )
+    assert "fetch_field_updates" not in ast.unparse(tee_time_branch.body)
+    assert "fetch_field_updates" in ast.unparse(tee_time_branch.orelse)
+
+    pre_course_write_guard = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.If)
+        and "not args.price_only" in ast.unparse(node.test)
+        and "pcf_full.to_csv" in ast.unparse(node)
+    )
+    assert pre_course_write_guard.lineno < h2h_write.lineno
+
+
 def test_primary_rust_draw_failure_is_fatal_without_explicit_python_mode():
     rust_try = next(
         node
@@ -436,6 +779,7 @@ def test_primary_rust_draw_failure_is_fatal_without_explicit_python_mode():
 def _cache_functions():
     namespace = _load_definitions(
         "_sha256_file",
+        "_canonical_replay_context_sha256",
         "_sim_cache_identity",
         "_write_sim_cache_manifest",
         "_validate_sim_cache_manifest",
@@ -550,6 +894,47 @@ def test_final_cache_requires_exact_input_field_and_artifact_hashes(tmp_path):
     with pytest.raises(RuntimeError, match="failed hash validation"):
         validate_manifest(
             str(manifest_path), identity, artifacts, now=CACHE_TIME
+        )
+
+
+def test_new_final_cache_manifest_persists_self_hashed_replay_context(tmp_path):
+    identity_for, write_manifest, validate_manifest = _cache_functions()
+    namespace = _replay_context_functions()
+    predictions = tmp_path / "final_predictions.csv"
+    predictions.write_text("player_name,pred\na,2\n", encoding="utf-8")
+    artifacts = _cache_artifacts(tmp_path)
+    manifest_path = tmp_path / "sim_cache_manifest.json"
+    identity = _cache_identity(identity_for, predictions)
+    context = namespace["_build_cache_replay_context"](
+        reference_time=CACHE_TIME,
+        allow_missing_tee_times=False,
+        prediction_path=str(predictions),
+        prediction_sha256=_prediction_sha256(predictions),
+        new_sim_source_contract=_source_contract_fixture(),
+        tee_time_payload=_tee_time_payload_fixture(),
+        effective_wind=_effective_wind_fixture(),
+    )
+    payload = write_manifest(
+        str(manifest_path),
+        identity,
+        artifacts,
+        generated_at=CACHE_TIME,
+        replay_context=context,
+    )
+    assert payload["replay_context"] == context
+    assert validate_manifest(
+        str(manifest_path), identity, artifacts, now=CACHE_TIME
+    )["replay_context"]["context_sha256"] == context["context_sha256"]
+
+    bad_context = dict(context)
+    bad_context["prediction_sha256"] = "changed"
+    with pytest.raises(RuntimeError, match="invalid replay context"):
+        write_manifest(
+            str(manifest_path),
+            identity,
+            artifacts,
+            generated_at=CACHE_TIME,
+            replay_context=bad_context,
         )
 
 
@@ -684,6 +1069,51 @@ def test_current_input_contract_names_every_requested_cache_dependency():
     assert "portable_hash.py" in source_contract
     assert "required=configured_for_current_event" in source_contract
     assert "portable_text=True" in source_contract
+    assert "source_overrides" in source_contract
+    assert "set(source_overrides) != {'new_sim.py'}" in source_contract
+
+
+def test_sealed_source_override_is_narrow_and_exact(tmp_path):
+    namespace = _load_definitions(
+        "_sha256_file",
+        "_file_contract",
+        "_simulation_source_contract",
+    )
+    required = (
+        "new_sim.py",
+        "category_distribution_guard.py",
+        "sim_inputs.py",
+        "sheet_config.py",
+        "api_utils.py",
+        "portable_hash.py",
+        "shot_dispersion_overlay.py",
+        "shot_dispersion_config.json",
+        "skew_calibration.py",
+    )
+    for relative in required:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{"enabled": false}' if relative.endswith(".json") else relative,
+            encoding="utf-8",
+        )
+
+    current = namespace["_simulation_source_contract"](str(tmp_path))
+    assert current["new_sim.py"]["sha256"] != "a" * 64
+
+    sealed = _source_contract_fixture()
+    replayed = namespace["_simulation_source_contract"](
+        str(tmp_path),
+        source_overrides={"new_sim.py": sealed},
+    )
+    assert replayed["new_sim.py"] == sealed
+    assert replayed["api_utils.py"] == current["api_utils.py"]
+
+    with pytest.raises(RuntimeError, match="only new_sim.py"):
+        namespace["_simulation_source_contract"](
+            str(tmp_path),
+            source_overrides={"api_utils.py": current["api_utils.py"]},
+        )
 
 
 def test_cache_rejects_changed_input_contract(tmp_path):
@@ -772,6 +1202,7 @@ def test_final_delivery_rechecks_prediction_and_full_contract(tmp_path):
         "_sha256_file",
         "_contract_json_value",
         "_canonical_contract_sha256",
+        "_canonical_replay_context_sha256",
         "_verify_final_delivery_inputs",
     )
     verify = namespace["_verify_final_delivery_inputs"]
@@ -782,12 +1213,22 @@ def test_final_delivery_rechecks_prediction_and_full_contract(tmp_path):
     contract = {"weather": [4.0, 6.0], "no_skew_cal": False}
     prediction_sha256 = hash_file(predictions)
     input_sha256 = hash_contract(contract)
+    replay_context = {"version": 1, "value": "sealed"}
+    replay_context["context_sha256"] = namespace[
+        "_canonical_replay_context_sha256"
+    ](replay_context)
+    manifest_path = tmp_path / "sim_cache_manifest.json"
+    manifest_path.write_text(
+        json.dumps({"replay_context": replay_context}), encoding="utf-8"
+    )
 
     verify(
         prediction_path=str(predictions),
         prediction_sha256=prediction_sha256,
         input_contract_sha256=input_sha256,
         contract_builder=lambda: contract,
+        cache_manifest_path=str(manifest_path),
+        replay_context_sha256=replay_context["context_sha256"],
     )
 
     predictions.write_text("player_name,pred\na,3\n", encoding="utf-8")
@@ -806,6 +1247,20 @@ def test_final_delivery_rechecks_prediction_and_full_contract(tmp_path):
             prediction_sha256=prediction_sha256,
             input_contract_sha256=input_sha256,
             contract_builder=lambda: {**contract, "no_skew_cal": True},
+        )
+
+    manifest_path.write_text(
+        json.dumps({"replay_context": {**replay_context, "value": "tampered"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="replay context changed"):
+        verify(
+            prediction_path=str(predictions),
+            prediction_sha256=prediction_sha256,
+            input_contract_sha256=input_sha256,
+            contract_builder=lambda: contract,
+            cache_manifest_path=str(manifest_path),
+            replay_context_sha256=replay_context["context_sha256"],
         )
 
 

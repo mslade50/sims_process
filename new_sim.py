@@ -42,6 +42,12 @@ _parser.add_argument("--price-only", action="store_true",
 _parser.add_argument("--reprice", action="store_true",
                      help=("With --final-pass, load cache and email refreshed "
                            "prices without re-storing or publishing"))
+_parser.add_argument(
+    "--validate-cache-only",
+    action="store_true",
+    help=("With --final-pass --price-only, validate the sealed cache and its "
+          "replay contract, then exit before pricing or external delivery"),
+)
 _pass_group = _parser.add_mutually_exclusive_group()
 _pass_group.add_argument(
     "--calibration-pass",
@@ -79,6 +85,10 @@ if args.reprice:
     args.price_only = True
 if args.sim_only and args.price_only:
     _parser.error("Cannot use --sim-only and --price-only/--reprice together")
+if args.validate_cache_only and not args.price_only:
+    _parser.error("--validate-cache-only requires --price-only")
+if args.price_only and not args.final_pass:
+    _parser.error("--price-only/--reprice require --final-pass")
 
 
 def _monday_tee_times_optional(now=None):
@@ -106,6 +116,334 @@ def _tee_time_fallback_allowed(run_pass, *, cli_override=False, now=None):
     return _monday_tee_times_optional(now) or (
         run_pass == "calibration" and bool(cli_override)
     )
+
+
+_REPLAY_CONTEXT_VERSION = 1
+
+
+def _canonical_replay_context_sha256(context):
+    """Hash replay metadata without trusting its self-declared digest."""
+    unsigned = dict(context or {})
+    unsigned.pop("context_sha256", None)
+    canonical = json.dumps(
+        unsigned,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _parse_replay_reference_time(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timestamp has no timezone")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Sim cache replay context has no valid UTC reference time"
+        ) from exc
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_replay_effective_wind(effective_wind, *, reference_time=None):
+    """Validate the exact post-climatology wind tape sealed with a cache."""
+    expected_keys = {
+        "wind_r1",
+        "wind_r2",
+        "climo_month",
+        "climo_applied",
+        "climo_weight_r1",
+        "climo_weight_r2",
+        "decision",
+    }
+    if not isinstance(effective_wind, dict) or set(effective_wind) != expected_keys:
+        raise RuntimeError("Replay context has malformed effective-wind metadata")
+
+    normalized = dict(effective_wind)
+    for key in ("wind_r1", "wind_r2"):
+        values = effective_wind[key]
+        if not isinstance(values, list) or len(values) != 15:
+            raise RuntimeError(
+                f"Replay context {key} must contain exactly 15 hourly values"
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in values
+        ):
+            raise RuntimeError(f"Replay context {key} contains invalid values")
+        normalized[key] = [float(value) for value in values]
+
+    month = effective_wind["climo_month"]
+    if isinstance(month, bool) or not isinstance(month, int) or not 1 <= month <= 12:
+        raise RuntimeError("Replay context has an invalid climatology month")
+    if reference_time is not None:
+        from zoneinfo import ZoneInfo
+
+        reference_month = reference_time.astimezone(
+            ZoneInfo("America/New_York")
+        ).month
+        if month != reference_month:
+            raise RuntimeError(
+                "Replay context climatology month disagrees with its sealed ET date"
+            )
+
+    applied = effective_wind["climo_applied"]
+    if not isinstance(applied, bool):
+        raise RuntimeError("Replay context climatology-applied flag must be boolean")
+    weights = []
+    for key in ("climo_weight_r1", "climo_weight_r2"):
+        value = effective_wind[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise RuntimeError(f"Replay context has an invalid {key}")
+        weights.append(float(value))
+        normalized[key] = float(value)
+
+    decision = effective_wind["decision"]
+    allowed_decisions = {
+        "blended",
+        "historical_climo_unavailable",
+        "no_course_coordinates",
+        "climo_error",
+    }
+    if decision not in allowed_decisions:
+        raise RuntimeError("Replay context has an invalid climatology decision")
+    if applied != (decision == "blended"):
+        raise RuntimeError("Replay context has inconsistent climatology metadata")
+    if applied and any(weight <= 0.0 for weight in weights):
+        raise RuntimeError("Applied climatology must have positive round weights")
+    if not applied and any(weight != 0.0 for weight in weights):
+        raise RuntimeError("Unapplied climatology must have zero round weights")
+    return normalized
+
+
+def _load_price_only_replay_context(
+    manifest_path,
+    *,
+    expected_tourney,
+    expected_event_id,
+    expected_course_id,
+    expected_prediction_path,
+    now=None,
+):
+    """Load the exact simulation-time context needed to reprice a sealed tape.
+
+    This is deliberately an early, read-only check. The full cache identity and
+    every artifact hash are validated again after the model input contract has
+    been reconstructed.
+    """
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except Exception as exc:
+        raise RuntimeError(
+            "Price-only replay requires a readable sim cache manifest"
+        ) from exc
+
+    expected_identity = {
+        "tourney": str(expected_tourney).casefold().strip(),
+        "event_id": str(expected_event_id),
+        "course_id": str(expected_course_id),
+        "run_pass": "final",
+        "prediction_path": os.path.normpath(
+            str(expected_prediction_path)
+        ).replace("\\", "/"),
+    }
+    mismatches = {
+        key: (manifest.get(key), expected)
+        for key, expected in expected_identity.items()
+        if manifest.get(key) != expected
+    }
+    if mismatches:
+        detail = ", ".join(
+            f"{key}={actual!r} (expected {expected!r})"
+            for key, (actual, expected) in sorted(mismatches.items())
+        )
+        raise RuntimeError("Sim cache replay identity mismatch: " + detail)
+
+    context = manifest.get("replay_context")
+    if not isinstance(context, dict):
+        raise RuntimeError(
+            "Sim cache has no sealed replay context; rebuild or explicitly "
+            "migrate the cache before price-only delivery"
+        )
+    if context.get("version") != _REPLAY_CONTEXT_VERSION:
+        raise RuntimeError("Unsupported sim cache replay-context version")
+    declared_context_sha256 = context.get("context_sha256")
+    actual_context_sha256 = _canonical_replay_context_sha256(context)
+    if declared_context_sha256 != actual_context_sha256:
+        raise RuntimeError("Sim cache replay context failed hash validation")
+
+    if context.get("prediction_path") != manifest.get("prediction_path"):
+        raise RuntimeError("Replay context prediction path disagrees with cache")
+    if context.get("prediction_sha256") != manifest.get("prediction_sha256"):
+        raise RuntimeError("Replay context prediction hash disagrees with cache")
+    if context.get("tee_times_source") != "sealed_replay_context_payload":
+        raise RuntimeError("Replay context has an unsupported tee-time source")
+    tee_times = context.get("tee_times")
+    if not isinstance(tee_times, list) or len(tee_times) != manifest.get(
+        "field_count"
+    ):
+        raise RuntimeError("Replay context tee-time payload has the wrong field size")
+    tee_time_names = []
+    for row in tee_times:
+        if not isinstance(row, dict) or set(row) != {
+            "player_name", "r1_teetime", "r2_teetime"
+        }:
+            raise RuntimeError("Replay context has a malformed tee-time row")
+        player_name = str(row.get("player_name", "")).casefold().strip()
+        if not player_name or player_name != row.get("player_name"):
+            raise RuntimeError("Replay context has a non-canonical player name")
+        tee_time_names.append(player_name)
+        for column in ("r1_teetime", "r2_teetime"):
+            value = row[column]
+            if value is None:
+                continue
+            try:
+                parsed_value = datetime.fromisoformat(value)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Replay context has an invalid {column} value"
+                ) from exc
+            if (
+                parsed_value.tzinfo is not None
+                or parsed_value.strftime("%Y-%m-%d %H:%M:%S") != value
+            ):
+                raise RuntimeError(
+                    f"Replay context has a non-canonical {column} value"
+                )
+    if tee_time_names != sorted(tee_time_names) or len(set(tee_time_names)) != len(
+        tee_time_names
+    ):
+        raise RuntimeError(
+            "Replay context tee-time players must be unique and sorted"
+        )
+
+    reference_time = _parse_replay_reference_time(
+        context.get("simulation_reference_time_utc")
+    )
+    _validate_replay_effective_wind(
+        context.get("effective_wind"),
+        reference_time=reference_time,
+    )
+    generated_time = _parse_replay_reference_time(manifest.get("generated_at_utc"))
+    if reference_time > generated_time + pd.Timedelta(minutes=5):
+        raise RuntimeError("Replay reference time is after cache generation")
+    if generated_time - reference_time > pd.Timedelta(hours=6):
+        raise RuntimeError("Replay reference time is implausibly old for this cache")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("Replay validation time must be timezone-aware")
+    age_seconds = (
+        now.astimezone(timezone.utc) - generated_time
+    ).total_seconds()
+    if age_seconds < -300:
+        raise RuntimeError("Sim cache generation timestamp is implausibly in the future")
+    if age_seconds > 7 * 24 * 60 * 60:
+        raise RuntimeError("Sim cache replay context is older than 7 days")
+
+    allow_missing = context.get("allow_missing_tee_times")
+    if not isinstance(allow_missing, bool):
+        raise RuntimeError("Replay context missing-tee-time policy must be boolean")
+    policy_allow_missing = _tee_time_fallback_allowed(
+        "final", now=reference_time
+    )
+    if allow_missing != policy_allow_missing:
+        raise RuntimeError(
+            "Replay context tee-time policy disagrees with its sealed ET date"
+        )
+
+    overrides = context.get("source_contract_overrides")
+    if not isinstance(overrides, dict) or set(overrides) != {"new_sim.py"}:
+        raise RuntimeError(
+            "Replay context must contain only the sealed new_sim.py source contract"
+        )
+    source = overrides["new_sim.py"]
+    valid_source = (
+        isinstance(source, dict)
+        and source.get("path") == "new_sim.py"
+        and source.get("present") is True
+        and isinstance(source.get("size"), int)
+        and source["size"] > 0
+        and isinstance(source.get("sha256"), str)
+        and len(source["sha256"]) == 64
+        and all(ch in "0123456789abcdef" for ch in source["sha256"].lower())
+    )
+    if not valid_source:
+        raise RuntimeError("Replay context has an invalid new_sim.py source contract")
+
+    return manifest, dict(context), reference_time
+
+
+def _round_dates_for_reference(reference_time):
+    """Return this event week's Thu-Sun using one sealed ET reference time."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    current = reference_time.astimezone(eastern).replace(tzinfo=None)
+    days_since_thu = (current.weekday() - 3) % 7
+    thursday = (current - timedelta(days=days_since_thu)).replace(
+        hour=7, minute=0, second=0, microsecond=0
+    )
+    sunday = thursday + timedelta(days=3)
+    if current > sunday.replace(hour=23):
+        thursday += timedelta(days=7)
+    return [thursday + timedelta(days=offset) for offset in range(4)]
+
+
+def _lead_days_from_reference(round_date, reference_time):
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    reference_local = reference_time.astimezone(eastern).replace(tzinfo=None)
+    return max((round_date - reference_local).total_seconds() / 86400.0, 0.0)
+
+
+def _build_cache_replay_context(
+    *,
+    reference_time,
+    allow_missing_tee_times,
+    prediction_path,
+    prediction_sha256,
+    new_sim_source_contract,
+    tee_time_payload,
+    effective_wind,
+):
+    """Build self-hashed replay metadata for a newly sealed final cache."""
+    validated_effective_wind = _validate_replay_effective_wind(
+        effective_wind,
+        reference_time=reference_time,
+    )
+    context = {
+        "version": _REPLAY_CONTEXT_VERSION,
+        "simulation_reference_time_utc": (
+            reference_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        ),
+        "allow_missing_tee_times": bool(allow_missing_tee_times),
+        "prediction_path": os.path.normpath(str(prediction_path)).replace("\\", "/"),
+        "prediction_sha256": str(prediction_sha256),
+        "tee_times_source": "sealed_replay_context_payload",
+        "tee_times": json.loads(
+            json.dumps(tee_time_payload, allow_nan=False)
+        ),
+        "effective_wind": json.loads(
+            json.dumps(validated_effective_wind, allow_nan=False)
+        ),
+        "source_contract_overrides": {
+            "new_sim.py": dict(new_sim_source_contract),
+        },
+    }
+    context["context_sha256"] = _canonical_replay_context_sha256(context)
+    return context
 
 
 def _select_prediction_input(
@@ -218,6 +556,37 @@ _course_id       = _cfg["course_id"]
 _sheet_manual_boosts = _cfg.get("manual_boosts", {})
 _sheet_archetype_boosts = _cfg.get("archetype_boosts", {})
 
+# Price-only is a replay of the simulation-time contract, not a fresh simulation
+# setup. Resolve its sealed reference before any wall-clock-dependent weather
+# blending. Full simulations capture one reference here and persist it with the
+# cache so later pricing can reconstruct the same contract exactly.
+_SIM_REFERENCE_TIME_UTC = datetime.now(timezone.utc)
+_PRICE_ONLY_REPLAY_MANIFEST = None
+_PRICE_ONLY_REPLAY_CONTEXT = None
+_PRICE_ONLY_REPLAY_CONTEXT_SHA256 = None
+_EARLY_CACHE_MANIFEST_PATH = os.path.join(
+    f"{tourney}", "sim_cache_manifest.json"
+)
+if args.price_only:
+    (
+        _PRICE_ONLY_REPLAY_MANIFEST,
+        _PRICE_ONLY_REPLAY_CONTEXT,
+        _SIM_REFERENCE_TIME_UTC,
+    ) = _load_price_only_replay_context(
+        _EARLY_CACHE_MANIFEST_PATH,
+        expected_tourney=tourney,
+        expected_event_id=_event_id,
+        expected_course_id=_course_id,
+        expected_prediction_path=f"final_predictions_{tourney}.csv",
+    )
+    _PRICE_ONLY_REPLAY_CONTEXT_SHA256 = _PRICE_ONLY_REPLAY_CONTEXT[
+        "context_sha256"
+    ]
+    print(
+        "[sim-cache] Replaying sealed simulation context from "
+        f"{_SIM_REFERENCE_TIME_UTC.isoformat()}"
+    )
+
 # --- Stable model params from sim_inputs ---
 from sim_inputs import (
     name_replacements,
@@ -256,41 +625,93 @@ print("=" * 60)
 # Climo weight scales with actual lead time (days to round), not hard-coded.
 from api_utils import (
     fetch_historical_hourly_wind, blend_wind_with_climo,
-    get_round_dates, climo_weight_for_lead,
+    climo_weight_for_lead,
     fetch_field_updates,
 )
-try:
-    import pandas as _pd_coords
-    _coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
-    _coords_df = _pd_coords.read_csv(_coords_csv)
-    _coords_row = _coords_df[_coords_df["course_id"] == _course_id]
-    if not _coords_row.empty:
-        _lat = float(_coords_row["lat"].iloc[0])
-        _lon = float(_coords_row["lon"].iloc[0])
-        _month = datetime.now().month
-        _climo_wind = fetch_historical_hourly_wind(_lat, _lon, _month)
-        _round_dates = get_round_dates()
-        if _climo_wind:
-            print(f"[weather] Blending forecast with {_month}-month climo prior ({_lat}, {_lon})")
-            print(f"[weather] Climo avg: {np.mean(_climo_wind):.1f} mph | "
-                  f"R1 fcst avg: {np.mean(wind_1):.1f} | R2 fcst avg: {np.mean(wind_2):.1f}")
-            wind_1, _w1 = blend_wind_with_climo(wind_1, _climo_wind,
-                                                 round_date=_round_dates[0] if _round_dates else None)
-            wind_2, _w2 = blend_wind_with_climo(wind_2, _climo_wind,
-                                                 round_date=_round_dates[1] if _round_dates else None)
-            print(f"[weather] Blended R1 avg: {np.mean(wind_1):.1f} (w_climo={_w1:.0%}) | "
-                  f"R2 avg: {np.mean(wind_2):.1f} (w_climo={_w2:.0%})")
-            if _round_dates:
-                _now = datetime.now()
-                for _r in range(4):
-                    _ld = (_round_dates[_r] - _now).total_seconds() / 86400
-                    print(f"  R{_r+1}: {_ld:.1f} days out -> climo weight {climo_weight_for_lead(_ld):.0%}")
+from zoneinfo import ZoneInfo as _WeatherZoneInfo
+_weather_reference_local = _SIM_REFERENCE_TIME_UTC.astimezone(
+    _WeatherZoneInfo("America/New_York")
+).replace(tzinfo=None)
+_month = _weather_reference_local.month
+
+if args.price_only:
+    # A price-only run reconstructs the exact post-climatology inputs used by
+    # the sealed simulation. It must never ask Open-Meteo to make that decision
+    # again, even if the archive endpoint is reachable on delivery day.
+    _EFFECTIVE_WIND_REPLAY_CONTEXT = _validate_replay_effective_wind(
+        _PRICE_ONLY_REPLAY_CONTEXT["effective_wind"],
+        reference_time=_SIM_REFERENCE_TIME_UTC,
+    )
+    wind_1 = list(_EFFECTIVE_WIND_REPLAY_CONTEXT["wind_r1"])
+    wind_2 = list(_EFFECTIVE_WIND_REPLAY_CONTEXT["wind_r2"])
+    print(
+        "[weather] Replaying sealed effective wind "
+        f"({_EFFECTIVE_WIND_REPLAY_CONTEXT['decision']}; no climatology fetch)"
+    )
+else:
+    _climo_applied = False
+    _climo_weight_r1 = 0.0
+    _climo_weight_r2 = 0.0
+    _climo_decision = "climo_error"
+    try:
+        import pandas as _pd_coords
+        _coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
+        _coords_df = _pd_coords.read_csv(_coords_csv)
+        _coords_row = _coords_df[_coords_df["course_id"] == _course_id]
+        if not _coords_row.empty:
+            _lat = float(_coords_row["lat"].iloc[0])
+            _lon = float(_coords_row["lon"].iloc[0])
+            _climo_wind = fetch_historical_hourly_wind(_lat, _lon, _month)
+            _round_dates = _round_dates_for_reference(_SIM_REFERENCE_TIME_UTC)
+            if _climo_wind:
+                print(f"[weather] Blending forecast with {_month}-month climo prior ({_lat}, {_lon})")
+                print(f"[weather] Climo avg: {np.mean(_climo_wind):.1f} mph | "
+                      f"R1 fcst avg: {np.mean(wind_1):.1f} | R2 fcst avg: {np.mean(wind_2):.1f}")
+                _blended_wind_1, _w1 = blend_wind_with_climo(
+                    wind_1,
+                    _climo_wind,
+                    lead_days=_lead_days_from_reference(
+                        _round_dates[0], _SIM_REFERENCE_TIME_UTC
+                    ) if _round_dates else None,
+                )
+                _blended_wind_2, _w2 = blend_wind_with_climo(
+                    wind_2,
+                    _climo_wind,
+                    lead_days=_lead_days_from_reference(
+                        _round_dates[1], _SIM_REFERENCE_TIME_UTC
+                    ) if _round_dates else None,
+                )
+                wind_1, wind_2 = _blended_wind_1, _blended_wind_2
+                _climo_applied = True
+                _climo_weight_r1 = float(_w1)
+                _climo_weight_r2 = float(_w2)
+                _climo_decision = "blended"
+                print(f"[weather] Blended R1 avg: {np.mean(wind_1):.1f} (w_climo={_w1:.0%}) | "
+                      f"R2 avg: {np.mean(wind_2):.1f} (w_climo={_w2:.0%})")
+                if _round_dates:
+                    _now = _weather_reference_local
+                    for _r in range(4):
+                        _ld = (_round_dates[_r] - _now).total_seconds() / 86400
+                        print(f"  R{_r+1}: {_ld:.1f} days out -> climo weight {climo_weight_for_lead(_ld):.0%}")
+            else:
+                _climo_decision = "historical_climo_unavailable"
+                print("[weather] Could not fetch climo wind — using raw forecast")
         else:
-            print("[weather] Could not fetch climo wind — using raw forecast")
-    else:
-        print(f"[weather] No coordinates for course_id={_course_id} — skipping climo blend")
-except Exception as _e:
-    print(f"[weather] Climo blend failed: {_e} — using raw forecast")
+            _climo_decision = "no_course_coordinates"
+            print(f"[weather] No coordinates for course_id={_course_id} — skipping climo blend")
+    except Exception as _e:
+        _climo_decision = "climo_error"
+        print(f"[weather] Climo blend failed: {_e} — using raw forecast")
+
+    _EFFECTIVE_WIND_REPLAY_CONTEXT = {
+        "wind_r1": [float(value) for value in wind_1],
+        "wind_r2": [float(value) for value in wind_2],
+        "climo_month": int(_month),
+        "climo_applied": _climo_applied,
+        "climo_weight_r1": _climo_weight_r1,
+        "climo_weight_r2": _climo_weight_r2,
+        "decision": _climo_decision,
+    }
 
 # Matchup weather-impact report settings (doesn't affect sim)
 wind_calculation_report = WIND_FACTOR_SIM
@@ -356,17 +777,23 @@ if args.allow_missing_tee_times and RUN_PASS != "calibration":
         "--allow-missing-tee-times is calibration-only and cannot authorize "
         "final delivery or a final cache"
     )
-_TEE_TIME_POLICY_NOW = datetime.now(timezone.utc)
+_TEE_TIME_POLICY_NOW = _SIM_REFERENCE_TIME_UTC
 _MONDAY_TEE_TIMES_OPTIONAL = _monday_tee_times_optional(_TEE_TIME_POLICY_NOW)
-_ALLOW_MISSING_TEE_TIMES = _tee_time_fallback_allowed(
-    RUN_PASS,
-    cli_override=args.allow_missing_tee_times,
-    now=_TEE_TIME_POLICY_NOW,
-)
+if args.price_only:
+    _ALLOW_MISSING_TEE_TIMES = _PRICE_ONLY_REPLAY_CONTEXT[
+        "allow_missing_tee_times"
+    ]
+else:
+    _ALLOW_MISSING_TEE_TIMES = _tee_time_fallback_allowed(
+        RUN_PASS,
+        cli_override=args.allow_missing_tee_times,
+        now=_TEE_TIME_POLICY_NOW,
+    )
 if _MONDAY_TEE_TIMES_OPTIONAL:
+    _tee_policy_label = "SEALED MONDAY MODE" if args.price_only else "MONDAY MODE"
     print(
-        "[teetimes] MONDAY MODE: missing R1/R2 tee times will use zero wave "
-        "adjustment and will not block final delivery."
+        f"[teetimes] {_tee_policy_label}: missing R1/R2 tee times will use zero "
+        "wave adjustment and will not block final delivery."
     )
 print(f"[info] Using predictions from: {PRED_PATH}")
 print(f"[pass] Tournament simulation pass: {RUN_PASS}")
@@ -579,6 +1006,84 @@ def _load_required_tee_times(
     return result, fresh_by_round
 
 
+def _normalized_replay_tee_time_payload(predictions):
+    """Serialize the exact normalized wave payload consumed by a full sim."""
+    required = {"player_name", "r1_teetime", "r2_teetime"}
+    missing = sorted(required - set(predictions.columns))
+    if missing:
+        raise RuntimeError(
+            "Cannot seal replay tee times; missing columns: " + ", ".join(missing)
+        )
+    rows = []
+    names = set()
+    for _, row in predictions.iterrows():
+        player_name = str(row["player_name"]).casefold().strip()
+        if not player_name or player_name in names:
+            raise RuntimeError(
+                "Cannot seal replay tee times with blank or duplicate players"
+            )
+        names.add(player_name)
+        output = {"player_name": player_name}
+        for column in ("r1_teetime", "r2_teetime"):
+            parsed = parse_time(row[column])
+            output[column] = (
+                parsed.strftime("%Y-%m-%d %H:%M:%S")
+                if parsed is not None
+                else None
+            )
+        rows.append(output)
+    return sorted(rows, key=lambda row: row["player_name"])
+
+
+def _load_sealed_replay_tee_times(
+    predictions,
+    *,
+    replay_context,
+    name_map,
+    allow_missing,
+):
+    """Reapply tee times from the cache's self-hashed replay payload.
+
+    Price-only must never replace the tape's simulation inputs with a newly
+    posted wave or stale prediction columns. The existing coverage/neutralization
+    policy still runs against the exact normalized payload consumed by the full
+    simulation.
+    """
+    tee_time_rows = replay_context.get("tee_times")
+    if not isinstance(tee_time_rows, list):
+        raise RuntimeError("Sealed replay context has no tee-time payload")
+    payload = pd.DataFrame(tee_time_rows)
+    expected_names = set(
+        predictions["player_name"].astype(str).str.casefold().str.strip()
+    )
+    payload_names = set(
+        payload["player_name"].astype(str).str.casefold().str.strip()
+    )
+    if payload_names != expected_names or len(payload) != len(predictions):
+        raise RuntimeError(
+            "Sealed replay tee-time field does not match final predictions"
+        )
+    sealed = {
+        column: payload[["player_name", column]].copy()
+        for column in ("r1_teetime", "r2_teetime")
+    }
+
+    def sealed_fetcher(_api_key, *, teetime_col, fill_missing_teetimes):
+        if fill_missing_teetimes is not False:
+            raise RuntimeError("Replay tee-time source cannot synthesize defaults")
+        if teetime_col not in sealed:
+            raise RuntimeError(f"Unsupported replay tee-time column: {teetime_col}")
+        return sealed[teetime_col].copy()
+
+    return _load_required_tee_times(
+        predictions,
+        fetcher=sealed_fetcher,
+        api_key="sealed-cache",
+        name_map=name_map,
+        allow_missing=allow_missing,
+    )
+
+
 def prob_to_american(p):
     if pd.isna(p) or p <= 0: return None
     if p >= 1: return -100
@@ -759,7 +1264,13 @@ def _file_contract(
     return contract
 
 
-def _simulation_source_contract(repo_dir, *, tourney_name=None, event_id=None):
+def _simulation_source_contract(
+    repo_dir,
+    *,
+    tourney_name=None,
+    event_id=None,
+    source_overrides=None,
+):
     """Hash the Python/Rust sources and optional overlay inputs that shape draws."""
     required_sources = (
         "new_sim.py",
@@ -825,6 +1336,27 @@ def _simulation_source_contract(repo_dir, *, tourney_name=None, event_id=None):
                 contract_path=str(feature_path),
                 portable_text=True,
             )
+
+    if source_overrides:
+        if not isinstance(source_overrides, dict) or set(source_overrides) != {
+            "new_sim.py"
+        }:
+            raise RuntimeError(
+                "Sealed source override may replace only new_sim.py"
+            )
+        sealed_source = source_overrides["new_sim.py"]
+        valid_sealed_source = (
+            isinstance(sealed_source, dict)
+            and sealed_source.get("path") == "new_sim.py"
+            and sealed_source.get("present") is True
+            and isinstance(sealed_source.get("size"), int)
+            and sealed_source["size"] > 0
+            and isinstance(sealed_source.get("sha256"), str)
+            and len(sealed_source["sha256"]) == 64
+        )
+        if not valid_sealed_source:
+            raise RuntimeError("Invalid sealed new_sim.py source override")
+        contracts["new_sim.py"] = dict(sealed_source)
     return contracts
 
 
@@ -875,6 +1407,7 @@ def _write_sim_cache_manifest(
     artifact_paths,
     *,
     generated_at=None,
+    replay_context=None,
 ):
     artifacts = {}
     for name, path in artifact_paths.items():
@@ -900,6 +1433,14 @@ def _write_sim_cache_manifest(
         "generated_at_utc": generated_at_utc.isoformat().replace("+00:00", "Z"),
         "artifacts": artifacts,
     }
+    if replay_context is not None:
+        if (
+            not isinstance(replay_context, dict)
+            or replay_context.get("context_sha256")
+            != _canonical_replay_context_sha256(replay_context)
+        ):
+            raise RuntimeError("Cannot seal cache with an invalid replay context")
+        payload["replay_context"] = dict(replay_context)
     tmp_path = f"{manifest_path}.tmp-{os.getpid()}"
     with open(tmp_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
@@ -995,6 +1536,8 @@ def _verify_final_delivery_inputs(
     prediction_sha256,
     input_contract_sha256,
     contract_builder,
+    cache_manifest_path=None,
+    replay_context_sha256=None,
 ):
     if _sha256_file(prediction_path) != prediction_sha256:
         raise RuntimeError(
@@ -1006,6 +1549,26 @@ def _verify_final_delivery_inputs(
             "Simulation inputs changed after the cache contract was captured; "
             "refusing delivery"
         )
+    if cache_manifest_path is not None or replay_context_sha256 is not None:
+        if not cache_manifest_path or not replay_context_sha256:
+            raise RuntimeError("Incomplete price-only replay verification inputs")
+        try:
+            with open(cache_manifest_path, encoding="utf-8") as handle:
+                current_manifest = json.load(handle)
+        except Exception as exc:
+            raise RuntimeError(
+                "Sim cache manifest changed before delivery; refusing delivery"
+            ) from exc
+        current_context = current_manifest.get("replay_context")
+        if (
+            not isinstance(current_context, dict)
+            or current_context.get("context_sha256") != replay_context_sha256
+            or _canonical_replay_context_sha256(current_context)
+            != replay_context_sha256
+        ):
+            raise RuntimeError(
+                "Sim cache replay context changed before delivery; refusing delivery"
+            )
 
 
 def load_corr_matrix(cat_order, *, return_source=False):
@@ -1134,16 +1697,24 @@ if 'sample' not in model_preds.columns and os.path.exists(_pre_course_path):
 # unavailable waves for both passes and assigns them zero wave adjustment; the
 # manual CLI escape remains calibration-only outside Monday. Neither path reuses
 # retained prediction columns.
-model_preds, _fresh_tee_times = _load_required_tee_times(
-    model_preds,
-    fetcher=fetch_field_updates,
-    api_key=API_KEY,
-    name_map=name_replacements,
-    allow_missing=_ALLOW_MISSING_TEE_TIMES,
-)
+if args.price_only:
+    model_preds, _fresh_tee_times = _load_sealed_replay_tee_times(
+        model_preds,
+        replay_context=_PRICE_ONLY_REPLAY_CONTEXT,
+        name_map=name_replacements,
+        allow_missing=_ALLOW_MISSING_TEE_TIMES,
+    )
+else:
+    model_preds, _fresh_tee_times = _load_required_tee_times(
+        model_preds,
+        fetcher=fetch_field_updates,
+        api_key=API_KEY,
+        name_map=name_replacements,
+        allow_missing=_ALLOW_MISSING_TEE_TIMES,
+    )
 
 # Write tee times back to pre_course_fit file
-if os.path.exists(_pre_course_path):
+if not args.price_only and os.path.exists(_pre_course_path):
     pcf_full = pd.read_csv(_pre_course_path)
     pcf_full['player_name'] = pcf_full['player_name'].astype(str).str.lower().str.strip().replace(name_replacements)
     for col in ['r1_teetime', 'r2_teetime']:
@@ -1330,6 +1901,11 @@ def _current_sim_input_contract():
         repo_dir,
         tourney_name=tourney,
         event_id=_event_id,
+        source_overrides=(
+            _PRICE_ONLY_REPLAY_CONTEXT["source_contract_overrides"]
+            if args.price_only
+            else None
+        ),
     )
 
     dists_contract = _file_contract(DISTS_FILE, portable_text=True)
@@ -1460,9 +2036,19 @@ def _current_sim_input_contract():
     }
 
 
-_SIM_INPUT_CONTRACT_SHA256 = _canonical_contract_sha256(
-    _current_sim_input_contract()
-)
+_SIM_INPUT_CONTRACT = _current_sim_input_contract()
+_SIM_INPUT_CONTRACT_SHA256 = _canonical_contract_sha256(_SIM_INPUT_CONTRACT)
+_CACHE_REPLAY_CONTEXT_FOR_WRITE = None
+if RUN_PASS == "final" and not args.price_only:
+    _CACHE_REPLAY_CONTEXT_FOR_WRITE = _build_cache_replay_context(
+        reference_time=_SIM_REFERENCE_TIME_UTC,
+        allow_missing_tee_times=_ALLOW_MISSING_TEE_TIMES,
+        prediction_path=PRED_PATH,
+        prediction_sha256=_PREDICTION_SHA256,
+        new_sim_source_contract=_SIM_INPUT_CONTRACT["source_files"]["new_sim.py"],
+        tee_time_payload=_normalized_replay_tee_time_payload(model_preds),
+        effective_wind=_EFFECTIVE_WIND_REPLAY_CONTEXT,
+    )
 print(
     "[sim-cache] Input contract: "
     f"{_SIM_INPUT_CONTRACT_SHA256[:12]}..."
@@ -2258,7 +2844,10 @@ if not args.price_only:
         simulations=final_scores.shape[1],
     )
     _write_sim_cache_manifest(
-        _cache_manifest_path, _cache_identity, _cache_artifact_paths
+        _cache_manifest_path,
+        _cache_identity,
+        _cache_artifact_paths,
+        replay_context=_CACHE_REPLAY_CONTEXT_FOR_WRITE,
     )
     print(f"[sim-cache] Saved sealed final_scores + player_names"
           f"{' + made_cut' if made_cut_mask is not None else ''} to {_cache_dir}")
@@ -2292,11 +2881,23 @@ else:
         player_names=model_preds["player_name"].tolist(),
         simulations=SIMULATIONS,
     )
-    _validate_sim_cache_manifest(
+    _validated_cache_manifest = _validate_sim_cache_manifest(
         _cache_manifest_path,
         _expected_cache_identity,
         _cache_artifact_paths,
     )
+    _validated_replay_context = _validated_cache_manifest.get("replay_context")
+    if (
+        not isinstance(_validated_replay_context, dict)
+        or _validated_replay_context.get("context_sha256")
+        != _PRICE_ONLY_REPLAY_CONTEXT_SHA256
+        or _canonical_replay_context_sha256(_validated_replay_context)
+        != _PRICE_ONLY_REPLAY_CONTEXT_SHA256
+        or _validated_replay_context != _PRICE_ONLY_REPLAY_CONTEXT
+    ):
+        raise RuntimeError(
+            "Sim cache replay context changed during cache validation"
+        )
     final_scores = np.load(_fs_path)
     with open(_pn_path) as _f:
         player_names = _sim_json.load(_f)
@@ -2321,6 +2922,20 @@ else:
     sim_win_probs = finish_equity_df[["player_name", "simulated_win_prob"]].copy()
     print(f"[sim-cache] Loaded cached sim outputs ({len(player_names)} players, "
           f"{final_scores.shape[1]:,} sims)")
+    if args.validate_cache_only:
+        _verify_final_delivery_inputs(
+            prediction_path=PRED_PATH,
+            prediction_sha256=_PREDICTION_SHA256,
+            input_contract_sha256=_SIM_INPUT_CONTRACT_SHA256,
+            contract_builder=_current_sim_input_contract,
+            cache_manifest_path=_EARLY_CACHE_MANIFEST_PATH,
+            replay_context_sha256=_PRICE_ONLY_REPLAY_CONTEXT_SHA256,
+        )
+        print(
+            "[sim-cache] Validation-only check passed; skipping H2H rebuild, "
+            "pricing, email, storage, and publication."
+        )
+        sys.exit(0)
 
 # Precomputed pairwise H2H matrix for the dashboard. Ships to Render via
 # push_dashboard_data.py; the raw final_scores.npy is too big to deploy.
@@ -5256,6 +5871,12 @@ if RUN_PASS == "final":
         prediction_sha256=_PREDICTION_SHA256,
         input_contract_sha256=_SIM_INPUT_CONTRACT_SHA256,
         contract_builder=_current_sim_input_contract,
+        cache_manifest_path=(
+            _EARLY_CACHE_MANIFEST_PATH if args.price_only else None
+        ),
+        replay_context_sha256=(
+            _PRICE_ONLY_REPLAY_CONTEXT_SHA256 if args.price_only else None
+        ),
     )
 
 # Calibration is computation-only by contract. Keep this gate immediately before
