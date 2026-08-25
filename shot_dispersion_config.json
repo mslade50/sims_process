@@ -10,7 +10,7 @@
   "event_start": "2026-08-27",
   "expected_field_size": 30,
   "feature_file": "shot_dispersion_features.csv",
-  "feature_sha256": "e045406f6a14867d776eb1e381299457ea6fa5aacf5b15522a55e83e78bc6c17",
+  "feature_sha256": "c15384ed4db0ba7d21b31c11c98e89481e2968b101467de2c1ab50299b6a090b",
   "hash_mode": "sha256_lf_normalized_v1",
   "methodology": {
     "feature_definition": "ema_pooled_within_round_shot_variance_times_expected_category_shots",
@@ -49,8 +49,8 @@
     "selected_round_category_rows": 40235,
     "selected_rows_missing_event_date": 830,
     "selected_valid_shots": 698867,
-    "shot_database_bytes": 17353863168,
-    "shot_database_mtime_utc": "2026-08-24T03:45:01.317061+00:00",
+    "shot_database_bytes": 17354125312,
+    "shot_database_mtime_utc": "2026-08-25T03:46:14.804703+00:00",
     "shot_database_name": "imgarena_shots_lean.sqlite3"
   },
   "required_current_event": true,
