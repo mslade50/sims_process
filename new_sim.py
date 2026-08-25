@@ -19,6 +19,11 @@ from email.mime.application import MIMEApplication
 from datetime import datetime, timezone
 from numpy.linalg import cholesky
 from category_distribution_guard import require_complete_category_distributions
+from portable_hash import (
+    LF_NORMALIZED_HASH_MODE,
+    lf_normalized_sha256,
+    lf_normalized_size,
+)
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
 
 # --- CLI flags (parsed early so the rest of the script can branch on them) ---
@@ -154,7 +159,7 @@ def _load_required_variance_inputs(sim_inputs_module, config_path):
     except Exception as exc:
         raise RuntimeError(
             "shot_dispersion_config.json is required and must be readable; "
-            "set enabled=false (or SHOT_DISPERSION_DISABLE) for a deliberate opt-out"
+            "set enabled=false for a deliberate opt-out"
         ) from exc
     if (
         not isinstance(shot_config, dict)
@@ -163,6 +168,30 @@ def _load_required_variance_inputs(sim_inputs_module, config_path):
         raise RuntimeError(
             "shot_dispersion_config.json must contain an explicit boolean enabled"
         )
+    if (
+        "required_current_event" in shot_config
+        and not isinstance(shot_config["required_current_event"], bool)
+    ):
+        raise RuntimeError(
+            "shot_dispersion_config.json required_current_event must be boolean"
+        )
+    if shot_config["enabled"] and shot_config.get("required_current_event", False):
+        missing = [
+            key
+            for key in (
+                "tourney",
+                "event_id",
+                "feature_file",
+                "feature_sha256",
+                "distribution_sha256",
+            )
+            if shot_config.get(key) in (None, "")
+        ]
+        if missing:
+            raise RuntimeError(
+                "Required weekly shot-dispersion config lacks: "
+                + ", ".join(missing)
+            )
     return week_latent_sd, shot_config
 
 # --- Weekly-changing config from Google Sheet ---
@@ -695,7 +724,13 @@ def _canonical_contract_sha256(contract):
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _file_contract(path, *, required=True, contract_path=None):
+def _file_contract(
+    path,
+    *,
+    required=True,
+    contract_path=None,
+    portable_text=False,
+):
     normalized_path = os.path.normpath(
         str(contract_path if contract_path is not None else path)
     ).replace("\\", "/")
@@ -705,15 +740,26 @@ def _file_contract(path, *, required=True, contract_path=None):
                 f"Required simulation-contract file is missing: {path!r}"
             )
         return {"path": normalized_path, "present": False}
-    return {
+    contract = {
         "path": normalized_path,
         "present": True,
-        "size": os.path.getsize(path),
-        "sha256": _sha256_file(path),
+        "size": (
+            lf_normalized_size(path)
+            if portable_text
+            else os.path.getsize(path)
+        ),
+        "sha256": (
+            lf_normalized_sha256(path)
+            if portable_text
+            else _sha256_file(path)
+        ),
     }
+    if portable_text:
+        contract["hash_mode"] = LF_NORMALIZED_HASH_MODE
+    return contract
 
 
-def _simulation_source_contract(repo_dir):
+def _simulation_source_contract(repo_dir, *, tourney_name=None, event_id=None):
     """Hash the Python/Rust sources and optional overlay inputs that shape draws."""
     required_sources = (
         "new_sim.py",
@@ -721,6 +767,7 @@ def _simulation_source_contract(repo_dir):
         "sim_inputs.py",
         "sheet_config.py",
         "api_utils.py",
+        "portable_hash.py",
         "shot_dispersion_overlay.py",
         "shot_dispersion_config.json",
         "skew_calibration.py",
@@ -752,7 +799,20 @@ def _simulation_source_contract(repo_dir):
     if os.path.isfile(overlay_config_path):
         with open(overlay_config_path, encoding="utf-8") as handle:
             overlay_config = json.load(handle)
+        enabled = overlay_config.get("enabled") is True
+        configured_for_current_event = bool(
+            enabled
+            and tourney_name is not None
+            and event_id is not None
+            and str(overlay_config.get("tourney", "")).casefold().strip()
+            == str(tourney_name).casefold().strip()
+            and str(overlay_config.get("event_id")) == str(event_id)
+        )
         feature_path = overlay_config.get("feature_file")
+        if configured_for_current_event and not feature_path:
+            raise RuntimeError(
+                "Enabled current-event shot-dispersion config lacks feature_file"
+            )
         if feature_path:
             resolved_feature = (
                 str(feature_path)
@@ -761,8 +821,9 @@ def _simulation_source_contract(repo_dir):
             )
             contracts["shot_dispersion_feature"] = _file_contract(
                 resolved_feature,
-                required=False,
+                required=configured_for_current_event,
                 contract_path=str(feature_path),
+                portable_text=True,
             )
     return contracts
 
@@ -1145,6 +1206,7 @@ if not os.path.exists(DISTS_FILE):
 dists, _DISTS_SHA256 = _read_stable_csv(
     DISTS_FILE,
     read_csv=pd.read_csv,
+    hasher=lf_normalized_sha256,
 )
 dists, player_names = require_complete_category_distributions(
     dists,
@@ -1165,10 +1227,10 @@ std_w  = dists.pivot(index='player_name', columns='category_clean', values='std'
 skew_w = dists.pivot(index='player_name', columns='category_clean', values='skew')
 neff_w = dists.pivot(index='player_name', columns='category_clean', values='n_eff')
 
-# BMW 2026: replace most of each player's production category variance with
-# the leakage-safe, pre-event shot-level estimate. The helper is event-scoped,
-# hash-locked, and is a no-op outside its configured tournament. Apply before
-# course multipliers so the existing course variance structure is preserved.
+# Replace most of each player's production category variance with the current
+# week's leakage-safe, pre-event shot-level estimate. Production configs are
+# event-scoped, required, and hash-locked. Apply before course multipliers so
+# the existing course variance structure is preserved.
 std_w = apply_shot_dispersion_overlay(
     std_w,
     player_names,
@@ -1264,9 +1326,13 @@ WEEK_LATENT = 0.0 if args.no_week_latent else WEEK_LATENT_SD
 
 def _current_sim_input_contract():
     repo_dir = os.path.dirname(os.path.abspath(__file__))
-    source_files = _simulation_source_contract(repo_dir)
+    source_files = _simulation_source_contract(
+        repo_dir,
+        tourney_name=tourney,
+        event_id=_event_id,
+    )
 
-    dists_contract = _file_contract(DISTS_FILE)
+    dists_contract = _file_contract(DISTS_FILE, portable_text=True)
     if dists_contract["sha256"] != _DISTS_SHA256:
         raise RuntimeError(
             f"Distribution input changed after it was read: {DISTS_FILE!r}"

@@ -1,4 +1,4 @@
-"""Apply the frozen BMW shot-level dispersion feature to category SG stds.
+"""Apply the current week's shot-level dispersion feature to category SG stds.
 
 The feature changes only player/category variance. Category means, course
 multipliers, skew, correlations, weather, and the shared week latent remain in
@@ -8,13 +8,14 @@ it cannot silently carry into another week or consume regenerated inputs.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from portable_hash import lf_normalized_sha256
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -23,14 +24,6 @@ DEFAULT_CONFIG = REPO_ROOT / "shot_dispersion_config.json"
 
 def _normalise_name(value: object) -> str:
     return str(value).casefold().strip()
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _load_config(config_path: str | os.PathLike[str] | None) -> tuple[dict, Path]:
@@ -53,6 +46,30 @@ def _load_config(config_path: str | os.PathLike[str] | None) -> tuple[dict, Path
         raise ValueError(
             "shot_dispersion_config.json must contain an explicit boolean enabled"
         )
+    if (
+        "required_current_event" in config
+        and not isinstance(config["required_current_event"], bool)
+    ):
+        raise ValueError(
+            "shot_dispersion_config.json required_current_event must be boolean"
+        )
+    if config["enabled"] and config.get("required_current_event", False):
+        missing = [
+            key
+            for key in (
+                "tourney",
+                "event_id",
+                "feature_file",
+                "feature_sha256",
+                "distribution_sha256",
+            )
+            if config.get(key) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                "Required weekly shot-dispersion config lacks: "
+                + ", ".join(missing)
+            )
     return config, path
 
 
@@ -74,23 +91,38 @@ def apply_shot_dispersion_overlay(
 
         new_var = (1 - weight) * production_var + weight * scaled_shot_var
 
-    An explicit ``enabled: false`` or a config for another event returns
-    ``std_w`` unchanged. Missing, unreadable, or structurally invalid config is
-    always fatal so production cannot silently lose this tracked model input.
+    An explicit ``enabled: false`` returns ``std_w`` unchanged. Legacy configs
+    for another event also remain a no-op, but a weekly production config with
+    ``required_current_event: true`` fails closed on an event mismatch or an
+    environment-disable attempt. Missing, unreadable, or structurally invalid
+    config is always fatal.
     """
     config, resolved_config_path = _load_config(config_path)
-    disabled_by_env = os.getenv("SHOT_DISPERSION_DISABLE", "").strip().lower()
-    if disabled_by_env in {"1", "true", "yes", "on"}:
-        print("[shot-dispersion] Disabled by SHOT_DISPERSION_DISABLE")
-        return std_w
     if not config["enabled"]:
         print(f"[shot-dispersion] Disabled ({resolved_config_path.name})")
+        return std_w
+
+    required_current_event = bool(config.get("required_current_event", False))
+    disabled_by_env = os.getenv("SHOT_DISPERSION_DISABLE", "").strip().lower()
+    if disabled_by_env in {"1", "true", "yes", "on"}:
+        if required_current_event:
+            raise RuntimeError(
+                "SHOT_DISPERSION_DISABLE cannot bypass a required weekly "
+                "shot-dispersion config"
+            )
+        print("[shot-dispersion] Disabled by SHOT_DISPERSION_DISABLE")
         return std_w
 
     configured_tourney = str(config.get("tourney", "")).casefold().strip()
     active_tourney = str(tourney).casefold().strip()
     configured_event_id = int(config.get("event_id", -1))
     if active_tourney != configured_tourney or int(event_id) != configured_event_id:
+        if required_current_event:
+            raise RuntimeError(
+                "Required weekly shot-dispersion config does not match the active "
+                f"event: active={active_tourney}/event {event_id}, "
+                f"configured={configured_tourney}/event {configured_event_id}"
+            )
         print(
             "[shot-dispersion] Not active for "
             f"{active_tourney}/event {event_id}; configured for "
@@ -116,8 +148,8 @@ def apply_shot_dispersion_overlay(
 
     expected_dists_hash = str(config.get("distribution_sha256", "")).casefold()
     expected_feature_hash = str(config.get("feature_sha256", "")).casefold()
-    actual_dists_hash = _sha256(dists)
-    actual_feature_hash = _sha256(feature_path)
+    actual_dists_hash = lf_normalized_sha256(dists)
+    actual_feature_hash = lf_normalized_sha256(feature_path)
     if expected_dists_hash and actual_dists_hash != expected_dists_hash:
         raise ValueError(
             "Shot-dispersion distribution hash mismatch: "

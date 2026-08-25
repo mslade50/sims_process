@@ -1,17 +1,66 @@
 {
+  "cutoff": "2026-08-27",
+  "distribution_file": "this_week_dists_v2.csv",
+  "distribution_sha256": "b4c8673722c770c2915c2433767b2dced964d3cc0dca374f52ac05d1d3b76c1c",
   "enabled": true,
-  "tourney": "bmw",
-  "event_id": 28,
-  "event_start": "2026-08-20",
-  "expected_field_size": 50,
-  "feature_file": "permanent_data/bmw_shot_features_prod.csv",
-  "feature_sha256": "8f385ba71da6527b277a38c95ed823d134b8e5c3101bcbd666c5bb6d9d347de9",
-  "distribution_sha256": "e6f1727b14ea82c5a6c9df30b4ea9994fb9d8e7312104f3a2176024938a27d01",
-  "weights": {
-    "sg_ott": 0.90,
-    "sg_app": 0.90,
-    "sg_arg": 0.80,
-    "sg_putt": 0.95
+  "event_id": 60,
+  "event_ids": [
+    60
+  ],
+  "event_start": "2026-08-27",
+  "expected_field_size": 30,
+  "feature_file": "shot_dispersion_features.csv",
+  "feature_sha256": "e045406f6a14867d776eb1e381299457ea6fa5aacf5b15522a55e83e78bc6c17",
+  "hash_mode": "sha256_lf_normalized_v1",
+  "methodology": {
+    "feature_definition": "ema_pooled_within_round_shot_variance_times_expected_category_shots",
+    "field_average_variance_preserved_by_runtime": true,
+    "missing_history_policy": "active_field_category_prior",
+    "variance_shrink_effective_df_k": 50.0,
+    "variance_span_rounds": 50
   },
-  "notes": "BMW-only production shot-dispersion overlay. Values are frozen for R1-R4 and applied before course multipliers. Set enabled=false for rollback."
+  "notes": "Required weekly production shot-dispersion overlay, frozen before R1 and reused for tournament plus round simulations. Disable only via an explicit tracked config rollback.",
+  "provenance": {
+    "builder_version": "weekly_shot_dispersion_v1",
+    "dg_results_tip": "2026-08-23",
+    "field_category_expected_shot_count_priors": {
+      "app": 19.249959481110153,
+      "arg": 7.218855063830665,
+      "ott": 14.037701789947079,
+      "putt": 28.641812936918093
+    },
+    "field_category_pooled_variance_priors": {
+      "app": 0.14900212533823964,
+      "arg": 0.15437238607057385,
+      "ott": 0.0487208359311721,
+      "putt": 0.09876239383878935
+    },
+    "field_roster_sha256": "e913c6ef7c1452788398e4c79697e603ae2e75310a1bf09862ac8f0f05693a53",
+    "history_coverage_rate": 1.0,
+    "history_fallback_cells": 0,
+    "history_fallback_players": 0,
+    "kept_event_round_models": 1061,
+    "latest_selected_event_key": "pga:R2026028",
+    "latest_selected_model_created_at": "2026-08-23T20:30:08.706Z",
+    "max_prior_event_start": "2026-08-20",
+    "max_prior_round_date": "2026-08-23",
+    "model_selection": "newest_created_at_then_model_id_per_event_round",
+    "model_version_like": "%v4_lies2026%",
+    "selected_round_category_rows": 40235,
+    "selected_rows_missing_event_date": 830,
+    "selected_valid_shots": 698867,
+    "shot_database_bytes": 17353863168,
+    "shot_database_mtime_utc": "2026-08-24T03:45:01.317061+00:00",
+    "shot_database_name": "imgarena_shots_lean.sqlite3"
+  },
+  "required_current_event": true,
+  "schema_version": 1,
+  "tour": "pga",
+  "tourney": "tourchamp",
+  "weights": {
+    "sg_app": 0.9,
+    "sg_arg": 0.8,
+    "sg_ott": 0.9,
+    "sg_putt": 0.95
+  }
 }

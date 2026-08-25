@@ -16,6 +16,11 @@ import pandas as pd
 import pytest
 
 from category_distribution_guard import require_complete_category_distributions
+from portable_hash import (
+    LF_NORMALIZED_HASH_MODE,
+    lf_normalized_sha256,
+    lf_normalized_size,
+)
 
 
 SOURCE_PATH = Path(__file__).with_name("new_sim.py")
@@ -38,6 +43,9 @@ def _load_definitions(*names):
         "os": os,
         "pd": pd,
         "timezone": timezone,
+        "LF_NORMALIZED_HASH_MODE": LF_NORMALIZED_HASH_MODE,
+        "lf_normalized_sha256": lf_normalized_sha256,
+        "lf_normalized_size": lf_normalized_size,
     }
     module = ast.Module(body=selected, type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(SOURCE_PATH), "exec"), namespace)
@@ -99,6 +107,13 @@ def test_variance_inputs_cannot_silently_disappear(tmp_path):
     latent, config = load_inputs(Inputs(), str(config_path))
     assert latent == 0.0
     assert config == {"enabled": False}
+
+    config_path.write_text(
+        '{"enabled": true, "required_current_event": true}',
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="Required weekly.*lacks"):
+        load_inputs(Inputs(), str(config_path))
 
 
 def _pretournament_category_dists(players):
@@ -613,6 +628,22 @@ def test_canonical_input_contract_changes_for_model_weather_flags_and_files():
         assert contract_hash(changed) != baseline_hash
 
 
+def test_portable_text_file_contract_ignores_checkout_newlines(tmp_path):
+    namespace = _load_definitions("_sha256_file", "_file_contract")
+    file_contract = namespace["_file_contract"]
+    lf_path = tmp_path / "lf.csv"
+    crlf_path = tmp_path / "crlf.csv"
+    lf_path.write_bytes(b"player,value\nalpha,1\n")
+    crlf_path.write_bytes(b"player,value\r\nalpha,1\r\n")
+
+    lf_contract = file_contract(lf_path, portable_text=True)
+    crlf_contract = file_contract(crlf_path, portable_text=True)
+
+    assert lf_contract["sha256"] == crlf_contract["sha256"]
+    assert lf_contract["size"] == crlf_contract["size"]
+    assert lf_contract["hash_mode"] == LF_NORMALIZED_HASH_MODE
+
+
 def test_current_input_contract_names_every_requested_cache_dependency():
     contract_node = next(
         node
@@ -648,7 +679,11 @@ def test_current_input_contract_names_every_requested_cache_dependency():
         if isinstance(node, ast.FunctionDef)
         and node.name == "_simulation_source_contract"
     )
-    assert "category_distribution_guard.py" in ast.unparse(source_contract_node)
+    source_contract = ast.unparse(source_contract_node)
+    assert "category_distribution_guard.py" in source_contract
+    assert "portable_hash.py" in source_contract
+    assert "required=configured_for_current_event" in source_contract
+    assert "portable_text=True" in source_contract
 
 
 def test_cache_rejects_changed_input_contract(tmp_path):

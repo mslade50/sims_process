@@ -9,6 +9,7 @@ Three adjustments layered onto base pred:
 Output: final_predictions_{tourney}.csv
 """
 
+import argparse
 import os
 import pandas as pd
 import numpy as np
@@ -22,6 +23,17 @@ except ImportError:
     dg_override_players = []
 
 load_dotenv()
+
+_parser = argparse.ArgumentParser(description="Regress sim predictions to market")
+_parser.add_argument(
+    "--local-only",
+    action="store_true",
+    help=(
+        "Write final prediction files in this checkout, but skip the OneDrive "
+        "copy and skill_merge external handoff"
+    ),
+)
+_args = _parser.parse_args()
 
 # ---------------------------------------------------------------------------
 # Tuning knobs
@@ -248,22 +260,41 @@ slim_path = f'final_predictions_{tourney}.csv'
 slim.to_csv(slim_path, index=False)
 print(f"[ok] Saved {slim_path} ({len(slim)} players, cols: {list(slim.columns)})")
 
-# Copy to OneDrive for etr-golf-sims consumption
-_onedrive_path = os.path.join(os.path.expanduser("~"), "OneDrive", f"final_predictions_{tourney}.csv")
-slim.to_csv(_onedrive_path, index=False)
-print(f"[ok] Copied to {_onedrive_path}")
-
-# ---------------------------------------------------------------------------
-# Chain skill_merge: tee times + DG 50/50 blend -> final_predictions_{tourney}_combined.csv
-# -> etr-golf-sims (the Rust sim's pred input)
-# ---------------------------------------------------------------------------
-import subprocess
-import sys
-
-_here = os.path.dirname(os.path.abspath(__file__))
-_result = subprocess.run([sys.executable, os.path.join(_here, "skill_merge.py")], cwd=_here)
-if _result.returncode:
-    print(f"[skill_merge] FAILED (exit {_result.returncode}) — "
-          f"final_predictions_{tourney}_combined.csv NOT delivered to etr-golf-sims")
+if _args.local_only:
+    print(
+        "[local-only] Local final predictions written; skipped OneDrive copy "
+        "and skill_merge external handoff"
+    )
 else:
-    print(f"[skill_merge] final_predictions_{tourney}_combined.csv delivered to etr-golf-sims")
+    # Copy to OneDrive for etr-golf-sims consumption
+    _onedrive_path = os.path.join(
+        os.path.expanduser("~"),
+        "OneDrive",
+        f"final_predictions_{tourney}.csv",
+    )
+    slim.to_csv(_onedrive_path, index=False)
+    print(f"[ok] Copied to {_onedrive_path}")
+
+    # -----------------------------------------------------------------------
+    # Chain skill_merge: tee times + DG 50/50 blend -> combined predictions
+    # -> etr-golf-sims (the Rust sim's pred input)
+    # -----------------------------------------------------------------------
+    import subprocess
+    import sys
+
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _result = subprocess.run(
+        [sys.executable, os.path.join(_here, "skill_merge.py")],
+        cwd=_here,
+    )
+    if _result.returncode:
+        print(
+            f"[skill_merge] FAILED (exit {_result.returncode}) — "
+            f"final_predictions_{tourney}_combined.csv NOT delivered to "
+            "etr-golf-sims"
+        )
+    else:
+        print(
+            f"[skill_merge] final_predictions_{tourney}_combined.csv "
+            "delivered to etr-golf-sims"
+        )

@@ -7,6 +7,7 @@ import pandas as pd
 
 import sim_health_gate as shg
 import publish_sim_fairs as psf
+from portable_hash import LF_NORMALIZED_HASH_MODE, lf_normalized_sha256
 
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
@@ -308,6 +309,127 @@ def test_event_scoped_overlay_hashes_do_not_block_a_different_week():
         generated_at=NOW,
     )
     assert manifest["approval"]["status"] == "approved"
+
+
+def test_required_weekly_overlay_mismatch_is_health_unsafe(tmp_path):
+    config_path = tmp_path / "shot_dispersion_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "required_current_event": True,
+                "tourney": "configured_event",
+                "event_id": 88,
+                "feature_file": "shot_dispersion_features.csv",
+                "feature_sha256": "feature",
+                "distribution_sha256": "dists",
+            }
+        ),
+        encoding="utf-8",
+    )
+    provenance = shg.collect_overlay_provenance(
+        tourney="test_event",
+        event_id=77,
+        dists_path=None,
+        selected_model="category_first",
+        config_path=config_path,
+    )
+
+    assert provenance["status"] == "required_event_mismatch"
+    assert provenance["required_current_event"] is True
+    manifest = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=provenance,
+        generated_at=NOW,
+    )
+    assert manifest["approval"]["status"] == "rejected"
+    assert any(
+        "required_event_mismatch" in error
+        for error in manifest["checks"]["errors"]
+    )
+
+
+def test_active_overlay_provenance_uses_lf_normalized_hashes(tmp_path):
+    feature_path = tmp_path / "shot_dispersion_features.csv"
+    dists_path = tmp_path / "this_week_dists_v2.csv"
+    feature_path.write_bytes(b"player_name,value\r\nalpha,1\r\n")
+    dists_path.write_bytes(b"player_name,value\r\nalpha,2\r\n")
+    feature_hash = lf_normalized_sha256(feature_path)
+    dists_hash = lf_normalized_sha256(dists_path)
+    config_path = tmp_path / "shot_dispersion_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "required_current_event": True,
+                "tourney": "test_event",
+                "event_id": 77,
+                "feature_file": str(feature_path),
+                "feature_sha256": feature_hash,
+                "distribution_sha256": dists_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provenance = shg.collect_overlay_provenance(
+        tourney="test_event",
+        event_id=77,
+        dists_path=dists_path,
+        selected_model="category_first",
+        config_path=config_path,
+    )
+
+    assert provenance["status"] == "active"
+    assert provenance["feature_sha256"] == feature_hash
+    assert provenance["distribution_sha256"] == dists_hash
+    assert provenance["text_hash_mode"] == LF_NORMALIZED_HASH_MODE
+
+    manifest = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=provenance,
+        generated_at=NOW,
+    )
+    assert manifest["approval"]["status"] == "approved"
+
+    wrong_hash = {**provenance, "configured_feature_sha256": "wrong"}
+    rejected = shg.build_simulation_manifest(
+        _tape(),
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=_players(),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=wrong_hash,
+        generated_at=NOW,
+    )
+    assert rejected["approval"]["status"] == "rejected"
+    assert any(
+        "feature_sha256 does not match" in error
+        for error in rejected["checks"]["errors"]
+    )
 
 
 def test_absent_shot_config_cannot_approve_or_revalidate_a_live_tape():
@@ -829,6 +951,7 @@ def test_round_score_publisher_rejects_pmf_from_parent_cache(tmp_path, monkeypat
     monkeypatch.setattr(psf, "_find_fresh", lambda *_args: score_path)
     monkeypatch.setattr(psf, "collect_overlay_provenance", lambda **_kwargs: OVERLAY)
     monkeypatch.setattr(psf, "_cache_meta", lambda *_args: {"health_manifest": parent})
+    monkeypatch.setattr(shg, "utc_now", lambda: NOW)
 
     published = psf._build_round_scores("test_event", 3, {})
     assert len(published) == len(tape)

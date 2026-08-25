@@ -214,6 +214,29 @@ here post-publish and runs `dists_thiswk_team.py` as its final stage, which
 builds `this_week_dists_adjusted.csv` and syncs it to `~/OneDrive/etr-golf-sims`
 along with `field_updates.csv`, `sg_dist_player.csv`, and `this_week_dists_v2.csv`.
 
+### 1.3b Weekly Shot-Dispersion Input (default production model)
+
+The sim_prep weekly pipeline must also deliver these two files to this repo's
+root before any tournament or round simulation:
+
+- `shot_dispersion_features.csv` — the current field's leakage-safe,
+  pre-event shot-variance features
+- `shot_dispersion_config.json` — current tournament/event identity, field
+  size, category weights, and frozen hashes for both the feature file and
+  `this_week_dists_v2.csv`
+
+The weekly config is normally `enabled: true` and
+`required_current_event: true`. Both CSV hashes use the tracked
+`sha256_lf_normalized_v1` convention, so LF and CRLF checkouts verify
+identically. A missing feature, changed distribution, hash mismatch, or stale
+tournament/event identity stops `new_sim.py` and `round_sim.py`; it is never a
+reason to silently fall back to last week's overlay. The same pre-event files
+remain frozen through R1-R4.
+
+`SHOT_DISPERSION_DISABLE` cannot bypass a required weekly config. An emergency
+rollback must be explicit and reviewable by setting `enabled: false` in the
+tracked config; restore the default enabled config in the next weekly build.
+
 ---
 
 ## Phase 2: Wednesday Pre-Tournament Simulation
@@ -374,18 +397,24 @@ escape remains prohibited for `--final-pass`, `--price-only`, and `--reprice`.
 
 **Weekly setup** — `COURSE_CAT_MULTS` is auto-set: `scoring_baseline.py` writes the `cat_mult_*`/`cat_skew_*` param rows to the Sheet's `round_config` tab when it runs, and `new_sim.py` reads them from the sheet config. Just make sure `scoring_baseline.py` ran for the current course before simming; hand-edit the sheet cells only to deliberately override.
 
-`WEEK_LATENT_SD`, a readable `shot_dispersion_config.json` with an explicit
-boolean `enabled`, and
+`WEEK_LATENT_SD`, the current root-level `shot_dispersion_features.csv`, an
+enabled `shot_dispersion_config.json` with
+`required_current_event: true`, and
 `permanent_data/sg_cat_corr_tour_within_player_pearson.csv` are required model
-inputs. Missing values/files stop the run; use `--no-week-latent`,
-`enabled: false`/`SHOT_DISPERSION_DISABLE`, or a deliberate config edit to turn
-an overlay off. Older correlation matrices and identity are never silent
-production fallbacks.
+inputs. Missing values/files, stale event identity, or normalized hash
+mismatches stop the run. Use `--no-week-latent` only for an intentional latent
+variant; a required overlay cannot be disabled by environment variable. Older
+correlation matrices and identity are never silent production fallbacks.
 
 ### 3.2 Market Regression
 ```bash
 python mkt_regress.py
 ```
+
+For an isolated comparison or shadow rerun, use
+`python mkt_regress.py --local-only`. It still writes both local final-prediction
+files but skips the OneDrive copy and `skill_merge.py`, so it cannot hand files
+to the ETR workflow.
 
 **What this does:**
 1. Reads first-pass sim outputs (`pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`)
@@ -823,13 +852,14 @@ python humidity.py                               # Step 1: Auto-populate weather
 python update_sheet_courses.py                   # Step 1: Auto-populate course codes
 python scoring_baseline.py                       # Step 2: Scoring baselines + expected scores (reads sim_inputs)
 python init_weekly.py                            # Step 3: Push tourney/event_id/course_id/round=0 to Sheet
-# Step 4: SG distributions arrive from sim_prep's cat_dists_player.py (verify freshness)
+# Step 4: SG distributions + required shot_dispersion files arrive from sim_prep
 python write_base_rates.py                       # Step 5: Base rates reference tab
 python hole_baselines.py                         # ETR only: exact-course hole profile
 
 # Pre-tournament sim (two-pass)
 python new_sim.py --calibration-pass             # First pass (pre_course_fit; local artifacts only)
 python mkt_regress.py                            # Market regression -> final_predictions
+# Shadow comparison only: mkt_regress.py --local-only (no OneDrive/ETR handoff)
 python new_sim.py --final-pass                   # Second pass (strict email/storage/publish)
 
 # Live rounds

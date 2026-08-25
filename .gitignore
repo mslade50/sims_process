@@ -171,6 +171,7 @@ credentials.json
 # Tournament data files (cleaned weekly, stored in Google Drive)
 # These are transient files generated during tournament week
 /*.csv
+!/shot_dispersion_features.csv
 /*.xlsx
 /*.txt
 *.tar.gz

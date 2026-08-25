@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -7,6 +6,7 @@ import pandas as pd
 import pytest
 
 from shot_dispersion_overlay import apply_shot_dispersion_overlay
+from portable_hash import LF_NORMALIZED_HASH_MODE, lf_normalized_sha256
 
 
 CATS = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 
 def _sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return lf_normalized_sha256(path)
 
 
 def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path):
@@ -102,6 +102,79 @@ def test_overlay_is_noop_outside_configured_event(tmp_path):
     assert actual is base
 
 
+def test_required_weekly_config_rejects_event_mismatch(tmp_path):
+    base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha, a"])
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "required_current_event": True,
+                "tourney": "bmw",
+                "event_id": 28,
+                "feature_file": "shot_dispersion_features.csv",
+                "feature_sha256": "feature",
+                "distribution_sha256": "dists",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="does not match the active event"):
+        apply_shot_dispersion_overlay(
+            base,
+            ["alpha, a"],
+            CATS,
+            tourney="next_week",
+            event_id=29,
+            dists_path=tmp_path / "not-needed.csv",
+            config_path=config_path,
+        )
+
+
+def test_required_weekly_config_cannot_be_disabled_by_environment(
+    tmp_path, monkeypatch
+):
+    base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha, a"])
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "required_current_event": True,
+                "tourney": "bmw",
+                "event_id": 28,
+                "feature_file": "shot_dispersion_features.csv",
+                "feature_sha256": "feature",
+                "distribution_sha256": "dists",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SHOT_DISPERSION_DISABLE", "1")
+
+    with pytest.raises(RuntimeError, match="cannot bypass"):
+        apply_shot_dispersion_overlay(
+            base,
+            ["alpha, a"],
+            CATS,
+            tourney="bmw",
+            event_id=28,
+            dists_path=tmp_path / "not-needed.csv",
+            config_path=config_path,
+        )
+
+
+def test_portable_hash_ignores_platform_newlines(tmp_path):
+    lf_path = tmp_path / "lf.csv"
+    crlf_path = tmp_path / "crlf.csv"
+    lf_path.write_bytes(b"player,value\nalpha,1\n")
+    crlf_path.write_bytes(b"player,value\r\nalpha,1\r\n")
+
+    assert lf_normalized_sha256(lf_path) == lf_normalized_sha256(crlf_path)
+    assert LF_NORMALIZED_HASH_MODE == "sha256_lf_normalized_v1"
+
+
 @pytest.mark.parametrize(
     "contents, error_type, pattern",
     [
@@ -109,6 +182,11 @@ def test_overlay_is_noop_outside_configured_event(tmp_path):
         ("not-json", ValueError, "invalid JSON"),
         ('{"weights": {}}', ValueError, "explicit boolean enabled"),
         ('{"enabled": "false"}', ValueError, "explicit boolean enabled"),
+        (
+            '{"enabled": true, "required_current_event": "yes"}',
+            ValueError,
+            "required_current_event must be boolean",
+        ),
     ],
 )
 def test_missing_or_invalid_config_is_fatal(tmp_path, contents, error_type, pattern):
@@ -153,6 +231,10 @@ def test_production_snapshot_is_present_and_hash_locked():
     feature_path = REPO_ROOT / config["feature_file"]
     dists_path = REPO_ROOT / "this_week_dists_v2.csv"
 
+    assert config["enabled"] is True
+    assert config["required_current_event"] is True
+    assert config["feature_file"] == "shot_dispersion_features.csv"
+    assert feature_path == REPO_ROOT / "shot_dispersion_features.csv"
     assert feature_path.is_file()
     assert dists_path.is_file()
     assert _sha256(feature_path) == config["feature_sha256"]

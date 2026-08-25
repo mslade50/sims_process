@@ -24,6 +24,8 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
+from portable_hash import LF_NORMALIZED_HASH_MODE, lf_normalized_sha256
+
 
 SCHEMA_VERSION = 1
 GATE_VERSION = "round-bet-health/v1"
@@ -394,15 +396,47 @@ def collect_overlay_provenance(
                 "config_path": config.name,
                 "error": str(exc),
             }
-        if (
-            not isinstance(payload, dict)
-            or not isinstance(payload.get("enabled"), bool)
-        ):
+        if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
             return {
                 "status": "invalid_config",
                 "used_by_selected_tape": False,
                 "config_path": config.name,
                 "error": "config must contain an explicit boolean enabled",
+            }
+        if (
+            "required_current_event" in payload
+            and not isinstance(payload["required_current_event"], bool)
+        ):
+            return {
+                "status": "invalid_config",
+                "used_by_selected_tape": False,
+                "config_path": config.name,
+                "error": "required_current_event must be boolean",
+            }
+
+    required_current_event = bool(
+        payload.get("enabled", False)
+        and payload.get("required_current_event", False)
+    )
+    if required_current_event:
+        missing = [
+            key
+            for key in (
+                "tourney",
+                "event_id",
+                "feature_file",
+                "feature_sha256",
+                "distribution_sha256",
+            )
+            if payload.get(key) in (None, "")
+        ]
+        if missing:
+            return {
+                "status": "invalid_config",
+                "used_by_selected_tape": False,
+                "config_path": config.name,
+                "required_current_event": True,
+                "error": "required weekly config lacks: " + ", ".join(missing),
             }
 
     active_event = (
@@ -417,6 +451,10 @@ def collect_overlay_provenance(
     used = bool(active_event and not env_disabled and category_first)
     if not payload:
         status = "config_absent"
+    elif required_current_event and not active_event:
+        status = "required_event_mismatch"
+    elif env_disabled and active_event and required_current_event:
+        status = "required_disabled_by_environment"
     elif env_disabled and active_event:
         status = "disabled_by_environment"
     elif active_event and not category_first:
@@ -436,14 +474,24 @@ def collect_overlay_provenance(
         dists = root / dists
     return {
         "status": status,
+        "required_current_event": required_current_event,
         "configured_for_active_event": active_event,
         "used_by_selected_tape": used,
         "config_path": config.name,
         "config_sha256": file_sha256(config) if config.is_file() else None,
         "feature_file": feature.name if feature else None,
-        "feature_sha256": file_sha256(feature) if feature and feature.is_file() else None,
+        "feature_sha256": (
+            lf_normalized_sha256(feature)
+            if feature and feature.is_file()
+            else None
+        ),
         "distribution_file": dists.name if dists else None,
-        "distribution_sha256": file_sha256(dists) if dists and dists.is_file() else None,
+        "distribution_sha256": (
+            lf_normalized_sha256(dists)
+            if dists and dists.is_file()
+            else None
+        ),
+        "text_hash_mode": LF_NORMALIZED_HASH_MODE,
         "configured_feature_sha256": payload.get("feature_sha256"),
         "configured_distribution_sha256": payload.get("distribution_sha256"),
         "weights": payload.get("weights") or {},
@@ -975,8 +1023,9 @@ def validate_simulation_manifest(
                 f"{current_overlay.get('status')}"
             )
         for key in (
-            "status", "used_by_selected_tape", "config_sha256",
-            "feature_sha256", "distribution_sha256",
+            "status", "required_current_event", "used_by_selected_tape",
+            "config_sha256", "feature_sha256", "distribution_sha256",
+            "text_hash_mode",
         ):
             if stored_overlay.get(key) != current_overlay.get(key):
                 errors.append(f"shot-dispersion provenance changed for {key}")
