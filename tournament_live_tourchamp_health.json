@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-08-28 11:23:24 UTC",
+  "generated_at": "2026-08-28 14:35:09 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-08-28 11:23:11 UTC",
-      "root_generated_at": "2026-08-28 11:23:11 UTC",
+      "generated_at": "2026-08-28 14:34:54 UTC",
+      "root_generated_at": "2026-08-28 14:34:54 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r2.csv",
         "exists": true,
         "sha256": "d96400d7b07ef2c62dce319602fb37079a305b8ac9730d5ad37aa834e913051d",
-        "modified_at": "2026-08-28 11:23:00 UTC"
+        "modified_at": "2026-08-28 14:34:50 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -120,9 +120,9 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-08-28 11:23:11 UTC"
+      "approved_at": "2026-08-28 14:34:54 UTC"
     },
-    "manifest_sha256": "cb8c824f28588c462802543e99023b3e3d1a7a36770e243394d092fa2c04126b"
+    "manifest_sha256": "be60208bac1b1aeeaa83dd580b7c048bce499a0c0c03f50201d850847529fa2c"
   },
   "files": {
     "final_scores": {
@@ -131,11 +131,11 @@
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "df05913800433e335d7a351093a322b4682db18db3362f57d1a43df96f3d37fc"
+      "sha256": "5b0ea805037aeb3a2be6ab6c1ce10999b145a14ba2f49da9683023d85a7b6fbb"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_tourchamp.csv",
-      "sha256": "df05913800433e335d7a351093a322b4682db18db3362f57d1a43df96f3d37fc"
+      "sha256": "5b0ea805037aeb3a2be6ab6c1ce10999b145a14ba2f49da9683023d85a7b6fbb"
     },
     "made_cut": {
       "path": "made_cut_live_tourchamp.npy",
@@ -151,5 +151,5 @@
     "num_players": 29,
     "num_sims": 100000
   },
-  "manifest_sha256": "1dd6808ac54ebf7edb676c558c6eb0a436246389d53071e4beceaaa1f53ffc13"
+  "manifest_sha256": "0b7395d63d88d7572d67019b7d4e3ab436400b0f9e3d6633e4275b79235a435b"
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-08-28 11:26:38 UTC",
+  "generated_at": "2026-08-28 14:38:43 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-08-28 11:23:11 UTC",
-      "root_generated_at": "2026-08-28 11:23:11 UTC",
+      "generated_at": "2026-08-28 14:34:54 UTC",
+      "root_generated_at": "2026-08-28 14:34:54 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r2.csv",
         "exists": true,
         "sha256": "d96400d7b07ef2c62dce319602fb37079a305b8ac9730d5ad37aa834e913051d",
-        "modified_at": "2026-08-28 11:23:00 UTC"
+        "modified_at": "2026-08-28 14:34:50 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -120,14 +120,14 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-08-28 11:23:11 UTC"
+      "approved_at": "2026-08-28 14:34:54 UTC"
     },
-    "manifest_sha256": "cb8c824f28588c462802543e99023b3e3d1a7a36770e243394d092fa2c04126b"
+    "manifest_sha256": "be60208bac1b1aeeaa83dd580b7c048bce499a0c0c03f50201d850847529fa2c"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "37d4e568940e9cbed3bc7ad66f93f12d3c23c21129e38c416dbb3e9739c555c2"
+      "sha256": "a2c5195533bffb46bad4450f0131621a7621b8feedf1997d75752e24bd3ce2bd"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
@@ -230,7 +230,7 @@
       "source_event_id": "60",
       "event_identity_basis": "datagolf_event_id",
       "tour": "pga",
-      "fetched_at": "2026-08-28 11:26:34 UTC",
+      "fetched_at": "2026-08-28 14:38:38 UTC",
       "attempts": 1,
       "event_identity_verified": true,
       "simulation_field_overlap": 1.0,
@@ -238,5 +238,5 @@
       "field_player_set_sha256": "164f1a5b2182366c67a567be45d5b1b31f97e0c8b892a162a85581c94d626654"
     }
   },
-  "manifest_sha256": "3a5e1bbac278e1d3b16a31a01734e1b3a7603085b4c94a9e1d1aa1afb28527ae"
+  "manifest_sha256": "4a66b5b6c1aa1ec0ebcf13e6923d75bd0e5a8faf7380784c1937462c6221e11e"
 }
