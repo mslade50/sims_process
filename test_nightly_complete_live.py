@@ -470,6 +470,41 @@ def test_nightly_workflow_is_strict_and_side_effect_free():
     assert 'from maker_alerts import send_telegram' not in nightly_source
 
 
+def test_nightly_dashboard_publish_is_explicit_optional_and_post_release():
+    workflow = (
+        Path(__file__).parent / ".github/workflows/nightly-round-sim.yml"
+    ).read_text(encoding="utf-8")
+
+    dispatch = workflow.split("workflow_dispatch:", 1)[1].split("concurrency:", 1)[0]
+    assert "publish_dashboard:" in dispatch
+    assert "type: boolean" in dispatch
+    assert "default: false" in dispatch
+
+    release_at = workflow.index("- name: Publish complete live market package")
+    dashboard_at = workflow.index(
+        "- name: Publish dashboard data to GitHub and Cloudflare"
+    )
+    failure_alert_at = workflow.index("- name: Telegram on failure")
+    assert release_at < dashboard_at < failure_alert_at
+
+    dashboard_step = workflow[dashboard_at:failure_alert_at]
+    assert "contents: write" in workflow
+    assert "success()" in dashboard_step
+    assert "inputs.publish_dashboard == true" in dashboard_step
+    assert "steps.live_sim.outputs.should_publish == 'true'" in dashboard_step
+    assert "& $env:RUNNER_PYTHON push_dashboard_data.py" in dashboard_step
+    assert "GH_TOKEN: ${{ github.token }}" in dashboard_step
+    assert "GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}" in dashboard_step
+    assert "CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}" in dashboard_step
+    assert "DASHBOARD_R2_ACCESS_KEY_ID:" in dashboard_step
+    assert "DASHBOARD_R2_SECRET_ACCESS_KEY:" in dashboard_step
+    assert "CLOUDFLARE_API_TOKEN:" in dashboard_step
+    assert "GIT_AUTHOR_NAME: github-actions[bot]" in dashboard_step
+    assert "GIT_AUTHOR_EMAIL:" in dashboard_step
+    assert "GIT_COMMITTER_NAME: github-actions[bot]" in dashboard_step
+    assert "GIT_COMMITTER_EMAIL:" in dashboard_step
+
+
 def test_live_stats_engine_exposes_no_sheet_write_mode():
     source = (Path(__file__).parent / "live_stats_engine.py").read_text(
         encoding="utf-8"
