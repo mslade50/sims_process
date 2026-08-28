@@ -140,6 +140,21 @@ def test_live_overlay_accepts_a_subset_of_the_frozen_roster(tmp_path):
     assert list(actual.index) == active_players
     assert np.isfinite(actual.loc[active_players, CATS].to_numpy()).all()
 
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["expected_field_size"] = 3
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen feature roster"):
+        apply_shot_dispersion_overlay(
+            base,
+            active_players,
+            CATS,
+            tourney="bmw",
+            event_id=28,
+            dists_path=dists_path,
+            config_path=config_path,
+            allow_active_subset=True,
+        )
+
 
 def test_overlay_is_noop_outside_configured_event(tmp_path):
     base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha, a"])

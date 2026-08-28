@@ -180,7 +180,7 @@ def apply_shot_dispersion_overlay(
     if features["player_name"].duplicated().any():
         raise ValueError("Shot-dispersion feature file has duplicate player names")
     features = features.set_index("player_name")
-    if allow_active_subset and len(features.index) != expected_field_size:
+    if len(features.index) != expected_field_size:
         raise ValueError(
             "Shot-dispersion frozen feature roster does not match its configured "
             f"field size: expected {expected_field_size}, got {len(features.index)}"
