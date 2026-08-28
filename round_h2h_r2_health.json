@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "gate_version": "round-bet-health/v1",
+  "kind": "published_round_h2h",
+  "generated_at": "2026-08-28 00:31:24 UTC",
+  "simulation_manifest": {
+    "schema_version": 1,
+    "gate_version": "round-bet-health/v1",
+    "kind": "round_simulation",
+    "event": {
+      "tourney": "tourchamp",
+      "event_id": "60",
+      "round": 2
+    },
+    "source": {
+      "generated_at": "2026-08-28 00:30:32 UTC",
+      "root_generated_at": "2026-08-28 00:30:32 UTC",
+      "expected_avg_authority": "sheet",
+      "prediction_artifact": {
+        "path": "model_predictions_r2.csv",
+        "exists": true,
+        "sha256": "7245949ce7434abd57f27507608613add6c2eecb12c97f3df1bb1d0560bb7b02",
+        "modified_at": "2026-08-28 00:30:25 UTC"
+      },
+      "parent_manifest_sha256": null,
+      "derivation": {}
+    },
+    "scoring": {
+      "expected_avg": 67.2,
+      "configured_course_averages": {
+        "field": 67.2
+      },
+      "implied_field_mean": 67.2,
+      "empirical_field_mean": 67.20100034482759,
+      "centering_delta": 0.001000344827588151,
+      "centering_tolerance": 0.12,
+      "player_expected_means": {
+        "aberg, ludvig": 66.9835866,
+        "bhatia, akshay": 67.95208031,
+        "bridgeman, jacob": 67.61616734,
+        "burns, sam": 66.90097072,
+        "cantlay, patrick": 66.75716921,
+        "clark, wyndham": 67.14710078,
+        "fitzpatrick, alex": 67.9231287,
+        "fitzpatrick, matt": 66.97435095,
+        "fleetwood, tommy": 66.82359676,
+        "fox, ryan": 68.42374078,
+        "gerard, ryan": 67.39182898,
+        "gotterup, chris": 66.94379374,
+        "henley, russell": 66.90788106,
+        "hovland, viktor": 67.06147392,
+        "kim, si woo": 66.91701224,
+        "kim, tom": 67.45964586,
+        "lee, min woo": 67.6656125,
+        "macintyre, robert": 67.33005067,
+        "matsuyama, hideki": 67.01348246,
+        "mcilroy, rory": 66.49522454,
+        "morikawa, collin": 66.71654413,
+        "reitan, kristoffer": 67.89484216,
+        "rose, justin": 67.50849391,
+        "schauffele, xander": 66.52494492,
+        "scheffler, scottie": 65.84061991,
+        "scott, adam": 67.5427938,
+        "smalley, alex": 67.68959279,
+        "woodland, gary": 67.74636854,
+        "young, cameron": 66.64790173
+      },
+      "player_expected_means_sha256": "bfef81f4b057845f94d2c9400733e66953fe7cd819d7b87bf11fbf2088603318",
+      "player_centering_rmse": 0.007371546152773388,
+      "player_centering_max_error": 0.017397759999994378,
+      "player_centering_rmse_tolerance": 0.08,
+      "player_centering_max_tolerance": 0.16
+    },
+    "simulation": {
+      "num_players": 29,
+      "num_model_players": 29,
+      "num_sims": 100000,
+      "field_coverage": 1.0,
+      "missing_players": [],
+      "extra_players": [],
+      "player_set_sha256": "d13e35589c87b53f49608127531efee8f58ea29ca0ea24a65aab66d43813eb05",
+      "tape_sha256": "7df184b22c84775e0ab4a16966fb9600f0bd59db493ddbb9a2c9c1370221017b",
+      "score_min": 56.0,
+      "score_max": 82.0,
+      "empirical_field_score_mean": 67.20100034482759,
+      "player_probability_mass_min": 1.0,
+      "player_probability_mass_max": 1.0
+    },
+    "model": {
+      "selected": "category_first",
+      "skew_calibrated": true,
+      "shot_dispersion_overlay": {
+        "status": "active",
+        "required_current_event": true,
+        "configured_for_active_event": true,
+        "used_by_selected_tape": true,
+        "config_path": "shot_dispersion_config.json",
+        "config_sha256": "2c67804bf25a1bffc515b33d36086b9f0f947c3c82484b6fc04a59849b6a4502",
+        "feature_file": "shot_dispersion_features.csv",
+        "feature_sha256": "c15384ed4db0ba7d21b31c11c98e89481e2968b101467de2c1ab50299b6a090b",
+        "distribution_file": "this_week_dists_v2.csv",
+        "distribution_sha256": "b4c8673722c770c2915c2433767b2dced964d3cc0dca374f52ac05d1d3b76c1c",
+        "text_hash_mode": "sha256_lf_normalized_v1",
+        "configured_feature_sha256": "c15384ed4db0ba7d21b31c11c98e89481e2968b101467de2c1ab50299b6a090b",
+        "configured_distribution_sha256": "b4c8673722c770c2915c2433767b2dced964d3cc0dca374f52ac05d1d3b76c1c",
+        "weights": {
+          "sg_app": 0.9,
+          "sg_arg": 0.8,
+          "sg_ott": 0.9,
+          "sg_putt": 0.95
+        }
+      }
+    },
+    "checks": {
+      "errors": [],
+      "passed": true
+    },
+    "approval": {
+      "status": "approved",
+      "mode": "automatic_sheet",
+      "approved_by": "round-bet-health/v1",
+      "approved_at": "2026-08-28 00:30:32 UTC"
+    },
+    "manifest_sha256": "cf555e3219316bb95855fb94bb7fbc41584a32476c8371cfcc0867372dc9df26"
+  },
+  "files": {
+    "h2h_meta": {
+      "path": "round_h2h_r2_meta.json",
+      "sha256": "e4fbfddc839c0e547054bc06a67cea1c3100ecc98825557b40dde3a8260fed07"
+    },
+    "h2h_parquet": {
+      "path": "round_h2h_r2.parquet",
+      "sha256": "15a7148fa788c207f604ddb41c8f5d098a07c2c4c4053e4014617b054e3c4565"
+    }
+  },
+  "extra": {
+    "num_pairs": 406,
+    "num_players": 29,
+    "num_sims": 100000,
+    "source_manifest_sha256": "cf555e3219316bb95855fb94bb7fbc41584a32476c8371cfcc0867372dc9df26"
+  },
+  "manifest_sha256": "79270d0874f3b55057415fd8093c41c740cb980c4b84f77870cf1e7941536e42"
+}
