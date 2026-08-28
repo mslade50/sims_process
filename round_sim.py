@@ -2314,6 +2314,113 @@ def price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name
     return df
 
 
+def merge_optional_live_outrights(
+    finish_probs,
+    pred_lookup,
+    sample_lookup,
+    outrights_combined,
+    outrights_sharp,
+    *,
+    tourney_name,
+    kalshi_pricer=None,
+    novig_pricer=None,
+    edge_threshold=None,
+):
+    """Price and merge Kalshi/NoVig without coupling either book to the run.
+
+    The two exchange adapters are deliberately isolated through their complete
+    fetch/shape/merge paths.  A timeout or malformed response from one exchange
+    therefore cannot skip the other exchange, poison the tournament health
+    state, or prevent the DataGolf-backed live finish snapshot from publishing.
+
+    Optional pricer/threshold arguments keep the behavior directly testable
+    without importing this module's live sheet configuration.
+    """
+    if kalshi_pricer is None:
+        kalshi_pricer = price_kalshi_outrights
+    if novig_pricer is None:
+        novig_pricer = price_novig_outrights
+    if edge_threshold is None:
+        edge_threshold = EDGE_THRESHOLD_TOPN
+
+    combined = (
+        outrights_combined
+        if outrights_combined is not None
+        else pd.DataFrame()
+    )
+    sharp = outrights_sharp if outrights_sharp is not None else pd.DataFrame()
+    kalshi_edges = pd.DataFrame()
+    novig_edges = pd.DataFrame()
+    kalshi_mids = pd.DataFrame()
+
+    print("\n    Pricing Kalshi outrights (no dead-heat)...")
+    try:
+        candidate = kalshi_pricer(finish_probs, pred_lookup, sample_lookup)
+        if candidate is None:
+            candidate = pd.DataFrame()
+        next_combined = combined
+        next_sharp = sharp
+        next_mids = pd.DataFrame()
+        if not candidate.empty:
+            kalshi_taker = candidate[
+                candidate["pricing"] == "taker"
+            ].copy()
+            next_mids = candidate[candidate["pricing"] == "mid"].copy()
+            if not kalshi_taker.empty:
+                next_combined = pd.concat(
+                    [combined, kalshi_taker], ignore_index=True
+                )
+                kalshi_sharp = kalshi_taker[
+                    kalshi_taker["edge"] > edge_threshold
+                ].copy()
+                if not kalshi_sharp.empty:
+                    next_sharp = pd.concat(
+                        [sharp, kalshi_sharp], ignore_index=True
+                    ).sort_values("edge", ascending=False)
+        kalshi_edges = candidate
+        kalshi_mids = next_mids
+        combined = next_combined
+        sharp = next_sharp
+    except Exception as exc:
+        kalshi_edges = pd.DataFrame()
+        kalshi_mids = pd.DataFrame()
+        print(f"    Warning: Kalshi outright pricing failed: {exc}")
+
+    print("\n    Pricing NoVig outrights (no dead-heat)...")
+    try:
+        candidate = novig_pricer(
+            finish_probs,
+            pred_lookup,
+            sample_lookup,
+            tourney_name=tourney_name,
+        )
+        if candidate is None:
+            candidate = pd.DataFrame()
+        next_combined = combined
+        next_sharp = sharp
+        if not candidate.empty:
+            novig_taker = candidate[candidate["edge"] > 0].copy()
+            if not novig_taker.empty:
+                next_combined = pd.concat(
+                    [combined, novig_taker], ignore_index=True
+                )
+                novig_sharp = novig_taker[
+                    novig_taker["edge"] > edge_threshold
+                ].copy()
+                if not novig_sharp.empty:
+                    next_sharp = pd.concat(
+                        [sharp, novig_sharp], ignore_index=True
+                    ).sort_values("edge", ascending=False)
+        novig_edges = candidate
+        combined = next_combined
+        sharp = next_sharp
+    except Exception as exc:
+        novig_edges = pd.DataFrame()
+        print(f"    Warning: NoVig pricing failed: {exc}")
+
+    return combined, sharp, kalshi_edges, novig_edges, kalshi_mids
+
+
 def build_finish_outputs(priced_markets, pred_lookup, sample_lookup):
     """
     Build combined and sharp outputs for finish positions.
@@ -5933,59 +6040,23 @@ def main():
                 # filter) — dead-heat and no-dead-heat variants emailed as CSVs.
                 finish_equity_full_paths = write_full_finish_equity(finish_probs, tourney)
 
-                # Price Kalshi outrights (no dead-heat)
-                print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
-                kalshi_mids = pd.DataFrame()
-                try:
-                    kalshi_edges = price_kalshi_outrights(
-                        finish_probs, pred_lookup, sample_lookup
-                    )
-                    if not kalshi_edges.empty:
-                        # Split taker vs mid pricing
-                        kalshi_taker = kalshi_edges[
-                            kalshi_edges["pricing"] == "taker"
-                        ].copy()
-                        kalshi_mids = kalshi_edges[
-                            kalshi_edges["pricing"] == "mid"
-                        ].copy()
-
-                        # Merge taker rows into outrights_combined/sharp (existing flow)
-                        if not kalshi_taker.empty:
-                            outrights_combined = pd.concat(
-                                [outrights_combined, kalshi_taker], ignore_index=True
-                            )
-                            kalshi_sharp = kalshi_taker[
-                                kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN
-                            ].copy()
-                            if not kalshi_sharp.empty:
-                                outrights_sharp = pd.concat(
-                                    [outrights_sharp, kalshi_sharp], ignore_index=True
-                                )
-                                outrights_sharp = outrights_sharp.sort_values(
-                                    "edge", ascending=False
-                                )
-                except Exception as e:
-                    # Exchange pricing is optional to the DataGolf/NoVig live
-                    # finish board. One unexpected Kalshi failure must not abort
-                    # their pricing or prevent the combined CSV from publishing.
-                    kalshi_edges = pd.DataFrame()
-                    kalshi_mids = pd.DataFrame()
-                    print(f"    Warning: Kalshi outright pricing failed: {e}")
-
-                # Price NoVig outrights (no dead-heat)
-                print(f"\n    Pricing NoVig outrights (no dead-heat)...")
-                try:
-                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=tourney)
-                    if not novig_edges.empty:
-                        novig_taker = novig_edges[novig_edges["edge"] > 0].copy()
-                        if not novig_taker.empty:
-                            outrights_combined = pd.concat([outrights_combined, novig_taker], ignore_index=True)
-                            novig_sharp = novig_taker[novig_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
-                            if not novig_sharp.empty:
-                                outrights_sharp = pd.concat([outrights_sharp, novig_sharp], ignore_index=True)
-                                outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
-                except Exception as e:
-                    print(f"    Warning: NoVig pricing failed: {e}")
+                # Exchange books are optional and independently isolated. Their
+                # complete fetch/shape/merge paths cannot fail the tournament run
+                # or suppress the other exchange.
+                (
+                    outrights_combined,
+                    outrights_sharp,
+                    kalshi_edges,
+                    novig_edges,
+                    kalshi_mids,
+                ) = merge_optional_live_outrights(
+                    finish_probs,
+                    pred_lookup,
+                    sample_lookup,
+                    outrights_combined,
+                    outrights_sharp,
+                    tourney_name=tourney,
+                )
 
                 # Persist the dashboard snapshot only after exchange taker rows
                 # have joined the DataGolf-book rows.
@@ -6124,33 +6195,23 @@ def main():
                 )
                 print(f"  [reprice-outrights] Loaded {len(finish_probs)} players from {_fp_path}")
 
-                # Price Kalshi outrights (no dead-heat)
-                print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
-                kalshi_edges = price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup)
-                if not kalshi_edges.empty:
-                    kalshi_taker = kalshi_edges[kalshi_edges["pricing"] == "taker"].copy()
-                    kalshi_mids = kalshi_edges[kalshi_edges["pricing"] == "mid"].copy()
-                    if not kalshi_taker.empty:
-                        outrights_combined = pd.concat([outrights_combined, kalshi_taker], ignore_index=True)
-                        kalshi_sharp = kalshi_taker[kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
-                        if not kalshi_sharp.empty:
-                            outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
-                            outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
-
-                # Price NoVig outrights (no dead-heat)
-                print(f"\n    Pricing NoVig outrights (no dead-heat)...")
-                try:
-                    novig_edges = price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=tourney)
-                    if not novig_edges.empty:
-                        novig_taker = novig_edges[novig_edges["edge"] > 0].copy()
-                        if not novig_taker.empty:
-                            outrights_combined = pd.concat([outrights_combined, novig_taker], ignore_index=True)
-                            novig_sharp = novig_taker[novig_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
-                            if not novig_sharp.empty:
-                                outrights_sharp = pd.concat([outrights_sharp, novig_sharp], ignore_index=True)
-                                outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
-                except Exception as e:
-                    print(f"    Warning: NoVig pricing failed: {e}")
+                # Keep cached repricing resilient to either optional exchange.
+                # A Kalshi failure must not skip NoVig or mark the validated
+                # tournament tape itself as failed.
+                (
+                    outrights_combined,
+                    outrights_sharp,
+                    kalshi_edges,
+                    novig_edges,
+                    kalshi_mids,
+                ) = merge_optional_live_outrights(
+                    finish_probs,
+                    pred_lookup,
+                    sample_lookup,
+                    outrights_combined,
+                    outrights_sharp,
+                    tourney_name=tourney,
+                )
             except SimulationHealthError:
                 raise
             except Exception as e:

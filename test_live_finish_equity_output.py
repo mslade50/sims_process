@@ -79,15 +79,18 @@ def test_live_finish_snapshot_is_finalized_after_full_sim_exchange_pricing():
         for node in ast.walk(main)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
-    kalshi_lines = [line for line, name in calls if name == "price_kalshi_outrights"]
+    exchange_lines = [
+        line for line, name in calls
+        if name == "merge_optional_live_outrights"
+    ]
     writer_lines = [line for line, name in calls if name == "write_live_finish_equity"]
 
-    assert len(kalshi_lines) == 2  # full simulation and --price-only
+    assert len(exchange_lines) == 2  # full simulation and --price-only
     assert len(writer_lines) == 1
-    # The full simulation writes after Kalshi has been merged.  The separate
+    # The full simulation writes after both exchanges have been merged. The separate
     # --price-only branch intentionally does not overwrite the complete
     # DataGolf + exchange dashboard snapshot with exchange-only rows.
-    assert kalshi_lines[0] < writer_lines[0] < kalshi_lines[1]
+    assert exchange_lines[0] < writer_lines[0] < exchange_lines[1]
 
 
 def test_live_finish_snapshot_skips_empty_output(tmp_path, monkeypatch):
@@ -214,41 +217,102 @@ def test_sims_kalshi_unresolved_suffix_must_have_one_proven_event():
     ]
 
 
-def test_full_sim_isolates_kalshi_failure_before_novig_and_snapshot_write():
-    tree = ast.parse(ROUND_SIM.read_text(encoding="utf-8"))
-    main = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
+def test_exchange_merge_keeps_novig_when_kalshi_raises(capsys):
+    (merge_exchanges,) = _load_round_sim_functions(
+        "merge_optional_live_outrights"
+    )
+    calls = []
+
+    def kalshi_failure(*_args, **_kwargs):
+        calls.append("kalshi")
+        raise TimeoutError("kalshi unavailable")
+
+    def novig_success(*_args, **kwargs):
+        calls.append(("novig", kwargs.get("tourney_name")))
+        return pd.DataFrame(
+            [
+                {
+                    "player_name": "player, novig",
+                    "bookmaker": "novig",
+                    "market_type": "top_10",
+                    "edge": 4.5,
+                }
+            ]
+        )
+
+    retail = pd.DataFrame(
+        [
+            {
+                "player_name": "player, retail",
+                "bookmaker": "fanduel",
+                "market_type": "top_10",
+                "edge": 3.0,
+            }
+        ]
+    )
+    combined, sharp, kalshi, novig, mids = merge_exchanges(
+        pd.DataFrame(),
+        {},
+        {},
+        retail,
+        pd.DataFrame(),
+        tourney_name="test_event",
+        kalshi_pricer=kalshi_failure,
+        novig_pricer=novig_success,
+        edge_threshold=2.0,
     )
 
-    def called_names(node):
-        return {
-            child.func.id
-            for child in ast.walk(node)
-            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
-        }
+    assert calls == ["kalshi", ("novig", "test_event")]
+    assert kalshi.empty
+    assert mids.empty
+    assert len(novig) == 1
+    assert set(combined["bookmaker"]) == {"fanduel", "novig"}
+    assert sharp["bookmaker"].tolist() == ["novig"]
+    assert "Kalshi outright pricing failed: kalshi unavailable" in capsys.readouterr().out
 
-    kalshi_tries = [
-        node
-        for node in ast.walk(main)
-        if isinstance(node, ast.Try)
-        and "price_kalshi_outrights" in called_names(node)
-        and "price_novig_outrights" not in called_names(node)
-    ]
-    # Pick the first/full-simulation isolation block (the other Kalshi call is
-    # in the separate --price-only path and intentionally outside this guard).
-    isolated = min(kalshi_tries, key=lambda node: node.lineno)
-    assert any(
-        isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
-        for handler in isolated.handlers
+
+def test_exchange_merge_keeps_kalshi_when_novig_raises(capsys):
+    (merge_exchanges,) = _load_round_sim_functions(
+        "merge_optional_live_outrights"
     )
 
-    calls = [
-        (node.lineno, node.func.id)
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    ]
-    first_novig = min(line for line, name in calls if name == "price_novig_outrights")
-    snapshot = min(line for line, name in calls if name == "write_live_finish_equity")
-    assert isolated.end_lineno < first_novig < snapshot
+    kalshi_rows = pd.DataFrame(
+        [
+            {
+                "player_name": "player, kalshi",
+                "bookmaker": "kalshi",
+                "market_type": "top_5",
+                "pricing": "taker",
+                "edge": 4.0,
+            },
+            {
+                "player_name": "player, maker",
+                "bookmaker": "kalshi",
+                "market_type": "top_20",
+                "pricing": "mid",
+                "edge": 3.0,
+            },
+        ]
+    )
+
+    def novig_failure(*_args, **_kwargs):
+        raise ValueError("novig malformed")
+
+    combined, sharp, kalshi, novig, mids = merge_exchanges(
+        pd.DataFrame(),
+        {},
+        {},
+        pd.DataFrame(),
+        pd.DataFrame(),
+        tourney_name="test_event",
+        kalshi_pricer=lambda *_args, **_kwargs: kalshi_rows,
+        novig_pricer=novig_failure,
+        edge_threshold=2.0,
+    )
+
+    assert len(kalshi) == 2
+    assert novig.empty
+    assert mids["pricing"].tolist() == ["mid"]
+    assert combined["pricing"].tolist() == ["taker"]
+    assert sharp["bookmaker"].tolist() == ["kalshi"]
+    assert "NoVig pricing failed: novig malformed" in capsys.readouterr().out
