@@ -121,6 +121,14 @@ def test_sims_kalshi_parser_accepts_current_topn_title_and_rules_metadata():
         assert player_parser(market["title"]) == "Xander Schauffele"
         assert tournament_parser(market) == "TOUR Championship"
 
+    legacy_suffix = {
+        "title": (
+            "Will Xander Schauffele finish in the top 5 at the "
+            "TOUR Championship?"
+        )
+    }
+    assert tournament_parser(legacy_suffix) == "TOUR Championship"
+
 
 def test_sims_kalshi_scoping_joins_blank_titles_by_event_ticker():
     tournament_parser, scope_markets = _load_round_sim_functions(
@@ -185,6 +193,55 @@ def test_sims_kalshi_scoping_rejects_positively_wrong_configured_event():
     assert matched == []
     assert "does not match" in rejection
     assert "TOUR Championship" in rejection
+
+
+def test_sims_kalshi_scoping_rejects_shared_token_collision():
+    tournament_parser, scope_markets = _load_round_sim_functions(
+        "_kalshi_outright_tournament",
+        "_scope_kalshi_outright_markets",
+    )
+    scope_markets.__globals__["_kalshi_outright_tournament"] = tournament_parser
+    markets = [
+        {
+            "title": "American Express: Will Alpha Golfer finish top 5?",
+            "event_ticker": "KXPGATOP5-AEX26",
+        },
+        {
+            "title": (
+                "American Century Championship: "
+                "Will Beta Golfer finish top 5?"
+            ),
+            "event_ticker": "KXPGATOP5-ACC26",
+        },
+    ]
+
+    scoped, matched, rejection = scope_markets(markets, "american_express")
+
+    assert rejection == ""
+    assert matched == ["American Express"]
+    assert [market["event_ticker"] for market in scoped] == [
+        "KXPGATOP5-AEX26"
+    ]
+
+
+def test_sims_kalshi_scoping_rejects_blank_config():
+    tournament_parser, scope_markets = _load_round_sim_functions(
+        "_kalshi_outright_tournament",
+        "_scope_kalshi_outright_markets",
+    )
+    scope_markets.__globals__["_kalshi_outright_tournament"] = tournament_parser
+    markets = [
+        {
+            "title": "Will Xander Schauffele win the TOUR Championship?",
+            "event_ticker": "KXPGATOUR-TOC26",
+        }
+    ]
+
+    scoped, matched, rejection = scope_markets(markets, "  ")
+
+    assert scoped == []
+    assert matched == []
+    assert rejection == "configured tournament is blank"
 
 
 def test_sims_kalshi_unresolved_suffix_must_have_one_proven_event():

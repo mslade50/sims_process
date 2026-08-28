@@ -1682,9 +1682,19 @@ def _kalshi_outright_tournament(market):
     import re
 
     title = str((market or {}).get("title") or "").strip()
-    match = re.search(r"(?:at|in|win) the (.+?)\?", title, re.I)
-    if match:
-        return match.group(1).strip()
+    # Prefer an explicit event suffix. A generic ``in the`` search incorrectly
+    # treats "finish in the top 5 at the TOUR Championship" as an event named
+    # "top 5 at the TOUR Championship".
+    for pattern in (
+        r"\bat\s+the\s+(.+?)\s*\??$",
+        r"\bwin\s+the\s+(.+?)\s*\??$",
+        r"\bin\s+the\s+(?!top\s+\d+\b)(.+?)\s*\??$",
+    ):
+        match = re.search(pattern, title, re.I)
+        if match:
+            candidate = match.group(1).rstrip("?").strip()
+            if candidate and not re.match(r"top\s+\d+\b", candidate, re.I):
+                return candidate
     match = re.match(r"(.+?):\s*Will", title, re.I)
     if match:
         return match.group(1).strip()
@@ -1719,6 +1729,13 @@ def _scope_kalshi_outright_markets(markets, configured_tourney):
     import re
     from collections import Counter, defaultdict
 
+    configured_words = re.findall(
+        r"[a-z0-9]+", str(configured_tourney or "").lower()
+    )
+    if not configured_words:
+        return [], [], "configured tournament is blank"
+    configured_compact = "".join(configured_words)
+
     tagged = [dict(market) for market in (markets or [])]
 
     def event_code(market):
@@ -1751,22 +1768,13 @@ def _scope_kalshi_outright_markets(markets, configured_tourney):
     if not tournament_counts:
         return [], [], "no Kalshi market supplied resolvable tournament metadata"
 
-    generic = {
-        "the", "a", "an", "of", "at", "in", "tournament", "championship",
-        "open", "classic", "invitational", "cup", "pga", "tour",
-    }
-    target_words = {
-        word for word in re.split(r"[\s_]+", str(configured_tourney).lower())
-        if word
-    }
-    distinct_words = target_words - generic
-
     def matches_target(name):
-        value = name.lower()
-        compact = re.sub(r"\s+", "", value)
-        if distinct_words:
-            return any(word in value or word in compact for word in distinct_words)
-        return all(word in value or word in compact for word in target_words)
+        name_compact = "".join(re.findall(r"[a-z0-9]+", name.lower()))
+        # Compare the complete configured slug, not any individual token.
+        # This retains deliberate compact aliases (tourchamp -> TOUR
+        # Championship) without letting american_express also match American
+        # Century Championship merely because both contain "American".
+        return configured_compact in name_compact
 
     matched = [name for name in tournament_counts if matches_target(name)]
     if matched:
