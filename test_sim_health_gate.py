@@ -7,7 +7,10 @@ import pandas as pd
 
 import sim_health_gate as shg
 import publish_sim_fairs as psf
-from portable_hash import LF_NORMALIZED_HASH_MODE, lf_normalized_sha256
+from portable_hash import (
+    LF_NORMALIZED_HASH_MODE,
+    lf_normalized_sha256,
+)
 
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
@@ -390,6 +393,7 @@ def test_active_overlay_provenance_uses_lf_normalized_hashes(tmp_path):
     )
 
     assert provenance["status"] == "active"
+    assert provenance["config_sha256"] == lf_normalized_sha256(config_path)
     assert provenance["feature_sha256"] == feature_hash
     assert provenance["distribution_sha256"] == dists_hash
     assert provenance["text_hash_mode"] == LF_NORMALIZED_HASH_MODE
@@ -430,6 +434,85 @@ def test_active_overlay_provenance_uses_lf_normalized_hashes(tmp_path):
         "feature_sha256 does not match" in error
         for error in rejected["checks"]["errors"]
     )
+
+
+def test_overlay_revalidation_accepts_legacy_windows_config_hash(tmp_path):
+    feature_path = tmp_path / "shot_dispersion_features.csv"
+    dists_path = tmp_path / "this_week_dists_v2.csv"
+    feature_path.write_text("player_name,value\nalpha,1\n", encoding="utf-8")
+    dists_path.write_text("player_name,value\nalpha,2\n", encoding="utf-8")
+    config_path = tmp_path / "shot_dispersion_config.json"
+    config_payload = {
+        "enabled": True,
+        "required_current_event": True,
+        "tourney": "test_event",
+        "event_id": 77,
+        "feature_file": str(feature_path),
+        "feature_sha256": lf_normalized_sha256(feature_path),
+        "distribution_sha256": lf_normalized_sha256(dists_path),
+    }
+    config_path.write_bytes(
+        json.dumps(config_payload, indent=2).replace("\n", "\r\n").encode("utf-8")
+    )
+    legacy_windows_hash = shg.file_sha256(config_path)
+    config_path.write_bytes(config_path.read_bytes().replace(b"\r\n", b"\n"))
+    current = shg.collect_overlay_provenance(
+        tourney="test_event",
+        event_id=77,
+        dists_path=dists_path,
+        selected_model="category_first",
+        config_path=config_path,
+    )
+    assert legacy_windows_hash != current["config_sha256"]
+    assert legacy_windows_hash == current["config_sha256_crlf_legacy"]
+    legacy = dict(current)
+    legacy["config_sha256"] = legacy_windows_hash
+    legacy.pop("config_sha256_crlf_legacy")
+    tape = _tape()
+    manifest = shg.build_simulation_manifest(
+        tape,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        expected_avg=68.7,
+        expected_field_mean=68.7,
+        model_players=list(tape),
+        expected_avg_authority="sheet",
+        selected_model="category_first",
+        skew_calibrated=True,
+        overlay=legacy,
+        generated_at=NOW,
+    )
+
+    report = shg.validate_simulation_manifest(
+        manifest,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.7,
+        sim_dict=tape,
+        model_players=list(tape),
+        current_overlay=current,
+        now=NOW + timedelta(minutes=5),
+    )
+
+    assert report.ok, report.errors
+    changed = dict(current)
+    changed["config_sha256"] = "changed-lf"
+    changed["config_sha256_crlf_legacy"] = "changed-crlf"
+    rejected = shg.validate_simulation_manifest(
+        manifest,
+        tourney="test_event",
+        event_id=77,
+        sim_round=3,
+        configured_expected_avg=68.7,
+        sim_dict=tape,
+        model_players=list(tape),
+        current_overlay=changed,
+        now=NOW + timedelta(minutes=5),
+    )
+    assert not rejected.ok
+    assert "shot-dispersion provenance changed for config_sha256" in rejected.errors
 
 
 def test_absent_shot_config_cannot_approve_or_revalidate_a_live_tape():

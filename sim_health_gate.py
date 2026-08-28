@@ -24,7 +24,11 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from portable_hash import LF_NORMALIZED_HASH_MODE, lf_normalized_sha256
+from portable_hash import (
+    LF_NORMALIZED_HASH_MODE,
+    lf_normalized_bytes,
+    lf_normalized_sha256,
+)
 
 
 SCHEMA_VERSION = 1
@@ -302,6 +306,12 @@ def file_sha256(path: str | os.PathLike[str]) -> str:
     return digest.hexdigest()
 
 
+def _legacy_crlf_text_sha256(path: str | os.PathLike[str]) -> str:
+    """Return the old Windows checkout hash for a normalized text file."""
+    crlf_bytes = lf_normalized_bytes(path).replace(b"\n", b"\r\n")
+    return hashlib.sha256(crlf_bytes).hexdigest()
+
+
 def names_sha256(names: Iterable[Any]) -> str:
     normalised = sorted(_normalise_name(name) for name in names)
     return hashlib.sha256(_canonical_json(normalised)).hexdigest()
@@ -478,7 +488,15 @@ def collect_overlay_provenance(
         "configured_for_active_event": active_event,
         "used_by_selected_tape": used,
         "config_path": config.name,
-        "config_sha256": file_sha256(config) if config.is_file() else None,
+        "config_sha256": (
+            lf_normalized_sha256(config) if config.is_file() else None
+        ),
+        # Manifests written before the config hash joined the portable text
+        # contract used raw checkout bytes. Keep the deterministic CRLF variant
+        # so a Windows-produced tape can be safely repriced on Linux.
+        "config_sha256_crlf_legacy": (
+            _legacy_crlf_text_sha256(config) if config.is_file() else None
+        ),
         "feature_file": feature.name if feature else None,
         "feature_sha256": (
             lf_normalized_sha256(feature)
@@ -1024,11 +1042,17 @@ def validate_simulation_manifest(
             )
         for key in (
             "status", "required_current_event", "used_by_selected_tape",
-            "config_sha256", "feature_sha256", "distribution_sha256",
-            "text_hash_mode",
+            "feature_sha256", "distribution_sha256", "text_hash_mode",
         ):
             if stored_overlay.get(key) != current_overlay.get(key):
                 errors.append(f"shot-dispersion provenance changed for {key}")
+        stored_config_hash = stored_overlay.get("config_sha256")
+        current_config_hashes = {
+            current_overlay.get("config_sha256"),
+            current_overlay.get("config_sha256_crlf_legacy"),
+        } - {None}
+        if stored_config_hash not in current_config_hashes:
+            errors.append("shot-dispersion provenance changed for config_sha256")
 
     return HealthReport(
         not errors,
