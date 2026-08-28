@@ -271,20 +271,29 @@ def copy_files(dry_run=False):
 
 
 def git_push(dry_run=False):
-    """Stage and commit ONLY the dashboard-deploy files, then push (pull+rebase retry).
+    """Publish ONLY dashboard-deploy files on top of the latest ``origin/main``.
 
-    The commit is scoped to an explicit pathspec (dashboard_data/, sim_inputs.py, and
-    the per-tourney prep files) so a stray ``git add``ed file or a mid-edit change
-    elsewhere can never be swept into the auto-deploy commit and pushed to origin/main.
-    Live pred files still publish every run — only unrelated staged work is excluded.
+    The commit is built with temporary Git indexes, so a preceding plumbing
+    publisher may advance the remote without advancing this checkout.  No pull,
+    rebase, branch move, or mutation of the ordinary index is required.  Only
+    changes to the explicit dashboard pathspec are overlaid on the remote tip;
+    unrelated local staging and remote-only dashboard changes are preserved.
     """
     import subprocess
+    import tempfile
+    import time
 
     if dry_run:
         return
 
-    def _run(cmd):
-        return subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+    def _run(cmd, *, env=None):
+        return subprocess.run(
+            cmd,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
 
     # The exact set of paths this deploy commit is allowed to touch.
     # historical_dists is included so the per-event rank_probs archives written
@@ -304,14 +313,6 @@ def git_push(dry_run=False):
         paths += [f for f in prep_files
                   if os.path.exists(os.path.join(PROJECT_ROOT, f))]
 
-    # Stage only these paths (force: some prep files are gitignored).
-    _run(["git", "add", "-f", "--", *paths])
-
-    # Nothing changed among OUR paths? (anything else staged is irrelevant.)
-    if _run(["git", "diff", "--staged", "--quiet", "--", *paths]).returncode == 0:
-        print("\n  No dashboard changes to commit.")
-        return
-
     # Commit/push failures alert loudly: this commit carries the cross-machine
     # skill-update state (model_predictions_r{N} / r{N}_live_model) — if it
     # silently doesn't land, another machine or nightly CI runs the next round
@@ -329,32 +330,162 @@ def git_push(dry_run=False):
         # diagnostics were silently lost (2026-08). Fail the process.
         sys.exit(1)
 
-    # Commit ONLY our pathspec — any other staged change is left untouched,
-    # never pushed. The exit status MUST be checked: on a runner with no git
-    # identity the commit errors, the push then returns 0 trivially
-    # ("everything up-to-date"), and the run goes green with nothing landed
-    # (the 2026-08-17 St. Jude silent loss).
-    commit = _run(["git", "commit", "-m", "Update dashboard data for Cloudflare", "--", *paths])
-    if commit.returncode != 0:
-        _fail(f"git commit failed: {(commit.stderr or commit.stdout).strip()[:160]}")
+    def _result_error(result):
+        return (result.stderr or result.stdout or "unknown git error").strip()[:240]
 
-    for attempt in range(3):
-        result = _run(["git", "push"])
+    # Snapshot exactly the worktree changes under our pathspec relative to the
+    # checked-out commit.  A separate temporary index means unrelated staged work
+    # is neither read nor changed.  The resulting blobs remain stable if a push
+    # race requires rebuilding the commit on a newer remote parent.
+    local_head = _run(["git", "rev-parse", "HEAD"])
+    if local_head.returncode != 0 or not local_head.stdout.strip():
+        _fail(f"git rev-parse HEAD failed: {_result_error(local_head)}")
+    local_head_sha = local_head.stdout.strip()
+    snapshot_index = os.path.join(
+        tempfile.gettempdir(),
+        f"dashboard_snapshot_index_{os.getpid()}_{time.time_ns()}",
+    )
+    snapshot_env = {**os.environ, "GIT_INDEX_FILE": snapshot_index}
+    overlay = {}
+    try:
+        read = _run(["git", "read-tree", local_head_sha], env=snapshot_env)
+        if read.returncode != 0:
+            _fail(f"git read-tree failed: {_result_error(read)}")
+        stage = _run(["git", "add", "-A", "-f", "--", *paths], env=snapshot_env)
+        if stage.returncode != 0:
+            _fail(f"git add failed: {_result_error(stage)}")
+        changed = _run(
+            [
+                "git", "diff", "--cached", "--name-only", "-z",
+                local_head_sha, "--", *paths,
+            ],
+            env=snapshot_env,
+        )
+        if changed.returncode != 0:
+            _fail(f"git diff failed: {_result_error(changed)}")
+        for path in (name for name in changed.stdout.split("\0") if name):
+            entry = _run(
+                ["git", "ls-files", "--stage", "--", path],
+                env=snapshot_env,
+            )
+            if entry.returncode != 0:
+                _fail(f"git ls-files failed for {path}: {_result_error(entry)}")
+            if not entry.stdout.strip():
+                overlay[path] = None
+                continue
+            fields = entry.stdout.split("\t", 1)[0].split()
+            if len(fields) != 3 or fields[2] != "0":
+                _fail(f"git index entry is invalid for {path}")
+            overlay[path] = (fields[0], fields[1])
+    finally:
+        try:
+            if os.path.exists(snapshot_index):
+                os.remove(snapshot_index)
+        except OSError:
+            pass
+
+    if not overlay:
+        print("\n  No dashboard changes to commit.")
+        return
+
+    def _commit_on(base):
+        publish_index = os.path.join(
+            tempfile.gettempdir(),
+            f"dashboard_publish_index_{os.getpid()}_{time.time_ns()}",
+        )
+        publish_env = {**os.environ, "GIT_INDEX_FILE": publish_index}
+        try:
+            read = _run(["git", "read-tree", base], env=publish_env)
+            if read.returncode != 0:
+                _fail(f"git read-tree origin failed: {_result_error(read)}")
+            for path, entry in overlay.items():
+                if entry is None:
+                    update = _run(
+                        ["git", "update-index", "--force-remove", "--", path],
+                        env=publish_env,
+                    )
+                else:
+                    mode, blob = entry
+                    update = _run(
+                        [
+                            "git", "update-index", "--add", "--cacheinfo",
+                            f"{mode},{blob},{path}",
+                        ],
+                        env=publish_env,
+                    )
+                if update.returncode != 0:
+                    _fail(f"git update-index failed for {path}: {_result_error(update)}")
+            diff = _run(
+                ["git", "diff", "--cached", "--quiet", base, "--", *overlay],
+                env=publish_env,
+            )
+            if diff.returncode == 0:
+                return None
+            if diff.returncode != 1:
+                _fail(f"git diff against origin failed: {_result_error(diff)}")
+            tree = _run(["git", "write-tree"], env=publish_env)
+            if tree.returncode != 0 or not tree.stdout.strip():
+                _fail(f"git write-tree failed: {_result_error(tree)}")
+            commit = _run(
+                [
+                    "git", "commit-tree", tree.stdout.strip(), "-p", base,
+                    "-m", "Update dashboard data for Cloudflare",
+                ]
+            )
+            if commit.returncode != 0 or not commit.stdout.strip():
+                # On CI this usually means the workflow omitted GIT_* identity.
+                _fail(f"git commit-tree failed: {_result_error(commit)}")
+            return commit.stdout.strip()
+        finally:
+            try:
+                if os.path.exists(publish_index):
+                    os.remove(publish_index)
+            except OSError:
+                pass
+
+    last_error = ""
+    for attempt in range(1, 4):
+        fetch = _run(["git", "fetch", "origin", "main"])
+        if fetch.returncode != 0:
+            last_error = _result_error(fetch)
+            if attempt < 3:
+                continue
+            _fail(f"git fetch failed after 3 attempts: {last_error}")
+        base = _run(["git", "rev-parse", "FETCH_HEAD"])
+        if base.returncode != 0 or not base.stdout.strip():
+            _fail(f"git rev-parse FETCH_HEAD failed: {_result_error(base)}")
+        commit_sha = _commit_on(base.stdout.strip())
+        if commit_sha is None:
+            print("\n  Dashboard changes are already current on origin/main.")
+            return
+        result = _run(["git", "push", "origin", f"{commit_sha}:main"])
         if result.returncode == 0:
-            break
-        if "rejected" in (result.stderr or "") or "non-fast-forward" in (result.stderr or ""):
-            print(f"  Push rejected (attempt {attempt + 1}/3), pulling with rebase...")
-            # --autostash so a dirty tree (sim artifacts regenerate every run) doesn't
-            # abort the rebase; the stash is reapplied after.
-            rebase = _run(["git", "pull", "--rebase", "--autostash"])
-            if rebase.returncode != 0:
-                _fail(f"pull --rebase failed: {rebase.stderr.strip()[:160]}")
-                break
-        else:
-            _fail(f"git push failed: {result.stderr.strip()[:160]}")
-            break
-    else:
-        _fail("push failed after 3 attempts")
+            return
+
+        last_error = _result_error(result)
+        verify = _run(["git", "fetch", "origin", "main"])
+        if verify.returncode == 0:
+            remote = _run(["git", "rev-parse", "FETCH_HEAD"])
+            remote_sha = remote.stdout.strip() if remote.returncode == 0 else ""
+            if remote_sha and (
+                remote_sha == commit_sha
+                or _run(
+                    ["git", "merge-base", "--is-ancestor", commit_sha, remote_sha]
+                ).returncode == 0
+            ):
+                print("  Dashboard push was accepted despite a client error.")
+                return
+
+        rejection = (result.stderr or result.stdout or "").lower()
+        if "rejected" in rejection or "non-fast-forward" in rejection:
+            print(
+                f"  Push rejected (attempt {attempt}/3); rebuilding the scoped "
+                "commit on latest origin/main..."
+            )
+            continue
+        _fail(f"git push failed: {last_error}")
+
+    _fail(f"git push failed after 3 attempts: {last_error}")
 
 
 def publish_cloudflare(dry_run=False):
