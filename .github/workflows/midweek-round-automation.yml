@@ -13,6 +13,10 @@ on:
         description: "Force rebuild the completed target round (manual repairs only)"
         type: boolean
         default: false
+      use_pinnacle_for_betcris:
+        description: "Manual repair only: require BetOnline + Pinnacle instead of BetCRIS + BetOnline"
+        type: boolean
+        default: false
 
 concurrency:
   group: round-sim
@@ -53,6 +57,7 @@ jobs:
         id: readiness
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ github.event_name == 'workflow_dispatch' && inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
         run: |
           set +e
           FORCE_ARG=""
@@ -156,6 +161,7 @@ jobs:
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ github.event_name == 'workflow_dispatch' && inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
         run: |
           $automationArgs = @()
           if ("${{ inputs.dry_run }}" -eq "true") {

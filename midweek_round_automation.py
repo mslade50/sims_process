@@ -36,6 +36,10 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
+from round_matchup_coverage import (
+    DEFAULT_REQUIRED_BOOKS,
+    resolve_required_matchup_books,
+)
 from score_centering import (
     CENTERING_VERSION,
     validate_field_relative_predictions,
@@ -46,7 +50,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_ODDS_FILE = (
     ROOT / "permanent_data" / "scraped_odds" / "round_matchups_latest.json"
 )
-REQUIRED_BOOKS = ("betcris", "betonline")
+REQUIRED_BOOKS = DEFAULT_REQUIRED_BOOKS
 MIN_PIN_HIGH_APPROACHES = 6
 
 
@@ -95,8 +99,14 @@ def evaluate_odds_readiness(
     min_book_matchups: int = 5,
     max_age_hours: float = 3.0,
     now: datetime | None = None,
+    required_books: tuple[str, ...] | None = None,
 ) -> OddsReadiness:
     """Validate and count the board's nested DataGolf-format matchup payload."""
+    required_books = (
+        tuple(required_books) if required_books is not None else REQUIRED_BOOKS
+    )
+    if not required_books:
+        raise ValueError("At least one required matchup book must be configured")
     if not isinstance(data, dict):
         raise NotReady("Odds payload is not a JSON object")
 
@@ -119,7 +129,7 @@ def evaluate_odds_readiness(
 
     target_event = str(event_id).strip()
     file_event = str(data.get("event_id") or "").strip()
-    counts = {book: set() for book in REQUIRED_BOOKS}
+    counts = {book: set() for book in required_books}
     scoped_rows = 0
 
     for row in data.get("match_list") or []:
@@ -147,7 +157,7 @@ def evaluate_odds_readiness(
         if not all(pair):
             continue
         odds = row.get("odds") or {}
-        for book in REQUIRED_BOOKS:
+        for book in required_books:
             if _valid_two_way_price(odds.get(book)):
                 counts[book].add(pair)
 
@@ -613,11 +623,14 @@ def _load_gate_context(args):
     event_id = config["event_id"]
     tourney = config["tourney"]
 
+    required_books = resolve_required_matchup_books()
+    print("  Required matchup books: " + ", ".join(required_books))
     readiness = evaluate_odds_readiness(
         odds_data,
         event_id,
         min_book_matchups=args.min_book_matchups,
         max_age_hours=args.max_age_hours,
+        required_books=required_books,
     )
     target_round = readiness.target_round
     completed_round = target_round - 1

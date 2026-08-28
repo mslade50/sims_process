@@ -97,6 +97,49 @@ class OddsReadinessTests(unittest.TestCase):
                 now=NOW,
             )
 
+    def test_manual_pinnacle_pair_accepts_without_betcris(self):
+        rows = [
+            _row(
+                525,
+                2,
+                ["betonline", "pinnacle"],
+                p1=f"Player {idx}",
+                p2=f"Opponent {idx}",
+            )
+            for idx in range(5)
+        ]
+
+        result = evaluate_odds_readiness(
+            _payload(rows),
+            525,
+            min_book_matchups=5,
+            now=NOW,
+            required_books=("betonline", "pinnacle"),
+        )
+
+        self.assertEqual(result.counts, {"betonline": 5, "pinnacle": 5})
+
+    def test_manual_pinnacle_pair_rejects_partial_pinnacle_coverage(self):
+        rows = [
+            _row(
+                525,
+                2,
+                ["betonline"] + (["pinnacle"] if idx < 4 else []),
+                p1=f"Player {idx}",
+                p2=f"Opponent {idx}",
+            )
+            for idx in range(5)
+        ]
+
+        with self.assertRaisesRegex(NotReady, "pinnacle=4/5"):
+            evaluate_odds_readiness(
+                _payload(rows),
+                525,
+                min_book_matchups=5,
+                now=NOW,
+                required_books=("betonline", "pinnacle"),
+            )
+
     def test_rejects_stale_payload(self):
         rows = [_row(525, 2, ["betcris", "betonline"])]
         with self.assertRaisesRegex(NotReady, "stale"):

@@ -189,6 +189,23 @@ def test_required_report_rejects_missing_sharp_book_coverage(round_module):
         )
 
 
+def test_required_report_accepts_manual_pinnacle_pair(round_module):
+    round_module.require_pricing_pipeline_healthy(
+        matchup_book_counts={"betonline": 5, "pinnacle": 5},
+        require_complete_email=True,
+        required_matchup_books=("betonline", "pinnacle"),
+    )
+
+
+def test_required_report_rejects_partial_manual_pinnacle_pair(round_module):
+    with pytest.raises(round_module.SimulationHealthError, match="pinnacle=4/5"):
+        round_module.require_pricing_pipeline_healthy(
+            matchup_book_counts={"betonline": 5, "pinnacle": 4},
+            require_complete_email=True,
+            required_matchup_books=("betonline", "pinnacle"),
+        )
+
+
 def test_round_delivery_rejects_any_unjoined_matchup_name(round_module):
     with pytest.raises(round_module.SimulationHealthError, match="did not join"):
         round_module.require_pricing_pipeline_healthy(

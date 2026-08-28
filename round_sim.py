@@ -87,6 +87,10 @@ from sim_inputs import (
 )
 
 from dotenv import load_dotenv
+from round_matchup_coverage import (
+    DEFAULT_REQUIRED_BOOKS,
+    resolve_required_matchup_books,
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -103,7 +107,7 @@ HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 # Email banner warns (orange) when a sharp book prices fewer than this many
 # matchup lines, and flags red at 0 ("NO LINES") — catches a book offline / barely posting.
 MATCHUP_LINE_WARN_THRESHOLD = 10
-REQUIRED_MATCHUP_BOOKS = ("betcris", "betonline")
+REQUIRED_MATCHUP_BOOKS = DEFAULT_REQUIRED_BOOKS
 
 # Score card: generate fair UNDER prices at these offsets from expected avg
 SCORE_CARD_RANGE = 3.0        # +-3 strokes from expected
@@ -144,6 +148,7 @@ def require_pricing_pipeline_healthy(
     require_live_tournament=False,
     tournament_error=None,
     finish_probs=None,
+    required_matchup_books=None,
 ):
     """Reject technically incomplete reports before any external side effect.
 
@@ -168,9 +173,18 @@ def require_pricing_pipeline_healthy(
     if require_complete_email:
         counts = matchup_book_counts or {}
         floor = _required_matchup_line_floor()
+        required_matchup_books = (
+            tuple(required_matchup_books)
+            if required_matchup_books is not None
+            else resolve_required_matchup_books()
+        )
+        if not required_matchup_books:
+            raise SimulationHealthError(
+                "BLOCKED — no required matchup books are configured"
+            )
         missing = {
             book: int(counts.get(book, 0) or 0)
-            for book in REQUIRED_MATCHUP_BOOKS
+            for book in required_matchup_books
             if int(counts.get(book, 0) or 0) < floor
         }
         if missing:
@@ -4890,6 +4904,13 @@ def main():
     )
     args = parser.parse_args()
 
+    required_matchup_books = resolve_required_matchup_books()
+    if _round_email_required():
+        print(
+            "  Required matchup books for complete delivery: "
+            + ", ".join(required_matchup_books)
+        )
+
     global _USE_PYTHON
     _USE_PYTHON = args.use_python
 
@@ -6094,6 +6115,7 @@ def main():
             require_live_tournament=(round_num >= 1 and not args.skip_tournament_sim),
             tournament_error=tournament_pipeline_error,
             finish_probs=finish_probs,
+            required_matchup_books=required_matchup_books,
         )
         require_simulation_healthy(
             active_health_manifest,

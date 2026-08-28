@@ -63,6 +63,21 @@ def test_midweek_workflow_requires_fairs_publish_and_dispatch():
     assert "REQUIRE_SIM_FAIRS_PUBLISH: '1'" in workflow
 
 
+def test_midweek_pinnacle_fallback_is_manual_only_and_reaches_both_gates():
+    workflow = (
+        psf.PROJECT_ROOT / ".github" / "workflows" / "midweek-round-automation.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "use_pinnacle_for_betcris:" in workflow
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+    fallback_input = workflow.split("use_pinnacle_for_betcris:", 1)[1].split(
+        "concurrency:", 1
+    )[0]
+    assert "default: false" in fallback_input
+    assert workflow.count("ROUND_MATCHUP_REQUIRED_BOOK_PAIR:") == 2
+    assert workflow.count("'betonline_pinnacle'") == 2
+
+
 def test_manual_run_workflow_requires_fairs_publish_and_dispatch():
     workflow = (
         psf.PROJECT_ROOT / ".github" / "workflows" / "run-sim.yml"
