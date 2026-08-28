@@ -4881,6 +4881,13 @@ def main():
     parser.add_argument("--no-store", action="store_true",
                         help="Send the email but skip bet storage + dashboard push "
                              "(for test emails without writing bets)")
+    parser.add_argument(
+        "--require-complete-live-publish",
+        action="store_true",
+        help=("Publish one strict complete-live package (including "
+              "sim_release_manifest.json) instead of the ordinary best-effort "
+              "odds-board package"),
+    )
     parser.add_argument("--legacy", action="store_true",
                         help="Use legacy N(mu, STD_DEV) draws instead of category-first (default: catfirst)")
     parser.add_argument("--use-python", action="store_true",
@@ -4924,6 +4931,17 @@ def main():
         args.price_only = True
     if args.sim_only and args.price_only:
         parser.error("Cannot use --sim-only and --price-only together")
+    if args.require_complete_live_publish and (
+        args.dry_run
+        or args.no_store
+        or args.sim_only
+        or args.price_only
+        or args.skip_tournament_sim
+    ):
+        parser.error(
+            "--require-complete-live-publish requires a full stored round and "
+            "remaining-tournament simulation"
+        )
 
     # ── Config ───────────────────────────────────────────────────────────
     sheet_config = None
@@ -6359,13 +6377,20 @@ def main():
             import publish_sim_fairs
             print(f"\n{'='*60}")
             print("  Publishing sim fairs + round samples for the odds board...")
-            publish_sim_fairs.publish()
+            publish_sim_fairs.publish(
+                require_complete_live=args.require_complete_live_publish,
+                expected_round=(
+                    sim_round if args.require_complete_live_publish else None
+                ),
+            )
             print(f"{'='*60}")
         except SimulationHealthError:
             raise
         except Exception as e:
             print(f"  [publish_sim_fairs] Warning: {e}")
-            if (os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or "").strip().lower() in (
+            if args.require_complete_live_publish or (
+                os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH") or ""
+            ).strip().lower() in (
                 "1", "true", "yes"
             ):
                 raise

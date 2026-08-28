@@ -434,6 +434,43 @@ class PredictionVerificationTests(unittest.TestCase):
             self._run_verification(self._prediction_frame([0.2, 0.1]))
 
 
+class CompleteLivePublishTests(unittest.TestCase):
+    def test_midweek_round_sim_requests_one_strict_complete_live_publish(self):
+        with patch.object(automation, "_run") as run_mock:
+            automation._run_complete_live_round_sim()
+
+        run_mock.assert_called_once_with(
+            [
+                automation.sys.executable,
+                "round_sim.py",
+                "--require-complete-live-publish",
+            ],
+            "round_sim.py (strict complete-live publish)",
+        )
+
+    def test_round_sim_strict_flag_drives_existing_single_publish_hook(self):
+        source = (Path(__file__).parent / "round_sim.py").read_text(encoding="utf-8")
+
+        self.assertEqual(source.count("publish_sim_fairs.publish("), 1)
+        self.assertIn('"--require-complete-live-publish"', source)
+        self.assertIn(
+            "require_complete_live=args.require_complete_live_publish", source
+        )
+        self.assertIn(
+            "sim_round if args.require_complete_live_publish else None", source
+        )
+
+    def test_manual_live_workflow_uses_strict_publish_but_r1_does_not(self):
+        workflow = (
+            Path(__file__).parent / ".github" / "workflows" / "run-sim.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("if ([int]$simRound -ge 2)", workflow)
+        self.assertEqual(
+            workflow.count('$simArgs += "--require-complete-live-publish"'), 1
+        )
+
+
 class WeatherForecastTests(unittest.TestCase):
     def test_ai_wind_overrides_best_match_and_builds_15_hour_arrays(self):
         os.environ["COEFFS_FROM_CACHE"] = "1"

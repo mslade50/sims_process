@@ -111,6 +111,12 @@ jobs:
             "--cli", "--sim-round", $simRound,
             "--health-approved-by", "github:${{ github.actor }}"
           )
+          # R2-R4 are live packages. Use the same single strict publish hook as
+          # midweek automation so a green production run always commits the
+          # release manifest required by push_odds_screen. R1 remains ordinary.
+          if ([int]$simRound -ge 2) {
+            $simArgs += "--require-complete-live-publish"
+          }
         }
         if ($expectedAvg) {
           $simArgs += @("--expected-avg", $expectedAvg)

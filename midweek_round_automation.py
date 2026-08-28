@@ -516,6 +516,14 @@ def _run(cmd, label):
         )
 
 
+def _run_complete_live_round_sim():
+    """Run the one round-sim publisher in strict complete-live mode."""
+    _run(
+        [sys.executable, "round_sim.py", "--require-complete-live-publish"],
+        "round_sim.py (strict complete-live publish)",
+    )
+
+
 def _verify_predictions(target_round: int):
     prediction = ROOT / f"model_predictions_r{target_round}.csv"
     if not prediction.exists() or prediction.stat().st_size == 0:
@@ -801,7 +809,7 @@ def run_pipeline(args) -> int:
         )
         _verify_predictions(target_round)
         sim_started_at = datetime.now(timezone.utc).timestamp()
-        _run([sys.executable, "round_sim.py"], "round_sim.py")
+        _run_complete_live_round_sim()
         _verify_outputs(target_round, tourney, started_at=sim_started_at)
         completion_message = (
             f"R{target_round} predictions, simulation, and fairs completed"
