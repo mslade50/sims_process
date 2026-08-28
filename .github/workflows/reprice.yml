@@ -71,8 +71,26 @@ jobs:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: python reprice.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
-    - name: Build and validate odds screen payloads
+    - name: Check odds screen release inputs
+      id: odds_screen_release
       if: steps.window.outputs.skip != 'true' && inputs.dry_run != true
+      shell: bash
+      run: |
+        missing=()
+        for file in sim_release_manifest.json sim_fairs.json; do
+          if [ ! -s "$file" ]; then
+            missing+=("$file")
+          fi
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Odds screen publish skipped::Reprice succeeded, but odds screen build and publish were skipped because the current checkout lacks required release input(s): ${missing[*]}"
+        else
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build and validate odds screen payloads
+      if: steps.window.outputs.skip != 'true' && inputs.dry_run != true && steps.odds_screen_release.outputs.ready == 'true'
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
@@ -89,7 +107,7 @@ jobs:
     # meta.json is the only consumer-visible pointer and is uploaded last; a
     # partial retry therefore leaves readers on the prior complete generation.
     - name: Publish odds screen payloads to R2
-      if: steps.window.outputs.skip != 'true' && inputs.dry_run != true
+      if: steps.window.outputs.skip != 'true' && inputs.dry_run != true && steps.odds_screen_release.outputs.ready == 'true'
       env:
         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

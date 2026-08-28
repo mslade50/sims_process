@@ -84,3 +84,28 @@ def test_manual_run_workflow_requires_fairs_publish_and_dispatch():
     ).read_text(encoding="utf-8")
 
     assert "REQUIRE_SIM_FAIRS_PUBLISH: '1'" in workflow
+
+
+def test_reprice_skips_odds_screen_when_release_contract_is_missing():
+    workflow = (
+        psf.PROJECT_ROOT / ".github" / "workflows" / "reprice.yml"
+    ).read_text(encoding="utf-8")
+
+    release_check = workflow.split(
+        "- name: Check odds screen release inputs", 1
+    )[1].split("- name: Build and validate odds screen payloads", 1)[0]
+    assert "id: odds_screen_release" in release_check
+    assert "for file in sim_release_manifest.json sim_fairs.json" in release_check
+    assert 'echo "ready=false" >> "$GITHUB_OUTPUT"' in release_check
+    assert 'echo "ready=true" >> "$GITHUB_OUTPUT"' in release_check
+    assert "::warning title=Odds screen publish skipped::" in release_check
+
+    required_gate = "steps.odds_screen_release.outputs.ready == 'true'"
+    build_step = workflow.split(
+        "- name: Build and validate odds screen payloads", 1
+    )[1].split("- name: Publish odds screen payloads to R2", 1)[0]
+    publish_step = workflow.split(
+        "- name: Publish odds screen payloads to R2", 1
+    )[1].split("- name: Telegram on failure", 1)[0]
+    assert required_gate in build_step
+    assert required_gate in publish_step
