@@ -13,6 +13,12 @@ def _matchup_row(p1, p2, book, o1, o2, edge1, edge2):
         "Ties": "push",
         "P1 Odds": o1,
         "P2 Odds": o2,
+        # This fixture represents an inspected straight-H2H quote. BetCRIS
+        # rows without this provenance are intentionally quarantined because
+        # its feed can carry a hidden +/-0.5-stroke contract.
+        "P1 Line": None,
+        "P2 Line": None,
+        "line_verified": True,
         "Fair_p1": -120,
         "Fair_p2": 120,
         "edge_p1": edge1,
