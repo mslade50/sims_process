@@ -79,7 +79,10 @@ _FINISH_KELLY_FRACTION = 0.25
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
 
 # Dedup key columns for the ledger
-LEDGER_DEDUP_COLS = ["event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker"]
+LEDGER_DEDUP_COLS = [
+    "event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker",
+    "spread_line",
+]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -97,6 +100,7 @@ TOURNAMENT_MU_HEADERS = [
     "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
     "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
+    "p1_line", "p2_line", "line_verified", "market_kind",
 ]
 
 CLV_COLS = ["open_odds", "close_odds", "tot_clv", "clv", "clv_book"]
@@ -133,6 +137,7 @@ ROUND_MU_HEADERS = [
     "wx_diff",
     "result", "p1_round_score", "p2_round_score", "units_won",
     "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
+    "p1_line", "p2_line", "line_verified", "market_kind",
 ]
 
 # 3-ball version of ROUND_MU_HEADERS: three players (no half-shot spreads — those
@@ -404,6 +409,56 @@ def _norm_key_cell(v):
     return format(f, ".6f").rstrip("0").rstrip(".")
 
 
+def _canonical_spread_line_key(value):
+    """Normalize missing legacy spread metadata to the straight-line key 0."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            missing = value is None or pd.isna(value)
+        except (TypeError, ValueError):
+            missing = True
+        return "0" if missing or str(value).strip().lower() in ("", "nan", "none") else str(value).strip().lower()
+    if not np.isfinite(number) or abs(number) <= 1e-9:
+        return "0"
+    return _norm_key_cell(number)
+
+
+def _safe_bool(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+def _legacy_ambiguous_matchup_mask(df):
+    """Rows whose old BetCRIS scraper discarded the actual handicap contract."""
+    if df is None or df.empty:
+        return pd.Series(False, index=getattr(df, "index", None), dtype=bool)
+    bet_type = (
+        df["bet_type"] if "bet_type" in df.columns
+        else pd.Series("", index=df.index)
+    ).astype(str).str.lower().str.strip()
+    bookmaker = (
+        df["bookmaker"] if "bookmaker" in df.columns
+        else pd.Series("", index=df.index)
+    ).astype(str).str.lower().str.strip()
+    verified_values = (
+        df["line_verified"] if "line_verified" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    verified = verified_values.map(_safe_bool)
+    return (
+        bet_type.isin(("round_matchup", "tournament_matchup"))
+        & bookmaker.str.contains("betcris|bookmaker", regex=True, na=False)
+        & ~verified
+    )
+
+
 def is_excluded_or_invalid_result(value):
     """Return whether a stored audit row is ineligible to suppress a new bet.
 
@@ -423,7 +478,7 @@ def is_excluded_or_invalid_result(value):
 
 def _canonical_matchup_row_key(
     row, *, event_index, round_index=None, player_indices, book_index, odds_indices,
-    bet_on_index
+    bet_on_index, line_indices=None, line_verified_index=None,
 ):
     """Canonical Sheet key for a two-way or three-way matchup row.
 
@@ -439,19 +494,30 @@ def _canonical_matchup_row_key(
         else None
     )
     book = _norm_key_cell(row[book_index]) if book_index < len(row) else ""
+    line_indices = line_indices or [None] * len(player_indices)
     participants = sorted(
         (
             _norm_key_cell(row[player_index]) if player_index < len(row) else "",
             _norm_key_cell(row[odds_index]) if odds_index < len(row) else "",
+            (
+                _norm_key_cell(row[line_index])
+                if line_index is not None and line_index < len(row) else ""
+            ),
         )
-        for player_index, odds_index in zip(player_indices, odds_indices)
+        for player_index, odds_index, line_index
+        in zip(player_indices, odds_indices, line_indices)
     )
     bet_on = _norm_key_cell(row[bet_on_index]) if bet_on_index < len(row) else ""
+    verified = (
+        _norm_key_cell(row[line_verified_index])
+        if line_verified_index is not None and line_verified_index < len(row)
+        else ""
+    )
     prefix = (event, rnd, book) if round_index is not None else (event, book)
     return (
         prefix
         + tuple(value for participant in participants for value in participant)
-        + (bet_on,)
+        + (bet_on, verified)
     )
 
 
@@ -601,7 +667,7 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
         p1 = str(_get(r, "Player 1")).lower().strip()
         p2 = str(_get(r, "Player 2")).lower().strip()
 
-        rows.append([
+        row_values = [
             ts,                                         # run_timestamp
             tourney,                                    # event_name
             year,                                       # year
@@ -631,7 +697,13 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
             _safe(_get(r, "wx_diff"), round_digits=1),  # wx_diff
             "",                                         # result (grading)
             "",                                         # units_won (grading)
-        ])
+            "", "", "", "", "",                     # CLV fields
+            _safe(_get(r, "P1 Line")),                  # p1_line
+            _safe(_get(r, "P2 Line")),                  # p2_line
+            _safe(_get(r, "line_verified")),            # line_verified
+            _safe(_get(r, "market_kind")),              # market_kind
+        ]
+        rows.append(row_values)
 
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
@@ -647,6 +719,9 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
             book_index=8,
             odds_indices=(10, 11),
             bet_on_index=16,
+            line_indices=(TOURNAMENT_MU_HEADERS.index("p1_line"),
+                          TOURNAMENT_MU_HEADERS.index("p2_line")),
+            line_verified_index=TOURNAMENT_MU_HEADERS.index("line_verified"),
         ),
         result_index=TOURNAMENT_MU_HEADERS.index("result"),
     )
@@ -815,7 +890,7 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
             _sp = _get(r, "sim_prob", default=None)
             sim_prob = _sp if _sp not in (None, "") else None
 
-        rows.append([
+        row_values = [
             ts,                                                 # run_timestamp
             tourney,                                            # event_name
             year,                                               # year
@@ -836,7 +911,10 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
             "",                                                 # result (grading)
             "",                                                 # actual_finish (grading)
             "",                                                 # units_won (grading)
-        ])
+        ]
+        if tab != TAB_LIVE:
+            row_values.extend(["", "", "", "", ""])       # CLV fields
+        rows.append(row_values)
 
     if spreadsheet is None:
         spreadsheet = get_spreadsheet()
@@ -925,6 +1003,11 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             "",                                         # p1_round_score (grading)
             "",                                         # p2_round_score (grading)
             "",                                         # units_won (grading)
+            "", "", "", "", "",                     # CLV fields
+            _safe(_get(r, "P1 Line")),                  # p1_line
+            _safe(_get(r, "P2 Line")),                  # p2_line
+            _safe(_get(r, "line_verified")),            # line_verified
+            _safe(_get(r, "market_kind")),              # market_kind
         ])
 
     if spreadsheet is None:
@@ -942,6 +1025,9 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
             book_index=9,
             odds_indices=(11, 12),
             bet_on_index=17,
+            line_indices=(ROUND_MU_HEADERS.index("p1_line"),
+                          ROUND_MU_HEADERS.index("p2_line")),
+            line_verified_index=ROUND_MU_HEADERS.index("line_verified"),
         ),
         result_index=ROUND_MU_HEADERS.index("result"),
     )
@@ -1251,6 +1337,8 @@ def _empty_ledger_record():
         "sample_on": np.nan,
         "kelly_stake": np.nan,
         "half_shot": np.nan,
+        "spread_line": 0.0,
+        "line_verified": False,
         "wind_on": np.nan,
         "wind_diff": np.nan,
         "wx_diff": np.nan,
@@ -1315,10 +1403,18 @@ def _append_to_ledger(records):
     else:
         combined = pd.concat([existing, new_df], ignore_index=True)
 
-    # Normalize dedup columns for matching
+    # Align legacy ledgers before normalizing/deduplicating. Missing spread
+    # metadata means the historical straight-contract key, never a distinct NaN.
     for col in LEDGER_DEDUP_COLS:
-        if col in combined.columns:
+        if col not in combined.columns:
+            combined[col] = 0.0 if col == "spread_line" else ""
+        if col == "spread_line":
+            combined[col] = combined[col].map(_canonical_spread_line_key)
+        else:
             combined[col] = combined[col].astype(str).str.lower().str.strip()
+    if "line_verified" not in combined.columns:
+        combined["line_verified"] = False
+    combined["line_verified"] = combined["line_verified"].map(_safe_bool)
 
     # Keep the first *eligible* occurrence (existing valid rows win over new).
     # Audit-preserved excluded/invalid rows remain in the ledger, but must not
@@ -1327,6 +1423,9 @@ def _append_to_ledger(records):
         invalid_mask = combined["result"].map(is_excluded_or_invalid_result)
     else:
         invalid_mask = pd.Series(False, index=combined.index, dtype=bool)
+    # Preserve unknown-contract BetCRIS rows for audit, but never let them
+    # suppress a corrected verified straight/half-shot record at the same key.
+    invalid_mask |= _legacy_ambiguous_matchup_mask(combined)
     eligible_duplicate = pd.Series(False, index=combined.index, dtype=bool)
     eligible_duplicate.loc[~invalid_mask] = combined.loc[~invalid_mask].duplicated(
         subset=LEDGER_DEDUP_COLS, keep="first"
@@ -1366,10 +1465,12 @@ def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_look
                 book_odds = _get(r, "P1 Odds", default=np.nan)
                 fair_odds = _get(r, "Fair_p1", default=np.nan)
                 hs = _get(r, "half_shot_p1", default=np.nan)
+                spread_line = _get(r, "P1 Line", default=0.0)
             else:
                 book_odds = _get(r, "P2 Odds", default=np.nan)
                 fair_odds = _get(r, "Fair_p2", default=np.nan)
                 hs = _get(r, "half_shot_p2", default=np.nan)
+                spread_line = _get(r, "P2 Line", default=0.0)
 
             bookmaker = str(_get(r, "Bookmaker", default=""))
 
@@ -1393,6 +1494,8 @@ def _ledger_write_tournament_matchups(combined_df, tourney, event_id, dg_id_look
                 "pred_on": _safe_float(_get(r, "pred_on", default=np.nan)),
                 "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
                 "half_shot": _safe_float(hs),
+                "spread_line": _safe_float(spread_line) if pd.notna(spread_line) else 0.0,
+                "line_verified": _safe_bool(_get(r, "line_verified", default=False)),
                 "wind_on": _safe_float(_get(r, "wind_on", default=np.nan)),
                 "wind_diff": _safe_float(_get(r, "wind_diff", default=np.nan)),
                 "wx_diff": _safe_float(_get(r, "wx_diff", default=np.nan)),
@@ -1467,10 +1570,12 @@ def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_i
                 book_odds = _get(r, "P1 Odds", default=np.nan)
                 fair_odds = _get(r, "Fair_p1", default=np.nan)
                 hs = _get(r, "half_shot_p1", default=np.nan)
+                spread_line = _get(r, "P1 Line", default=0.0)
             else:
                 book_odds = _get(r, "P2 Odds", default=np.nan)
                 fair_odds = _get(r, "Fair_p2", default=np.nan)
                 hs = _get(r, "half_shot_p2", default=np.nan)
+                spread_line = _get(r, "P2 Line", default=0.0)
 
             bookmaker = str(_get(r, "Bookmaker", default=""))
 
@@ -1494,6 +1599,8 @@ def _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_i
                 "pred_on": _safe_float(_get(r, "pred_on", "p1_pred", default=np.nan)),
                 "sample_on": _safe_float(_get(r, "sample_on", default=np.nan)),
                 "half_shot": _safe_float(hs),
+                "spread_line": _safe_float(spread_line) if pd.notna(spread_line) else 0.0,
+                "line_verified": _safe_bool(_get(r, "line_verified", default=False)),
                 "wx_diff": _safe_float(_get(r, "wx_diff", default=np.nan)),
                 "book_category": _categorize_book(bookmaker),
             })
@@ -1597,15 +1704,20 @@ def update_ledger_grades(graded_bets):
         print("  [ledger] Ledger is empty — nothing to grade")
         return
 
-    # Normalize dedup cols in ledger
+    # Normalize dedup cols in ledger, migrating legacy rows to straight line 0.
     for col in LEDGER_DEDUP_COLS:
-        if col in ledger.columns:
+        if col not in ledger.columns:
+            ledger[col] = 0.0 if col == "spread_line" else ""
+        if col == "spread_line":
+            ledger[col] = ledger[col].map(_canonical_spread_line_key)
+        else:
             ledger[col] = ledger[col].astype(str).str.lower().str.strip()
     eligible_ledger_rows = (
         ~ledger["result"].map(is_excluded_or_invalid_result)
         if "result" in ledger.columns
         else pd.Series(True, index=ledger.index, dtype=bool)
     )
+    eligible_ledger_rows &= ~_legacy_ambiguous_matchup_mask(ledger)
 
     graded_ts = _now_est_iso()
     updated = 0
@@ -1626,6 +1738,7 @@ def update_ledger_grades(graded_bets):
         if str(rd).lower() == "tournament":
             rd = "0"
         rd = str(rd).lower().strip()
+        spread_line = _canonical_spread_line_key(bet.get("spread_line", 0.0))
 
         # Determine opponent
         if bt.startswith("finish_position"):
@@ -1646,6 +1759,7 @@ def update_ledger_grades(graded_bets):
             (ledger["opponent"] == opponent) &
             (ledger["bookmaker"] == bookmaker) &
             (ledger["round"].astype(str) == rd) &
+            (ledger["spread_line"] == spread_line) &
             eligible_ledger_rows
         )
 
@@ -1736,9 +1850,16 @@ def update_ledger_clv(clv_bets):
     if ledger.empty:
         return
 
+    if "spread_line" not in ledger.columns:
+        ledger["spread_line"] = 0.0
+
     # Normalized copies of the dedup cols for matching (don't mutate stored values)
     key = {
-        col: ledger[col].astype(str).str.lower().str.strip()
+        col: (
+            ledger[col].map(_canonical_spread_line_key)
+            if col == "spread_line"
+            else ledger[col].astype(str).str.lower().str.strip()
+        )
         for col in LEDGER_DEDUP_COLS if col in ledger.columns
     }
     eligible_ledger_rows = (
@@ -1746,6 +1867,7 @@ def update_ledger_clv(clv_bets):
         if "result" in ledger.columns
         else pd.Series(True, index=ledger.index, dtype=bool)
     )
+    eligible_ledger_rows &= ~_legacy_ambiguous_matchup_mask(ledger)
 
     for col in ("open_odds", "close_odds", "tot_clv", "clv"):
         if col not in ledger.columns:
@@ -1759,7 +1881,11 @@ def update_ledger_clv(clv_bets):
         for col in LEDGER_DEDUP_COLS:
             if col not in key:
                 continue
-            val = str(bet.get(col, "")).lower().strip()
+            val = (
+                _canonical_spread_line_key(bet.get(col, 0.0))
+                if col == "spread_line"
+                else str(bet.get(col, "")).lower().strip()
+            )
             mask &= key[col] == val
 
         matches = ledger.index[mask]

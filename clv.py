@@ -363,6 +363,65 @@ def _drop_uncovered_books(df, label):
     return df[covered].copy()
 
 
+def _drop_line_ineligible_matchups(df, *, selected_line_column=None):
+    """Exclude contracts the straight-only historical archive cannot match."""
+    if df is None or df.empty:
+        return df
+
+    book_values = (
+        df["bookmaker"]
+        if "bookmaker" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    book = book_values.astype(str).str.lower()
+    verified_values = (
+        df["line_verified"]
+        if "line_verified" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    def is_verified(value):
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        try:
+            if pd.isna(value):
+                return False
+        except (TypeError, ValueError):
+            return False
+        return str(value).strip().lower() in ("1", "true", "yes")
+
+    verified = verified_values.map(is_verified)
+    ambiguous_betcris = book.str.contains("betcris|bookmaker", regex=True, na=False) & ~verified
+
+    if selected_line_column:
+        line = pd.to_numeric(
+            df[selected_line_column]
+            if selected_line_column in df.columns
+            else pd.Series(0.0, index=df.index),
+            errors="coerce",
+        ).fillna(0.0)
+    else:
+        p1_line = pd.to_numeric(
+            df["p1_line"] if "p1_line" in df.columns else pd.Series(0.0, index=df.index),
+            errors="coerce",
+        ).fillna(0.0)
+        p2_line = pd.to_numeric(
+            df["p2_line"] if "p2_line" in df.columns else pd.Series(0.0, index=df.index),
+            errors="coerce",
+        ).fillna(0.0)
+        # The archive is contract-unaware, so any handicap on either participant
+        # makes the whole quote ineligible even if the selected-side field is bad.
+        line = pd.concat([p1_line.abs(), p2_line.abs()], axis=1).max(axis=1)
+
+    spread = line.abs().gt(1e-9)
+    dropped = ambiguous_betcris | spread
+    if dropped.any():
+        print(
+            f"  [clv] Skipping {int(dropped.sum())} matchup bet(s) with "
+            "unknown/spread settlement; historical matchup tape is straight-only"
+        )
+    return df.loc[~dropped].copy()
+
+
 def load_bets_from_ledger(event_id) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load matchup + pre-tournament finish bets for an event from the ledger."""
     path = os.path.join("permanent_data", "bet_ledger.parquet")
@@ -371,6 +430,10 @@ def load_bets_from_ledger(event_id) -> tuple[pd.DataFrame, pd.DataFrame]:
     ev = ledger[ledger["event_id"].astype(str) == str(event_id)].copy()
 
     mu = ev[ev["bet_type"].isin(["round_matchup", "tournament_matchup"])].copy()
+    if not mu.empty:
+        if "spread_line" not in mu.columns:
+            mu["spread_line"] = 0.0
+        mu = _drop_line_ineligible_matchups(mu, selected_line_column="spread_line")
     if not mu.empty:
         mu["round_key"] = np.where(
             mu["bet_type"] == "tournament_matchup", "tournament",
@@ -384,7 +447,7 @@ def load_bets_from_ledger(event_id) -> tuple[pd.DataFrame, pd.DataFrame]:
         mu["sheet_row"] = None
         mu = mu[["event_id", "year", "round_key", "bookmaker", "book_odds",
                  "dg_id_bet_on", "dg_id_opponent", "bet_on_name",
-                 "opponent_name", "source_tab", "sheet_row"]]
+                 "opponent_name", "source_tab", "sheet_row", "spread_line"]]
 
     # finish_position_live is excluded: in-play prices can't be compared to
     # the pre-tournament close DataGolf archives.
@@ -433,6 +496,9 @@ def load_bets_from_sheet(event_id=None) -> tuple[pd.DataFrame, pd.DataFrame]:
         time.sleep(2)
         if df.empty:
             continue
+        df = _drop_line_ineligible_matchups(df)
+        if df.empty:
+            continue
         out = pd.DataFrame(index=df.index)
         p1 = df["player_1"].astype(str).str.lower().str.strip()
         p2 = df["player_2"].astype(str).str.lower().str.strip()
@@ -451,6 +517,7 @@ def load_bets_from_sheet(event_id=None) -> tuple[pd.DataFrame, pd.DataFrame]:
         out["opponent_name"] = np.where(on_is_p1, p2, p1)
         out["source_tab"] = tab
         out["sheet_row"] = df["sheet_row"].values
+        out["spread_line"] = 0.0
         mu_frames.append(out)
 
     # Finish position tab. "Live" (in-play finish bets) is deliberately NOT
@@ -646,6 +713,7 @@ def build_ledger_records(df) -> list[dict]:
                 "bet_on": r["bet_on_name"],
                 "opponent": r["opponent_name"],
                 "bookmaker": r["bookmaker"],
+                "spread_line": r.get("spread_line", 0.0),
             }
         else:
             rec = {

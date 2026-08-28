@@ -18,6 +18,11 @@ dash.register_page(__name__, path="/matchups", title="Matchups", order=2)
 layout = dbc.Container([
     html.H4("Matchup Edges", className="page-header"),
 
+    dbc.Tabs([
+        dbc.Tab(label="Primary Matchups", tab_id="straight"),
+        dbc.Tab(label="Half Shot Included", tab_id="half_shot"),
+    ], id="mu-line-mode", active_tab="straight", className="mb-3"),
+
     # Filters (round dropdown populated by callback on page load)
     dbc.Row([
         round_selector("mu", available_rounds=[2, 3, 4], default=None),
@@ -59,13 +64,14 @@ def populate_rounds(_):
     Input("mu-edge-slider", "value"),
     Input("mu-pred-slider", "value"),
     Input("mu-sample-slider", "value"),
+    Input("mu-line-mode", "active_tab"),
 )
-def update_matchups(round_num, books, min_edge, min_pred, min_sample):
+def update_matchups(round_num, books, min_edge, min_pred, min_sample, line_mode):
     if not round_num:
         return dbc.Alert("Select a round.", color="info"), ""
 
     rounds = round_num if isinstance(round_num, list) else [round_num]
-    frames = [get_matchups(r) for r in rounds]
+    frames = [get_matchups(r, line_mode=line_mode or "straight") for r in rounds]
     frames = [f for f in frames if not f.empty]
     if not frames:
         return dbc.Alert(f"No matchup data for selected rounds.", color="warning"), ""
@@ -103,6 +109,7 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
     # Display columns
     display_cols = [
         "bet_on", "bet_against", "Bookmaker", "Ties",
+        "spread_line",
         "fair", "bet_on_odds", "bet_against_odds",
         "edge_on", "pred_on", "sample_on",
     ]
@@ -130,6 +137,11 @@ def update_matchups(round_num, books, min_edge, min_pred, min_sample):
             d["headerName"] = "Bet Against"
         elif col == "Bookmaker":
             d["headerName"] = "Book"
+        elif col == "spread_line":
+            d["headerName"] = "Line"
+            d["valueFormatter"] = {
+                "function": "params.value > 0 ? '+' + params.value.toFixed(1) : params.value.toFixed(1)"
+            }
         elif col == "fair":
             d["headerName"] = "Fair"
             d["valueFormatter"] = {"function": "params.value > 0 ? '+' + params.value : params.value"}

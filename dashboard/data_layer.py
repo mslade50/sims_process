@@ -85,6 +85,17 @@ def _drop_excluded_results(df):
     return df[~result.str.startswith(EXCLUDED_RESULT_PREFIX)]
 
 
+def _is_truthy(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
 # ── Tournament Config ────────────────────────────────────────────────────────
 
 def get_tournament_config():
@@ -130,6 +141,8 @@ _TOURNAMENT_MU_HEADERS = [
     "half_shot_p1", "half_shot_p2",
     "wind_on", "wind_diff", "wx_diff",
     "result", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
+    "p1_line", "p2_line", "line_verified", "market_kind",
 ]
 
 _ROUND_MU_HEADERS = [
@@ -140,7 +153,10 @@ _ROUND_MU_HEADERS = [
     "edge_p1", "edge_p2",
     "bet_on", "type_on", "edge_on", "pred_on", "pred_against", "sample_on",
     "half_shot_p1", "half_shot_p2",
+    "wx_diff",
     "result", "p1_round_score", "p2_round_score", "units_won",
+    "open_odds", "close_odds", "tot_clv", "clv", "clv_book",
+    "p1_line", "p2_line", "line_verified", "market_kind",
 ]
 
 _FINISH_POS_HEADERS = [
@@ -184,6 +200,8 @@ def _normalize_tab(tab_df, bet_type):
     n["event_id"] = tab_df.get("event_id", "")
     n["bet_type"] = bet_type
     n["round"] = tab_df.get("round", "0")
+    n["spread_line"] = 0.0
+    n["line_verified"] = True
 
     # --- Score bets have a different column layout ---
     if bet_type == "score_bet":
@@ -234,6 +252,10 @@ def _normalize_tab(tab_df, bet_type):
         )
         n["book_odds"] = np.where(is_p1, tab_df["p1_odds"], tab_df.get("p2_odds", ""))
         n["fair_odds"] = np.where(is_p1, tab_df.get("fair_p1", ""), tab_df.get("fair_p2", ""))
+        n["spread_line"] = np.where(
+            is_p1, tab_df.get("p1_line", 0.0), tab_df.get("p2_line", 0.0)
+        )
+        n["line_verified"] = tab_df.get("line_verified", False)
     else:
         n["book_odds"] = tab_df.get("american_odds", "")
         n["fair_odds"] = tab_df.get("my_fair", "")
@@ -323,7 +345,19 @@ def _load_all_bets_from_sheets():
     # Sort by timestamp first to match grade_bets.py's "first write wins" semantics.
     if "run_timestamp" in df.columns:
         df = df.sort_values("run_timestamp", na_position="last")
-    dedup_cols = ["event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker"]
+    # Legacy BetCRIS matchup audit rows have unknown settlement and are hidden
+    # from actionable/performance views without modifying the source Sheet.
+    is_matchup = df["bet_type"].isin(["round_matchup", "tournament_matchup"])
+    is_betcris = df["bookmaker"].astype(str).str.lower().str.contains(
+        "betcris|bookmaker", regex=True, na=False
+    )
+    verified = df["line_verified"].map(_is_truthy)
+    df = df.loc[~(is_matchup & is_betcris & ~verified)].copy()
+
+    dedup_cols = [
+        "event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker",
+        "spread_line",
+    ]
     existing = [c for c in dedup_cols if c in df.columns]
     if existing:
         for col in existing:
@@ -463,11 +497,45 @@ def _load_matchups_from_sheets(tab_name, headers):
 
     # Drop excluded bookmakers (e.g. defunct PointsBet) from matchup views
     df = _drop_excluded_books(df)
+    df = _drop_excluded_results(df)
+
+    def line_present(values):
+        return values.map(
+            lambda value: not (
+                value is None
+                or (isinstance(value, str) and value.strip().lower() in ("", "nan", "none"))
+                or (not isinstance(value, str) and pd.isna(value))
+            )
+        )
+
+    raw_p1_line = (
+        df["p1_line"] if "p1_line" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    raw_p2_line = (
+        df["p2_line"] if "p2_line" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    p1_present = line_present(raw_p1_line)
+    p2_present = line_present(raw_p2_line)
+    parsed_p1 = pd.to_numeric(raw_p1_line, errors="coerce")
+    parsed_p2 = pd.to_numeric(raw_p2_line, errors="coerce")
+    existing_parse_error = (
+        df["line_parse_error"].map(_is_truthy)
+        if "line_parse_error" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    df["line_parse_error"] = (
+        existing_parse_error
+        | (p1_present & parsed_p1.isna())
+        | (p2_present & parsed_p2.isna())
+        | (p1_present ^ p2_present)
+    )
 
     # Convert numeric columns
     for col in ["edge_on", "edge_p1", "edge_p2", "pred_on", "pred_against",
                 "sample_on", "p1_odds", "p2_odds", "fair_p1", "fair_p2",
-                "half_shot_p1", "half_shot_p2"]:
+                "half_shot_p1", "half_shot_p2", "p1_line", "p2_line"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -476,7 +544,7 @@ def _load_matchups_from_sheets(tab_name, headers):
     return df
 
 
-def get_matchups(round_num, tourney=None):
+def get_matchups(round_num, tourney=None, line_mode="straight"):
     """Get matchup data from Google Sheets, filtered to latest timestamp rows.
 
     For numeric rounds (1-4): reads "Round Matchups" tab.
@@ -500,6 +568,80 @@ def get_matchups(round_num, tourney=None):
             return df
         # Filter to requested round
         df = df[df["round"].astype(str).str.strip() == str(round_num)]
+
+    if df.empty:
+        return df
+
+    def raw_line_series(column):
+        return (
+            df[column] if column in df.columns
+            else pd.Series(np.nan, index=df.index)
+        )
+
+    raw_p1_line = raw_line_series("p1_line")
+    raw_p2_line = raw_line_series("p2_line")
+    p1_line = pd.to_numeric(raw_p1_line, errors="coerce")
+    p2_line = pd.to_numeric(raw_p2_line, errors="coerce")
+    p1_present = raw_p1_line.map(
+        lambda value: not (
+            value is None
+            or (isinstance(value, str) and value.strip().lower() in ("", "nan", "none"))
+            or (not isinstance(value, str) and pd.isna(value))
+        )
+    )
+    p2_present = raw_p2_line.map(
+        lambda value: not (
+            value is None
+            or (isinstance(value, str) and value.strip().lower() in ("", "nan", "none"))
+            or (not isinstance(value, str) and pd.isna(value))
+        )
+    )
+    parse_error = (
+        (df["line_parse_error"].map(_is_truthy)
+         if "line_parse_error" in df.columns
+         else pd.Series(False, index=df.index))
+        | (p1_present & p1_line.isna())
+        | (p2_present & p2_line.isna())
+        | (p1_present ^ p2_present)
+    )
+    # Keep downstream display construction fail-soft for legacy/malformed tabs
+    # whose header predates the appended line metadata columns.
+    df["p1_line"] = p1_line
+    df["p2_line"] = p2_line
+    verified = df.get("line_verified", False)
+    if not isinstance(verified, pd.Series):
+        verified = pd.Series(bool(verified), index=df.index)
+    verified = verified.map(_is_truthy)
+    book_values = (
+        df["bookmaker"]
+        if "bookmaker" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    book = book_values.astype(str).str.lower()
+    ambiguous_betcris = book.str.contains("betcris|bookmaker", regex=True, na=False) & ~verified
+    straight = (
+        ~parse_error
+        & (
+            (~p1_present & ~p2_present)
+            | (
+                p1_present & p2_present
+                & p1_line.abs().le(1e-9) & p2_line.abs().le(1e-9)
+            )
+        )
+    )
+    supported_half = (
+        ~parse_error
+        & verified
+        & p1_line.abs().sub(0.5).abs().le(1e-9)
+        & p2_line.abs().sub(0.5).abs().le(1e-9)
+        & (p1_line + p2_line).abs().le(1e-9)
+    )
+    if str(line_mode).lower() in ("half", "half_shot", "half-shot"):
+        df = df.loc[~ambiguous_betcris & supported_half].copy()
+    else:
+        # Any nonzero contract stays off primary, including future unsupported
+        # spreads. Only the explicit half-shot subtab may show supported +/-0.5.
+        df = df.loc[~ambiguous_betcris & straight].copy()
 
     if df.empty:
         return df
@@ -529,11 +671,19 @@ def get_matchups(round_num, tourney=None):
 
         if "fair_p1" in df.columns and "fair_p2" in df.columns:
             df["fair"] = np.where(is_p2, df["fair_p2"], df["fair_p1"])
+        df["spread_line"] = pd.to_numeric(
+            pd.Series(
+                np.where(is_p2, df["p2_line"], df["p1_line"]),
+                index=df.index,
+            ),
+            errors="coerce",
+        ).fillna(0.0)
 
     # Drop raw columns no longer needed for display
     drop_cols = [
         "player_1", "player_2", "p1_odds", "p2_odds",
         "fair_p1", "fair_p2", "half_shot_p1", "half_shot_p2",
+        "p1_line", "p2_line", "line_verified", "market_kind",
     ]
     df = df.drop(columns=[c for c in drop_cols if c in df.columns])
 

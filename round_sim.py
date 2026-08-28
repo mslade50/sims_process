@@ -2838,21 +2838,21 @@ def calculate_edges(df):
         100 / df["P2 Odds"].abs() + 1,
     )
 
-    # Which probability to use for edge: ties-loss when "separate bet offered"
-    use_tl = df["Ties"] == "separate bet offered"
-
-    prob_p1 = np.where(use_tl, df["my_odds_p1_tl"], df["my_odds_p1"])
-    prob_p2 = np.where(use_tl, df["my_odds_p2_tl"], df["my_odds_p2"])
+    from reprice_core import matchup_settlement_probabilities
+    prob_p1, prob_p2, market_kind = matchup_settlement_probabilities(df)
+    df["market_kind"] = market_kind
 
     # Edge = (prob × (decimal − 1) − (1 − prob)) × 100
     df["edge_p1"] = (prob_p1 * (df["p1_dec"] - 1) - (1 - prob_p1)) * 100
     df["edge_p2"] = (prob_p2 * (df["p2_dec"] - 1) - (1 - prob_p2)) * 100
 
     # Fair American odds (ties push)
-    df["Fair_p1"] = df["my_odds_p1"].apply(
+    fair_p1_prob = df["my_odds_p1"].where(market_kind != "half_shot", prob_p1)
+    fair_p2_prob = df["my_odds_p2"].where(market_kind != "half_shot", prob_p2)
+    df["Fair_p1"] = fair_p1_prob.apply(
         lambda p: implied_to_american(p) if pd.notna(p) else None
     )
-    df["Fair_p2"] = df["my_odds_p2"].apply(
+    df["Fair_p2"] = fair_p2_prob.apply(
         lambda p: implied_to_american(p) if pd.notna(p) else None
     )
 
@@ -2902,6 +2902,15 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
 
     Returns (combined_df, sharp_df).
     """
+    from reprice_core import actionable_matchup_mask
+    quarantined = ~actionable_matchup_mask(df)
+    if quarantined.any():
+        print(
+            f"  Quarantined {int(quarantined.sum())} ambiguous/unsupported "
+            "matchup line(s) before alerts/storage"
+        )
+        df = df.loc[~quarantined].copy()
+
     # Merge predictions and sample sizes
     df["p1_pred"] = df["Player 1"].map(pred_lookup)
     df["p2_pred"] = df["Player 2"].map(pred_lookup)
@@ -2970,6 +2979,7 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
         "p1_pred", "p2_pred", "pred_on", "pred_against",
         "Sample_P1", "Sample_P2", "sample_on",
         "half_shot_p1", "half_shot_p2",
+        "P1 Line", "P2 Line", "line_verified", "market_kind",
     ]
     # Add weather decomposition columns if available
     for col in ["wx_diff"]:
@@ -3146,6 +3156,8 @@ def build_betonline_all_matchups_csv(matchup_df, sim_round, out_dir):
     BetOnline prices — even negative edges and low-sample players.
     Sorted by edge_on descending (highest edge first).
     """
+    from reprice_core import prepare_matchup_attachment_rows
+    matchup_df = prepare_matchup_attachment_rows(matchup_df)
     bol = matchup_df[matchup_df["Bookmaker"].str.lower() == "betonline"].copy()
     if bol.empty:
         print("  No BetOnline matchups found")
@@ -3159,6 +3171,7 @@ def build_betonline_all_matchups_csv(matchup_df, sim_round, out_dir):
 
     display_cols = [
         "Player 1", "Player 2", "Ties",
+        "P1 Line", "P2 Line", "Spread", "line_verified", "market_kind",
         "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
         "edge_p1", "edge_p2", "edge_on", "bet_on",
         "p1_pred", "p2_pred", "pred_on",
@@ -3183,6 +3196,8 @@ def build_all_books_fair_csv(matchup_df, sim_round, out_dir):
 
     Sorted by Bookmaker then edge_on descending.
     """
+    from reprice_core import prepare_matchup_attachment_rows
+    matchup_df = prepare_matchup_attachment_rows(matchup_df)
     target_books = {"betonline", "pinnacle", "betcris"}
     mask = matchup_df["Bookmaker"].str.lower().isin(target_books)
     df = matchup_df[mask].copy()
@@ -3197,6 +3212,7 @@ def build_all_books_fair_csv(matchup_df, sim_round, out_dir):
 
     display_cols = [
         "Bookmaker", "Player 1", "Player 2", "Ties",
+        "P1 Line", "P2 Line", "Spread", "line_verified", "market_kind",
         "P1 Odds", "P2 Odds", "Fair_p1", "Fair_p2",
         "edge_p1", "edge_p2", "edge_on", "bet_on",
         "p1_pred", "p2_pred", "pred_on",
@@ -3713,6 +3729,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         - bet_on player's sample > EMAIL_MIN_SAMPLE
     """
     from kalshi_ancillary import kelly_contracts  # 0.4-Kelly $50k contract sizing
+    from reprice_core import selected_spread_line
 
     # --- Sharp-book matchup line-count banner (top of email) ---
     # Confirms how many matchup lines were priced from each sharp book so a book
@@ -3776,6 +3793,10 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 fair_odds = (
                     row["Fair_p1"] if row["bet_on"] == row["Player 1"] else row["Fair_p2"]
                 )
+                try:
+                    spread_line = float(selected_spread_line(row))
+                except (TypeError, ValueError, OverflowError):
+                    spread_line = np.nan
                 edge = row["edge_on"]
                 pred = row["pred_on"]
                 sample = int(row["sample_on"])
@@ -3797,6 +3818,11 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                 # Format odds
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
                 fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
+                spread_str = (
+                    f"{spread_line:+.1f}"
+                    if pd.notna(spread_line) and abs(spread_line) > 1e-9
+                    else "—"
+                )
 
                 rows_html += f"""
                 <tr>
@@ -3806,6 +3832,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype_a}</td>
                     <td style="padding:6px 10px; text-align:center;">{book}</td>
                     <td style="padding:6px 10px; text-align:center;">{ties}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:600;">{spread_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -3826,7 +3853,8 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     <th style="padding:6px 10px; text-align:center;">Type_a</th>
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Ties</th>
-                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Spread</th>
+                    <th style="padding:6px 10px; text-align:center;">Odds</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Wx</th>
@@ -5430,7 +5458,11 @@ def main():
         )
         matchup_df = calculate_edges(matchup_df)
         if "Bookmaker" in matchup_df.columns and not matchup_df.empty:
-            _vc = matchup_df["Bookmaker"].astype(str).str.lower().value_counts()
+            from reprice_core import actionable_matchup_mask
+            _actionable_matchups = matchup_df.loc[
+                actionable_matchup_mask(matchup_df)
+            ]
+            _vc = _actionable_matchups["Bookmaker"].astype(str).str.lower().value_counts()
             matchup_book_counts = {b: int(_vc.get(b, 0)) for b in SHARP_BOOKS}
         print("  Matchup lines priced per sharp book: "
               + ", ".join(f"{b}={matchup_book_counts[b]}" for b in SHARP_BOOKS))

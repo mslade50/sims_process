@@ -90,6 +90,7 @@ def test_event_clv_sheet_loader_excludes_matchup_and_finish_rows(monkeypatch):
     tournament_headers = [
         "event_id", "year", "player_1", "player_2", "bookmaker", "p1_odds",
         "p2_odds", "dg_id_p1", "dg_id_p2", "bet_on",
+        "p1_line", "p2_line", "line_verified",
     ]
     spreadsheet = _Spreadsheet(
         {
@@ -99,9 +100,9 @@ def test_event_clv_sheet_loader_excludes_matchup_and_finish_rows(monkeypatch):
                 "EXCLUDED_INVALID_MODEL",
             ]]),
             # No result column: verifies compatibility with a legacy tab.
-            "Tournament Matchups": _Worksheet(values=[tournament_headers, [
-                "28", "2026", "valid, player", "other, player", "betcris",
-                "110", "-130", "1", "2", "valid, player",
+                "Tournament Matchups": _Worksheet(values=[tournament_headers, [
+                    "28", "2026", "valid, player", "other, player", "betcris",
+                    "110", "-130", "1", "2", "valid, player", "0", "0", "TRUE",
             ]]),
             "Finish Positions": _Worksheet(values=[
                 finish_headers,
@@ -135,6 +136,7 @@ def _ledger_rows(include_result=True):
             "round": 4, "bet_on": "valid, player", "opponent": "other, player",
             "bookmaker": "betcris", "book_odds": 110,
             "dg_id_bet_on": 1, "dg_id_opponent": 2, "result": "",
+            "spread_line": 0.0, "line_verified": True,
         },
         {
             "event_id": "28", "year": 2026, "bet_type": "finish_position",

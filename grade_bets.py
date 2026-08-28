@@ -395,11 +395,17 @@ def deduplicate_bets(df, bet_type):
 
     # Define key columns based on bet type
     if bet_type == "round_matchup":
-        key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker", "round"]
+        key_cols = [
+            "event_id", "player_1", "player_2", "bet_on", "bookmaker", "round",
+            "p1_line", "p2_line", "line_verified",
+        ]
     elif bet_type == "round_3ball":
         key_cols = ["event_id", "player_1", "player_2", "player_3", "bet_on", "bookmaker", "round"]
     elif bet_type == "tournament_matchup":
-        key_cols = ["event_id", "player_1", "player_2", "bet_on", "bookmaker"]
+        key_cols = [
+            "event_id", "player_1", "player_2", "bet_on", "bookmaker",
+            "p1_line", "p2_line", "line_verified",
+        ]
     elif bet_type.startswith("finish_position"):
         key_cols = ["event_id", "player_name", "market_type", "sportsbook"]
     elif bet_type == "score_bet":
@@ -496,6 +502,78 @@ def _ties_lose(row):
     return "separate" in v
 
 
+def _truthy(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+def _opposite_spread(value):
+    """Return the reciprocal line without letting malformed audit data crash grading."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return np.nan
+    return -number if np.isfinite(number) else np.nan
+
+
+def _selected_matchup_spread(row):
+    """Return (selected_line, error) for a supported matchup contract.
+
+    Legacy BetCRIS/Bookmaker rows are unknowable because the old scraper threw
+    away the source Line column. They stay untouched for audit and are not
+    graded. New rows must explicitly prove either straight or reciprocal +/-0.5.
+    """
+    book = str(row.get("bookmaker", row.get("Bookmaker", ""))).lower().strip()
+    verified = _truthy(row.get("line_verified", False))
+    is_betcris = "betcris" in book or "bookmaker" in book
+    if is_betcris and not verified:
+        return None, "unknown BetCRIS handicap provenance"
+
+    def parse(value):
+        if value is None or str(value).strip().lower() in ("", "nan", "none"):
+            return 0.0
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if np.isfinite(number) else None
+
+    p1_line = parse(row.get("p1_line", row.get("P1 Line", 0.0)))
+    p2_line = parse(row.get("p2_line", row.get("P2 Line", 0.0)))
+    if p1_line is None or p2_line is None:
+        return None, "unparseable matchup handicap"
+    straight = abs(p1_line) <= 1e-9 and abs(p2_line) <= 1e-9
+    half = (
+        abs(abs(p1_line) - 0.5) <= 1e-9
+        and abs(abs(p2_line) - 0.5) <= 1e-9
+        and abs(p1_line + p2_line) <= 1e-9
+    )
+    if not (straight or (verified and half)):
+        return None, "unsupported or unverified matchup handicap"
+
+    p1 = str(row.get("player_1", row.get("Player 1", ""))).lower().strip()
+    bet_on = str(row.get("bet_on", "")).lower().strip()
+    return (p1_line if bet_on == p1 else p2_line), None
+
+
+def _settle_two_way_matchup(winner, bet_on, spread_line, ties_lose, units_wagered, units_to_win):
+    if winner == "tie":
+        if spread_line > 0:
+            return "win", units_to_win
+        if spread_line < 0 or ties_lose:
+            return "loss", -units_wagered
+        return "push", 0.0
+    if winner == bet_on:
+        return "win", units_to_win
+    return "loss", -units_wagered
+
+
 def grade_round_matchup(row, results_df):
     """
     Grade a round matchup bet.
@@ -506,6 +584,13 @@ def grade_round_matchup(row, results_df):
     p2 = str(row.get("player_2", "")).lower().strip()
     bet_on = str(row.get("bet_on", "")).lower().strip()
     round_num = str(row.get("round", "1")).strip()
+    spread_line, spread_error = _selected_matchup_spread(row)
+    if spread_error:
+        return {
+            "result": "no_data", "p1_score": "", "p2_score": "",
+            "units_wagered": 0, "units_won": 0,
+            "notes": spread_error, "skip_write": True,
+        }
 
     # Handle round number
     try:
@@ -619,19 +704,9 @@ def grade_round_matchup(row, results_df):
             units_wagered = 1.0
             units_to_win = 1.0
 
-    if winner == "tie":
-        if _ties_lose(row):
-            result = "loss"       # ties-lose book: 3-way market, stake is lost
-            units_won = -units_wagered
-        else:
-            result = "push"
-            units_won = 0.0
-    elif winner == bet_on:
-        result = "win"
-        units_won = units_to_win
-    else:
-        result = "loss"
-        units_won = -units_wagered
+    result, units_won = _settle_two_way_matchup(
+        winner, bet_on, spread_line, _ties_lose(row), units_wagered, units_to_win
+    )
 
     # Margin: positive = our player won by N strokes (lower score is better)
     opponent = p2 if bet_on == p1 else p1
@@ -654,6 +729,7 @@ def grade_round_matchup(row, results_df):
         "p2_score": int(p2_score),
         "units_wagered": round(units_wagered, 3),
         "units_won": round(units_won, 3),
+        "spread_line": spread_line,
         "margin": margin,
         **sg_fields,
         "notes": ""
@@ -752,6 +828,13 @@ def grade_tournament_matchup(row, results_df):
     p1 = str(row.get("player_1", "")).lower().strip()
     p2 = str(row.get("player_2", "")).lower().strip()
     bet_on = str(row.get("bet_on", "")).lower().strip()
+    spread_line, spread_error = _selected_matchup_spread(row)
+    if spread_error:
+        return {
+            "result": "no_data", "p1_finish": "", "p2_finish": "",
+            "units_wagered": 0, "units_won": 0,
+            "notes": spread_error, "skip_write": True,
+        }
 
     p1_data = results_df[results_df["player_name"] == p1]
     p2_data = results_df[results_df["player_name"] == p2]
@@ -848,19 +931,9 @@ def grade_tournament_matchup(row, results_df):
             units_wagered = 1.0
             units_to_win = 1.0
 
-    if winner == "tie":
-        if _ties_lose(row):
-            result = "loss"       # ties-lose book: 3-way market, stake is lost
-            units_won = -units_wagered
-        else:
-            result = "push"
-            units_won = 0.0
-    elif winner == bet_on:
-        result = "win"
-        units_won = units_to_win
-    else:
-        result = "loss"
-        units_won = -units_wagered
+    result, units_won = _settle_two_way_matchup(
+        winner, bet_on, spread_line, _ties_lose(row), units_wagered, units_to_win
+    )
 
     # Margin: compare strokes over the SAME rounds both players completed
     # If one MC'd and other didn't, margin is incomparable (set None)
@@ -919,6 +992,7 @@ def grade_tournament_matchup(row, results_df):
         "p2_finish": p2_fin_text,
         "units_wagered": round(units_wagered, 3),
         "units_won": round(units_won, 3),
+        "spread_line": spread_line,
         "margin": margin,
         **sg_fields,
         "notes": ""
@@ -1089,6 +1163,10 @@ def grade_sharp_bet(row, results_df):
             "bet_on": p1,
             "round": round_num,
             "p1_odds": row.get("book_odds"),
+            "p1_line": row.get("spread_line", 0.0),
+            "p2_line": _opposite_spread(row.get("spread_line", 0.0)),
+            "line_verified": row.get("line_verified", False),
+            "bookmaker": row.get("bookmaker", ""),
         }
         return grade_round_matchup(mock_row, results_df)
 
@@ -1101,6 +1179,10 @@ def grade_sharp_bet(row, results_df):
             "player_2": p2,
             "bet_on": p1,
             "p1_odds": row.get("book_odds"),
+            "p1_line": row.get("spread_line", 0.0),
+            "p2_line": _opposite_spread(row.get("spread_line", 0.0)),
+            "line_verified": row.get("line_verified", False),
+            "bookmaker": row.get("bookmaker", ""),
         }
         return grade_tournament_matchup(mock_row, results_df)
 
@@ -2151,6 +2233,12 @@ def main():
                 sheet_row = row_dict["_sheet_row"]
 
                 grade_result = grade_fn(row_dict, results_df)
+                if grade_result.get("skip_write"):
+                    print(
+                        f"    Leaving row {sheet_row} ungraded: "
+                        f"{grade_result.get('notes', 'unknown matchup contract')}"
+                    )
+                    continue
 
                 # Get bookmaker for categorization
                 bookmaker = row_dict.get("bookmaker", row_dict.get("sportsbook", ""))
@@ -2192,6 +2280,7 @@ def main():
                     grade["player_1"] = row_dict.get("player_1", "")
                     grade["player_2"] = row_dict.get("player_2", "")
                     grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
+                    grade["spread_line"] = grade_result.get("spread_line", 0.0)
 
                 elif bet_type == "round_3ball":
                     grade["round"] = row_dict.get("round", "")
@@ -2220,6 +2309,7 @@ def main():
                     grade["player_1"] = row_dict.get("player_1", "")
                     grade["player_2"] = row_dict.get("player_2", "")
                     grade["book_odds"] = row_dict.get("p1_odds", "") if str(row_dict.get("bet_on", "")).lower() == str(row_dict.get("player_1", "")).lower() else row_dict.get("p2_odds", "")
+                    grade["spread_line"] = grade_result.get("spread_line", 0.0)
 
                 elif bet_type.startswith("finish_position"):
                     grade["market_type"] = row_dict.get("market_type", "")

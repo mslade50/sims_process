@@ -154,13 +154,19 @@ def test_invalidated_sharp_row_suppresses_neither_storage_nor_alert(monkeypatch)
     assert seen_alerts == set()
 
 
-def _round_row(p1, p2, o1, o2, bet_on=None, result=""):
+def _round_row(
+    p1, p2, o1, o2, bet_on=None, result="", *,
+    book="pinnacle", p1_line="", p2_line="", line_verified="",
+):
     row = ["" for _ in range(len(sheets_storage.ROUND_MU_HEADERS))]
     row[3:7] = ["28", "4", p1, p2]
-    row[9] = "pinnacle"
+    row[9] = book
     row[11:13] = [o1, o2]
     row[sheets_storage.ROUND_MU_HEADERS.index("bet_on")] = bet_on or p1
     row[sheets_storage.ROUND_MU_HEADERS.index("result")] = result
+    row[sheets_storage.ROUND_MU_HEADERS.index("p1_line")] = p1_line
+    row[sheets_storage.ROUND_MU_HEADERS.index("p2_line")] = p2_line
+    row[sheets_storage.ROUND_MU_HEADERS.index("line_verified")] = line_verified
     return row
 
 
@@ -173,6 +179,11 @@ def _round_key(row):
         book_index=9,
         odds_indices=(11, 12),
         bet_on_index=17,
+        line_indices=(
+            sheets_storage.ROUND_MU_HEADERS.index("p1_line"),
+            sheets_storage.ROUND_MU_HEADERS.index("p2_line"),
+        ),
+        line_verified_index=sheets_storage.ROUND_MU_HEADERS.index("line_verified"),
     )
 
 
@@ -231,6 +242,55 @@ def test_sheet_matchup_dedup_records_an_edge_flip_at_unchanged_prices():
 
     assert (written, skipped) == (1, 0)
     assert ws.appended == [incoming]
+
+
+def test_sheet_matchup_dedup_keeps_straight_and_half_contracts_distinct():
+    existing = _round_row(
+        "alpha player", "beta player", 100, -120,
+        p1_line="", p2_line="", line_verified=True,
+    )
+    incoming = _round_row(
+        "alpha player", "beta player", 100, -120,
+        p1_line=-0.5, p2_line=0.5, line_verified=True,
+    )
+    ws = _Worksheet(values=[sheets_storage.ROUND_MU_HEADERS, existing])
+
+    written, skipped = _append_rows_deduped(
+        ws, [incoming], sheets_storage._DEDUP_KEYS["round_mu"],
+        key_fn=_round_key,
+        result_index=sheets_storage.ROUND_MU_HEADERS.index("result"),
+    )
+
+    assert (written, skipped) == (1, 0)
+    assert ws.appended == [incoming]
+
+
+def test_legacy_betcris_sheet_row_suppresses_neither_corrected_storage_nor_alert(
+    monkeypatch,
+):
+    existing = [{
+        "event_id": "28", "round": "4", "player_1": "alpha player",
+        "player_2": "beta player", "bookmaker": "betcris",
+        "p1_odds": 100, "p2_odds": -120, "bet_on": "alpha player",
+        "line_verified": "",
+    }]
+    ws = _Worksheet(records=existing)
+    monkeypatch.setattr(
+        "sheets_storage._get_or_create_tab", lambda *args, **kwargs: ws
+    )
+    corrected = pd.DataFrame([{
+        "Player 1": "alpha player", "Player 2": "beta player",
+        "Bookmaker": "betcris", "P1 Odds": 100, "P2 Odds": -120,
+        "P1 Line": None, "P2 Line": None, "line_verified": True,
+        "bet_on": "alpha player",
+    }])
+
+    fresh, seen = reprice_core.dedup_round_matchups(
+        corrected, object(), "28", 4
+    )
+
+    assert len(fresh) == 1
+    assert seen == set()
 
 
 def test_sheet_matchup_dedup_ignores_invalidated_existing_row():
@@ -296,6 +356,43 @@ def test_ledger_keeps_invalid_audit_row_but_allows_corrected_bet(tmp_path, monke
     assert stored.loc["bad", "result"] == "excluded_invalid_model"
     assert stored.loc["corrected", "result"] == "win"
     assert pd.isna(stored.loc["bad", "close_odds"])
+    assert stored.loc["corrected", "close_odds"] == -110
+
+
+def test_legacy_betcris_ledger_row_cannot_tombstone_corrected_straight(
+    tmp_path, monkeypatch
+):
+    ledger_path = tmp_path / "bet_ledger.parquet"
+    base = {
+        "event_id": "28", "bet_type": "round_matchup", "round": 2,
+        "bet_on": "alpha player", "opponent": "beta player",
+        "bookmaker": "betcris", "spread_line": 0.0, "result": "",
+    }
+    pd.DataFrame([{
+        **base, "bet_id": "legacy-ambiguous", "line_verified": False,
+    }]).to_parquet(ledger_path, index=False)
+    monkeypatch.setattr(sheets_storage, "LEDGER_PATH", str(ledger_path))
+
+    sheets_storage._append_to_ledger([
+        {**base, "bet_id": "corrected", "line_verified": True},
+        {**base, "bet_id": "corrected-duplicate", "line_verified": True},
+    ])
+
+    stored = pd.read_parquet(ledger_path)
+    assert stored["bet_id"].tolist() == ["legacy-ambiguous", "corrected"]
+
+    sheets_storage.update_ledger_grades([{
+        **base, "result": "win", "units_wagered": 1, "units_won": 1,
+    }])
+    sheets_storage.update_ledger_clv([{
+        **base, "open_odds": 100, "close_odds": -110,
+        "tot_clv": 2.4, "clv": 2.4, "clv_book": "pinnacle",
+    }])
+
+    stored = pd.read_parquet(ledger_path).set_index("bet_id")
+    assert stored.loc["legacy-ambiguous", "result"] == ""
+    assert stored.loc["corrected", "result"] == "win"
+    assert pd.isna(stored.loc["legacy-ambiguous", "close_odds"])
     assert stored.loc["corrected", "close_odds"] == -110
 
 

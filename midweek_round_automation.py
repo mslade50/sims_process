@@ -37,6 +37,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from round_matchup_coverage import (
+    is_actionable_matchup_price,
     DEFAULT_REQUIRED_BOOKS,
     resolve_required_matchup_books,
 )
@@ -158,7 +159,8 @@ def evaluate_odds_readiness(
             continue
         odds = row.get("odds") or {}
         for book in required_books:
-            if _valid_two_way_price(odds.get(book)):
+            if (_valid_two_way_price(odds.get(book))
+                    and is_actionable_matchup_price(book, odds.get(book))):
                 counts[book].add(pair)
 
     final_counts = {book: len(pairs) for book, pairs in counts.items()}

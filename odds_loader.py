@@ -27,6 +27,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -50,6 +51,10 @@ MAX_AGE_HOURS = 6  # ignore scraped files older than this
 
 # Books we scrape ourselves — prefer our odds over DataGolf for these
 SCRAPED_BOOKS = {"betonline", "pinnacle", "betcris"}
+MATCHUP_CONTRACT_DEDUP_COLS = [
+    "Player 1", "Player 2", "Bookmaker",
+    "P1 Line", "P2 Line", "line_verified",
+]
 
 # Per-process dedup for the guard's event-rejection Telegram (a sim run calls
 # guard_scraped_data once per market; without this a retry loop could spam).
@@ -337,12 +342,43 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
                 continue  # Kalshi H2H handled separately by price_kalshi_matchups_tourney
             p1_odds = odds.get("p1")
             p2_odds = odds.get("p2")
+            line_keys_present = "p1_line" in odds or "p2_line" in odds
+            line_keys_complete = "p1_line" in odds and "p2_line" in odds
+            p1_line = odds.get("p1_line")
+            p2_line = odds.get("p2_line")
+            line_verified = (
+                odds.get("line_verified") is True
+                or str(odds.get("line_verified") or "").strip().lower()
+                in ("1", "true", "yes")
+            )
+            line_parse_error = line_keys_present and not line_keys_complete
+            def line_value_present(value):
+                if value is None:
+                    return False
+                return str(value).strip().lower() not in ("", "nan", "none")
+
+            if line_value_present(p1_line) != line_value_present(p2_line):
+                line_parse_error = True
+            for raw_line in (p1_line, p2_line):
+                if not line_value_present(raw_line):
+                    continue
+                try:
+                    parsed_line = float(raw_line)
+                    if not np.isfinite(parsed_line):
+                        line_parse_error = True
+                except (TypeError, ValueError, OverflowError):
+                    line_parse_error = True
             rows.append({
                 "Player 1": p1,
                 "Player 2": p2,
                 "Bookmaker": book,
                 "P1 Odds": p1_odds,
                 "P2 Odds": p2_odds,
+                "P1 Line": p1_line,
+                "P2 Line": p2_line,
+                "line_verified": line_verified,
+                "line_parse_error": line_parse_error,
+                "line_metadata_present": line_keys_present,
                 "DG_p1": match.get("odds", {}).get("datagolf", {}).get("p1"),
                 "DG_p2": match.get("odds", {}).get("datagolf", {}).get("p2"),
                 "Ties": ties,
@@ -357,10 +393,43 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
             df["Player 2"] = df["Player 2"].replace(name_replacements)
         except ImportError:
             pass
-        df = df.drop_duplicates(subset=["Player 1", "Player 2", "Bookmaker"], keep="first")
+        df = df.drop_duplicates(
+            subset=[
+                "Player 1", "Player 2", "Bookmaker",
+                "P1 Line", "P2 Line", "line_verified",
+            ],
+            keep="first",
+        )
         df["P1 Odds"] = pd.to_numeric(df["P1 Odds"], errors="coerce")
         df["P2 Odds"] = pd.to_numeric(df["P2 Odds"], errors="coerce")
+        df["P1 Line"] = pd.to_numeric(df["P1 Line"], errors="coerce")
+        df["P2 Line"] = pd.to_numeric(df["P2 Line"], errors="coerce")
+        ambiguous_betcris = (
+            df["Bookmaker"].astype(str).str.lower().str.contains(
+                "betcris|bookmaker", regex=True, na=False
+            )
+            & ~df["line_verified"].fillna(False).astype(bool)
+        )
+        if ambiguous_betcris.any():
+            print(
+                f"  Quarantined {int(ambiguous_betcris.sum())} legacy BetCRIS "
+                "matchup quote(s) with unknown handicap provenance"
+            )
+            df = df.loc[~ambiguous_betcris].copy()
     return df
+
+
+def deduplicate_matchup_contracts(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse literal feed repeats without merging distinct handicap markets."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.copy()
+    for column, default in (
+        ("P1 Line", np.nan), ("P2 Line", np.nan), ("line_verified", False)
+    ):
+        if column not in out.columns:
+            out[column] = default
+    return out.drop_duplicates(subset=MATCHUP_CONTRACT_DEDUP_COLS, keep="first")
 
 
 def _parse_3ball_json(data: dict) -> pd.DataFrame:
@@ -560,7 +629,7 @@ def load_matchup_odds(
         df = pd.DataFrame()
 
     if not df.empty:
-        df = df.drop_duplicates(subset=["Player 1", "Player 2", "Bookmaker"], keep="first")
+        df = deduplicate_matchup_contracts(df)
 
     return df
 

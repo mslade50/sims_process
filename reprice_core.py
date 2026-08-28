@@ -35,6 +35,142 @@ import requests
 # ── constants (mirror round_sim.py:71-72) ──────────────────────────────────────
 SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
+
+
+def _aligned_series(df, column, default=np.nan):
+    """Return a Series even when an optional input column is absent."""
+    if column in df.columns:
+        return df[column]
+    return pd.Series(default, index=df.index)
+
+
+def _truthy_series(df, column):
+    values = _aligned_series(df, column, False)
+    return values.map(_truthy_value)
+
+
+def _truthy_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+def _line_value_present(value):
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() not in ("", "nan", "none")
+
+
+def actionable_matchup_mask(df):
+    """Rows with known settlement semantics, safe for gates/alerts/storage."""
+    line_verified = _truthy_series(df, "line_verified")
+    book = _aligned_series(df, "Bookmaker", "").astype(str).str.lower()
+    legacy_betcris = (
+        book.str.contains("betcris|bookmaker", regex=True, na=False)
+        & ~line_verified
+    )
+    unsupported = _aligned_series(df, "market_kind", "straight").eq(
+        "unsupported_spread"
+    )
+    raw_line1 = _aligned_series(df, "P1 Line")
+    raw_line2 = _aligned_series(df, "P2 Line")
+    line1 = pd.to_numeric(raw_line1, errors="coerce")
+    line2 = pd.to_numeric(raw_line2, errors="coerce")
+    malformed_line = (
+        (raw_line1.map(_line_value_present) & line1.isna())
+        | (raw_line2.map(_line_value_present) & line2.isna())
+        | (line1.notna() ^ line2.notna())
+    )
+    nonzero = line1.fillna(0).abs().gt(1e-9) | line2.fillna(0).abs().gt(1e-9)
+    verified_half = (
+        line_verified
+        & line1.abs().sub(0.5).abs().le(1e-9)
+        & line2.abs().sub(0.5).abs().le(1e-9)
+        & (line1 + line2).abs().le(1e-9)
+    )
+    parse_error = _truthy_series(df, "line_parse_error")
+    return ~(
+        legacy_betcris
+        | unsupported
+        | parse_error
+        | malformed_line
+        | (nonzero & ~verified_half)
+    )
+
+
+def matchup_settlement_probabilities(
+    df,
+    *,
+    push_p1_col="my_odds_p1",
+    push_p2_col="my_odds_p2",
+    win_p1_col="my_odds_p1_tl",
+    win_p2_col="my_odds_p2_tl",
+):
+    """Return settlement probabilities plus a validated matchup market kind.
+
+    Straight H2Hs retain the book's tie rule. For +/-0.5 markets, -0.5 must
+    win outright and +0.5 wins outright or ties. Any other/non-opposite spread
+    fails closed with NaN probabilities rather than being priced as straight.
+    """
+    p1_push = pd.to_numeric(df[push_p1_col], errors="coerce")
+    p2_push = pd.to_numeric(df[push_p2_col], errors="coerce")
+    p1_win = pd.to_numeric(df[win_p1_col], errors="coerce")
+    p2_win = pd.to_numeric(df[win_p2_col], errors="coerce")
+    raw_line1 = _aligned_series(df, "P1 Line")
+    raw_line2 = _aligned_series(df, "P2 Line")
+    line1 = pd.to_numeric(raw_line1, errors="coerce")
+    line2 = pd.to_numeric(raw_line2, errors="coerce")
+    supplied1 = raw_line1.map(_line_value_present)
+    supplied2 = raw_line2.map(_line_value_present)
+    malformed_line = (
+        (supplied1 & line1.isna())
+        | (supplied2 & line2.isna())
+        | (line1.notna() ^ line2.notna())
+    )
+
+    straight = (
+        (line1.isna() & line2.isna())
+        | (
+            line1.notna() & line2.notna()
+            & line1.abs().le(1e-9) & line2.abs().le(1e-9)
+        )
+    )
+    verified = _truthy_series(df, "line_verified")
+    half_contract = (
+        line1.abs().sub(0.5).abs().le(1e-9)
+        & line2.abs().sub(0.5).abs().le(1e-9)
+        & (line1 + line2).abs().le(1e-9)
+    )
+    half = half_contract & verified
+    parse_error = _truthy_series(df, "line_parse_error") | malformed_line
+    valid = (straight | half) & ~parse_error
+
+    use_ties_loss = _aligned_series(df, "Ties", "").astype(str).eq("separate bet offered")
+    prob1 = pd.Series(np.where(use_ties_loss, p1_win, p1_push), index=df.index, dtype=float)
+    prob2 = pd.Series(np.where(use_ties_loss, p2_win, p2_push), index=df.index, dtype=float)
+    tie = (1.0 - p1_win - p2_win).clip(lower=0.0, upper=1.0)
+
+    prob1.loc[half & line1.lt(0)] = p1_win
+    prob1.loc[half & line1.gt(0)] = p1_win + tie
+    prob2.loc[half & line2.lt(0)] = p2_win
+    prob2.loc[half & line2.gt(0)] = p2_win + tie
+    prob1.loc[~valid] = np.nan
+    prob2.loc[~valid] = np.nan
+
+    kind = pd.Series("straight", index=df.index, dtype=object)
+    kind.loc[half] = "half_shot"
+    kind.loc[~valid] = "unsupported_spread"
+    return prob1, prob2, kind
 # Only sharp books generate Telegram matchup alerts (mirror round_sim:3942).
 TELEGRAM_BOOKS = {"betonline", "pinnacle", "betcris"}
 TELEGRAM_MESSAGE_MAX_CHARS = 3500
@@ -155,17 +291,18 @@ def calculate_edges(df):
         100 / df["P2 Odds"].abs() + 1,
     )
 
-    use_tl = df["Ties"] == "separate bet offered"
-    prob_p1 = np.where(use_tl, df["my_odds_p1_tl"], df["my_odds_p1"])
-    prob_p2 = np.where(use_tl, df["my_odds_p2_tl"], df["my_odds_p2"])
+    prob_p1, prob_p2, market_kind = matchup_settlement_probabilities(df)
+    df["market_kind"] = market_kind
 
     df["edge_p1"] = (prob_p1 * (df["p1_dec"] - 1) - (1 - prob_p1)) * 100
     df["edge_p2"] = (prob_p2 * (df["p2_dec"] - 1) - (1 - prob_p2)) * 100
 
-    df["Fair_p1"] = df["my_odds_p1"].apply(
+    fair_p1_prob = df["my_odds_p1"].where(market_kind != "half_shot", prob_p1)
+    fair_p2_prob = df["my_odds_p2"].where(market_kind != "half_shot", prob_p2)
+    df["Fair_p1"] = fair_p1_prob.apply(
         lambda p: implied_to_american(p) if pd.notna(p) else None
     )
-    df["Fair_p2"] = df["my_odds_p2"].apply(
+    df["Fair_p2"] = fair_p2_prob.apply(
         lambda p: implied_to_american(p) if pd.notna(p) else None
     )
 
@@ -206,6 +343,14 @@ def calculate_edges(df):
 # ── combined/sharp split (verbatim mirror of round_sim.build_matchup_outputs) ───
 def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None):
     """Filter, annotate, and split matchup DataFrame into combined + sharp."""
+    quarantined = ~actionable_matchup_mask(df)
+    if quarantined.any():
+        print(
+            f"  Quarantined {int(quarantined.sum())} ambiguous/unsupported "
+            "matchup line(s) before alerts/storage"
+        )
+        df = df.loc[~quarantined].copy()
+
     df["p1_pred"] = df["Player 1"].map(pred_lookup)
     df["p2_pred"] = df["Player 2"].map(pred_lookup)
     df["Sample_P1"] = df["Player 1"].map(sample_lookup)
@@ -270,6 +415,7 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
         "p1_pred", "p2_pred", "pred_on", "pred_against",
         "Sample_P1", "Sample_P2", "sample_on",
         "half_shot_p1", "half_shot_p2",
+        "P1 Line", "P2 Line", "line_verified", "market_kind",
     ]
     for col in ["wx_diff"]:
         if col in combined.columns:
@@ -287,26 +433,87 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
 
 
 # ── dedup vs Sheets (mirror of round_sim._dedup_round_matchups) ─────────────────
-def alerted_key(p1, p2, bet_on):
+def _canonical_spread_line(value):
+    """Stable line identity; missing/blank means the straight contract (0)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "0" if not _line_value_present(value) else str(value).strip().lower()
+    if not np.isfinite(number) or abs(number) <= 1e-9:
+        return "0"
+    if number == int(number):
+        return str(int(number))
+    return format(number, ".6f").rstrip("0").rstrip(".")
+
+
+def selected_spread_line(row):
+    """Return the handicap attached to the selected player, defaulting straight to 0."""
+    bet_on = str(row.get("bet_on", "")).lower().strip()
+    p1 = str(row.get("Player 1", row.get("player_1", ""))).lower().strip()
+    raw = (
+        row.get("P1 Line", row.get("p1_line", 0.0))
+        if bet_on == p1
+        else row.get("P2 Line", row.get("p2_line", 0.0))
+    )
+    key = _canonical_spread_line(raw)
+    try:
+        return float(key)
+    except (TypeError, ValueError):
+        return key
+
+
+def prepare_matchup_attachment_rows(df):
+    """Filter attachment rows to actionable contracts and label the selected line."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.loc[actionable_matchup_mask(df)].copy()
+    out["Spread"] = out.apply(selected_spread_line, axis=1)
+    return out
+
+
+def is_straight_matchup_contract(row):
+    """True only when both side-attached lines explicitly/implicitly mean zero."""
+    raw1 = row.get("P1 Line", row.get("p1_line"))
+    raw2 = row.get("P2 Line", row.get("p2_line"))
+    supplied1 = _line_value_present(raw1)
+    supplied2 = _line_value_present(raw2)
+    if not supplied1 and not supplied2:
+        return True
+    if supplied1 != supplied2:
+        return False
+    try:
+        line1 = float(raw1)
+        line2 = float(raw2)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (
+        np.isfinite(line1)
+        and np.isfinite(line2)
+        and abs(line1) <= 1e-9
+        and abs(line2) <= 1e-9
+    )
+
+
+def alerted_key(p1, p2, bet_on, spread_line=0.0):
     """Alert-level identity of a matchup edge: order-insensitive pairing + which
     player the bet is on. A price/edge-size change on the same bet maps to the
     same key; the edge flipping to the other player maps to a new one."""
     a, b = sorted([str(p1).lower().strip(), str(p2).lower().strip()])
-    return (a, b, str(bet_on).lower().strip())
+    return (a, b, str(bet_on).lower().strip(), _canonical_spread_line(spread_line))
 
 
-def _canonical_mu_key(p1, p2, book, o1, o2, bet_on):
+def _canonical_mu_key(p1, p2, book, o1, o2, bet_on, line1=0.0, line2=0.0):
     """Order-insensitive bet identity with each price attached to its player.
 
     The selected side is deliberately part of the storage identity.  If the
     fair crosses at unchanged market odds, betting the other player is a new bet
     and must survive both Sheet dedup and Telegram alert dedup.
     """
-    a = (str(p1).lower().strip(), _canonical_quote_price(o1))
-    b = (str(p2).lower().strip(), _canonical_quote_price(o2))
+    a = (str(p1).lower().strip(), _canonical_quote_price(o1), _canonical_spread_line(line1))
+    b = (str(p2).lower().strip(), _canonical_quote_price(o2), _canonical_spread_line(line2))
     lo, hi = (a, b) if a[0] <= b[0] else (b, a)
     return (
-        lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1],
+        lo[0], hi[0], str(book).lower().strip(), lo[1], hi[1], lo[2], hi[2],
         str(bet_on).lower().strip(),
     )
 
@@ -335,6 +542,7 @@ def _canonical_actionable_quote_key(row, player_count):
         (
             str(row.get(f"Player {idx}", "")).lower().strip(),
             _canonical_quote_price(row.get(f"P{idx} Odds", "")),
+            _canonical_spread_line(row.get(f"P{idx} Line", 0.0)),
         )
         for idx in range(1, player_count + 1)
     ))
@@ -400,11 +608,19 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
         # historical bet/alert and therefore cannot suppress a corrected retry.
         if is_excluded_or_invalid_result(row.get("result", "")):
             continue
+        book = str(row.get("bookmaker", "")).lower().strip()
+        # Legacy BetCRIS rows lack enough information to identify the wager.
+        # Keep them as audit records, but they cannot suppress a corrected quote.
+        if ("betcris" in book or "bookmaker" in book) and not _truthy_value(
+            row.get("line_verified")
+        ):
+            continue
         if str(row.get("event_id", "")) == str(event_id) and str(row.get("round", "")) == str(sim_round):
             existing_keys.add(_canonical_mu_key(
                 row.get("player_1", ""), row.get("player_2", ""),
                 row.get("bookmaker", ""), row.get("p1_odds", ""),
                 row.get("p2_odds", ""), row.get("bet_on", ""),
+                row.get("p1_line", 0.0), row.get("p2_line", 0.0),
             ))
             # Only a row from a Telegram-eligible book can prove this edge was
             # previously surfaced.  A soft-book row may be stored independently
@@ -412,7 +628,8 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
             # the sharp alert on the workflow retry.
             if str(row.get("bookmaker", "")).lower().strip() in TELEGRAM_BOOKS:
                 seen_alert_keys.add(alerted_key(
-                    row.get("player_1", ""), row.get("player_2", ""), row.get("bet_on", "")))
+                    row.get("player_1", ""), row.get("player_2", ""),
+                    row.get("bet_on", ""), selected_spread_line(row)))
 
     if not existing_keys:
         return combined, seen_alert_keys
@@ -422,7 +639,7 @@ def dedup_round_matchups(combined, spreadsheet, event_id, sim_round):
         key = _canonical_mu_key(
             r.get("Player 1", ""), r.get("Player 2", ""),
             r.get("Bookmaker", ""), r.get("P1 Odds", ""), r.get("P2 Odds", ""),
-            r.get("bet_on", ""),
+            r.get("bet_on", ""), r.get("P1 Line", 0.0), r.get("P2 Line", 0.0),
         )
         mask.append(key not in existing_keys)
 
@@ -503,7 +720,8 @@ def partition_matchup_alert_rows(new_mu, seen_alert_keys=None):
     for _, row in new_mu.iterrows():
         book = str(row.get("Bookmaker", "")).lower().strip()
         key = alerted_key(
-            row.get("Player 1", ""), row.get("Player 2", ""), row.get("bet_on", "")
+            row.get("Player 1", ""), row.get("Player 2", ""),
+            row.get("bet_on", ""), selected_spread_line(row)
         )
         needs_alert.append(book in TELEGRAM_BOOKS and key not in seen)
 
@@ -524,8 +742,16 @@ def _matchup_alert_messages(tg, sim_round, tourney_name, max_chars=TELEGRAM_MESS
         opp = html.escape(str(r.get("Player 2", "") if is_p1 else r.get("Player 1", "")))
         mkt_odds = r.get("P1 Odds", "?") if is_p1 else r.get("P2 Odds", "?")
         fair_odds = r.get("Fair_p1", "?") if is_p1 else r.get("Fair_p2", "?")
+        spread_line = selected_spread_line(r)
+        try:
+            spread_number = float(spread_line)
+        except (TypeError, ValueError):
+            spread_number = 0.0
+        spread_text = (
+            f" {spread_number:+.1f}" if abs(spread_number) > 1e-9 else ""
+        )
         entries.append(
-            f"  {bet} vs {opp}\n"
+            f"  {bet}{spread_text} vs {opp}\n"
             f"    {book} {html.escape(_fmt_odds(mkt_odds))} "
             f"(fair {html.escape(_fmt_odds(fair_odds))}) edge={edge}%"
         )

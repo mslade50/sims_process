@@ -3456,7 +3456,11 @@ wx_out.to_csv(f'weather_impact_{tourney}.csv', index=False)
 print(f"[ok] wrote weather_impact_{tourney}.csv")
 
 # --- Pull tournament matchups (scraped → DataGolf fallback) ---
-from odds_loader import load_matchup_odds, scrape_betonline_live
+from odds_loader import (
+    deduplicate_matchup_contracts,
+    load_matchup_odds,
+    scrape_betonline_live,
+)
 
 print("[info] Fetching tournament matchup odds (scraped -> DataGolf fallback)...")
 _mu_df = load_matchup_odds("tournament_matchups", api_key=API_KEY)
@@ -4602,6 +4606,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                                 wx_lookup=None, kalshi_df=None, novig_df=None,
                                 kalshi_mu_df=None, novig_mu_df=None, arch_map=None,
                                 sb_lines_lookup=None):
+    from reprice_core import is_straight_matchup_contract, selected_spread_line
+
     timestamp_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
 
 
@@ -4668,6 +4674,10 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     row.get('Fair_p1') if bet_on_lower == str(row['Player 1']).lower()
                     else row.get('Fair_p2')
                 )
+                try:
+                    spread_line = float(selected_spread_line(row))
+                except (TypeError, ValueError, OverflowError):
+                    spread_line = np.nan
                 edge = row.get('edge_on', 0)
                 pred = row.get('pred_on', 0)
                 sample = int(row.get('sample_on', 0))
@@ -4679,7 +4689,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 _opp_norm = name_replacements.get(_opp_lower, _opp_lower)
                 _exch_key = (_bet_norm, _opp_norm)
                 _exch = _exch_mu_lookup.get(_exch_key)
-                if _exch:
+                if _exch and is_straight_matchup_contract(row):
                     # Compare: exchange eff_price vs sportsbook implied prob
                     sb_implied = abs(book_odds) / (abs(book_odds) + 100) if pd.notna(book_odds) and book_odds != 0 else 1.0
                     if pd.notna(book_odds) and book_odds > 0:
@@ -4734,6 +4744,11 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                 pred_color = "#d4edda" if pred > 1.5 else "#ffffff"
                 book_str = f"{int(book_odds):+d}" if pd.notna(book_odds) else ""
                 fair_str = f"{int(fair_odds):+d}" if pd.notna(fair_odds) else ""
+                spread_str = (
+                    f"{spread_line:+.1f}"
+                    if pd.notna(spread_line) and abs(spread_line) > 1e-9
+                    else "—"
+                )
                 book_color = "color:#dd6b20; font-weight:500;" if book == "kalshi" else "color:#6b46c1; font-weight:500;" if book == "novig" else ""
 
                 rows_html += f"""
@@ -4743,6 +4758,7 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <td style="padding:6px 10px; text-align:center; {book_color}">{book}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{archetype}</td>
                     <td style="padding:6px 10px; text-align:center; font-size:11px; color:#555;">{arch_against}</td>
+                    <td style="padding:6px 10px; text-align:center; font-weight:600;">{spread_str}</td>
                     <td style="padding:6px 10px; text-align:center;">{book_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:500;">{fair_str}</td>
                     <td style="padding:6px 10px; text-align:center; font-weight:bold; background:{edge_color};">{edge:.1f}%</td>
@@ -4763,7 +4779,8 @@ def build_tournament_email_html(sharp_mu_df, finish_df, sample_lookup, my_pred_l
                     <th style="padding:6px 10px; text-align:center;">Book</th>
                     <th style="padding:6px 10px; text-align:center;">Type</th>
                     <th style="padding:6px 10px; text-align:center;">Vs Type</th>
-                    <th style="padding:6px 10px; text-align:center;">Line</th>
+                    <th style="padding:6px 10px; text-align:center;">Spread</th>
+                    <th style="padding:6px 10px; text-align:center;">Odds</th>
                     <th style="padding:6px 10px; text-align:center;">Fair</th>
                     <th style="padding:6px 10px; text-align:center;">Edge</th>
                     <th style="padding:6px 10px; text-align:center;">Edge %</th>
@@ -5767,7 +5784,7 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
 
 
 # --- Process matchups ---
-df_match = pd.DataFrame(rows_mu).drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first')
+df_match = deduplicate_matchup_contracts(pd.DataFrame(rows_mu))
 if not df_match.empty:
     df_match = df_match.dropna(subset=['Player 1','Player 2'])
 
@@ -5824,16 +5841,30 @@ if not df_match.empty:
         100 / df_match['P2 Odds'].abs() + 1,
     )
 
-    use_tl = df_match['Ties'] == 'separate bet offered'
-    prob_p1 = np.where(use_tl, df_match['my_odds_p1_ties_loss'], df_match['my_odds_p1'])
-    prob_p2 = np.where(use_tl, df_match['my_odds_p2_ties_loss'], df_match['my_odds_p2'])
+    from reprice_core import matchup_settlement_probabilities
+    prob_p1, prob_p2, market_kind = matchup_settlement_probabilities(
+        df_match,
+        win_p1_col='my_odds_p1_ties_loss',
+        win_p2_col='my_odds_p2_ties_loss',
+    )
+    df_match['market_kind'] = market_kind
+    from reprice_core import actionable_matchup_mask
+    _actionable_matchups = actionable_matchup_mask(df_match)
+    if (~_actionable_matchups).any():
+        print(
+            f"  Quarantined {int((~_actionable_matchups).sum())} ambiguous/unsupported "
+            "matchup line(s) before alerts/storage"
+        )
+        df_match = df_match.loc[_actionable_matchups].copy()
 
     df_match['edge_p1'] = (prob_p1 * (df_match['p1_dec'] - 1) - (1 - prob_p1)) * 100
     df_match['edge_p2'] = (prob_p2 * (df_match['p2_dec'] - 1) - (1 - prob_p2)) * 100
 
-    df_match['Fair_p1'] = df_match['my_odds_p1'].apply(
+    fair_p1_prob = df_match['my_odds_p1'].where(market_kind != 'half_shot', prob_p1)
+    fair_p2_prob = df_match['my_odds_p2'].where(market_kind != 'half_shot', prob_p2)
+    df_match['Fair_p1'] = fair_p1_prob.apply(
         lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
-    df_match['Fair_p2'] = df_match['my_odds_p2'].apply(
+    df_match['Fair_p2'] = fair_p2_prob.apply(
         lambda p: implied_prob_to_american_odds(p) if pd.notna(p) and 0 < p < 1 else None)
 
     df_match['half_shot_p1'] = (df_match['my_odds_p1'] - df_match['my_odds_p1_ties_loss']) * 400
@@ -5853,29 +5884,18 @@ if not df_match.empty:
         dfb = dfb.copy()
         dfb['p1_implied'] = dfb['P1 Odds'].apply(american_to_implied_probability).round(1)
         dfb['p2_implied'] = dfb['P2 Odds'].apply(american_to_implied_probability).round(1)
-        dfb['use_ties_loss'] = (dfb['Ties'] == "separate bet offered")
         dfb['p1_decimal_odds'] = np.where(dfb['P1 Odds'] > 0, dfb['P1 Odds'] / 100 + 1, 100 / dfb['P1 Odds'].abs() + 1)
         dfb['p2_decimal_odds'] = np.where(dfb['P2 Odds'] > 0, dfb['P2 Odds'] / 100 + 1, 100 / dfb['P2 Odds'].abs() + 1)
-        dfb['edge_p1'] = np.where(
-            dfb['use_ties_loss'],
-            ((dfb['my_odds_p1_ties_loss'] * (dfb['p1_decimal_odds'] - 1)) - (1 - dfb['my_odds_p1_ties_loss'])) * 100,
-            ((dfb['my_odds_p1'] * (dfb['p1_decimal_odds'] - 1)) - (1 - dfb['my_odds_p1'])) * 100
-        )
-        dfb['edge_p2'] = np.where(
-            dfb['use_ties_loss'],
-            ((dfb['my_odds_p2_ties_loss'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2_ties_loss'])) * 100,
-            ((dfb['my_odds_p2'] * (dfb['p2_decimal_odds'] - 1)) - (1 - dfb['my_odds_p2'])) * 100
-        )
-        dfb['Fair_p1'] = dfb['my_odds_p1'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
-        dfb['Fair_p2'] = dfb['my_odds_p2'].apply(lambda p: implied_prob_to_american_odds(p) if pd.notna(p) else None)
         dfb['Round'] = round_var
 
-        final_cols = ['Player 1','Player 2','Bookmaker','Ties','P1 Odds','P2 Odds','Fair_p1','Fair_p2','edge_p1','edge_p2','Round']
+        final_cols = ['Player 1','Player 2','Bookmaker','Ties','P1 Odds','P2 Odds',
+                      'P1 Line','P2 Line','line_verified','market_kind',
+                      'Fair_p1','Fair_p2','edge_p1','edge_p2','Round']
         use_cols = [c for c in final_cols if c in dfb.columns]
         dfb = dfb[use_cols].dropna(subset=['Fair_p1','Fair_p2'])
 
         out_name = f"{bookmaker}_odds_with_my_odds_tu.csv"
-        dfb.drop_duplicates(subset=['Player 1','Player 2','Bookmaker'], keep='first').to_csv(out_name, index=False)
+        deduplicate_matchup_contracts(dfb).to_csv(out_name, index=False)
         print(f"[ok] wrote {out_name}")
 
     # Combine + filter into {tourney}/matchups

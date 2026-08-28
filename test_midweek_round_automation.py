@@ -27,15 +27,20 @@ NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
 
 def _row(event_id, round_num, books, p1="Player A", p2="Player B"):
+    odds = {}
+    for book in books:
+        quote = {"p1": "-110", "p2": "-110"}
+        if book == "betcris":
+            quote.update({
+                "p1_line": None, "p2_line": None, "line_verified": True,
+            })
+        odds[book] = quote
     return {
         "p1_player_name": p1,
         "p2_player_name": p2,
         "round": round_num,
         "event_id": str(event_id),
-        "odds": {
-            book: {"p1": "-110", "p2": "-110"}
-            for book in books
-        },
+        "odds": odds,
     }
 
 
@@ -95,6 +100,20 @@ class OddsReadinessTests(unittest.TestCase):
                 525,
                 min_book_matchups=5,
                 now=NOW,
+            )
+
+    def test_legacy_betcris_without_line_provenance_cannot_satisfy_gate(self):
+        rows = [
+            _row(525, 2, ["betcris", "betonline"],
+                 p1=f"Player {idx}", p2=f"Opponent {idx}")
+            for idx in range(5)
+        ]
+        for row in rows:
+            row["odds"]["betcris"] = {"p1": "-110", "p2": "-110"}
+
+        with self.assertRaisesRegex(NotReady, "betcris=0/5"):
+            evaluate_odds_readiness(
+                _payload(rows), 525, min_book_matchups=5, now=NOW
             )
 
     def test_manual_pinnacle_pair_accepts_without_betcris(self):

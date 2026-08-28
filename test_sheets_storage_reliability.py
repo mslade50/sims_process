@@ -121,3 +121,86 @@ def test_unreadable_existing_ledger_is_never_replaced(monkeypatch, tmp_path):
 
     assert isinstance(exc_info.value.__cause__, OSError)
     assert ledger_path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize(
+    ("store_name", "frame_factory", "args", "store_kwargs", "expected_headers"),
+    [
+        (
+            "store_tournament_matchups", _tournament_matchup, ("event", "28"), {},
+            sheets_storage.TOURNAMENT_MU_HEADERS,
+        ),
+        (
+            "store_round_matchups", _round_matchup, (2, "event", "28"), {},
+            sheets_storage.ROUND_MU_HEADERS,
+        ),
+        (
+            "store_finish_positions", _finish_position, ("event", "28"), {},
+            sheets_storage.FINISH_POS_HEADERS,
+        ),
+        (
+            "store_finish_positions", _finish_position, ("event", "28"),
+            {"tab_name": sheets_storage.TAB_LIVE},
+            [
+                header for header in sheets_storage.FINISH_POS_HEADERS
+                if header not in sheets_storage.CLV_COLS
+            ],
+        ),
+    ],
+)
+def test_storage_rows_exactly_match_their_header_lengths(
+    monkeypatch, store_name, frame_factory, args, store_kwargs, expected_headers
+):
+    captured = {}
+
+    def get_tab(_spreadsheet, _tab, headers):
+        captured["headers"] = headers
+        return object()
+
+    def append_rows(_ws, rows, *_args, **_kwargs):
+        captured["rows"] = rows
+        return len(rows), 0
+
+    monkeypatch.setattr(sheets_storage, "_get_or_create_tab", get_tab)
+    monkeypatch.setattr(sheets_storage, "_append_rows_deduped", append_rows)
+    monkeypatch.setattr(sheets_storage, "_append_to_ledger", lambda _records: None)
+
+    getattr(sheets_storage, store_name)(
+        frame_factory(), *args, spreadsheet=object(), **store_kwargs
+    )
+
+    assert captured["headers"] == expected_headers
+    assert captured["rows"]
+    assert all(len(row) == len(expected_headers) for row in captured["rows"])
+
+
+def test_matchup_line_schema_is_appended_after_existing_clv_prefix():
+    extension = ["p1_line", "p2_line", "line_verified", "market_kind"]
+    assert sheets_storage.TOURNAMENT_MU_HEADERS[-4:] == extension
+    assert sheets_storage.ROUND_MU_HEADERS[-4:] == extension
+    assert sheets_storage.FINISH_POS_HEADERS[-5:] == sheets_storage.CLV_COLS
+
+
+def test_legacy_ledger_schema_migrates_missing_spread_without_key_error(
+    monkeypatch, tmp_path
+):
+    ledger_path = Path(tmp_path, "bet_ledger.parquet")
+    base = {
+        "event_id": "28", "bet_type": "round_matchup", "round": 2,
+        "bet_on": "alpha", "opponent": "beta", "bookmaker": "pinnacle",
+        "result": "",
+    }
+    pd.DataFrame([{**base, "bet_id": "legacy-straight"}]).to_parquet(
+        ledger_path, index=False
+    )
+    monkeypatch.setattr(sheets_storage, "LEDGER_PATH", str(ledger_path))
+
+    sheets_storage._append_to_ledger([
+        {**base, "bet_id": "duplicate-straight", "spread_line": 0.0},
+        {**base, "bet_id": "new-half", "spread_line": -0.5,
+         "line_verified": True},
+    ])
+
+    stored = pd.read_parquet(ledger_path)
+    assert stored["bet_id"].tolist() == ["legacy-straight", "new-half"]
+    assert stored["spread_line"].tolist() == ["0", "-0.5"]
