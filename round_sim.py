@@ -1485,6 +1485,32 @@ def write_full_finish_equity(finish_probs, tourney):
     return paths
 
 
+def write_live_finish_equity(outrights_combined, tourney):
+    """Persist the final live finish board after every book is merged.
+
+    DataGolf books are priced first, then Kalshi and NoVig taker rows are
+    appended.  Keeping this write in one finalization step prevents the
+    dashboard CSV from capturing only the pre-exchange snapshot.
+    """
+    if outrights_combined is None or outrights_combined.empty:
+        return None
+
+    path = f"finish_equity_live_{tourney}.csv"
+    outrights_combined.to_csv(path, index=False)
+    books = (
+        outrights_combined["bookmaker"]
+        .astype(str)
+        .str.lower()
+        .value_counts()
+        .sort_index()
+        .to_dict()
+        if "bookmaker" in outrights_combined.columns
+        else {}
+    )
+    print(f"    Saved {path} ({len(outrights_combined)} rows; books={books})")
+    return path
+
+
 def format_units(stake_dollars):
     """Format a $ stake as units (1u = $200). Returns '—' for non-positive.
     Sub-0.3u stakes show 2 decimals so 0.05u doesn't render as '0.1u'."""
@@ -1627,6 +1653,142 @@ def _kalshi_taker_fee(price):
     return 0.07 * price * (1 - price)
 
 
+def _kalshi_outright_player(title):
+    """Extract a player from legacy and current Kalshi outright titles."""
+    import re
+
+    value = str(title or "").strip()
+    match = re.match(
+        r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", value, re.I
+    )
+    if match:
+        return match.group(1).strip()
+    match = re.match(r"Will (.+?) win the ", value, re.I)
+    if match:
+        return match.group(1).strip()
+    # Current top-N shape (August 2026): "X finishes top N".  Tournament
+    # identity now lives in rules/event metadata rather than the title.
+    match = re.match(
+        r"^(.+?)\s+finishes?\s+(?:in\s+the\s+)?top\s+\d+"
+        r"(?:\s+(?:at|in)\s+the\s+.+?)?\??$",
+        value,
+        re.I,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _kalshi_outright_tournament(market):
+    """Resolve tournament identity from title or Kalshi resolution metadata."""
+    import re
+
+    title = str((market or {}).get("title") or "").strip()
+    match = re.search(r"(?:at|in|win) the (.+?)\?", title, re.I)
+    if match:
+        return match.group(1).strip()
+    match = re.match(r"(.+?):\s*Will", title, re.I)
+    if match:
+        return match.group(1).strip()
+
+    # Current top-N rules end with "... in the 2026 TOUR Championship,
+    # then the market resolves ...".  Use the final "in the" clause so the
+    # earlier "finishes in the top 5" clause cannot be mistaken for an event.
+    rules = str((market or {}).get("rules_primary") or "").strip()
+    resolution = re.split(
+        r",\s*then the market", rules, maxsplit=1, flags=re.I
+    )[0]
+    lower = resolution.lower()
+    for marker in (" in the ", " wins the "):
+        index = lower.rfind(marker)
+        if index < 0:
+            continue
+        candidate = resolution[index + len(marker):].strip()
+        candidate = re.sub(r"^\d{4}\s+", "", candidate).strip()
+        if candidate and not re.match(r"top\s+\d+", candidate, re.I):
+            return candidate
+    return ""
+
+
+def _scope_kalshi_outright_markets(markets, configured_tourney):
+    """Tag and retain Kalshi markets belonging to the configured tournament.
+
+    Tournament metadata is read per market.  When it is absent, contracts in
+    sibling series are joined by the stable suffix of ``event_ticker`` (for
+    example TOP5-TOC26 and TOUR-TOC26), preventing blank-title top-N markets
+    from leaking across simultaneously open tournaments.
+    """
+    import re
+    from collections import Counter, defaultdict
+
+    tagged = [dict(market) for market in (markets or [])]
+
+    def event_code(market):
+        ticker = str(market.get("event_ticker") or "")
+        return ticker.split("-", 1)[1] if "-" in ticker else ""
+
+    code_names = defaultdict(dict)
+    for market in tagged:
+        detected = _kalshi_outright_tournament(market)
+        market["_kalshi_tournament"] = detected
+        code = event_code(market)
+        if code and detected:
+            code_names[code][detected.lower()] = detected
+
+    for market in tagged:
+        if market["_kalshi_tournament"]:
+            continue
+        code = event_code(market)
+        # A suffix proves identity only when every labelled sibling agrees.
+        # Ambiguous or unseen suffixes remain unresolved and are rejected below.
+        names_for_code = code_names.get(code, {})
+        if code and len(names_for_code) == 1:
+            market["_kalshi_tournament"] = next(iter(names_for_code.values()))
+
+    tournament_counts = Counter(
+        market["_kalshi_tournament"]
+        for market in tagged
+        if market["_kalshi_tournament"]
+    )
+    if not tournament_counts:
+        return [], [], "no Kalshi market supplied resolvable tournament metadata"
+
+    generic = {
+        "the", "a", "an", "of", "at", "in", "tournament", "championship",
+        "open", "classic", "invitational", "cup", "pga", "tour",
+    }
+    target_words = {
+        word for word in re.split(r"[\s_]+", str(configured_tourney).lower())
+        if word
+    }
+    distinct_words = target_words - generic
+
+    def matches_target(name):
+        value = name.lower()
+        compact = re.sub(r"\s+", "", value)
+        if distinct_words:
+            return any(word in value or word in compact for word in distinct_words)
+        return all(word in value or word in compact for word in target_words)
+
+    matched = [name for name in tournament_counts if matches_target(name)]
+    if matched:
+        accepted = {name.lower() for name in matched}
+        return (
+            [
+                market for market in tagged
+                if market["_kalshi_tournament"].lower() in accepted
+            ],
+            matched,
+            "",
+        )
+
+    known = ", ".join(sorted(tournament_counts))
+    return (
+        [],
+        [],
+        f"configured tournament '{configured_tourney}' does not match "
+        f"open Kalshi tournament(s): {known}",
+    )
+
+
 def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     """Price Kalshi outright markets using live API with orderbook-aware liquidity filtering.
 
@@ -1639,9 +1801,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     Mid rows are the bid/ask midpoint (maker, no fee) — emitted for any stage-1 survivor.
     Downstream splits on `pricing` (taker → outrights pipeline; mid → maker-opportunity email).
     """
-    import re as _re
     import time as _time
-    from collections import Counter
     import httpx as _httpx
 
     try:
@@ -1731,61 +1891,19 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     if not all_markets:
         return pd.DataFrame()
 
-    def _detect_tourney(title):
-        m = _re.search(r"(?:at|in|win) the (.+?)\?", title)
-        if m:
-            return m.group(1).strip()
-        m = _re.match(r"(.+?):\s*Will", title)
-        if m:
-            return m.group(1).strip()
-        return ""
+    all_markets, matched_tourneys, scope_rejection = (
+        _scope_kalshi_outright_markets(all_markets, tourney)
+    )
+    if matched_tourneys:
+        print(
+            f"  Tournament: {', '.join(matched_tourneys)} "
+            f"({len(all_markets)} markets, matched on tourney='{tourney}')"
+        )
+    elif scope_rejection:
+        print(f"  [warn] Kalshi outrights rejected: {scope_rejection}")
 
-    # Match Kalshi tournament names against the configured `tourney` so
-    # simultaneously-open events don't get confused (e.g. PGA Championship
-    # markets bleeding into a Cadillac sim). If all configured words are
-    # generic (e.g. tourney='pga_championship'), require ALL words to match.
-    _GENERIC_RT = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
-                   "open", "classic", "invitational", "cup", "pga", "tour"}
-    _all_target_words_rt = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
-    _distinct_target_words_rt = _all_target_words_rt - _GENERIC_RT
-
-    def _matches_target_rt(detected_title):
-        t = detected_title.lower()
-        # Also check against whitespace-stripped title so contracted slugs
-        # like 'cjcup' match Kalshi's 'THE CJ CUP Byron Nelson' (-> 'thecjcupbyronnelson').
-        t_nospace = _re.sub(r"\s+", "", t)
-        if _distinct_target_words_rt:
-            return any(w in t or w in t_nospace for w in _distinct_target_words_rt)
-        return all(w in t or w in t_nospace for w in _all_target_words_rt)
-
-    tourn_counts = Counter()
-    for m in all_markets:
-        t = _detect_tourney(m.get("title", ""))
-        if t:
-            tourn_counts[t] += 1
-    if tourn_counts:
-        matched = [t for t in tourn_counts.keys() if _matches_target_rt(t)]
-        if matched:
-            matched_lower = {t.lower() for t in matched}
-            all_markets = [m for m in all_markets
-                           if _detect_tourney(m.get("title", "")).lower() in matched_lower
-                           or _detect_tourney(m.get("title", "")) == ""]
-            print(f"  Tournament: {', '.join(matched)} ({len(all_markets)} markets, matched on tourney='{tourney}')")
-        else:
-            current_tourney = tourn_counts.most_common(1)[0][0]
-            all_markets = [m for m in all_markets
-                           if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
-            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; falling back to most-common: {current_tourney}")
-            print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
-
-    def _extract_player(title):
-        m = _re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
-        if m:
-            return m.group(1).strip()
-        m = _re.match(r"Will (.+?) win the ", title)
-        if m:
-            return m.group(1).strip()
-        return ""
+    if not all_markets:
+        return pd.DataFrame()
 
     type_to_col = {
         "top_5": "top_5_nodh",
@@ -1858,7 +1976,7 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         if (ask - bid) > 0.10:
             continue
 
-        player_raw = _extract_player(title)
+        player_raw = _kalshi_outright_player(title)
         if not player_raw:
             continue
         player = norm(player_raw)
@@ -5811,34 +5929,48 @@ def main():
                     priced_markets, pred_lookup, sample_lookup
                 )
 
-                if not outrights_combined.empty:
-                    finish_equity_csv_path = f"finish_equity_live_{tourney}.csv"
-                    outrights_combined.to_csv(finish_equity_csv_path, index=False)
-                    print(f"    Saved {finish_equity_csv_path}")
-                    print(f"    Outrights: {len(outrights_combined)} edges found, {len(outrights_sharp)} sharp")
-                else:
-                    print(f"    No outright edges above threshold")
-
                 # Full finish-position equity (every player, all markets, no edge
                 # filter) — dead-heat and no-dead-heat variants emailed as CSVs.
                 finish_equity_full_paths = write_full_finish_equity(finish_probs, tourney)
 
                 # Price Kalshi outrights (no dead-heat)
                 print(f"\n    Pricing Kalshi outrights (no dead-heat)...")
-                kalshi_edges = price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup)
                 kalshi_mids = pd.DataFrame()
-                if not kalshi_edges.empty:
-                    # Split taker vs mid pricing
-                    kalshi_taker = kalshi_edges[kalshi_edges["pricing"] == "taker"].copy()
-                    kalshi_mids = kalshi_edges[kalshi_edges["pricing"] == "mid"].copy()
+                try:
+                    kalshi_edges = price_kalshi_outrights(
+                        finish_probs, pred_lookup, sample_lookup
+                    )
+                    if not kalshi_edges.empty:
+                        # Split taker vs mid pricing
+                        kalshi_taker = kalshi_edges[
+                            kalshi_edges["pricing"] == "taker"
+                        ].copy()
+                        kalshi_mids = kalshi_edges[
+                            kalshi_edges["pricing"] == "mid"
+                        ].copy()
 
-                    # Merge taker rows into outrights_combined/sharp (existing flow)
-                    if not kalshi_taker.empty:
-                        outrights_combined = pd.concat([outrights_combined, kalshi_taker], ignore_index=True)
-                        kalshi_sharp = kalshi_taker[kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN].copy()
-                        if not kalshi_sharp.empty:
-                            outrights_sharp = pd.concat([outrights_sharp, kalshi_sharp], ignore_index=True)
-                            outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
+                        # Merge taker rows into outrights_combined/sharp (existing flow)
+                        if not kalshi_taker.empty:
+                            outrights_combined = pd.concat(
+                                [outrights_combined, kalshi_taker], ignore_index=True
+                            )
+                            kalshi_sharp = kalshi_taker[
+                                kalshi_taker["edge"] > EDGE_THRESHOLD_TOPN
+                            ].copy()
+                            if not kalshi_sharp.empty:
+                                outrights_sharp = pd.concat(
+                                    [outrights_sharp, kalshi_sharp], ignore_index=True
+                                )
+                                outrights_sharp = outrights_sharp.sort_values(
+                                    "edge", ascending=False
+                                )
+                except Exception as e:
+                    # Exchange pricing is optional to the DataGolf/NoVig live
+                    # finish board. One unexpected Kalshi failure must not abort
+                    # their pricing or prevent the combined CSV from publishing.
+                    kalshi_edges = pd.DataFrame()
+                    kalshi_mids = pd.DataFrame()
+                    print(f"    Warning: Kalshi outright pricing failed: {e}")
 
                 # Price NoVig outrights (no dead-heat)
                 print(f"\n    Pricing NoVig outrights (no dead-heat)...")
@@ -5854,6 +5986,19 @@ def main():
                                 outrights_sharp = outrights_sharp.sort_values("edge", ascending=False)
                 except Exception as e:
                     print(f"    Warning: NoVig pricing failed: {e}")
+
+                # Persist the dashboard snapshot only after exchange taker rows
+                # have joined the DataGolf-book rows.
+                finish_equity_csv_path = write_live_finish_equity(
+                    outrights_combined, tourney
+                )
+                if finish_equity_csv_path:
+                    print(
+                        f"    Outrights: {len(outrights_combined)} rows found, "
+                        f"{len(outrights_sharp)} sharp"
+                    )
+                else:
+                    print(f"    No outright edges above threshold")
 
                 # --- Win market edge CSVs ---
                 print(f"\n    Building outright win edge CSVs...")
