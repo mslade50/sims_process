@@ -1663,6 +1663,13 @@ def _kalshi_outright_player(title):
     )
     if match:
         return match.group(1).strip()
+    match = re.match(
+        r"^Will (.+?) (?:finish(?:es)?|make|miss|lead)\b",
+        value,
+        re.I,
+    )
+    if match:
+        return match.group(1).strip()
     match = re.match(r"Will (.+?) win the ", value, re.I)
     if match:
         return match.group(1).strip()

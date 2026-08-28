@@ -127,6 +127,7 @@ def test_sims_kalshi_parser_accepts_current_topn_title_and_rules_metadata():
             "TOUR Championship?"
         )
     }
+    assert player_parser(legacy_suffix["title"]) == "Xander Schauffele"
     assert tournament_parser(legacy_suffix) == "TOUR Championship"
 
 
