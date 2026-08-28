@@ -82,6 +82,7 @@ def apply_shot_dispersion_overlay(
     event_id: int,
     dists_path: str | os.PathLike[str],
     config_path: str | os.PathLike[str] | None = None,
+    allow_active_subset: bool = False,
 ) -> pd.DataFrame:
     """Return category stds with the event-scoped shot variance overlay.
 
@@ -165,7 +166,9 @@ def apply_shot_dispersion_overlay(
     if len(players) != len(set(players)):
         raise ValueError("Shot-dispersion active player names are not unique")
     expected_field_size = int(config.get("expected_field_size", len(players)))
-    if len(players) != expected_field_size:
+    if len(players) != expected_field_size and not (
+        allow_active_subset and 0 < len(players) < expected_field_size
+    ):
         raise ValueError(
             f"Shot-dispersion expected {expected_field_size} players, got {len(players)}"
         )
@@ -177,6 +180,11 @@ def apply_shot_dispersion_overlay(
     if features["player_name"].duplicated().any():
         raise ValueError("Shot-dispersion feature file has duplicate player names")
     features = features.set_index("player_name")
+    if allow_active_subset and len(features.index) != expected_field_size:
+        raise ValueError(
+            "Shot-dispersion frozen feature roster does not match its configured "
+            f"field size: expected {expected_field_size}, got {len(features.index)}"
+        )
     missing_features = sorted(set(players) - set(features.index))
     if missing_features:
         raise ValueError(
@@ -234,6 +242,11 @@ def apply_shot_dispersion_overlay(
         "[shot-dispersion] ACTIVE: frozen pre-event 50-round shot variance; "
         "means/correlation/skew unchanged"
     )
+    if len(players) < expected_field_size:
+        print(
+            "[shot-dispersion] Live active-field subset: "
+            f"{len(players)}/{expected_field_size} frozen-roster players"
+        )
     print(f"[shot-dispersion] {' | '.join(diagnostics)}")
     print(
         f"[shot-dispersion] feature={feature_path.name} sha256={actual_feature_hash[:12]}... "

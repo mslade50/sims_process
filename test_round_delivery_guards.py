@@ -169,6 +169,26 @@ def test_round_category_dists_require_complete_finite_active_field(
     np.testing.assert_array_equal(correlation, np.eye(4))
 
 
+def test_live_round_category_dists_allow_only_explicit_active_subset(
+    round_module, monkeypatch, tmp_path
+):
+    dists_path = tmp_path / "dists.csv"
+    _category_dists(["alpha"]).to_csv(dists_path, index=False)
+    monkeypatch.setattr(round_module, "DISTS_FILE_V2", str(dists_path))
+    captured = {}
+
+    def overlay(stds, *_args, **kwargs):
+        captured.update(kwargs)
+        return stds
+
+    monkeypatch.setattr(round_module, "apply_shot_dispersion_overlay", overlay)
+    monkeypatch.setattr(round_module, "load_corr_matrix", lambda _cats: np.eye(4))
+
+    round_module._load_catfirst_dists(["alpha"], allow_player_subset=True)
+
+    assert captured["allow_active_subset"] is True
+
+
 def test_production_correlation_matrix_never_falls_back(round_module, monkeypatch, tmp_path):
     missing = tmp_path / "preferred_missing.csv"
     fallback = tmp_path / "different_fallback.csv"

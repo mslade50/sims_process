@@ -320,7 +320,7 @@ def _apply_skew(z, gamma):
     return z_skewed
 
 
-def _load_catfirst_dists(player_names):
+def _load_catfirst_dists(player_names, *, allow_player_subset=False):
     """Load v2 dists + correlation + per-player params for category-first draws.
 
     Returns (player_cf_params, effective_skew, L_corr). Production never
@@ -356,6 +356,7 @@ def _load_catfirst_dists(player_names):
         tourney=tourney,
         event_id=_event_id,
         dists_path=DISTS_FILE_V2,
+        allow_active_subset=allow_player_subset,
     )
     active_stds = std_w.loc[active_players, CAT_ORDER].to_numpy(dtype=float)
     if not np.isfinite(active_stds).all() or np.any(active_stds <= 0.0):
@@ -2554,7 +2555,8 @@ def simulate_round_scores_catfirst(model_preds, sim_round, expected_avg,
 
     # Load v2 distributions via shared helper
     player_cf_params, effective_skew, L_corr = _load_catfirst_dists(
-        list(model_preds["player_name"])
+        list(model_preds["player_name"]),
+        allow_player_subset=sim_round > 1,
     )
 
     has_course_adj = "course_score_adj" in model_preds.columns
@@ -5594,7 +5596,8 @@ def main():
 
                 # Load category-first distribution params
                 player_cf_params, effective_skew, L_corr = _load_catfirst_dists(
-                    player_names
+                    player_names,
+                    allow_player_subset=round_num >= 1,
                 )
                 print(f"    Loaded catfirst distribution parameters")
 

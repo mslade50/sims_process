@@ -81,6 +81,66 @@ def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path):
         np.testing.assert_allclose(expected_var.mean(), base_var.mean())
 
 
+def test_live_overlay_accepts_a_subset_of_the_frozen_roster(tmp_path):
+    players = ["alpha, a", "beta, b"]
+    active_players = ["alpha, a"]
+    base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=active_players)
+    features = pd.DataFrame(
+        {
+            "player_name": players,
+            "ott_shot_indep_var50_shrunk": [2.0, 1.0],
+            "app_shot_indep_var50_shrunk": [2.0, 1.0],
+            "arg_shot_indep_var50_shrunk": [2.0, 1.0],
+            "putt_shot_indep_var50_shrunk": [2.0, 1.0],
+        }
+    )
+    feature_path = tmp_path / "features.csv"
+    dists_path = tmp_path / "dists.csv"
+    config_path = tmp_path / "config.json"
+    features.to_csv(feature_path, index=False)
+    dists_path.write_text("hash-locked input", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "tourney": "bmw",
+                "event_id": 28,
+                "expected_field_size": 2,
+                "feature_file": str(feature_path),
+                "feature_sha256": _sha256(feature_path),
+                "distribution_sha256": _sha256(dists_path),
+                "weights": {cat: 0.9 for cat in CATS},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="expected 2 players, got 1"):
+        apply_shot_dispersion_overlay(
+            base,
+            active_players,
+            CATS,
+            tourney="bmw",
+            event_id=28,
+            dists_path=dists_path,
+            config_path=config_path,
+        )
+
+    actual = apply_shot_dispersion_overlay(
+        base,
+        active_players,
+        CATS,
+        tourney="bmw",
+        event_id=28,
+        dists_path=dists_path,
+        config_path=config_path,
+        allow_active_subset=True,
+    )
+
+    assert list(actual.index) == active_players
+    assert np.isfinite(actual.loc[active_players, CATS].to_numpy()).all()
+
+
 def test_overlay_is_noop_outside_configured_event(tmp_path):
     base = pd.DataFrame({cat: [1.0] for cat in CATS}, index=["alpha, a"])
     config_path = tmp_path / "config.json"
