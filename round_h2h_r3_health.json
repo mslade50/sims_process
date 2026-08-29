@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-08-29 00:01:41 UTC",
+  "generated_at": "2026-08-29 09:26:15 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 3
     },
     "source": {
-      "generated_at": "2026-08-28 23:57:40 UTC",
-      "root_generated_at": "2026-08-28 23:57:40 UTC",
+      "generated_at": "2026-08-29 09:22:35 UTC",
+      "root_generated_at": "2026-08-29 09:22:35 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r3.csv",
         "exists": true,
         "sha256": "b0167782587de50e2746885e544e9a27f24c3689f7c30714c79f53a62a60f327",
-        "modified_at": "2026-08-28 23:57:34 UTC"
+        "modified_at": "2026-08-29 09:22:31 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -120,14 +120,14 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-08-28 23:57:40 UTC"
+      "approved_at": "2026-08-29 09:22:35 UTC"
     },
-    "manifest_sha256": "57324a9a28ab9f066cc385266a424399b606e5f699dc4c35950e1e4bb0018043"
+    "manifest_sha256": "6f24e81190b2f656a1ef47c1cd1ddff3d68c42402228ddfc565b7441d49ca6ad"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r3_meta.json",
-      "sha256": "92031ac39f9cce283882f9269ca7b9635c643ce3e8650c59790753f940a63417"
+      "sha256": "2f434f032677122ffdcc68608703de1eee0585305ce8bfe1b9622da0d9dd1ab7"
     },
     "h2h_parquet": {
       "path": "round_h2h_r3.parquet",
@@ -138,7 +138,7 @@
     "num_pairs": 406,
     "num_players": 29,
     "num_sims": 100000,
-    "source_manifest_sha256": "57324a9a28ab9f066cc385266a424399b606e5f699dc4c35950e1e4bb0018043"
+    "source_manifest_sha256": "6f24e81190b2f656a1ef47c1cd1ddff3d68c42402228ddfc565b7441d49ca6ad"
   },
-  "manifest_sha256": "23d6bd1cd5619e3d691420be06eb5ae755a9069333376d0795d201df1811aaad"
+  "manifest_sha256": "70ab03cb06c1819800593e0d66279cab9189eb19138b21c5e8521dcaae5df91f"
 }
