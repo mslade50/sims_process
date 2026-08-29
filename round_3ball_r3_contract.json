@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
-  "kind": "live_tournament_tape",
-  "generated_at": "2026-08-28 23:58:28 UTC",
+  "kind": "published_round_3ball",
+  "generated_at": "2026-08-29 00:01:45 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -125,31 +125,118 @@
     "manifest_sha256": "57324a9a28ab9f066cc385266a424399b606e5f699dc4c35950e1e4bb0018043"
   },
   "files": {
-    "final_scores": {
-      "path": "final_scores_live_tourchamp.npy",
-      "sha256": "ec0f94f113c27c421f72a02ef0f94830f6c82028f4572c66daab2c2001687b3c"
+    "threeball_meta": {
+      "path": "round_3ball_r3_meta.json",
+      "sha256": "5b4710617a57a7325afa72e0a4f73a59b99c2cbaf8f4758532703f9d43fd54c9"
     },
-    "finish_probs": {
-      "path": "simulated_probs_live.csv",
-      "sha256": "829da9c5efed8169556eb80f96af287352c9cd0ab2b8022fe361bd31bcfdcae7"
-    },
-    "finish_probs_event": {
-      "path": "top_finish_probs_live_tourchamp.csv",
-      "sha256": "829da9c5efed8169556eb80f96af287352c9cd0ab2b8022fe361bd31bcfdcae7"
-    },
-    "made_cut": {
-      "path": "made_cut_live_tourchamp.npy",
-      "sha256": "f32dfa0a4d98d78560844f4cc712213f1c59663786f44a31ff804c280fc9c394"
-    },
-    "player_names": {
-      "path": "player_names_live_tourchamp.json",
-      "sha256": "d6fd9eba1823557009d3ecdaeadd5d2aa0bd95caaa75e3a1a504ecb87dc22ed9"
+    "threeball_parquet": {
+      "path": "round_3ball_r3.parquet",
+      "sha256": "0e635861f91ba2f5b313382ef969f04362eab62e41d827aa71c169f3f1e7fc4e"
     }
   },
   "extra": {
-    "field_player_set_sha256": "d13e35589c87b53f49608127531efee8f58ea29ca0ea24a65aab66d43813eb05",
-    "num_players": 29,
-    "num_sims": 100000
+    "status": "no_groups_offered",
+    "event_id": "60",
+    "round": 3,
+    "num_groups": 0,
+    "tee_group_source": {
+      "status": "no_groups_offered",
+      "groups": [],
+      "field_players": 30,
+      "tee_time_players": 29,
+      "tee_time_names": [
+        "aberg, ludvig",
+        "bhatia, akshay",
+        "bridgeman, jacob",
+        "burns, sam",
+        "cantlay, patrick",
+        "clark, wyndham",
+        "fitzpatrick, alex",
+        "fitzpatrick, matt",
+        "fleetwood, tommy",
+        "fox, ryan",
+        "gerard, ryan",
+        "gotterup, chris",
+        "henley, russell",
+        "hovland, viktor",
+        "kim, si woo",
+        "kim, tom",
+        "lee, min woo",
+        "macintyre, robert",
+        "matsuyama, hideki",
+        "mcilroy, rory",
+        "morikawa, collin",
+        "reitan, kristoffer",
+        "rose, justin",
+        "schauffele, xander",
+        "scheffler, scottie",
+        "scott, adam",
+        "smalley, alex",
+        "woodland, gary",
+        "young, cameron"
+      ],
+      "group_sizes": [
+        1,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "field_names": [
+        "aberg, ludvig",
+        "bhatia, akshay",
+        "bridgeman, jacob",
+        "burns, sam",
+        "cantlay, patrick",
+        "clark, wyndham",
+        "fitzpatrick, alex",
+        "fitzpatrick, matt",
+        "fleetwood, tommy",
+        "fox, ryan",
+        "gerard, ryan",
+        "gotterup, chris",
+        "henley, russell",
+        "hovland, viktor",
+        "kim, si woo",
+        "kim, tom",
+        "lee, min woo",
+        "macintyre, robert",
+        "matsuyama, hideki",
+        "mcilroy, rory",
+        "morikawa, collin",
+        "reitan, kristoffer",
+        "rose, justin",
+        "schauffele, xander",
+        "scheffler, scottie",
+        "scott, adam",
+        "smalley, alex",
+        "spaun, j.j.",
+        "woodland, gary",
+        "young, cameron"
+      ],
+      "round": 3,
+      "event_id": "60",
+      "requested_event_id": "60",
+      "source_event_id": "60",
+      "event_identity_basis": "datagolf_event_id",
+      "tour": "pga",
+      "fetched_at": "2026-08-29 00:01:41 UTC",
+      "attempts": 1,
+      "event_identity_verified": true,
+      "simulation_field_overlap": 1.0,
+      "simulation_tee_time_coverage": 1.0,
+      "field_player_set_sha256": "164f1a5b2182366c67a567be45d5b1b31f97e0c8b892a162a85581c94d626654"
+    }
   },
-  "manifest_sha256": "4a7697a3b3d4fbc58baa5f814fdfe9b48ac4c2d85f5ca46a7c6bb90e81db7212"
+  "manifest_sha256": "f760e066bfd11714a13205b7dcfdf37aa892cb15d0eafd28f9f42022c8066755"
 }

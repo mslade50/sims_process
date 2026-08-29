@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
-  "kind": "live_tournament_tape",
-  "generated_at": "2026-08-28 23:58:28 UTC",
+  "kind": "published_round_h2h",
+  "generated_at": "2026-08-29 00:01:41 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -125,31 +125,20 @@
     "manifest_sha256": "57324a9a28ab9f066cc385266a424399b606e5f699dc4c35950e1e4bb0018043"
   },
   "files": {
-    "final_scores": {
-      "path": "final_scores_live_tourchamp.npy",
-      "sha256": "ec0f94f113c27c421f72a02ef0f94830f6c82028f4572c66daab2c2001687b3c"
+    "h2h_meta": {
+      "path": "round_h2h_r3_meta.json",
+      "sha256": "92031ac39f9cce283882f9269ca7b9635c643ce3e8650c59790753f940a63417"
     },
-    "finish_probs": {
-      "path": "simulated_probs_live.csv",
-      "sha256": "829da9c5efed8169556eb80f96af287352c9cd0ab2b8022fe361bd31bcfdcae7"
-    },
-    "finish_probs_event": {
-      "path": "top_finish_probs_live_tourchamp.csv",
-      "sha256": "829da9c5efed8169556eb80f96af287352c9cd0ab2b8022fe361bd31bcfdcae7"
-    },
-    "made_cut": {
-      "path": "made_cut_live_tourchamp.npy",
-      "sha256": "f32dfa0a4d98d78560844f4cc712213f1c59663786f44a31ff804c280fc9c394"
-    },
-    "player_names": {
-      "path": "player_names_live_tourchamp.json",
-      "sha256": "d6fd9eba1823557009d3ecdaeadd5d2aa0bd95caaa75e3a1a504ecb87dc22ed9"
+    "h2h_parquet": {
+      "path": "round_h2h_r3.parquet",
+      "sha256": "b11958b409d6fc43dfaf5464e66254fd5a501a6ec00aa6a33ead2b17c1872720"
     }
   },
   "extra": {
-    "field_player_set_sha256": "d13e35589c87b53f49608127531efee8f58ea29ca0ea24a65aab66d43813eb05",
+    "num_pairs": 406,
     "num_players": 29,
-    "num_sims": 100000
+    "num_sims": 100000,
+    "source_manifest_sha256": "57324a9a28ab9f066cc385266a424399b606e5f699dc4c35950e1e4bb0018043"
   },
-  "manifest_sha256": "4a7697a3b3d4fbc58baa5f814fdfe9b48ac4c2d85f5ca46a7c6bb90e81db7212"
+  "manifest_sha256": "23d6bd1cd5619e3d691420be06eb5ae755a9069333376d0795d201df1811aaad"
 }
