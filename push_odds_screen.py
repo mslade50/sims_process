@@ -2009,6 +2009,7 @@ def _build_tournament_matchups(
     """Build tournament matchups only from the sealed live tournament joint."""
     lookup = _tournament_h2h_lookup(release)
     score_lookup = _tournament_score_lookup(release)
+    active_field = set(score_lookup)
     scraped = _fetch_scraped_guarded("tournament_matchups", event_id=event_id)
     offered = (scraped or {}).get("match_list")
     if not isinstance(offered, list) or not offered:
@@ -2019,9 +2020,13 @@ def _build_tournament_matchups(
 
     matchups = {}
     missing_fairs = set()
+    skipped_nonparticipants = set()
     for match in offered:
         p1 = _norm(match.get("p1_player_name", ""), repl)
         p2 = _norm(match.get("p2_player_name", ""), repl)
+        if p1 not in active_field or p2 not in active_field:
+            skipped_nonparticipants.add((p1, p2))
+            continue
         probabilities = _tournament_probabilities(lookup, score_lookup, p1, p2)
         if probabilities is None:
             missing_fairs.add((p1, p2))
@@ -2053,6 +2058,13 @@ def _build_tournament_matchups(
             rec["books"][book] = {"p1": p1_odds, "p2": p2_odds}
             rec["edge"][f"{book}_p1"] = _edge_pct(p1_prob, p1_odds)
             rec["edge"][f"{book}_p2"] = _edge_pct(p2_prob, p2_odds)
+    if skipped_nonparticipants:
+        logger.warning(
+            "Skipped %s tournament matchup pair(s) outside the sealed active "
+            "field: %s",
+            len(skipped_nonparticipants),
+            sorted(skipped_nonparticipants),
+        )
     if missing_fairs:
         raise OddsScreenContractError(
             f"{len(missing_fairs)} fresh offered tournament matchup pair(s) "

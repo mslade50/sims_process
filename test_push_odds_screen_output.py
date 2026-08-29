@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -532,6 +533,45 @@ class PushOddsScreenOutputTests(unittest.TestCase):
 
 
 class CommittedReleaseContractTests(unittest.TestCase):
+    @staticmethod
+    def _build_tournament_fixture(
+        *,
+        field=("a", "b"),
+        fair_pairs=(("a", "b", 0.6),),
+        offered_pairs=(("a", "b"),),
+        replacements=None,
+    ):
+        release = {
+            "fairs": {
+                "field": list(field),
+                "matchups": [list(pair) for pair in fair_pairs],
+            }
+        }
+        quoted = {"betcris": {"p1": -110, "p2": -110}}
+        offered = {
+            "match_list": [
+                {
+                    "p1_player_name": p1,
+                    "p2_player_name": p2,
+                    "ties": "void",
+                    "odds": quoted,
+                }
+                for p1, p2 in offered_pairs
+            ]
+        }
+        score_lookup = {
+            player: np.array([280.0 + index, 281.0 - index])
+            for index, player in enumerate(field)
+        }
+        with patch(
+            "push_odds_screen._fetch_scraped_guarded", return_value=offered
+        ), patch(
+            "push_odds_screen._tournament_score_lookup", return_value=score_lookup
+        ):
+            return _build_tournament_matchups(
+                "test_event", replacements or {}, event_id=99, release=release
+            )
+
     def test_threeball_prices_must_match_declared_tee_groups(self):
         tee_source = {
             "status": "groups",
@@ -974,6 +1014,57 @@ class CommittedReleaseContractTests(unittest.TestCase):
                     _build_tournament_matchups(
                         "test_event", {}, event_id=99, release=release
                     )
+
+    def test_tournament_builder_skips_off_field_offers(self):
+        rows = self._build_tournament_fixture(
+            field=(
+                "scheffler, scottie",
+                "hovland, viktor",
+                "macintyre, robert",
+                "lee, min woo",
+                "woodland, gary",
+            ),
+            fair_pairs=(("scheffler, scottie", "hovland, viktor", 0.6),),
+            offered_pairs=(
+                ("Scheffler, Scottie", "Hovland, Viktor"),
+                ("Scheffler, Scottie", "Field, The"),
+                ("Spaun, JJ", "Hovland, Viktor"),
+                ("Spaun, JJ", "MacIntyre, Robert"),
+                ("Spaun, JJ", "Lee, Min Woo"),
+                ("Woodland, Gary", "Spaun, JJ"),
+            ),
+            replacements={"spaun, jj": "spaun, j.j."},
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            (rows[0]["p1"], rows[0]["p2"]),
+            ("scheffler, scottie", "hovland, viktor"),
+        )
+
+    def test_tournament_builder_skips_unknown_off_field_player(self):
+        rows = self._build_tournament_fixture(
+            offered_pairs=(("a", "b"), ("unknown", "a"))
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["p1"], rows[0]["p2"]), ("a", "b"))
+
+    def test_tournament_builder_still_rejects_in_field_missing_fair(self):
+        with self.assertRaisesRegex(
+            OddsScreenContractError, "1 fresh offered tournament matchup"
+        ):
+            self._build_tournament_fixture(
+                field=("a", "b", "c"), offered_pairs=(("a", "c"),)
+            )
+
+    def test_tournament_builder_rejects_all_off_field_offers(self):
+        with self.assertRaisesRegex(
+            OddsScreenContractError, "do not join the sealed tournament model"
+        ):
+            self._build_tournament_fixture(
+                offered_pairs=(("inactive", "Field, The"),)
+            )
 
     def test_score_builder_rejects_off_model_and_integer_offers(self):
         with tempfile.TemporaryDirectory() as tmp:
