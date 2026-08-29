@@ -1747,6 +1747,13 @@ def _event_id_token(value) -> str | None:
     return text or None
 
 
+def _event_name_token(value) -> str | None:
+    if value in (None, ""):
+        return None
+    text = " ".join(str(value).split()).casefold()
+    return text or None
+
+
 def _normalize_scraped_event_ids(data):
     """Canonicalize numeric event IDs before odds_loader's string comparison."""
     if not isinstance(data, dict):
@@ -2189,8 +2196,18 @@ def _decimal_to_american(dec: float) -> int:
         return int(round(-100 / (dec - 1)))
 
 
-def _fetch_dg_outrights(market_name: str, repl: dict, *, event_id=None) -> dict:
-    """Fetch outright odds from DataGolf API. Returns {player: {book: american_odds}}."""
+def _fetch_dg_outrights(
+    market_name: str,
+    repl: dict,
+    *,
+    event_id=None,
+    event_name=None,
+) -> dict:
+    """Fetch event-bound DataGolf odds as {player: {book: american_odds}}.
+
+    DataGolf's live outright response may omit ``event_id``. In that case an exact
+    normalized ``event_name`` match is required; a present ID remains authoritative.
+    """
     api_key = os.getenv("DATAGOLF_API_KEY")
     if not api_key:
         return {}
@@ -2211,12 +2228,26 @@ def _fetch_dg_outrights(market_name: str, repl: dict, *, event_id=None) -> dict:
 
     response_event_id = _event_id_token(data.get("event_id"))
     target_event_id = _event_id_token(event_id)
-    if target_event_id is None or response_event_id != target_event_id:
+    response_event_name = _event_name_token(data.get("event_name"))
+    target_event_name = _event_name_token(event_name)
+    if response_event_id is not None:
+        identity_matches = (
+            target_event_id is not None and response_event_id == target_event_id
+        )
+    else:
+        identity_matches = (
+            target_event_name is not None
+            and response_event_name == target_event_name
+        )
+    if not identity_matches:
         logger.warning(
-            "DG outrights (%s) lack exact event identity (%s != %s); dropping quotes",
+            "DG outrights (%s) lack exact event identity "
+            "(id=%s/%s, name=%s/%s); dropping quotes",
             market_name,
             response_event_id,
             target_event_id,
+            response_event_name,
+            target_event_name,
         )
         return {}
 
@@ -2252,6 +2283,9 @@ def _build_outrights(
     """Build outright records from sealed sim fairs plus current/frozen book odds."""
     sealed_outrights = release["fairs"]["outrights"]
     sealed_nodh = release["fairs"].get("outrights_nodh") or {}
+    active_field = {
+        _norm(player, repl) for player in (release["fairs"].get("field") or [])
+    }
     fair_by_market = {
         market: {
             _norm(player, repl): float(probability)
@@ -2275,7 +2309,10 @@ def _build_outrights(
     dg_by_market = {}
     for dg_market in ["win", "top_5", "top_10", "top_20"]:
         dg_by_market[dg_market] = _fetch_dg_outrights(
-            dg_market, repl, event_id=event_id
+            dg_market,
+            repl,
+            event_id=event_id,
+            event_name=release["fairs"].get("event_name"),
         )
 
     # Overlay event-tagged, freshness-stamped Betcris quotes. Calling the legacy
@@ -2311,10 +2348,18 @@ def _build_outrights(
         offered_players = {
             player for player, books in dg_odds.items() if books
         } | set(betcris_scraped.get(market_key, {}))
-        missing_fairs = offered_players - set(dh_fairs)
-        if missing_fairs:
+        skipped_nonparticipants = offered_players - active_field
+        if skipped_nonparticipants:
+            logger.warning(
+                "Skipped %s %s quote player(s) outside the sealed active field: %s",
+                len(skipped_nonparticipants),
+                market_key,
+                sorted(skipped_nonparticipants),
+            )
+        missing_active_fairs = (offered_players & active_field) - set(dh_fairs)
+        if missing_active_fairs:
             raise OddsScreenContractError(
-                f"{len(missing_fairs)} attributable {market_key} quote player(s) "
+                f"{len(missing_active_fairs)} active {market_key} quote player(s) "
                 "lack a sealed outright fair; retaining prior generation"
             )
 

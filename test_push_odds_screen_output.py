@@ -1100,7 +1100,7 @@ class CommittedReleaseContractTests(unittest.TestCase):
                         "test_event", 4, {}, event_id=99, release=release
                     )
 
-    def test_outright_builder_rejects_attributable_off_model_quote(self):
+    def test_outright_builder_skips_off_field_quote_when_valid_quote_remains(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_strict_release(root)
@@ -1113,9 +1113,38 @@ class CommittedReleaseContractTests(unittest.TestCase):
             )
             with patch(
                 "push_odds_screen._fetch_dg_outrights",
-                return_value={"c": {"betcris": 150}},
+                return_value={
+                    "a": {"betcris": 150},
+                    "c": {"betcris": 200},
+                },
             ), patch("push_odds_screen._fetch_scraped_guarded", return_value=None):
-                with self.assertRaisesRegex(OddsScreenContractError, "lack a sealed"):
+                markets = _build_outrights(
+                    "test_event", {}, event_id=99, release=release
+                )
+            for rows in markets.values():
+                self.assertNotIn("c", {row["player"] for row in rows})
+                player_a = next(row for row in rows if row["player"] == "a")
+                self.assertEqual(player_a["books"]["betcris"]["yes"], 150)
+
+    def test_outright_builder_rejects_active_quote_missing_market_fair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root)
+            release = _load_committed_release_contract(
+                expected_tourney="test_event",
+                expected_event_id=99,
+                expected_round=4,
+                project_root=root,
+                verify_git=False,
+            )
+            release["fairs"]["outrights"]["winner"].pop("a")
+            with patch(
+                "push_odds_screen._fetch_dg_outrights",
+                return_value={"a": {"betcris": 150}},
+            ), patch("push_odds_screen._fetch_scraped_guarded", return_value=None):
+                with self.assertRaisesRegex(
+                    OddsScreenContractError, "active winner quote player"
+                ):
                     _build_outrights(
                         "test_event", {}, event_id=99, release=release
                     )
@@ -1131,6 +1160,10 @@ class CommittedReleaseContractTests(unittest.TestCase):
                 project_root=root,
                 verify_git=False,
             )
+            release["fairs"]["field"] = [
+                "scheffler, scottie",
+                "other, player",
+            ]
             for market in ("winner", "top_5", "top_10", "top_20"):
                 release["fairs"]["outrights"][market] = {
                     "scheffler, scottie": 0.6,
@@ -1179,7 +1212,7 @@ class CommittedReleaseContractTests(unittest.TestCase):
             ), patch(
                 "push_odds_screen._fetch_scraped_guarded", return_value=betcris
             ):
-                with self.assertRaisesRegex(OddsScreenContractError, "lack a sealed"):
+                with self.assertRaisesRegex(OddsScreenContractError, "no usable winner"):
                     _build_outrights(
                         "test_event", {}, event_id=99, release=release
                     )
@@ -1198,12 +1231,25 @@ class StrictQuoteProvenanceTests(unittest.TestCase):
                 return self.payload
 
         payload = {
+            "event_name": "Test Event",
             "odds": [{"player_name": "a", "betcris": 2.5}],
         }
         with patch.dict("os.environ", {"DATAGOLF_API_KEY": "test"}), patch(
             "push_odds_screen.requests.get", return_value=Response(payload)
         ):
             self.assertEqual(_fetch_dg_outrights("win", {}, event_id=99), {})
+            self.assertEqual(
+                _fetch_dg_outrights(
+                    "win", {}, event_id=99, event_name="Different Event"
+                ),
+                {},
+            )
+            self.assertEqual(
+                _fetch_dg_outrights(
+                    "win", {}, event_id=99, event_name="Test Event"
+                ),
+                {"a": {"betcris": 150}},
+            )
 
         with patch.dict("os.environ", {"DATAGOLF_API_KEY": "test"}), patch(
             "push_odds_screen.requests.get",
