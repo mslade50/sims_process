@@ -27,6 +27,8 @@ Pipeline Summary:
 """
 
 import argparse
+import hashlib
+import json
 import os
 import pandas as pd
 import numpy as np
@@ -1287,6 +1289,8 @@ def _load_active_field_context(round_num, require_centered=False):
         return None
 
     frame = pd.read_csv(path)
+    if "player_name" in frame:
+        frame = clean_names(frame)
     skill_col = "my_pred" if round_num == 1 else f"my_pred{round_num}"
     score_col = f"scores_r{round_num}"
     required = [skill_col, score_col, f"wind_r{round_num}",
@@ -1320,10 +1324,16 @@ def _load_active_field_context(round_num, require_centered=False):
     numeric_skill = pd.to_numeric(frame[skill_col], errors="coerce")
     if numeric_skill.isna().any() or frame.empty:
         raise RuntimeError(f"{path} has missing active-field skills")
+    player_names = sorted({
+        str(name).strip().lower()
+        for name in frame.get("player_name", pd.Series(dtype=str)).dropna()
+        if str(name).strip().lower() not in {"", "nan", "none"}
+    })
 
     return {
         "path": path,
         "players": len(frame),
+        "player_names": player_names,
         "field_mean_skill": float(numeric_skill.mean()),
         "avg_wind": float(pd.to_numeric(
             frame[f"wind_r{round_num}"], errors="coerce").mean()),
@@ -2590,6 +2600,275 @@ def main():
         print("\n  [no-sheet-writes] Skipping expected-score Sheet update")
 
 
+def _shadow_completed_actuals(actual_grid, completed_round):
+    """Read realized weather and full-field structural residuals by header."""
+    from scoring_shadow import ShadowUnavailable
+
+    if not actual_grid:
+        raise ShadowUnavailable("round_config actuals grid is empty")
+    header = {
+        str(value).strip().lower(): idx
+        for idx, value in enumerate(actual_grid[0])
+    }
+    required = (
+        "round", "wind impact", "dew impact", "structural residual"
+    )
+    missing = [name for name in required if name not in header]
+    if missing:
+        raise ShadowUnavailable(
+            f"round_config actuals grid is missing {missing}"
+        )
+    actuals = {}
+    for row in actual_grid[1:]:
+        label_idx = header["round"]
+        label = (
+            str(row[label_idx]).strip().lower()
+            if label_idx < len(row) else ""
+        )
+        if not label.startswith("r"):
+            continue
+        try:
+            rnd = int(label[1:])
+            wind = float(row[header["wind impact"]])
+            dew = float(row[header["dew impact"]])
+            residual = float(row[header["structural residual"]])
+        except (IndexError, TypeError, ValueError):
+            continue
+        actuals[rnd] = {
+            "weather_effect": wind + dew,
+            "structural_residual": residual,
+        }
+    needed = set(range(1, completed_round + 1))
+    if not needed.issubset(actuals):
+        raise ShadowUnavailable(
+            f"completed actuals are missing for rounds "
+            f"{sorted(needed - set(actuals))}"
+        )
+    return {rnd: actuals[rnd] for rnd in sorted(needed)}
+
+
+def _build_live_scoring_shadow(
+    *,
+    completed_round,
+    baselines,
+    active_context,
+    target_weather_effect,
+    production_candidate,
+    sheet_before,
+    published_after,
+    actual_grid,
+    cut_line=None,
+    target_weather_complete=True,
+):
+    """Collect live inputs and return one pure shadow diagnostic record."""
+    from scoring_shadow import (
+        ShadowUnavailable,
+        classify_cut_format,
+        compute_shadow_forecast,
+        load_shadow_calibration,
+    )
+
+    target_round = completed_round + 1
+    if len(COURSE_SCORE_MAP) > 1:
+        raise ShadowUnavailable("multi-course events are not calibrated in v1")
+    if not active_context:
+        raise ShadowUnavailable(f"R{target_round} active field is unavailable")
+    if not target_weather_complete:
+        raise ShadowUnavailable("target-round weather context is incomplete")
+
+    active_names = set(active_context.get("player_names") or [])
+    if len(active_names) != int(active_context.get("players") or 0):
+        raise ShadowUnavailable("target active-field membership is incomplete")
+    completed_actuals = _shadow_completed_actuals(
+        actual_grid, completed_round
+    )
+
+    completed = []
+    opening_field_size = None
+    event_names = set()
+    course_names = set()
+    for rnd in range(1, completed_round + 1):
+        frame = None
+        for path in (
+            f"r{rnd}_live_model.csv",
+            os.path.join("dashboard_data", f"r{rnd}_live_model.csv"),
+        ):
+            if not os.path.exists(path):
+                continue
+            candidate = pd.read_csv(path)
+            if "player_name" not in candidate or "round" not in candidate:
+                continue
+            candidate = clean_names(candidate)
+            candidate_names = {
+                str(name).strip().lower()
+                for name in candidate["player_name"].dropna()
+                if str(name).strip().lower() not in {"", "nan", "none"}
+            }
+            if len(candidate_names & active_names) / len(active_names) < 0.8:
+                print(
+                    f"  [shadow] Ignoring stale R{rnd} artifact {path}"
+                )
+                continue
+            frame = candidate
+            print(f"  [shadow] R{rnd} cohort scores from {path}")
+            break
+        if frame is None:
+            raise ShadowUnavailable(
+                f"R{rnd} local cohort artifact is unavailable or stale"
+            )
+        if frame is None or "player_name" not in frame or "round" not in frame:
+            raise ShadowUnavailable(f"R{rnd} target-cohort scores are unavailable")
+        frame = clean_names(frame.copy())
+        frame["_shadow_score_to_par"] = pd.to_numeric(
+            frame["round"], errors="coerce"
+        )
+        valid_all = frame.dropna(subset=["_shadow_score_to_par"])
+        valid_all = valid_all.drop_duplicates("player_name", keep="last")
+        if rnd == 1:
+            opening_field_size = frame.loc[
+                ~frame["player_name"].isin(["", "nan", "none"]),
+                "player_name",
+            ].nunique()
+        if "event_name" in valid_all:
+            event_names.update(
+                str(value).strip()
+                for value in valid_all["event_name"].dropna().unique()
+                if str(value).strip()
+            )
+        row_level_courses = set()
+        for course_col in ("course", "course_x", "course_y"):
+            if course_col in valid_all:
+                row_level_courses.update(
+                    str(value).strip()
+                    for value in valid_all[course_col].dropna().unique()
+                    if str(value).strip()
+                )
+        if row_level_courses:
+            course_names.update(row_level_courses)
+        elif "course_name" in valid_all:
+            course_names.update(
+                str(value).strip()
+                for value in valid_all["course_name"].dropna().unique()
+                if str(value).strip()
+            )
+
+        cohort = valid_all[valid_all["player_name"].isin(active_names)]
+        matched = cohort["player_name"].nunique()
+        coverage = matched / len(active_names)
+        if cohort.empty:
+            raise ShadowUnavailable(f"R{rnd} has no target-cohort scores")
+        score = float(
+            cohort["_shadow_score_to_par"].mean() + course_par
+        )
+        completed.append({
+            "round": rnd,
+            "score": score,
+            "weather_effect": completed_actuals[rnd]["weather_effect"],
+            "structural_residual": completed_actuals[rnd][
+                "structural_residual"
+            ],
+            "coverage": coverage,
+        })
+
+    if len(event_names) > 1:
+        raise ShadowUnavailable(
+            f"completed rounds refer to different events: {sorted(event_names)}"
+        )
+    if len(course_names) > 1:
+        raise ShadowUnavailable(
+            f"completed rounds contain multiple courses: {sorted(course_names)}"
+        )
+    if not opening_field_size:
+        raise ShadowUnavailable("opening R1 field size is unavailable")
+
+    if cut_line in (None, ""):
+        from sim_inputs import CUT_LINE
+
+        cut_line = CUT_LINE
+    cut_format = classify_cut_format(cut_line, opening_field_size)
+    calibration = load_shadow_calibration()
+    record = compute_shadow_forecast(
+        calibration,
+        target_round=target_round,
+        course_id=course_id,
+        cut_format=cut_format,
+        active_players=len(active_names),
+        cohort_members=active_names,
+        completed_rounds=completed,
+        target_baseline=baselines.get(target_round),
+        target_field_skill=active_context["field_mean_skill"],
+        target_weather_effect=target_weather_effect,
+        production_candidate=production_candidate,
+        sheet_before=sheet_before,
+        published_after=published_after,
+    )
+    record.update({
+        "run_timestamp": datetime.utcnow().strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
+        "tourney": tourney,
+        "year": datetime.now().year,
+        "event_id": str(event_ids[0]) if event_ids else "",
+        "weather_granularity": "round_field_average",
+    })
+    return record
+
+
+def _print_scoring_shadow(record):
+    """Print the shadow result without exposing it to simulation state."""
+    print("\n  SCORING SHADOW (diagnostic only; not published to sims)")
+    print(
+        f"  Prior cohort avg={record['prior_score_average']:.3f}, "
+        f"transition={record['transition_used']:+.3f} "
+        f"({record['transition_source']}), "
+        f"weather delta={record['weather_delta']:+.3f}"
+    )
+    print(
+        f"  Paired={record['weather_paired']:.3f}, "
+        f"robust structural={record['robust_structural']:.3f}, "
+        f"shadow={record['shadow_unrounded']:.3f} "
+        f"(display {record['shadow_display']:.1f}), "
+        f"production candidate={record['production_candidate']:.3f}"
+    )
+
+
+def _scoring_shadow_skip_record(
+    completed_round,
+    reason,
+    *,
+    production_candidate=None,
+    sheet_before=None,
+    published_after=None,
+):
+    """Build a deterministic audit row when the optional shadow cannot run."""
+    target_round = completed_round + 1
+    payload = {
+        "status": "skipped",
+        "reason": str(reason),
+        "year": datetime.now().year,
+        "event_id": str(event_ids[0]) if event_ids else "",
+        "course_id": course_id,
+        "target_round": target_round,
+        "production_candidate": production_candidate,
+        "sheet_before": sheet_before,
+        "published_after": published_after,
+    }
+    payload["input_hash"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    payload.update({
+        "run_timestamp": datetime.utcnow().strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
+        "model_version": "shadow-unavailable",
+        "tourney": tourney,
+        "weather_granularity": "round_field_average",
+    })
+    return payload
+
+
 def update_expected_scores(completed_round, sync_primary=False):
     """
     Recompute expected scoring averages for future rounds using current
@@ -2707,6 +2986,7 @@ def update_expected_scores(completed_round, sync_primary=False):
     # Dewpoint base is persisted by humidity.py. Include the fresh dew forecast
     # in the same score-space formula used by the pre-tournament breakdown.
     dewpoint_base = 0.0
+    raw_params = {}
     try:
         from sheets_storage import get_round_config_params, get_spreadsheet
 
@@ -2722,12 +3002,13 @@ def update_expected_scores(completed_round, sync_primary=False):
     # completed rounds. Do not substitute a hindsight structural baseline; the
     # user-facing forecast is the quantity whose calibration we update.
     delta_adj = 0.0
+    actual_grid = []
     try:
         from sheets_storage import get_spreadsheet as _get_ss
 
         if spreadsheet is None:
             spreadsheet = _get_ss()
-        actual_grid = spreadsheet.worksheet("round_config").get("U10:AC14")
+        actual_grid = spreadsheet.worksheet("round_config").get("U10:AE14")
         header = actual_grid[0] if actual_grid else []
         if len(header) < 9 or str(header[8]).strip().lower() != "forecast miss":
             raise RuntimeError(
@@ -2761,6 +3042,8 @@ def update_expected_scores(completed_round, sync_primary=False):
     # 5. Compute for future rounds
     future_rounds = range(completed_round + 1, 5)
     adjusted = {}
+    production_candidates = {}
+    target_weather_effects = {}
 
     print(f"\n  {'Rnd':>3} | {'Baseline':>8} | {'Wind':>6} | {'Wind Eff':>8} | {'Dew Eff':>8} | {'Field':>8} | {'Fcst Fb':>8} | {'Expected':>8}")
     print(f"  {'-'*3}-+-{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}-+-{'-'*8}")
@@ -2809,6 +3092,8 @@ def update_expected_scores(completed_round, sync_primary=False):
             difficulty_feedback=delta_adj,
         )
         adjusted[rnd] = round(expected, 1)
+        production_candidates[rnd] = expected
+        target_weather_effects[rnd] = wind_effect + dew_effect
 
         print(f"  R{rnd}  | {base:>8.2f} | {avg_wind:>6.1f} | {wind_effect:>+8.3f} | {dew_effect:>+8.3f} | {fld:>+8.3f} | {delta_adj:>+8.3f} | {adjusted[rnd]:>8.1f}")
 
@@ -2823,6 +3108,7 @@ def update_expected_scores(completed_round, sync_primary=False):
         )
 
     # 6. Write to Sheet
+    authoritative_write_succeeded = False
     try:
         from sheets_storage import (
             get_spreadsheet,
@@ -2847,6 +3133,7 @@ def update_expected_scores(completed_round, sync_primary=False):
         update_round_config_params(
             updates, notes=notes, spreadsheet=spreadsheet
         )
+        authoritative_write_succeeded = True
         for param_name, value in updates.items():
             print(f"  Wrote {param_name} = {value}")
 
@@ -2855,6 +3142,56 @@ def update_expected_scores(completed_round, sync_primary=False):
         print(f"  WARNING: Could not write to Sheet: {e}")
         if sync_primary:
             raise
+
+    # Shadow-only paired forecast. Run it only after the authoritative update,
+    # with no path back into adjusted, SCORE_ADJS, prediction files, or sims.
+    # Missing inputs and storage errors remain warnings in automation mode.
+    sheet_before = single_published_forecast(
+        raw_params.get(f"expected_score_r{target_round}")
+    )
+    published_after = (
+        single_published_forecast(adjusted.get(target_round))
+        if authoritative_write_succeeded
+        else None
+    )
+    shadow_record = None
+    try:
+        dew_context_complete = (
+            float(dew_calculation) == 0.0
+            or bool(dewpoint_base and active_context and active_context.get("avg_dew"))
+        )
+        shadow_record = _build_live_scoring_shadow(
+            completed_round=completed_round,
+            baselines=baselines,
+            active_context=active_context,
+            target_weather_effect=target_weather_effects[target_round],
+            production_candidate=production_candidates[target_round],
+            sheet_before=sheet_before,
+            published_after=published_after,
+            actual_grid=actual_grid,
+            cut_line=raw_params.get("cut_line"),
+            target_weather_complete=dew_context_complete,
+        )
+        _print_scoring_shadow(shadow_record)
+    except Exception as exc:
+        print(f"  WARNING: scoring shadow skipped ({exc})")
+        shadow_record = _scoring_shadow_skip_record(
+            completed_round,
+            exc,
+            production_candidate=production_candidates.get(target_round),
+            sheet_before=sheet_before,
+            published_after=published_after,
+        )
+
+    if shadow_record is not None:
+        try:
+            from sheets_storage import append_scoring_shadow
+
+            append_scoring_shadow(
+                shadow_record, spreadsheet=spreadsheet
+            )
+        except Exception as exc:
+            print(f"  WARNING: scoring shadow storage failed ({exc})")
 
 
 if __name__ == "__main__":

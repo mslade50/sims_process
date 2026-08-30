@@ -554,6 +554,13 @@ python live_stats_engine.py
   - `r1_live_model.csv` (R1 skill-adjusted model)
   - `model_predictions_r2.csv` (predictions for R2)
 
+For rounds 1-3, the same run also records a context-aware scoring forecast in
+the dedicated `Scoring Shadow` Sheet tab. It combines the target-round active
+cohort's completed scores, exact-course historical round transitions, realized
+weather, and a robust structural anchor. This is diagnostic only: it runs after
+the authoritative expected-score write, is not read by simulations or odds
+pricing, and any shadow calculation or storage failure is warning-only.
+
 ### 4.2b R1 Round Sim (with round=0 still in the sheet)
 ```bash
 python round_sim.py

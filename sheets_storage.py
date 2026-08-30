@@ -62,8 +62,27 @@ TAB_BASE_RATES = "Base Rates"
 TAB_LIVE = "Live"
 TAB_DETAILS = "Details"
 TAB_SCORE_EDGES = "Score Edges"
+TAB_SCORING_SHADOW = "Scoring Shadow"
 
 DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
+
+SCORING_SHADOW_HEADERS = [
+    "run_timestamp", "input_hash", "model_version", "tourney", "year",
+    "event_id", "course_id", "target_round", "cut_format", "status",
+    "active_players", "cohort_hash", "minimum_coverage", "round_scores",
+    "round_coverages", "round_weather_effects",
+    "round_structural_residuals", "prior_score_average",
+    "transition_global", "transition_course_mean", "transition_course_n",
+    "transition_used", "transition_source", "prior_weather_average",
+    "target_weather_effect", "weather_delta", "raw_paired",
+    "weather_paired", "structural_no_feedback",
+    "median_structural_residual", "robust_residual_weight",
+    "robust_structural", "paired_blend_weight", "production_candidate",
+    "sheet_before", "published_after", "shadow_unrounded", "shadow_display",
+    "shadow_minus_production", "calibration_hash", "model_input_hash",
+    "weather_granularity", "target_baseline", "target_field_skill",
+    "transition_pseudo_count", "reason",
+]
 
 # Minimum Kelly edge (sim_prob * decimal_odds - 1, i.e. EV per unit staked) to
 # log a finish-position bet. Matches the dashboard's Kelly-EV metric. Matchups
@@ -556,6 +575,86 @@ def _append_rows_deduped(ws, rows, key_indices, key_fn=None, result_index=None):
     if fresh:
         ws.append_rows(fresh, value_input_option="USER_ENTERED")
     return len(fresh), skipped
+
+
+def append_scoring_shadow(record, spreadsheet=None):
+    """Append one idempotent diagnostic row to the isolated shadow tab.
+
+    This tab is not read by simulation, pricing, dashboard, or publishing code.
+    The deterministic input hash makes an automation retry a no-op.
+    """
+    if not isinstance(record, dict):
+        raise TypeError("Scoring shadow record must be a mapping")
+    input_hash = str(record.get("input_hash") or "").strip()
+    if not input_hash:
+        raise ValueError("Scoring shadow record has no input_hash")
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+
+    def _json_field(name):
+        return json.dumps(
+            record.get(name) or {}, sort_keys=True, separators=(",", ":")
+        )
+
+    row = [
+        record.get("run_timestamp")
+        or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        input_hash,
+        record.get("model_version", ""),
+        record.get("tourney", ""),
+        record.get("year", ""),
+        record.get("event_id", ""),
+        record.get("course_id", ""),
+        record.get("target_round", ""),
+        record.get("cut_format", ""),
+        record.get("status", ""),
+        record.get("active_players", ""),
+        record.get("cohort_hash", ""),
+        record.get("minimum_coverage", ""),
+        _json_field("round_scores"),
+        _json_field("round_coverages"),
+        _json_field("round_weather_effects"),
+        _json_field("round_structural_residuals"),
+        record.get("prior_score_average", ""),
+        record.get("transition_global", ""),
+        record.get("transition_course_mean", ""),
+        record.get("transition_course_n", ""),
+        record.get("transition_used", ""),
+        record.get("transition_source", ""),
+        record.get("prior_weather_average", ""),
+        record.get("target_weather_effect", ""),
+        record.get("weather_delta", ""),
+        record.get("raw_paired", ""),
+        record.get("weather_paired", ""),
+        record.get("structural_no_feedback", ""),
+        record.get("median_structural_residual", ""),
+        record.get("robust_residual_weight", ""),
+        record.get("robust_structural", ""),
+        record.get("paired_blend_weight", ""),
+        record.get("production_candidate", ""),
+        record.get("sheet_before", ""),
+        record.get("published_after", ""),
+        record.get("shadow_unrounded", ""),
+        record.get("shadow_display", ""),
+        record.get("shadow_minus_production", ""),
+        record.get("calibration_hash", ""),
+        record.get("model_input_hash", ""),
+        record.get("weather_granularity", ""),
+        record.get("target_baseline", ""),
+        record.get("target_field_skill", ""),
+        record.get("transition_pseudo_count", ""),
+        record.get("reason", ""),
+    ]
+    ws = _get_or_create_tab(
+        spreadsheet, TAB_SCORING_SHADOW, SCORING_SHADOW_HEADERS
+    )
+    written, skipped = _append_rows_deduped(ws, [row], [4, 5, 6, 7, 2, 1])
+    print(
+        f"  [storage] Wrote {written} scoring shadow row to "
+        f"'{TAB_SCORING_SHADOW}'"
+        + (f" ({skipped} duplicate skipped)" if skipped else "")
+    )
+    return written
 
 
 # ══════════════════════════════════════════════════════════════════════════════
