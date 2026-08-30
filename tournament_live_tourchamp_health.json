@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-08-29 09:23:22 UTC",
+  "generated_at": "2026-08-30 00:35:43 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -10,64 +10,64 @@
     "event": {
       "tourney": "tourchamp",
       "event_id": "60",
-      "round": 3
+      "round": 4
     },
     "source": {
-      "generated_at": "2026-08-29 09:22:35 UTC",
-      "root_generated_at": "2026-08-29 09:22:35 UTC",
+      "generated_at": "2026-08-30 00:34:58 UTC",
+      "root_generated_at": "2026-08-30 00:34:58 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
-        "path": "model_predictions_r3.csv",
+        "path": "model_predictions_r4.csv",
         "exists": true,
-        "sha256": "b0167782587de50e2746885e544e9a27f24c3689f7c30714c79f53a62a60f327",
-        "modified_at": "2026-08-29 09:22:31 UTC"
+        "sha256": "69521d011ad4b30fc721cab0d92a0a31c64927930947283ff9d82170f54ceffd",
+        "modified_at": "2026-08-30 00:34:53 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
     },
     "scoring": {
-      "expected_avg": 68.9,
+      "expected_avg": 68.4,
       "configured_course_averages": {
-        "field": 68.9
+        "field": 68.4
       },
-      "implied_field_mean": 68.89999999999999,
-      "empirical_field_mean": 68.90094724137931,
-      "centering_delta": 0.0009472413793218948,
+      "implied_field_mean": 68.4,
+      "empirical_field_mean": 68.40096827586207,
+      "centering_delta": 0.0009682758620641607,
       "centering_tolerance": 0.12,
       "player_expected_means": {
-        "aberg, ludvig": 68.49524205,
-        "bhatia, akshay": 69.61859149,
-        "bridgeman, jacob": 69.32493521,
-        "burns, sam": 68.51598285,
-        "cantlay, patrick": 68.58326378,
-        "clark, wyndham": 68.782128,
-        "fitzpatrick, alex": 69.66397334,
-        "fitzpatrick, matt": 68.67691691,
-        "fleetwood, tommy": 68.54946826,
-        "fox, ryan": 69.92648835,
-        "gerard, ryan": 69.13168521,
-        "gotterup, chris": 68.53647616,
-        "henley, russell": 68.74186796,
-        "hovland, viktor": 68.69016208,
-        "kim, si woo": 68.67467602,
-        "kim, tom": 69.11993475,
-        "lee, min woo": 69.85600368,
-        "macintyre, robert": 69.53096043,
-        "matsuyama, hideki": 68.68585725,
-        "mcilroy, rory": 67.95414207,
-        "morikawa, collin": 68.39178628,
-        "reitan, kristoffer": 69.4870429,
-        "rose, justin": 69.28149789,
-        "schauffele, xander": 68.20719353,
-        "scheffler, scottie": 67.31723342,
-        "scott, adam": 69.18059157,
-        "smalley, alex": 69.30920146,
-        "woodland, gary": 69.2903412,
-        "young, cameron": 68.57635592
+        "aberg, ludvig": 68.23054047,
+        "bhatia, akshay": 69.20042192,
+        "bridgeman, jacob": 68.89288124,
+        "burns, sam": 68.11200399,
+        "cantlay, patrick": 67.9341688,
+        "clark, wyndham": 68.34205493,
+        "fitzpatrick, alex": 69.33263318,
+        "fitzpatrick, matt": 68.37019233,
+        "fleetwood, tommy": 68.07726539,
+        "fox, ryan": 69.37681469,
+        "gerard, ryan": 68.72344419,
+        "gotterup, chris": 68.10220284,
+        "henley, russell": 68.14948143,
+        "hovland, viktor": 68.36922853,
+        "kim, si woo": 68.32377507,
+        "kim, tom": 68.55794667,
+        "lee, min woo": 68.9811965,
+        "macintyre, robert": 68.72372965,
+        "matsuyama, hideki": 68.23151677,
+        "mcilroy, rory": 67.36881735,
+        "morikawa, collin": 67.8924227,
+        "reitan, kristoffer": 68.99737457,
+        "rose, justin": 68.80378286,
+        "schauffele, xander": 67.50955154,
+        "scheffler, scottie": 66.75591395,
+        "scott, adam": 68.83070712,
+        "smalley, alex": 68.7938975,
+        "woodland, gary": 68.66642535,
+        "young, cameron": 67.94960847
       },
-      "player_expected_means_sha256": "6f4adf7e3c97fe6fe9ac360a3063fd4c6c35a12a4466b1cfb9eaaf9311d692e9",
-      "player_centering_rmse": 0.007705226060655283,
-      "player_centering_max_error": 0.019356470000005288,
+      "player_expected_means_sha256": "340077f9519cb313349bdc76675e9d7b2e0997e915ae193eeea3a2d0add01679",
+      "player_centering_rmse": 0.0076025910610049395,
+      "player_centering_max_error": 0.02058322999999973,
       "player_centering_rmse_tolerance": 0.08,
       "player_centering_max_tolerance": 0.16
     },
@@ -79,10 +79,10 @@
       "missing_players": [],
       "extra_players": [],
       "player_set_sha256": "d13e35589c87b53f49608127531efee8f58ea29ca0ea24a65aab66d43813eb05",
-      "tape_sha256": "69d22d4ddb8e2f4614f25aefc2111614c6d1209f9da9dbad744c7b1cc69b47be",
-      "score_min": 58.0,
+      "tape_sha256": "c4eec43d1e58019c54db9982ab7f556c4ccb3187af1d6f74b55ffb4b2bc47696",
+      "score_min": 57.0,
       "score_max": 83.0,
-      "empirical_field_score_mean": 68.90094724137931,
+      "empirical_field_score_mean": 68.40096827586207,
       "player_probability_mass_min": 1.0,
       "player_probability_mass_max": 1.0
     },
@@ -120,22 +120,22 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-08-29 09:22:35 UTC"
+      "approved_at": "2026-08-30 00:34:58 UTC"
     },
-    "manifest_sha256": "6f24e81190b2f656a1ef47c1cd1ddff3d68c42402228ddfc565b7441d49ca6ad"
+    "manifest_sha256": "7be0ae286d888aeb9437aa58c1564773bcbd6eb961fbf4efe1dfd369e06fb7a5"
   },
   "files": {
     "final_scores": {
       "path": "final_scores_live_tourchamp.npy",
-      "sha256": "ec0f94f113c27c421f72a02ef0f94830f6c82028f4572c66daab2c2001687b3c"
+      "sha256": "d19b931215e270cf5a78f736b91db9c0e79a1fedbf69b5ab44b7cff8810abb39"
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "85b58fd7bb5776bc0dcf060b2c7697fbf5d6bec8b8256f690242b8c8182ea987"
+      "sha256": "152b27b3877f5e3fd71ef38a0f16daf382c95daf9460b78be19a7237cd43ab59"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_tourchamp.csv",
-      "sha256": "85b58fd7bb5776bc0dcf060b2c7697fbf5d6bec8b8256f690242b8c8182ea987"
+      "sha256": "152b27b3877f5e3fd71ef38a0f16daf382c95daf9460b78be19a7237cd43ab59"
     },
     "made_cut": {
       "path": "made_cut_live_tourchamp.npy",
@@ -151,5 +151,5 @@
     "num_players": 29,
     "num_sims": 100000
   },
-  "manifest_sha256": "e27d720cbc0f5baf75c40334ee54baf2a3cb4ec8578cf77f367c516039f60f31"
+  "manifest_sha256": "9562ed74cdf00e00d775d04979359326762f55c63e88a41ecddb1a8e9a70eb67"
 }
