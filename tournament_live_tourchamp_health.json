@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-08-30 08:33:39 UTC",
+  "generated_at": "2026-08-30 11:45:59 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,61 +13,61 @@
       "round": 4
     },
     "source": {
-      "generated_at": "2026-08-30 08:32:53 UTC",
-      "root_generated_at": "2026-08-30 08:32:53 UTC",
+      "generated_at": "2026-08-30 11:45:13 UTC",
+      "root_generated_at": "2026-08-30 11:45:13 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r4.csv",
         "exists": true,
         "sha256": "69521d011ad4b30fc721cab0d92a0a31c64927930947283ff9d82170f54ceffd",
-        "modified_at": "2026-08-30 08:32:50 UTC"
+        "modified_at": "2026-08-30 11:45:09 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
     },
     "scoring": {
-      "expected_avg": 68.4,
+      "expected_avg": 67.5,
       "configured_course_averages": {
-        "field": 68.4
+        "field": 67.5
       },
-      "implied_field_mean": 68.4,
-      "empirical_field_mean": 68.40096827586207,
-      "centering_delta": 0.0009682758620641607,
+      "implied_field_mean": 67.5,
+      "empirical_field_mean": 67.50080931034483,
+      "centering_delta": 0.0008093103448345573,
       "centering_tolerance": 0.12,
       "player_expected_means": {
-        "aberg, ludvig": 68.23054047,
-        "bhatia, akshay": 69.20042192,
-        "bridgeman, jacob": 68.89288124,
-        "burns, sam": 68.11200399,
-        "cantlay, patrick": 67.9341688,
-        "clark, wyndham": 68.34205493,
-        "fitzpatrick, alex": 69.33263318,
-        "fitzpatrick, matt": 68.37019233,
-        "fleetwood, tommy": 68.07726539,
-        "fox, ryan": 69.37681469,
-        "gerard, ryan": 68.72344419,
-        "gotterup, chris": 68.10220284,
-        "henley, russell": 68.14948143,
-        "hovland, viktor": 68.36922853,
-        "kim, si woo": 68.32377507,
-        "kim, tom": 68.55794667,
-        "lee, min woo": 68.9811965,
-        "macintyre, robert": 68.72372965,
-        "matsuyama, hideki": 68.23151677,
-        "mcilroy, rory": 67.36881735,
-        "morikawa, collin": 67.8924227,
-        "reitan, kristoffer": 68.99737457,
-        "rose, justin": 68.80378286,
-        "schauffele, xander": 67.50955154,
-        "scheffler, scottie": 66.75591395,
-        "scott, adam": 68.83070712,
-        "smalley, alex": 68.7938975,
-        "woodland, gary": 68.66642535,
-        "young, cameron": 67.94960847
+        "aberg, ludvig": 67.33054047,
+        "bhatia, akshay": 68.30042192,
+        "bridgeman, jacob": 67.99288124,
+        "burns, sam": 67.21200399,
+        "cantlay, patrick": 67.0341688,
+        "clark, wyndham": 67.44205493,
+        "fitzpatrick, alex": 68.43263318,
+        "fitzpatrick, matt": 67.47019233,
+        "fleetwood, tommy": 67.17726539,
+        "fox, ryan": 68.47681469,
+        "gerard, ryan": 67.82344419,
+        "gotterup, chris": 67.20220284,
+        "henley, russell": 67.24948143,
+        "hovland, viktor": 67.46922853,
+        "kim, si woo": 67.42377507,
+        "kim, tom": 67.65794667,
+        "lee, min woo": 68.0811965,
+        "macintyre, robert": 67.82372965,
+        "matsuyama, hideki": 67.33151677,
+        "mcilroy, rory": 66.46881735,
+        "morikawa, collin": 66.9924227,
+        "reitan, kristoffer": 68.09737457,
+        "rose, justin": 67.90378286,
+        "schauffele, xander": 66.60955154,
+        "scheffler, scottie": 65.85591395,
+        "scott, adam": 67.93070712,
+        "smalley, alex": 67.8938975,
+        "woodland, gary": 67.76642535,
+        "young, cameron": 67.04960847
       },
-      "player_expected_means_sha256": "340077f9519cb313349bdc76675e9d7b2e0997e915ae193eeea3a2d0add01679",
-      "player_centering_rmse": 0.0076025910610049395,
-      "player_centering_max_error": 0.02058322999999973,
+      "player_expected_means_sha256": "64543f8bbd38a1c4172b474afe23dee51f7330ea59bb8266e65bec263f7e3fcd",
+      "player_centering_rmse": 0.007652753671595432,
+      "player_centering_max_error": 0.02098323000001301,
       "player_centering_rmse_tolerance": 0.08,
       "player_centering_max_tolerance": 0.16
     },
@@ -79,10 +79,10 @@
       "missing_players": [],
       "extra_players": [],
       "player_set_sha256": "d13e35589c87b53f49608127531efee8f58ea29ca0ea24a65aab66d43813eb05",
-      "tape_sha256": "c4eec43d1e58019c54db9982ab7f556c4ccb3187af1d6f74b55ffb4b2bc47696",
+      "tape_sha256": "b46985c182dab8b92e5e1af9954a3b4e29c90c6997130cc140758ac85e6d390c",
       "score_min": 57.0,
       "score_max": 83.0,
-      "empirical_field_score_mean": 68.40096827586207,
+      "empirical_field_score_mean": 67.50080931034483,
       "player_probability_mass_min": 1.0,
       "player_probability_mass_max": 1.0
     },
@@ -120,22 +120,22 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-08-30 08:32:53 UTC"
+      "approved_at": "2026-08-30 11:45:13 UTC"
     },
-    "manifest_sha256": "1a7adfda9068bfaaaacdd3151036491b3786d54bc1a6f014592453e901fb4413"
+    "manifest_sha256": "93da3eeae2c75b61c7c014051efa3a17f25d49b3c0ed5dcb77219d3dcfea692e"
   },
   "files": {
     "final_scores": {
       "path": "final_scores_live_tourchamp.npy",
-      "sha256": "d19b931215e270cf5a78f736b91db9c0e79a1fedbf69b5ab44b7cff8810abb39"
+      "sha256": "665c3ee0502801bef0237657e92358c88a2ca68e0fb56eb75b42787181394cb6"
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "71f6a9c99348fbfa205c91a8d50fb41334190aa62f7ec73566eb2e78dbccbfa2"
+      "sha256": "c063ab1fca6df54679a73dd76669dff083ea1cf2104fb375e73f7b953fb0aeb7"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_tourchamp.csv",
-      "sha256": "71f6a9c99348fbfa205c91a8d50fb41334190aa62f7ec73566eb2e78dbccbfa2"
+      "sha256": "c063ab1fca6df54679a73dd76669dff083ea1cf2104fb375e73f7b953fb0aeb7"
     },
     "made_cut": {
       "path": "made_cut_live_tourchamp.npy",
@@ -151,5 +151,5 @@
     "num_players": 29,
     "num_sims": 100000
   },
-  "manifest_sha256": "056abf8c8eb82cfdbf06d2e12309ab01658b442287c7ae60b8d33390c16da270"
+  "manifest_sha256": "e3b4a0ceaa1b044dada3e4aefd63c528e806cb576f3431d36d22ea34808c5adf"
 }
