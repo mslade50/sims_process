@@ -157,6 +157,7 @@ jobs:
           REQUIRE_SIM_FAIRS_PUBLISH: '1'
           IMG_SHOT_COLLECTOR_ROOT: 'C:\Users\McKinley Slade\dev\golf_scraping-collector-prod'
           IMG_SHOT_DB_PATH: 'C:\Users\McKinley Slade\dev\golf_scraping\output\imgarena_shots_lean.sqlite3'
+          PGA_YARDAGE_TIMING_DIR: 'C:\Users\McKinley Slade\dev\sims_process\permanent_data\yardage_timing'
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]

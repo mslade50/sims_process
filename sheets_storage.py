@@ -92,6 +92,34 @@ SCORING_SHADOW_HEADERS = [
     "setup_reference_course_id", "setup_reference_course_n",
     "setup_reference_pseudocount", "setup_global_round_reference",
     "setup_course_round_mean",
+    # Setup-yardage schema-v3 audit columns are append-only.  Keeping them
+    # after the original 67-column contract lets existing Sheets migrate by
+    # adding a safe trailing suffix without changing any historical index.
+    "setup_schema_version", "setup_geometry_observed_at_utc",
+    "setup_training_event_overlap_checked",
+    "setup_training_event_keys_sha256", "setup_selected_adjustment_mode",
+    "setup_selected_adjustment", "setup_broadie_adjustment",
+    "setup_empirical_global_adjustment",
+    "setup_empirical_course_eb_adjustment",
+    "setup_empirical_global_was_capped",
+    "setup_empirical_course_was_capped", "setup_empirical_max_abs_adjustment",
+    "setup_yardage_coefficient_model_version",
+    "setup_yardage_coefficient_units", "setup_empirical_global_coefficient",
+    "setup_empirical_global_cluster_se", "setup_empirical_course_coefficient",
+    "setup_empirical_course_coefficient_source",
+    "setup_empirical_course_coefficient_fallback_reason",
+    "setup_empirical_course_n_informative_years",
+    "setup_empirical_course_cluster_se", "setup_empirical_course_n_events",
+    "setup_yardage_delta_reference_global",
+    "setup_yardage_delta_reference_global_source",
+    "setup_centered_yardage_delta_global",
+    "setup_yardage_delta_reference_course",
+    "setup_yardage_delta_reference_source",
+    "setup_yardage_delta_reference_course_id",
+    "setup_yardage_delta_reference_course_n",
+    "setup_yardage_delta_reference_pseudocount",
+    "setup_yardage_delta_reference_fallback_reason",
+    "setup_centered_yardage_delta_course",
 ]
 
 # Minimum Kelly edge (sim_prob * decimal_odds - 1, i.e. EV per unit staked) to
@@ -607,6 +635,25 @@ def append_scoring_shadow(record, spreadsheet=None):
         )
 
     setup = record.get("setup_yardage") or {}
+    selected_mode = setup.get("selected_adjustment_mode", "")
+
+    missing = object()
+
+    def _setup_scalar(path, *fallback_names):
+        """Read a scalar from the canonical nested v3 arm with old-shape fallback."""
+        value = setup
+        for name in path:
+            if not isinstance(value, dict) or name not in value:
+                value = missing
+                break
+            value = value[name]
+        if value is not missing and value is not None:
+            return value
+        for name in fallback_names:
+            fallback = setup.get(name, missing)
+            if fallback is not missing and fallback is not None:
+                return fallback
+        return ""
 
     row = [
         record.get("run_timestamp")
@@ -677,6 +724,159 @@ def append_scoring_shadow(record, spreadsheet=None):
         setup.get("reference_pseudocount", ""),
         setup.get("historical_round_reference_global", ""),
         setup.get("historical_round_reference_course_mean", ""),
+        setup.get("schema_version", ""),
+        setup.get("geometry_observed_at_utc", ""),
+        setup.get("training_event_overlap_checked", ""),
+        setup.get("training_event_keys_sha256", ""),
+        selected_mode,
+        _setup_scalar(
+            ("adjustment_arms", selected_mode, "adjustment"),
+            "selected_adjustment",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "broadie", "adjustment"),
+            "broadie_adjustment",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "adjustment"),
+            "empirical_global_adjustment",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_course_eb", "adjustment"),
+            "empirical_course_eb_adjustment",
+            "empirical_course_adjustment",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "was_capped"),
+            "empirical_global_was_capped",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_course_eb", "was_capped"),
+            "empirical_course_was_capped",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "max_abs_adjustment"),
+            "empirical_max_abs_adjustment",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_global",
+                "coefficient_provenance", "model_version",
+            ),
+            "yardage_coefficient_model_version",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_global",
+                "coefficient_provenance", "units",
+            ),
+            "yardage_coefficient_units",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "coefficient"),
+            "empirical_global_coefficient",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_global",
+                "coefficient_provenance", "cluster_se",
+            ),
+            "empirical_global_cluster_se",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_course_eb", "coefficient"),
+            "empirical_course_coefficient",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_course_eb", "coefficient_source"),
+            "empirical_course_coefficient_source",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "coefficient_provenance", "fallback_reason",
+            ),
+            "empirical_course_coefficient_fallback_reason",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "coefficient_provenance", "n_informative_years",
+            ),
+            "empirical_course_n_informative_years",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "coefficient_provenance", "cluster_se",
+            ),
+            "empirical_course_cluster_se",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "coefficient_provenance", "n_events",
+            ),
+            "empirical_course_n_events",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "yardage_reference"),
+            "yardage_delta_reference_global",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "yardage_reference_source"),
+            "yardage_delta_reference_global_source",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_global", "centered_yardage_delta"),
+            "centered_yardage_delta_global",
+        ),
+        _setup_scalar(
+            ("adjustment_arms", "empirical_course_eb", "yardage_reference"),
+            "yardage_delta_reference_course",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "yardage_reference_source",
+            ),
+            "yardage_delta_reference_source",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "yardage_reference_provenance", "course_id",
+            ),
+            "yardage_delta_reference_course_id",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "yardage_reference_provenance", "course_n",
+            ),
+            "yardage_delta_reference_course_n",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "yardage_reference_provenance", "pseudocount",
+            ),
+            "yardage_delta_reference_pseudocount",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "yardage_reference_provenance", "fallback_reason",
+            ),
+            "yardage_delta_reference_fallback_reason",
+        ),
+        _setup_scalar(
+            (
+                "adjustment_arms", "empirical_course_eb",
+                "centered_yardage_delta",
+            ),
+            "centered_yardage_delta_course",
+        ),
     ]
     ws = _get_or_create_tab(
         spreadsheet, TAB_SCORING_SHADOW, SCORING_SHADOW_HEADERS

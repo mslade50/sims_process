@@ -1,9 +1,10 @@
 {
-  "calibration_version": "setup-yardage-shadow-v2-course-eb-2026-08-30",
-  "schema_version": "live-scoring-setup-yardage/v2",
+  "calibration_version": "setup-yardage-shadow-v3-course-yardage-coefficient-2026-08-31",
+  "schema_version": "live-scoring-setup-yardage/v3",
   "status": "shadow_only",
   "frozen": true,
   "method": "broadie_2012_tee_expected_strokes_round_setup_delta",
+  "selected_adjustment_mode": "broadie",
   "response_weight": 1.0,
   "response_weight_provenance": {
     "selection": "Prospective shadow-only physical tee-state pass-through, not a fitted historical score-outcome coefficient.",
@@ -3564,6 +3565,2965 @@
         }
       }
     }
+  },
+  "yardage_delta_references": {
+    "definition": "Target-round total setup yardage minus the mean total setup yardage of all strictly prior rounds, in raw yards.",
+    "round_reference_mean": {
+      "2": -17.591836734693878,
+      "3": -25.616326530612245,
+      "4": 2.795918367346946
+    },
+    "round_reference_mode": {
+      "2": "global",
+      "3": "course_eb",
+      "4": "course_eb"
+    },
+    "round_course_eb_pseudocount": {
+      "2": null,
+      "3": 5.0,
+      "4": 8.0
+    },
+    "course_references": {
+      "4": {
+        "n": 1,
+        "course_names": [
+          "Torrey Pines Golf Course (South Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -31.0,
+            "mean_delta": -31.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 65.5,
+            "mean_delta": 65.5,
+            "eb_reference": -10.430272108843539
+          },
+          "4": {
+            "sum_delta": 5.66666666666697,
+            "mean_delta": 5.66666666666697,
+            "eb_reference": 3.1148904006047267
+          }
+        }
+      },
+      "6": {
+        "n": 6,
+        "course_names": [
+          "Waialae Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -258.0,
+            "mean_delta": -43.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 75.0,
+            "mean_delta": 12.5,
+            "eb_reference": -4.825602968460112
+          },
+          "4": {
+            "sum_delta": 109.0,
+            "mean_delta": 18.166666666666668,
+            "eb_reference": 9.383381924198256
+          }
+        }
+      },
+      "9": {
+        "n": 5,
+        "course_names": [
+          "Arnold Palmer's Bay Hill Club & Lodge",
+          "Bay Hill Club & Lodge"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 75.0,
+            "mean_delta": 15.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -213.5,
+            "mean_delta": -42.7,
+            "eb_reference": -34.15816326530612
+          },
+          "4": {
+            "sum_delta": 251.66666666666697,
+            "mean_delta": 50.33333333333339,
+            "eb_reference": 21.07953950811096
+          }
+        }
+      },
+      "11": {
+        "n": 5,
+        "course_names": [
+          "TPC Sawgrass",
+          "TPC Sawgrass (THE PLAYERS Stadium Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -28.0,
+            "mean_delta": -5.6,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -377.0,
+            "mean_delta": -75.4,
+            "eb_reference": -50.50816326530612
+          },
+          "4": {
+            "sum_delta": -352.33333333333394,
+            "mean_delta": -70.46666666666678,
+            "eb_reference": -25.38199895342757
+          }
+        }
+      },
+      "12": {
+        "n": 6,
+        "course_names": [
+          "Harbour Town Golf Links"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -190.0,
+            "mean_delta": -31.666666666666668,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -185.0,
+            "mean_delta": -30.833333333333332,
+            "eb_reference": -28.461966604823747
+          },
+          "4": {
+            "sum_delta": 16.66666666666606,
+            "mean_delta": 2.777777777777677,
+            "eb_reference": 2.7881438289601164
+          }
+        }
+      },
+      "14": {
+        "n": 4,
+        "course_names": [
+          "Augusta National Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -14.231292517006803
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 1.8639455782312975
+          }
+        }
+      },
+      "21": {
+        "n": 6,
+        "course_names": [
+          "Colonial Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -190.0,
+            "mean_delta": -31.666666666666668,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -367.0,
+            "mean_delta": -61.166666666666664,
+            "eb_reference": -45.00742115027829
+          },
+          "4": {
+            "sum_delta": 39.33333333333394,
+            "mean_delta": 6.555555555555657,
+            "eb_reference": 4.407191448007822
+          }
+        }
+      },
+      "23": {
+        "n": 6,
+        "course_names": [
+          "Muirfield Village Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -179.0,
+            "mean_delta": -29.833333333333332,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -421.5,
+            "mean_delta": -70.25,
+            "eb_reference": -49.96196660482374
+          },
+          "4": {
+            "sum_delta": 146.0,
+            "mean_delta": 24.333333333333332,
+            "eb_reference": 12.026239067055398
+          }
+        }
+      },
+      "43": {
+        "n": 1,
+        "course_names": [
+          "The Los Angeles Country Club (North Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 171.0,
+            "mean_delta": 171.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -55.5,
+            "mean_delta": -55.5,
+            "eb_reference": -30.596938775510207
+          },
+          "4": {
+            "sum_delta": 40.0,
+            "mean_delta": 40.0,
+            "eb_reference": 6.929705215419507
+          }
+        }
+      },
+      "232": {
+        "n": 5,
+        "course_names": [
+          "Albany",
+          "Albany GC",
+          "Albany, Bahamas"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 24.0,
+            "mean_delta": 4.8,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 7.0,
+            "mean_delta": 1.4,
+            "eb_reference": -12.108163265306123
+          },
+          "4": {
+            "sum_delta": 109.66666666666697,
+            "mean_delta": 21.933333333333394,
+            "eb_reference": 10.156462585034042
+          }
+        }
+      },
+      "237": {
+        "n": 1,
+        "course_names": [
+          "TPC Potomac at Avenel Farm"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -28.0,
+            "mean_delta": -28.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -139.0,
+            "mean_delta": -139.0,
+            "eb_reference": -44.51360544217687
+          },
+          "4": {
+            "sum_delta": -76.66666666666697,
+            "mean_delta": -76.66666666666697,
+            "eb_reference": -6.033257747543489
+          }
+        }
+      },
+      "240": {
+        "n": 1,
+        "course_names": [
+          "Club de Golf Chapultepec"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -27.0,
+            "mean_delta": -27.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -14.5,
+            "mean_delta": -14.5,
+            "eb_reference": -23.76360544217687
+          },
+          "4": {
+            "sum_delta": -18.66666666666697,
+            "mean_delta": -18.66666666666697,
+            "eb_reference": 0.41118669690095544
+          }
+        }
+      },
+      "241": {
+        "n": 1,
+        "course_names": [
+          "Quail Hollow-PGA Championship"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -41.0,
+            "mean_delta": -41.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -83.5,
+            "mean_delta": -83.5,
+            "eb_reference": -35.263605442176875
+          },
+          "4": {
+            "sum_delta": 35.33333333333303,
+            "mean_delta": 35.33333333333303,
+            "eb_reference": 6.411186696900955
+          }
+        }
+      },
+      "242": {
+        "n": 1,
+        "course_names": [
+          "Nine Bridges"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "244": {
+        "n": 6,
+        "course_names": [
+          "Corales Golf Club",
+          "Puntacana Resort & Club (Corales Golf Course)",
+          "Puntacana Resort (Corales Golf Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -11.64378478664193
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 1.5976676384839692
+          }
+        }
+      },
+      "250": {
+        "n": 1,
+        "course_names": [
+          "Le Golf National"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -37.0,
+            "mean_delta": -37.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 7.5,
+            "mean_delta": 7.5,
+            "eb_reference": -20.096938775510207
+          },
+          "4": {
+            "sum_delta": -23.0,
+            "mean_delta": -23.0,
+            "eb_reference": -0.07029478458049236
+          }
+        }
+      },
+      "379": {
+        "n": 1,
+        "course_names": [
+          "The Philadelphia Cricket Club (Wissahickon Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 11.0,
+            "mean_delta": 11.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -51.5,
+            "mean_delta": -51.5,
+            "eb_reference": -29.93027210884354
+          },
+          "4": {
+            "sum_delta": 6.66666666666697,
+            "mean_delta": 6.66666666666697,
+            "eb_reference": 3.226001511715838
+          }
+        }
+      },
+      "406": {
+        "n": 1,
+        "course_names": [
+          "Castle Pines Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -116.0,
+            "mean_delta": -116.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -102.0,
+            "mean_delta": -102.0,
+            "eb_reference": -38.3469387755102
+          },
+          "4": {
+            "sum_delta": 10.0,
+            "mean_delta": 10.0,
+            "eb_reference": 3.5963718820861743
+          }
+        }
+      },
+      "500": {
+        "n": 5,
+        "course_names": [
+          "Riviera Country Club",
+          "The Riviera Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -96.0,
+            "mean_delta": -19.2,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -66.0,
+            "mean_delta": -13.2,
+            "eb_reference": -19.408163265306122
+          },
+          "4": {
+            "sum_delta": 11.0,
+            "mean_delta": 2.2,
+            "eb_reference": 2.5667189952904286
+          }
+        }
+      },
+      "503": {
+        "n": 6,
+        "course_names": [
+          "TPC River Highlands"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -67.0,
+            "mean_delta": -11.166666666666666,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 15.5,
+            "mean_delta": 2.5833333333333335,
+            "eb_reference": -10.234693877551022
+          },
+          "4": {
+            "sum_delta": -4.66666666666606,
+            "mean_delta": -0.7777777777776768,
+            "eb_reference": 1.2643343051506792
+          }
+        }
+      },
+      "510": {
+        "n": 6,
+        "course_names": [
+          "TPC Scottsdale",
+          "TPC Scottsdale (Stadium Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -107.0,
+            "mean_delta": -17.833333333333332,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -97.5,
+            "mean_delta": -16.25,
+            "eb_reference": -20.507421150278294
+          },
+          "4": {
+            "sum_delta": 265.0,
+            "mean_delta": 44.166666666666664,
+            "eb_reference": 20.526239067055396
+          }
+        }
+      },
+      "513": {
+        "n": 6,
+        "course_names": [
+          "TPC Southwind"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -82.0,
+            "mean_delta": -13.666666666666666,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -144.0,
+            "mean_delta": -24.0,
+            "eb_reference": -24.73469387755102
+          },
+          "4": {
+            "sum_delta": -1.0,
+            "mean_delta": -0.16666666666666666,
+            "eb_reference": 1.5262390670553978
+          }
+        }
+      },
+      "514": {
+        "n": 1,
+        "course_names": [
+          "Oak Hill Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -110.0,
+            "mean_delta": -110.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -79.0,
+            "mean_delta": -79.0,
+            "eb_reference": -34.513605442176875
+          },
+          "4": {
+            "sum_delta": 16.33333333333303,
+            "mean_delta": 16.33333333333303,
+            "eb_reference": 4.300075585789845
+          }
+        }
+      },
+      "528": {
+        "n": 1,
+        "course_names": [
+          "Pinehurst Resort & Country Club (Course No. 2)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -50.0,
+            "mean_delta": -50.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -118.0,
+            "mean_delta": -118.0,
+            "eb_reference": -41.013605442176875
+          },
+          "4": {
+            "sum_delta": 32.33333333333303,
+            "mean_delta": 32.33333333333303,
+            "eb_reference": 6.077853363567622
+          }
+        }
+      },
+      "538": {
+        "n": 6,
+        "course_names": [
+          "TPC Summerlin"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 9.0,
+            "mean_delta": 1.5,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 50.5,
+            "mean_delta": 8.416666666666666,
+            "eb_reference": -7.05287569573284
+          },
+          "4": {
+            "sum_delta": 295.66666666666606,
+            "mean_delta": 49.27777777777768,
+            "eb_reference": 22.716715257531543
+          }
+        }
+      },
+      "552": {
+        "n": 6,
+        "course_names": [
+          "Silverado Resort & Spa (North)",
+          "Silverado Resort (North Course)",
+          "Silverado Resort and Spa (North Course)",
+          "Silverado Resort and Spa North"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -213.0,
+            "mean_delta": -35.5,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -99.5,
+            "mean_delta": -16.583333333333332,
+            "eb_reference": -20.689239332096477
+          },
+          "4": {
+            "sum_delta": 76.66666666666697,
+            "mean_delta": 12.777777777777828,
+            "eb_reference": 7.073858114674467
+          }
+        }
+      },
+      "608": {
+        "n": 1,
+        "course_names": [
+          "Oakmont Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -25.0,
+            "mean_delta": -25.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -64.5,
+            "mean_delta": -64.5,
+            "eb_reference": -32.0969387755102
+          },
+          "4": {
+            "sum_delta": 76.0,
+            "mean_delta": 76.0,
+            "eb_reference": 10.929705215419508
+          }
+        }
+      },
+      "611": {
+        "n": 1,
+        "course_names": [
+          "Southern Hills CC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -12.0,
+            "mean_delta": -12.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -199.0,
+            "mean_delta": -199.0,
+            "eb_reference": -54.51360544217687
+          },
+          "4": {
+            "sum_delta": -68.66666666666697,
+            "mean_delta": -68.66666666666697,
+            "eb_reference": -5.1443688586546
+          }
+        }
+      },
+      "656": {
+        "n": 6,
+        "course_names": [
+          "Plantation Course at Kapalua"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -85.0,
+            "mean_delta": -14.166666666666666,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -226.5,
+            "mean_delta": -37.75,
+            "eb_reference": -32.23469387755102
+          },
+          "4": {
+            "sum_delta": 86.00000000000091,
+            "mean_delta": 14.333333333333485,
+            "eb_reference": 7.740524781341177
+          }
+        }
+      },
+      "665": {
+        "n": 5,
+        "course_names": [
+          "Innisbrook Resort (Copperhead Course)",
+          "Innisbrook Resort (Copperhead)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -2.0,
+            "mean_delta": -0.4,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -211.0,
+            "mean_delta": -42.2,
+            "eb_reference": -33.90816326530612
+          },
+          "4": {
+            "sum_delta": -6.66666666666697,
+            "mean_delta": -1.3333333333333939,
+            "eb_reference": 1.207744636316046
+          }
+        }
+      },
+      "668": {
+        "n": 1,
+        "course_names": [
+          "St. Andrews GC (Old Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "669": {
+        "n": 5,
+        "course_names": [
+          "TPC Deere Run"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -202.0,
+            "mean_delta": -40.4,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -123.0,
+            "mean_delta": -24.6,
+            "eb_reference": -25.108163265306125
+          },
+          "4": {
+            "sum_delta": 233.0,
+            "mean_delta": 46.6,
+            "eb_reference": 19.643642072213506
+          }
+        }
+      },
+      "671": {
+        "n": 1,
+        "course_names": [
+          "Valhalla Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 1.0,
+            "mean_delta": 1.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -6.5,
+            "mean_delta": -6.5,
+            "eb_reference": -22.43027210884354
+          },
+          "4": {
+            "sum_delta": 39.66666666666697,
+            "mean_delta": 39.66666666666697,
+            "eb_reference": 6.892668178382504
+          }
+        }
+      },
+      "688": {
+        "n": 5,
+        "course_names": [
+          "East Lake Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -412.0,
+            "mean_delta": -82.4,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -165.0,
+            "mean_delta": -33.0,
+            "eb_reference": -29.30816326530612
+          },
+          "4": {
+            "sum_delta": -72.0,
+            "mean_delta": -14.4,
+            "eb_reference": -3.8178963893249565
+          }
+        }
+      },
+      "697": {
+        "n": 1,
+        "course_names": [
+          "Ocean Course at Kiawah Island"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -5.0,
+            "mean_delta": -5.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 42.5,
+            "mean_delta": 42.5,
+            "eb_reference": -14.263605442176873
+          },
+          "4": {
+            "sum_delta": -114.66666666666697,
+            "mean_delta": -114.66666666666697,
+            "eb_reference": -10.25547996976571
+          }
+        }
+      },
+      "700": {
+        "n": 1,
+        "course_names": [
+          "TPC Boston"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -76.0,
+            "mean_delta": -76.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -7.0,
+            "mean_delta": -7.0,
+            "eb_reference": -22.51360544217687
+          },
+          "4": {
+            "sum_delta": 32.33333333333303,
+            "mean_delta": 32.33333333333303,
+            "eb_reference": 6.077853363567622
+          }
+        }
+      },
+      "709": {
+        "n": 1,
+        "course_names": [
+          "Royal Troon"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "724": {
+        "n": 1,
+        "course_names": [
+          "Royal Liverpool GC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 2.0,
+            "mean_delta": 2.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -17.0,
+            "mean_delta": -17.0,
+            "eb_reference": -24.18027210884354
+          },
+          "4": {
+            "sum_delta": 76.66666666666697,
+            "mean_delta": 76.66666666666697,
+            "eb_reference": 11.003779289493615
+          }
+        }
+      },
+      "729": {
+        "n": 1,
+        "course_names": [
+          "Golf Club of Houston"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -35.0,
+            "mean_delta": -35.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -44.5,
+            "mean_delta": -44.5,
+            "eb_reference": -28.76360544217687
+          },
+          "4": {
+            "sum_delta": 72.33333333333303,
+            "mean_delta": 72.33333333333303,
+            "eb_reference": 10.522297808012066
+          }
+        }
+      },
+      "733": {
+        "n": 4,
+        "course_names": [
+          "El Camaleon Golf Club",
+          "El Camale\u00f3n Golf Course at Mayakoba"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -14.231292517006803
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 1.8639455782312975
+          }
+        }
+      },
+      "734": {
+        "n": 4,
+        "course_names": [
+          "PGA National (Champion)",
+          "PGA National Resort (The Champion)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -53.0,
+            "mean_delta": -13.25,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 34.5,
+            "mean_delta": 8.625,
+            "eb_reference": -10.397959183673471
+          },
+          "4": {
+            "sum_delta": -55.0,
+            "mean_delta": -13.75,
+            "eb_reference": -2.719387755102036
+          }
+        }
+      },
+      "742": {
+        "n": 5,
+        "course_names": [
+          "Grand Reserve Country Club",
+          "Grand Reserve Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -12.808163265306124
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 1.7205651491365823
+          }
+        }
+      },
+      "746": {
+        "n": 6,
+        "course_names": [
+          "Country Club of Jackson",
+          "The Country Club of Jackson"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -120.0,
+            "mean_delta": -20.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 37.0,
+            "mean_delta": 6.166666666666667,
+            "eb_reference": -8.280148423005567
+          },
+          "4": {
+            "sum_delta": 32.66666666666697,
+            "mean_delta": 5.444444444444495,
+            "eb_reference": 3.931000971817324
+          }
+        }
+      },
+      "752": {
+        "n": 6,
+        "course_names": [
+          "Sedgefield Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -179.0,
+            "mean_delta": -29.833333333333332,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -247.5,
+            "mean_delta": -41.25,
+            "eb_reference": -34.14378478664193
+          },
+          "4": {
+            "sum_delta": 146.0,
+            "mean_delta": 24.333333333333332,
+            "eb_reference": 12.026239067055398
+          }
+        }
+      },
+      "765": {
+        "n": 6,
+        "course_names": [
+          "Port Royal Golf Course"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -11.64378478664193
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 1.5976676384839692
+          }
+        }
+      },
+      "766": {
+        "n": 1,
+        "course_names": [
+          "Sheshan International GC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "770": {
+        "n": 5,
+        "course_names": [
+          "TPC San Antonio (Oaks Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -278.0,
+            "mean_delta": -55.6,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -158.0,
+            "mean_delta": -31.6,
+            "eb_reference": -28.60816326530612
+          },
+          "4": {
+            "sum_delta": -172.33333333333394,
+            "mean_delta": -34.46666666666679,
+            "eb_reference": -11.53584510727372
+          }
+        }
+      },
+      "771": {
+        "n": 1,
+        "course_names": [
+          "The Old White TPC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 66.0,
+            "mean_delta": 66.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 40.0,
+            "mean_delta": 40.0,
+            "eb_reference": -14.680272108843539
+          },
+          "4": {
+            "sum_delta": 39.66666666666697,
+            "mean_delta": 39.66666666666697,
+            "eb_reference": 6.892668178382504
+          }
+        }
+      },
+      "772": {
+        "n": 1,
+        "course_names": [
+          "St. George's G&CC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -72.0,
+            "mean_delta": -72.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -101.0,
+            "mean_delta": -101.0,
+            "eb_reference": -38.18027210884354
+          },
+          "4": {
+            "sum_delta": 36.66666666666697,
+            "mean_delta": 36.66666666666697,
+            "eb_reference": 6.559334845049171
+          }
+        }
+      },
+      "778": {
+        "n": 1,
+        "course_names": [
+          "Royal St. George's GC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "872": {
+        "n": 3,
+        "course_names": [
+          "Quail Hollow Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -96.0,
+            "mean_delta": -32.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -122.0,
+            "mean_delta": -40.666666666666664,
+            "eb_reference": -31.260204081632654
+          },
+          "4": {
+            "sum_delta": -16.33333333333303,
+            "mean_delta": -5.444444444444343,
+            "eb_reference": 0.5485466914038671
+          }
+        }
+      },
+      "874": {
+        "n": 1,
+        "course_names": [
+          "Hamilton Golf & Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 30.0,
+            "mean_delta": 30.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -12.0,
+            "mean_delta": -12.0,
+            "eb_reference": -23.346938775510207
+          },
+          "4": {
+            "sum_delta": -65.0,
+            "mean_delta": -65.0,
+            "eb_reference": -4.736961451247159
+          }
+        }
+      },
+      "875": {
+        "n": 5,
+        "course_names": [
+          "ACCORDIA GOLF Narashino Country Club",
+          "Accordia Golf Narashino CC",
+          "Accordia Golf Narashino Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -4.0,
+            "mean_delta": -0.8,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 33.0,
+            "mean_delta": 6.6,
+            "eb_reference": -9.508163265306123
+          },
+          "4": {
+            "sum_delta": 33.0,
+            "mean_delta": 6.6,
+            "eb_reference": 4.259026687598121
+          }
+        }
+      },
+      "876": {
+        "n": 6,
+        "course_names": [
+          "Detroit Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -152.0,
+            "mean_delta": -25.333333333333332,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -17.0,
+            "mean_delta": -2.8333333333333335,
+            "eb_reference": -13.189239332096475
+          },
+          "4": {
+            "sum_delta": 209.66666666666697,
+            "mean_delta": 34.94444444444449,
+            "eb_reference": 16.57385811467447
+          }
+        }
+      },
+      "878": {
+        "n": 1,
+        "course_names": [
+          "Shadow Creek Golf Course"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -28.0,
+            "mean_delta": -28.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -123.0,
+            "mean_delta": -123.0,
+            "eb_reference": -41.8469387755102
+          },
+          "4": {
+            "sum_delta": -18.0,
+            "mean_delta": -18.0,
+            "eb_reference": 0.4852607709750632
+          }
+        }
+      },
+      "882": {
+        "n": 2,
+        "course_names": [
+          "Caves Valley Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -24.0,
+            "mean_delta": -12.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -141.0,
+            "mean_delta": -70.5,
+            "eb_reference": -38.4402332361516
+          },
+          "4": {
+            "sum_delta": -38.0,
+            "mean_delta": -19.0,
+            "eb_reference": -1.563265306122443
+          }
+        }
+      },
+      "883": {
+        "n": 6,
+        "course_names": [
+          "TPC Twin Cities"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 170.0,
+            "mean_delta": 28.333333333333332,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -748.0,
+            "mean_delta": -124.66666666666667,
+            "eb_reference": -79.64378478664193
+          },
+          "4": {
+            "sum_delta": -293.66666666666697,
+            "mean_delta": -48.94444444444449,
+            "eb_reference": -19.37852283770653
+          }
+        }
+      },
+      "884": {
+        "n": 4,
+        "course_names": [
+          "Keene Trace Golf Club",
+          "Keene Trace Golf Club (Champion Trace)",
+          "Keene Trace Golf Club (Champions Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -97.0,
+            "mean_delta": -24.25,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 12.5,
+            "mean_delta": 3.125,
+            "eb_reference": -12.842403628117914
+          },
+          "4": {
+            "sum_delta": 27.33333333333303,
+            "mean_delta": 6.8333333333332575,
+            "eb_reference": 4.14172335600905
+          }
+        }
+      },
+      "885": {
+        "n": 1,
+        "course_names": [
+          "Royal Portrush Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "886": {
+        "n": 1,
+        "course_names": [
+          "Liberty National Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 60.0,
+            "mean_delta": 60.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -86.0,
+            "mean_delta": -86.0,
+            "eb_reference": -35.68027210884354
+          },
+          "4": {
+            "sum_delta": 48.66666666666697,
+            "mean_delta": 48.66666666666697,
+            "eb_reference": 7.892668178382504
+          }
+        }
+      },
+      "890": {
+        "n": 1,
+        "course_names": [
+          "Tahoe Mountain Club (Old Greenwood)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -20.0,
+            "mean_delta": -20.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -77.0,
+            "mean_delta": -77.0,
+            "eb_reference": -34.18027210884354
+          },
+          "4": {
+            "sum_delta": -1.3333333333330302,
+            "mean_delta": -1.3333333333330302,
+            "eb_reference": 2.3371126228269485
+          }
+        }
+      },
+      "891": {
+        "n": 1,
+        "course_names": [
+          "Winged Foot GC"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 39.0,
+            "mean_delta": 39.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 1.5,
+            "mean_delta": 1.5,
+            "eb_reference": -21.096938775510207
+          },
+          "4": {
+            "sum_delta": -6.0,
+            "mean_delta": -6.0,
+            "eb_reference": 1.8185941043083966
+          }
+        }
+      },
+      "893": {
+        "n": 1,
+        "course_names": [
+          "Muirfield Village Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -18.0,
+            "mean_delta": -18.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -120.0,
+            "mean_delta": -120.0,
+            "eb_reference": -41.3469387755102
+          },
+          "4": {
+            "sum_delta": 11.0,
+            "mean_delta": 11.0,
+            "eb_reference": 3.7074829931972855
+          }
+        }
+      },
+      "896": {
+        "n": 2,
+        "course_names": [
+          "Olympia Fields CC (North)",
+          "Olympia Fields Country Club (North Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 19.0,
+            "mean_delta": 9.5,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -49.5,
+            "mean_delta": -24.75,
+            "eb_reference": -25.368804664723033
+          },
+          "4": {
+            "sum_delta": 2.0,
+            "mean_delta": 1.0,
+            "eb_reference": 2.4367346938775567
+          }
+        }
+      },
+      "897": {
+        "n": 4,
+        "course_names": [
+          "Memorial Park Golf Course"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -8.0,
+            "mean_delta": -2.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -340.0,
+            "mean_delta": -85.0,
+            "eb_reference": -52.00907029478458
+          },
+          "4": {
+            "sum_delta": -309.66666666666697,
+            "mean_delta": -77.41666666666674,
+            "eb_reference": -23.941609977324287
+          }
+        }
+      },
+      "898": {
+        "n": 1,
+        "course_names": [
+          "The Concession Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -38.0,
+            "mean_delta": -38.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 25.0,
+            "mean_delta": 25.0,
+            "eb_reference": -17.18027210884354
+          },
+          "4": {
+            "sum_delta": 29.66666666666697,
+            "mean_delta": 29.66666666666697,
+            "eb_reference": 5.781557067271393
+          }
+        }
+      },
+      "899": {
+        "n": 1,
+        "course_names": [
+          "The Summit Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -133.0,
+            "mean_delta": -133.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -1.5,
+            "mean_delta": -1.5,
+            "eb_reference": -21.596938775510207
+          },
+          "4": {
+            "sum_delta": 2.0,
+            "mean_delta": 2.0,
+            "eb_reference": 2.7074829931972855
+          }
+        }
+      },
+      "901": {
+        "n": 1,
+        "course_names": [
+          "Wilmington Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -36.0,
+            "mean_delta": -36.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -67.0,
+            "mean_delta": -67.0,
+            "eb_reference": -32.513605442176875
+          },
+          "4": {
+            "sum_delta": -87.66666666666697,
+            "mean_delta": -87.66666666666697,
+            "eb_reference": -7.2554799697657115
+          }
+        }
+      },
+      "902": {
+        "n": 2,
+        "course_names": [
+          "Congaree Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -76.0,
+            "mean_delta": -38.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -51.0,
+            "mean_delta": -25.5,
+            "eb_reference": -25.58309037900875
+          },
+          "4": {
+            "sum_delta": 47.0,
+            "mean_delta": 23.5,
+            "eb_reference": 6.936734693877557
+          }
+        }
+      },
+      "908": {
+        "n": 1,
+        "course_names": [
+          "Oakdale Golf & Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -3.0,
+            "mean_delta": -3.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -69.5,
+            "mean_delta": -69.5,
+            "eb_reference": -32.93027210884354
+          },
+          "4": {
+            "sum_delta": 38.66666666666697,
+            "mean_delta": 38.66666666666697,
+            "eb_reference": 6.781557067271393
+          }
+        }
+      },
+      "919": {
+        "n": 3,
+        "course_names": [
+          "El Cardonal at Diamante"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -16.010204081632654
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.0333951762523244
+          }
+        }
+      },
+      "921": {
+        "n": 5,
+        "course_names": [
+          "TPC Craig Ranch"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -205.0,
+            "mean_delta": -41.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -309.5,
+            "mean_delta": -61.9,
+            "eb_reference": -43.75816326530612
+          },
+          "4": {
+            "sum_delta": -108.33333333333303,
+            "mean_delta": -21.666666666666607,
+            "eb_reference": -6.612768184196728
+          }
+        }
+      },
+      "925": {
+        "n": 2,
+        "course_names": [
+          "Dunes Golf and Beach Club",
+          "The Dunes Golf and Beach Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 26.0,
+            "mean_delta": 13.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -30.0,
+            "mean_delta": -15.0,
+            "eb_reference": -22.58309037900875
+          },
+          "4": {
+            "sum_delta": -63.0,
+            "mean_delta": -31.5,
+            "eb_reference": -4.063265306122443
+          }
+        }
+      },
+      "926": {
+        "n": 1,
+        "course_names": [
+          "Silverado Resort (North Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -48.0,
+            "mean_delta": -48.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 33.0,
+            "mean_delta": 33.0,
+            "eb_reference": -15.846938775510205
+          },
+          "4": {
+            "sum_delta": -12.0,
+            "mean_delta": -12.0,
+            "eb_reference": 1.15192743764173
+          }
+        }
+      },
+      "928": {
+        "n": 2,
+        "course_names": [
+          "PGA National Resort (The Champion Course)",
+          "PGA National Resort (The Champion)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -100.0,
+            "mean_delta": -50.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 53.0,
+            "mean_delta": 26.5,
+            "eb_reference": -10.72594752186589
+          },
+          "4": {
+            "sum_delta": 78.33333333333394,
+            "mean_delta": 39.16666666666697,
+            "eb_reference": 10.07006802721095
+          }
+        }
+      },
+      "930": {
+        "n": 2,
+        "course_names": [
+          "Black Desert Resort"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 70.0,
+            "mean_delta": 35.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -43.0,
+            "mean_delta": -21.5,
+            "eb_reference": -24.440233236151606
+          },
+          "4": {
+            "sum_delta": -80.66666666666697,
+            "mean_delta": -40.333333333333485,
+            "eb_reference": -5.82993197278914
+          }
+        }
+      },
+      "931": {
+        "n": 2,
+        "course_names": [
+          "Tahoe Mountain Club (Old Greenwood)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -118.0,
+            "mean_delta": -59.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -121.0,
+            "mean_delta": -60.5,
+            "eb_reference": -35.583090379008745
+          },
+          "4": {
+            "sum_delta": -38.66666666666697,
+            "mean_delta": -19.333333333333485,
+            "eb_reference": -1.6299319727891401
+          }
+        }
+      },
+      "933": {
+        "n": 1,
+        "course_names": [
+          "East Lake Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -9.0,
+            "mean_delta": -9.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 106.5,
+            "mean_delta": 106.5,
+            "eb_reference": -3.5969387755102056
+          },
+          "4": {
+            "sum_delta": 32.0,
+            "mean_delta": 32.0,
+            "eb_reference": 6.040816326530619
+          }
+        }
+      },
+      "934": {
+        "n": 1,
+        "course_names": [
+          "Hurstbourne Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 2.0,
+            "mean_delta": 2.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -47.0,
+            "mean_delta": -47.0,
+            "eb_reference": -29.18027210884354
+          },
+          "4": {
+            "sum_delta": -9.33333333333303,
+            "mean_delta": -9.33333333333303,
+            "eb_reference": 1.44822373393806
+          }
+        }
+      },
+      "935": {
+        "n": 1,
+        "course_names": [
+          "TPC Toronto at Osprey Valley (North Course)"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -94.0,
+            "mean_delta": -94.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -35.0,
+            "mean_delta": -35.0,
+            "eb_reference": -27.18027210884354
+          },
+          "4": {
+            "sum_delta": -20.33333333333303,
+            "mean_delta": -20.33333333333303,
+            "eb_reference": 0.22600151171583763
+          }
+        }
+      },
+      "936": {
+        "n": 1,
+        "course_names": [
+          "Yokohama Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 52.0,
+            "mean_delta": 52.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -29.0,
+            "mean_delta": -29.0,
+            "eb_reference": -26.18027210884354
+          },
+          "4": {
+            "sum_delta": 49.66666666666697,
+            "mean_delta": 49.66666666666697,
+            "eb_reference": 8.003779289493615
+          }
+        }
+      },
+      "940": {
+        "n": 1,
+        "course_names": [
+          "Grand Reserve Golf Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": -21.346938775510207
+          },
+          "4": {
+            "sum_delta": 0.0,
+            "mean_delta": 0.0,
+            "eb_reference": 2.485260770975063
+          }
+        }
+      },
+      "977": {
+        "n": 4,
+        "course_names": [
+          "The Renaissance Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -161.0,
+            "mean_delta": -40.25,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 12.5,
+            "mean_delta": 3.125,
+            "eb_reference": -12.842403628117914
+          },
+          "4": {
+            "sum_delta": -154.66666666666606,
+            "mean_delta": -38.666666666666515,
+            "eb_reference": -11.024943310657541
+          }
+        }
+      },
+      "978": {
+        "n": 4,
+        "course_names": [
+          "Vidanta Vallarta"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -61.0,
+            "mean_delta": -15.25,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": -135.5,
+            "mean_delta": -33.875,
+            "eb_reference": -29.286848072562357
+          },
+          "4": {
+            "sum_delta": -47.33333333333394,
+            "mean_delta": -11.833333333333485,
+            "eb_reference": -2.0804988662131976
+          }
+        }
+      },
+      "2000": {
+        "n": 1,
+        "course_names": [
+          "Sherwood Country Club"
+        ],
+        "rounds": {
+          "2": {
+            "sum_delta": -71.0,
+            "mean_delta": -71.0,
+            "eb_reference": null
+          },
+          "3": {
+            "sum_delta": 81.5,
+            "mean_delta": 81.5,
+            "eb_reference": -7.763605442176872
+          },
+          "4": {
+            "sum_delta": 19.33333333333303,
+            "mean_delta": 19.33333333333303,
+            "eb_reference": 4.633408919123178
+          }
+        }
+      }
+    }
+  },
+  "yardage_coefficient_model": {
+    "schema_version": "course-yardage-coefficient/v1",
+    "model_version": "course-yardage-coefficient-v1-2026-08-31",
+    "units": "strokes_per_10_yards",
+    "max_abs_adjustment": 0.35,
+    "design": {
+      "observation": "Event-round-hole field mean completed-hole strokes; valid hole scores are 1-15 and each cell requires at least 20.",
+      "formula": "mean_hole_strokes ~ yardage_per_10 + event_key:hole_no FE + event_key:round_no FE",
+      "fixed_effects": [
+        "event_key_x_hole_no",
+        "event_key_x_round_no"
+      ],
+      "within_transform": "Balanced 4-round x 18-hole two-way demeaning within edition.",
+      "standard_errors": "CR1 cluster-robust by event_key after FE absorption, using the G/(G-1) finite-cluster correction.",
+      "course_identity": "Exact archive metadata calendar year plus PGA event number join to DataGolf (year,event_id), requiring one stable physical course_num; no name, date, or layout aliases.",
+      "informative_edition": "Complete 72-cell score/setup panel with at least 8 holes whose yardage varies across rounds.",
+      "heterogeneity": "Normal-normal marginal ML with mu fixed at the all-edition global beta; reliability=tau2/(tau2+cluster_se^2).",
+      "shrinkage": "shrunk_beta = reliability*raw_beta + (1-reliability)*global.beta"
+    },
+    "training_cutoff_calendar_year": 2025,
+    "training_event_keys": [
+      "pga:R2020003",
+      "pga:R2020006",
+      "pga:R2020007",
+      "pga:R2020009",
+      "pga:R2020010",
+      "pga:R2020012",
+      "pga:R2020013",
+      "pga:R2020016",
+      "pga:R2020020",
+      "pga:R2020021",
+      "pga:R2020023",
+      "pga:R2020027",
+      "pga:R2020028",
+      "pga:R2020034",
+      "pga:R2020047",
+      "pga:R2020054",
+      "pga:R2020060",
+      "pga:R2020464",
+      "pga:R2020473",
+      "pga:R2020476",
+      "pga:R2020490",
+      "pga:R2020524",
+      "pga:R2020525",
+      "pga:R2020533",
+      "pga:R2021003",
+      "pga:R2021006",
+      "pga:R2021007",
+      "pga:R2021009",
+      "pga:R2021010",
+      "pga:R2021011",
+      "pga:R2021012",
+      "pga:R2021013",
+      "pga:R2021016",
+      "pga:R2021019",
+      "pga:R2021020",
+      "pga:R2021021",
+      "pga:R2021023",
+      "pga:R2021027",
+      "pga:R2021028",
+      "pga:R2021030",
+      "pga:R2021034",
+      "pga:R2021041",
+      "pga:R2021047",
+      "pga:R2021054",
+      "pga:R2021060",
+      "pga:R2021464",
+      "pga:R2021473",
+      "pga:R2021475",
+      "pga:R2021476",
+      "pga:R2021480",
+      "pga:R2021518",
+      "pga:R2021521",
+      "pga:R2021524",
+      "pga:R2021525",
+      "pga:R2021527",
+      "pga:R2021538",
+      "pga:R2022003",
+      "pga:R2022006",
+      "pga:R2022007",
+      "pga:R2022009",
+      "pga:R2022010",
+      "pga:R2022011",
+      "pga:R2022012",
+      "pga:R2022013",
+      "pga:R2022016",
+      "pga:R2022019",
+      "pga:R2022020",
+      "pga:R2022021",
+      "pga:R2022023",
+      "pga:R2022027",
+      "pga:R2022028",
+      "pga:R2022030",
+      "pga:R2022032",
+      "pga:R2022034",
+      "pga:R2022041",
+      "pga:R2022047",
+      "pga:R2022054",
+      "pga:R2022060",
+      "pga:R2022464",
+      "pga:R2022475",
+      "pga:R2022480",
+      "pga:R2022518",
+      "pga:R2022521",
+      "pga:R2022524",
+      "pga:R2022525",
+      "pga:R2022540",
+      "pga:R2022541",
+      "pga:R2023003",
+      "pga:R2023006",
+      "pga:R2023007",
+      "pga:R2023010",
+      "pga:R2023011",
+      "pga:R2023012",
+      "pga:R2023013",
+      "pga:R2023016",
+      "pga:R2023019",
+      "pga:R2023021",
+      "pga:R2023023",
+      "pga:R2023027",
+      "pga:R2023028",
+      "pga:R2023030",
+      "pga:R2023032",
+      "pga:R2023033",
+      "pga:R2023034",
+      "pga:R2023041",
+      "pga:R2023047",
+      "pga:R2023054",
+      "pga:R2023060",
+      "pga:R2023464",
+      "pga:R2023472",
+      "pga:R2023475",
+      "pga:R2023480",
+      "pga:R2023518",
+      "pga:R2023521",
+      "pga:R2023524",
+      "pga:R2023525",
+      "pga:R2023540",
+      "pga:R2023541",
+      "pga:R2023543",
+      "pga:R2023545",
+      "pga:R2024003",
+      "pga:R2024006",
+      "pga:R2024007",
+      "pga:R2024009",
+      "pga:R2024010",
+      "pga:R2024011",
+      "pga:R2024012",
+      "pga:R2024013",
+      "pga:R2024016",
+      "pga:R2024019",
+      "pga:R2024020",
+      "pga:R2024021",
+      "pga:R2024023",
+      "pga:R2024027",
+      "pga:R2024028",
+      "pga:R2024030",
+      "pga:R2024032",
+      "pga:R2024033",
+      "pga:R2024034",
+      "pga:R2024041",
+      "pga:R2024047",
+      "pga:R2024054",
+      "pga:R2024060",
+      "pga:R2024464",
+      "pga:R2024472",
+      "pga:R2024475",
+      "pga:R2024478",
+      "pga:R2024480",
+      "pga:R2024518",
+      "pga:R2024519",
+      "pga:R2024524",
+      "pga:R2024525",
+      "pga:R2024527",
+      "pga:R2024540",
+      "pga:R2024541",
+      "pga:R2024553",
+      "pga:R2024554",
+      "pga:R2025003",
+      "pga:R2025006",
+      "pga:R2025007",
+      "pga:R2025009",
+      "pga:R2025010",
+      "pga:R2025011",
+      "pga:R2025012",
+      "pga:R2025013",
+      "pga:R2025016",
+      "pga:R2025019",
+      "pga:R2025020",
+      "pga:R2025021",
+      "pga:R2025023",
+      "pga:R2025026",
+      "pga:R2025027",
+      "pga:R2025028",
+      "pga:R2025030",
+      "pga:R2025032",
+      "pga:R2025033",
+      "pga:R2025034",
+      "pga:R2025041",
+      "pga:R2025054",
+      "pga:R2025060",
+      "pga:R2025464",
+      "pga:R2025475",
+      "pga:R2025478",
+      "pga:R2025480",
+      "pga:R2025518",
+      "pga:R2025524",
+      "pga:R2025525",
+      "pga:R2025527",
+      "pga:R2025540",
+      "pga:R2025541",
+      "pga:R2025553",
+      "pga:R2025554"
+    ],
+    "training_event_keys_sha256": "e255e3c42f409bcd3fbc505d50b0f3664e4bedf116c0dcd47e07a845834ba291",
+    "eligibility": {
+      "min_informative_years": 3,
+      "min_varying_holes_per_edition": 8
+    },
+    "global": {
+      "beta": 0.028169308642838602,
+      "cluster_se": 0.0012793184786479743,
+      "n_events": 192,
+      "n_hole_rounds": 13824
+    },
+    "heterogeneity": {
+      "method": "fixed_center_marginal_ml",
+      "mu": 0.028169308642838602,
+      "tau2": 0.00011881656145859157,
+      "tau": 0.010900300980183601
+    },
+    "courses": {
+      "6": {
+        "course_names": [
+          "Waialae Country Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020006",
+          "pga:R2021006",
+          "pga:R2022006",
+          "pga:R2023006",
+          "pga:R2024006",
+          "pga:R2025006"
+        ],
+        "raw_beta": 0.05025252540468072,
+        "cluster_se": 0.004850887502417291,
+        "reliability": 0.8346926971650155,
+        "shrunk_beta": 0.04660200840386028
+      },
+      "9": {
+        "course_names": [
+          "Arnold Palmer's Bay Hill Club & Lodge",
+          "Bay Hill Club & Lodge"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2020009",
+          "pga:R2021009",
+          "pga:R2022009",
+          "pga:R2024009",
+          "pga:R2025009"
+        ],
+        "raw_beta": 0.01307892375134993,
+        "cluster_se": 0.010685217113605002,
+        "reliability": 0.50996327782426,
+        "shrunk_beta": 0.02047376649994535
+      },
+      "11": {
+        "course_names": [
+          "TPC Sawgrass",
+          "TPC Sawgrass (THE PLAYERS Stadium Course)"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2021011",
+          "pga:R2022011",
+          "pga:R2023011",
+          "pga:R2024011",
+          "pga:R2025011"
+        ],
+        "raw_beta": 0.040685527606573214,
+        "cluster_se": 0.006419424311503697,
+        "reliability": 0.7424848509892917,
+        "shrunk_beta": 0.03746241161507644
+      },
+      "12": {
+        "course_names": [
+          "Harbour Town Golf Links"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020012",
+          "pga:R2021012",
+          "pga:R2022012",
+          "pga:R2023012",
+          "pga:R2024012",
+          "pga:R2025012"
+        ],
+        "raw_beta": 0.02643298947128005,
+        "cluster_se": 0.00569166968638524,
+        "reliability": 0.7857631965135483,
+        "shrunk_beta": 0.026804972940426997
+      },
+      "21": {
+        "course_names": [
+          "Colonial Country Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020021",
+          "pga:R2021021",
+          "pga:R2022021",
+          "pga:R2023021",
+          "pga:R2024021",
+          "pga:R2025021"
+        ],
+        "raw_beta": 0.03571863750185995,
+        "cluster_se": 0.006163319033839542,
+        "reliability": 0.7577438808080054,
+        "shrunk_beta": 0.03388976638996931
+      },
+      "23": {
+        "course_names": [
+          "Muirfield Village Golf Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020023",
+          "pga:R2021023",
+          "pga:R2022023",
+          "pga:R2023023",
+          "pga:R2024023",
+          "pga:R2025023"
+        ],
+        "raw_beta": 0.019794434746790986,
+        "cluster_se": 0.008945485020724819,
+        "reliability": 0.5975538069932618,
+        "shrunk_beta": 0.02316487086316686
+      },
+      "500": {
+        "course_names": [
+          "Riviera Country Club",
+          "The Riviera Country Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2020007",
+          "pga:R2021007",
+          "pga:R2022007",
+          "pga:R2023007",
+          "pga:R2024007"
+        ],
+        "raw_beta": -0.0042765531999467655,
+        "cluster_se": 0.0073638854848505,
+        "reliability": 0.6866287962706579,
+        "shrunk_beta": 0.005891045581762815
+      },
+      "503": {
+        "course_names": [
+          "TPC River Highlands"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020034",
+          "pga:R2021034",
+          "pga:R2022034",
+          "pga:R2023034",
+          "pga:R2024034",
+          "pga:R2025034"
+        ],
+        "raw_beta": 0.02294920974382949,
+        "cluster_se": 0.002167295803544765,
+        "reliability": 0.9619704545983812,
+        "shrunk_beta": 0.023147727731910296
+      },
+      "510": {
+        "course_names": [
+          "TPC Scottsdale",
+          "TPC Scottsdale (Stadium Course)"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020003",
+          "pga:R2021003",
+          "pga:R2022003",
+          "pga:R2023003",
+          "pga:R2024003",
+          "pga:R2025003"
+        ],
+        "raw_beta": 0.03456983684668019,
+        "cluster_se": 0.0036529332484118234,
+        "reliability": 0.8990324411876209,
+        "shrunk_beta": 0.03392359113882853
+      },
+      "513": {
+        "course_names": [
+          "TPC Southwind"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020476",
+          "pga:R2021476",
+          "pga:R2022027",
+          "pga:R2023027",
+          "pga:R2024027",
+          "pga:R2025027"
+        ],
+        "raw_beta": 0.04686011582912483,
+        "cluster_se": 0.0066463493373236345,
+        "reliability": 0.7289783525433333,
+        "shrunk_beta": 0.041794502473202634
+      },
+      "538": {
+        "course_names": [
+          "TPC Summerlin"
+        ],
+        "informative_years": [
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020047",
+          "pga:R2021047",
+          "pga:R2022047",
+          "pga:R2023047",
+          "pga:R2023545",
+          "pga:R2024047"
+        ],
+        "raw_beta": 0.016192021084657515,
+        "cluster_se": 0.0030624338354803262,
+        "reliability": 0.926841948378738,
+        "shrunk_beta": 0.017068256106121626
+      },
+      "552": {
+        "course_names": [
+          "Silverado Resort & Spa (North)",
+          "Silverado Resort (North Course)",
+          "Silverado Resort and Spa (North Course)",
+          "Silverado Resort and Spa North"
+        ],
+        "informative_years": [
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020464",
+          "pga:R2021464",
+          "pga:R2022464",
+          "pga:R2023464",
+          "pga:R2023543",
+          "pga:R2024464"
+        ],
+        "raw_beta": 0.036845831188636366,
+        "cluster_se": 0.004885564196768459,
+        "reliability": 0.8327176121752926,
+        "shrunk_beta": 0.03539440177916041
+      },
+      "656": {
+        "course_names": [
+          "Plantation Course at Kapalua"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020016",
+          "pga:R2021016",
+          "pga:R2022016",
+          "pga:R2023016",
+          "pga:R2024016",
+          "pga:R2025016"
+        ],
+        "raw_beta": 0.009207310224478108,
+        "cluster_se": 0.007311506878852231,
+        "reliability": 0.689692481781437,
+        "shrunk_beta": 0.015091360894143868
+      },
+      "665": {
+        "course_names": [
+          "Innisbrook Resort (Copperhead Course)",
+          "Innisbrook Resort (Copperhead)"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2021475",
+          "pga:R2022475",
+          "pga:R2023475",
+          "pga:R2024475",
+          "pga:R2025475"
+        ],
+        "raw_beta": 0.00924094131420001,
+        "cluster_se": 0.007582146535757635,
+        "reliability": 0.6739242755989667,
+        "shrunk_beta": 0.01541302240261469
+      },
+      "669": {
+        "course_names": [
+          "TPC Deere Run"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2021030",
+          "pga:R2022030",
+          "pga:R2023030",
+          "pga:R2024030",
+          "pga:R2025030"
+        ],
+        "raw_beta": 0.044779478730671854,
+        "cluster_se": 0.004063313347636008,
+        "reliability": 0.8779954777041538,
+        "shrunk_beta": 0.042752962863853
+      },
+      "688": {
+        "course_names": [
+          "East Lake Golf Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2020060",
+          "pga:R2021060",
+          "pga:R2022060",
+          "pga:R2023060",
+          "pga:R2025060"
+        ],
+        "raw_beta": 0.021187265632347598,
+        "cluster_se": 0.006478039320688324,
+        "reliability": 0.7389937330388923,
+        "shrunk_beta": 0.023009622614277747
+      },
+      "734": {
+        "course_names": [
+          "PGA National (Champion)",
+          "PGA National Resort (The Champion)"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023
+        ],
+        "n_informative_years": 4,
+        "n_events": 4,
+        "event_keys": [
+          "pga:R2020010",
+          "pga:R2021010",
+          "pga:R2022010",
+          "pga:R2023010"
+        ],
+        "raw_beta": 0.03467399322962603,
+        "cluster_se": 0.008240159484389345,
+        "reliability": 0.636346423876953,
+        "shrunk_beta": 0.03230854141808832
+      },
+      "746": {
+        "course_names": [
+          "Country Club of Jackson",
+          "The Country Club of Jackson"
+        ],
+        "informative_years": [
+          2019,
+          2020,
+          2021,
+          2022,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020054",
+          "pga:R2021054",
+          "pga:R2022054",
+          "pga:R2023054",
+          "pga:R2024054",
+          "pga:R2025054"
+        ],
+        "raw_beta": 0.03256776911907339,
+        "cluster_se": 0.004987300796824779,
+        "reliability": 0.8268966813604202,
+        "shrunk_beta": 0.03180638101373212
+      },
+      "752": {
+        "course_names": [
+          "Sedgefield Country Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020013",
+          "pga:R2021013",
+          "pga:R2022013",
+          "pga:R2023013",
+          "pga:R2024013",
+          "pga:R2025013"
+        ],
+        "raw_beta": 0.028051917163456976,
+        "cluster_se": 0.004332280341871846,
+        "reliability": 0.8635852475878003,
+        "shrunk_beta": 0.028067931093052122
+      },
+      "770": {
+        "course_names": [
+          "TPC San Antonio (Oaks Course)"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2021041",
+          "pga:R2022041",
+          "pga:R2023041",
+          "pga:R2024041",
+          "pga:R2025041"
+        ],
+        "raw_beta": 0.024397772098870323,
+        "cluster_se": 0.003784703779249308,
+        "reliability": 0.892414569975313,
+        "shrunk_beta": 0.024803534479806974
+      },
+      "872": {
+        "course_names": [
+          "Quail Hollow Club"
+        ],
+        "informative_years": [
+          2021,
+          2023,
+          2024
+        ],
+        "n_informative_years": 3,
+        "n_events": 3,
+        "event_keys": [
+          "pga:R2021480",
+          "pga:R2023480",
+          "pga:R2024480"
+        ],
+        "raw_beta": 0.023856354353521528,
+        "cluster_se": 0.002062035122047901,
+        "reliability": 0.9654502402597145,
+        "shrunk_beta": 0.024005365887988264
+      },
+      "876": {
+        "course_names": [
+          "Detroit Golf Club"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020524",
+          "pga:R2021524",
+          "pga:R2022524",
+          "pga:R2023524",
+          "pga:R2024524",
+          "pga:R2025524"
+        ],
+        "raw_beta": 0.03461944485484474,
+        "cluster_se": 0.0049889531094220755,
+        "reliability": 0.8268018317815158,
+        "shrunk_beta": 0.03350229307816557
+      },
+      "883": {
+        "course_names": [
+          "TPC Twin Cities"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 6,
+        "n_events": 6,
+        "event_keys": [
+          "pga:R2020525",
+          "pga:R2021525",
+          "pga:R2022525",
+          "pga:R2023525",
+          "pga:R2024525",
+          "pga:R2025525"
+        ],
+        "raw_beta": 0.037485938048618536,
+        "cluster_se": 0.006279946765527857,
+        "reliability": 0.7507951874732403,
+        "shrunk_beta": 0.03516418916416985
+      },
+      "884": {
+        "course_names": [
+          "Keene Trace Golf Club",
+          "Keene Trace Golf Club (Champion Trace)",
+          "Keene Trace Golf Club (Champions Course)"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "n_informative_years": 4,
+        "n_events": 4,
+        "event_keys": [
+          "pga:R2021518",
+          "pga:R2022518",
+          "pga:R2023518",
+          "pga:R2024518"
+        ],
+        "raw_beta": 0.03827494793830108,
+        "cluster_se": 0.012338530462814698,
+        "reliability": 0.4383470843367729,
+        "shrunk_beta": 0.0325990861633637
+      },
+      "897": {
+        "course_names": [
+          "Memorial Park Golf Course"
+        ],
+        "informative_years": [
+          2020,
+          2021,
+          2024,
+          2025
+        ],
+        "n_informative_years": 4,
+        "n_events": 4,
+        "event_keys": [
+          "pga:R2021020",
+          "pga:R2022020",
+          "pga:R2024020",
+          "pga:R2025020"
+        ],
+        "raw_beta": 0.029092134671828453,
+        "cluster_se": 0.007010791670097767,
+        "reliability": 0.707377180828796,
+        "shrunk_beta": 0.02882209471762088
+      },
+      "921": {
+        "course_names": [
+          "TPC Craig Ranch"
+        ],
+        "informative_years": [
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 5,
+        "n_events": 5,
+        "event_keys": [
+          "pga:R2021019",
+          "pga:R2022019",
+          "pga:R2023019",
+          "pga:R2024019",
+          "pga:R2025019"
+        ],
+        "raw_beta": 0.029472026779316315,
+        "cluster_se": 0.0027259699536124923,
+        "reliability": 0.9411401117712678,
+        "shrunk_beta": 0.029395348935409692
+      },
+      "977": {
+        "course_names": [
+          "The Renaissance Club"
+        ],
+        "informative_years": [
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 4,
+        "n_events": 4,
+        "event_keys": [
+          "pga:R2022541",
+          "pga:R2023541",
+          "pga:R2024541",
+          "pga:R2025541"
+        ],
+        "raw_beta": 0.0008787815504575444,
+        "cluster_se": 0.006864329902768902,
+        "reliability": 0.7160402658906636,
+        "shrunk_beta": 0.008628192367313712
+      },
+      "978": {
+        "course_names": [
+          "Vidanta Vallarta"
+        ],
+        "informative_years": [
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "n_informative_years": 4,
+        "n_events": 4,
+        "event_keys": [
+          "pga:R2022540",
+          "pga:R2023540",
+          "pga:R2024540",
+          "pga:R2025540"
+        ],
+        "raw_beta": 0.02415490068055056,
+        "cluster_se": 0.0015446892786867303,
+        "reliability": 0.9803134219278573,
+        "shrunk_beta": 0.024233930636313575
+      }
+    },
+    "fallback": "global"
   },
   "guards": {
     "par_3_yardage": [

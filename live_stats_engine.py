@@ -2648,6 +2648,79 @@ def _shadow_completed_actuals(actual_grid, completed_round):
     return {rnd: actuals[rnd] for rnd in sorted(needed)}
 
 
+def _pga_tournament_id(event_id, season):
+    """Translate the weekly DataGolf event number to PGA's tournament key."""
+    raw = str(event_id or "").strip()
+    if raw.upper().startswith("R"):
+        return raw.upper()
+    try:
+        return f"R{int(season)}{int(raw):03d}"
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Cannot derive PGA tournament ID from {event_id!r}") from exc
+
+
+def _timing_geometry_for_shadow(target_round):
+    """Load the fresh pre-round timing probe without touching live state."""
+    from yardage_timing_reader import load_latest_round_geometry
+
+    season = datetime.now().year
+    event_id = _pga_tournament_id(event_ids[0], season)
+    log_path = os.getenv("PGA_YARDAGE_TIMING_LOG", "").strip()
+    if not log_path:
+        timing_dir = os.getenv("PGA_YARDAGE_TIMING_DIR", "").strip()
+        if not timing_dir:
+            timing_dir = os.path.join(
+                os.path.dirname(__file__),
+                "permanent_data",
+                "yardage_timing",
+            )
+        log_path = os.path.join(
+            timing_dir,
+            f"{tourney}_{season}.jsonl",
+        )
+    max_age = float(os.getenv("PGA_YARDAGE_TIMING_MAX_AGE_MINUTES", "15"))
+    rows, provenance = load_latest_round_geometry(
+        log_path,
+        event_id=event_id,
+        target_round=target_round,
+        expected_pga_course_id=(
+            os.getenv("PGA_YARDAGE_TIMING_COURSE_ID", "").strip() or None
+        ),
+        max_age_minutes=max_age,
+    )
+    frame = pd.DataFrame(rows)
+    frame.attrs.update(provenance)
+    return frame
+
+
+def _setup_geometry_candidates(target_round, failures=None):
+    """Yield independent setup sources, newest pre-round telemetry first."""
+    failures = failures if failures is not None else []
+    try:
+        timing = _timing_geometry_for_shadow(target_round)
+        if timing is not None and not timing.empty:
+            yield timing
+    except Exception as exc:
+        failures.append(f"timing probe: {exc}")
+
+    try:
+        archive = fetch_img_hole_geometry(
+            event_ids[0],
+            season=datetime.now().year,
+            tour=tour,
+            event_key=os.getenv("IMG_SHOT_EVENT_KEY") or None,
+        )
+        if archive is not None and not archive.empty:
+            yield archive
+        else:
+            failures.append("rich archive: no round-specific hole geometry")
+    except Exception as exc:
+        failures.append(f"rich archive: {exc}")
+
+    if failures:
+        print(f"  [shadow] Setup source diagnostics: {'; '.join(failures)}")
+
+
 def _build_live_scoring_shadow(
     *,
     completed_round,
@@ -2792,28 +2865,50 @@ def _build_live_scoring_shadow(
     cut_format = classify_cut_format(cut_line, opening_field_size)
     calibration = load_shadow_calibration()
     setup_calibration = None
+    setup_provenance = {}
     try:
         setup_calibration = load_setup_yardage_calibration()
         if not event_ids:
             raise ShadowUnavailable("current event_id is unavailable")
-        geometry = fetch_img_hole_geometry(
-            event_ids[0],
-            season=datetime.now().year,
-            tour=tour,
-            event_key=os.getenv("IMG_SHOT_EVENT_KEY") or None,
-        )
-        if geometry is None or geometry.empty:
-            raise ShadowUnavailable("round-specific hole geometry is unavailable")
-        setup_yardage = compute_setup_yardage_signal(
-            setup_calibration,
-            geometry.to_dict("records"),
-            target_round,
-            course_id=course_id,
-        )
-        setup_yardage.update({
-            "data_source": geometry.attrs.get("source", "unknown"),
-            "event_key": geometry.attrs.get("event_key"),
-        })
+        source_errors = []
+        setup_yardage = None
+        for geometry in _setup_geometry_candidates(
+            target_round, failures=source_errors
+        ):
+            source = geometry.attrs.get("source", "unknown")
+            source_event_key = geometry.attrs.get("event_key")
+            try:
+                setup_yardage = compute_setup_yardage_signal(
+                    setup_calibration,
+                    geometry.to_dict("records"),
+                    target_round,
+                    course_id=course_id,
+                    event_key=source_event_key,
+                )
+                # Observation/source metadata is audit provenance, not a model
+                # input.  Attach it after forecast hashing so a later poll of
+                # the identical setup cannot defeat retry deduplication.
+                setup_provenance = {
+                    "data_source": source,
+                    "event_key": source_event_key,
+                    "geometry_observed_at_utc": geometry.attrs.get(
+                        "observed_at_utc"
+                    ),
+                    "geometry_pga_course_id": geometry.attrs.get(
+                        "pga_course_id"
+                    ),
+                    "geometry_setup_hashes": geometry.attrs.get(
+                        "setup_hashes"
+                    ),
+                }
+                print(f"  [shadow] Daily setup loaded from {source}")
+                break
+            except Exception as source_exc:
+                source_errors.append(f"{source}: {source_exc}")
+                setup_yardage = None
+        if setup_yardage is None:
+            detail = "; ".join(source_errors) or "no setup source is available"
+            raise ShadowUnavailable(detail)
     except Exception as exc:
         print(f"  [shadow] Setup yardage unavailable: {exc}")
         setup_yardage = unavailable_setup_yardage_signal(
@@ -2835,6 +2930,8 @@ def _build_live_scoring_shadow(
         published_after=published_after,
         setup_yardage=setup_yardage,
     )
+    if setup_provenance and record.get("setup_status") == "ok":
+        record["setup_yardage"].update(setup_provenance)
     record.update({
         "run_timestamp": datetime.utcnow().strftime(
             "%Y-%m-%d %H:%M:%S UTC"
@@ -2879,6 +2976,27 @@ def _print_scoring_shadow(record):
             f"({setup['reference_source']}, n={setup['reference_course_n']}, "
             f"k={setup_k_label})"
         )
+        print(
+            f"  Setup source={setup.get('data_source') or 'unknown'}, "
+            f"selected arm={setup.get('selected_adjustment_mode') or 'broadie'}"
+        )
+        if setup.get("empirical_global_adjustment") is not None:
+            print(
+                "  Yardage arms: "
+                f"Broadie={setup['broadie_adjustment']:+.3f}; "
+                f"global={setup['empirical_global_adjustment']:+.3f} "
+                f"(beta={setup['empirical_global_coefficient']:.4f}/10yd, "
+                f"ref={setup['yardage_delta_reference_global']:+.1f}yd); "
+                f"course={setup['empirical_course_adjustment']:+.3f} "
+                f"(beta={setup['empirical_course_coefficient']:.4f}/10yd, "
+                f"{setup['empirical_course_coefficient_source']}, "
+                f"ref={setup['yardage_delta_reference_course']:+.1f}yd)"
+            )
+            fallback = setup.get(
+                "empirical_course_coefficient_fallback_reason"
+            )
+            if fallback:
+                print(f"  Course-yardage fallback: {fallback}")
     else:
         print(
             f"  Daily setup unavailable: {record.get('setup_reason') or 'unknown'}"

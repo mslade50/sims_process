@@ -571,18 +571,23 @@ python live_stats_engine.py
   - `model_predictions_r2.csv` (predictions for R2)
 
 For rounds 1-3, the same run also records a context-aware scoring forecast in
-the dedicated `Scoring Shadow` Sheet tab. It combines the target-round active
-cohort's completed scores, exact-course historical round transitions, realized
-weather, a robust structural anchor, and—when all 18 target-round holes are
-available—a guarded daily-setup yardage adjustment. The setup adjustment uses
-the rich shot archive's round-specific hole geometry, rejects incomplete or
-implausible layouts, and records its raw, historically centered, and capped
-values separately. Missing setup data is zero-impact and warning-only.
+the dedicated `Scoring Shadow` Sheet tab. Setup schema v3 logs three diagnostic
+arms: Broadie tee-state expected strokes, a global empirical yardage response,
+and an exact-course empirical EB response. **Broadie remains the selected arm.**
+The empirical arms start with target-round total yardage minus the average of
+all prior rounds, center that raw-yard delta on the matching historical round
+transition, and cap each adjustment at +/-0.35 strokes. Course EB requires an
+exact numeric DataGolf `course_num` with at least three informative years;
+otherwise both coefficient and centering fall back to global. Biltmore is a new
+course in this calibration and therefore intentionally uses that global
+fallback.
 
-The entire forecast remains diagnostic: it runs after the authoritative
-expected-score write and is not read by simulations or odds pricing. Any
-shadow calculation or storage failure therefore cannot change the published
-round expectation.
+Setup geometry is tried from the fresh timing JSONL observation first, then the
+rich archive. Either source must provide all 18 validated holes; incomplete or
+implausible layouts are zero-impact and warning-only. The entire forecast is
+diagnostic: it runs after the authoritative expected-score write and is not
+read by simulations, odds pricing, or publishing. A shadow calculation or
+storage failure therefore cannot change the published round expectation.
 
 For a prospective publication-timing audit, `pga_yardage_timing.py` polls the
 public PGA course-stats and tee-times pages and appends one immutable JSONL

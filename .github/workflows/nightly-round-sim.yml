@@ -27,6 +27,7 @@ jobs:
       contents: write   # publish_sim_fairs atomically pushes the complete live package
     env:
       RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
+      PGA_YARDAGE_TIMING_DIR: 'C:\Users\McKinley Slade\dev\sims_process\permanent_data\yardage_timing'
 
     steps:
     - name: Checkout repository
