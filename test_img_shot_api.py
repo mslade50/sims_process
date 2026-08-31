@@ -1,7 +1,11 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from api_utils import fetch_img_player_rounds, fetch_img_player_shots
+from api_utils import (
+    fetch_img_hole_geometry,
+    fetch_img_player_rounds,
+    fetch_img_player_shots,
+)
 
 
 def response(payload, status=200):
@@ -88,6 +92,38 @@ class ImgShotApiTests(unittest.TestCase):
         self.assertEqual(get.call_count, 2)
         self.assertNotIn("cursor", get.call_args_list[0].kwargs["params"])
         self.assertEqual(get.call_args_list[1].kwargs["params"]["cursor"], "a")
+
+    @patch("api_utils.requests.get")
+    def test_fetch_hole_geometry_uses_explicit_season_event_key(self, get):
+        get.return_value = response({
+            "ok": True,
+            "event_key": "pga:R2026060",
+            "rows": [{
+                "geometry_key": "g-4-1",
+                "event_key": "pga:R2026060",
+                "course_id": "layout:r4",
+                "round_no": 4,
+                "hole_no": 1,
+                "par": 4,
+                "yardage": 522,
+            }],
+        })
+
+        frame = fetch_img_hole_geometry(
+            60,
+            base_url="https://shots.example",
+            read_token="read-secret",
+            season=2026,
+        )
+
+        self.assertEqual(frame.loc[0, "yardage"], 522)
+        self.assertEqual(frame.attrs["event_key"], "pga:R2026060")
+        self.assertEqual(frame.attrs["source"], "cloudflare_archive")
+        args, kwargs = get.call_args
+        self.assertEqual(
+            args[0], "https://shots.example/v1/archive/hole-geometry"
+        )
+        self.assertEqual(kwargs["params"], {"event_key": "pga:R2026060"})
 
 
 if __name__ == "__main__":

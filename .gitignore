@@ -193,6 +193,11 @@ cleanup_backup_*.tar.gz
 !odds_screen/
 !odds_screen/**
 
+# Auditable frozen-model rebuild utility (archive remains off the weekly path).
+!archive/
+archive/*
+!archive/calibrate_live_scoring_setup_yardage.py
+
 # Rust sim-kernel crate (PyO3 extension); rust/.gitignore handles target/, *.pyd/.so, oracle .npy
 !rust/
 

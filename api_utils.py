@@ -20,6 +20,7 @@ from datetime import datetime
 
 from sim_inputs import name_replacements
 from img_shot_local import (
+    read_hole_geometry as read_local_img_hole_geometry,
     read_player_rounds as read_local_img_player_rounds,
     read_player_shots as read_local_img_player_shots,
     resolve_db_path as resolve_img_shot_db_path,
@@ -188,6 +189,9 @@ def _img_rows_frame(rows):
         "shot_distance_m", "shot_distance_yd", "distance_to_pin_m",
         "distance_to_pin_yd", "distance_to_pin_ft",
         "avg_tee_shot_distance_m", "avg_tee_shot_distance_yd",
+        "par", "yardage", "official_yardage", "actual_yardage",
+        "tee_x", "tee_y", "tee_z", "pin_x", "pin_y", "pin_z",
+        "fairway_center_x", "fairway_center_y", "fairway_center_z",
     ]
     for column in numeric:
         if column in frame.columns:
@@ -260,6 +264,60 @@ def fetch_img_player_shots(event_id, round_num, base_url=None, read_token=None,
             return _img_rows_frame(rows)
     print(f"  IMG shot archive exceeded {max_pages} pages; refusing partial data")
     return None
+
+
+def fetch_img_hole_geometry(
+    event_id, round_num=None, base_url=None, read_token=None, timeout=30,
+    db_path=None, tour="pga", season=None, event_key=None,
+):
+    """Fetch round-specific hole setup locally, then from the rich Worker API.
+
+    The rich route is intentionally addressed with an explicit ``event_key``
+    whenever one can be constructed.  Event IDs alone are reusable labels and
+    must never silently select a different season or venue.
+    """
+    season = int(season or datetime.now().year)
+    explicit_key = (
+        event_key
+        or os.getenv("IMG_SHOT_EVENT_KEY")
+        or (
+            f"pga:R{season}{int(event_id):03d}"
+            if str(tour).lower() == "pga" and str(event_id).isdigit()
+            else None
+        )
+    )
+    if _use_local_img_archive(base_url, read_token, db_path):
+        try:
+            resolved, rows = read_local_img_hole_geometry(
+                event_id, round_num, db_path=db_path, tour=tour,
+                season=season, event_key=explicit_key,
+            )
+            frame = _img_rows_frame(rows)
+            frame.attrs.update(event_key=resolved, source="local_sqlite")
+            return frame
+        except (FileNotFoundError, LookupError, OSError, sqlite3.Error) as exc:
+            print(f"  IMG local hole geometry unavailable: {exc}")
+            if os.getenv("IMG_SHOT_SOURCE", "auto").strip().lower() == "local":
+                return None
+
+    params = {"event_key": explicit_key} if explicit_key else {
+        "event_id": int(event_id), "tour": str(tour).lower(),
+        "season": season,
+    }
+    if round_num is not None:
+        params["round"] = int(round_num)
+    payload = _fetch_img_archive_json(
+        "/v1/archive/hole-geometry", params,
+        base_url=base_url, read_token=read_token, timeout=timeout,
+    )
+    if payload is None:
+        return None
+    frame = _img_rows_frame(payload["rows"])
+    frame.attrs.update(
+        event_key=payload.get("event_key") or explicit_key,
+        source="cloudflare_archive",
+    )
+    return frame
 
 
 def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,

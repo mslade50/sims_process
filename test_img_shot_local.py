@@ -4,6 +4,7 @@ import sqlite3
 
 from img_shot_local import (
     _readonly_uri,
+    read_hole_geometry,
     read_player_rounds,
     read_player_shots,
     write_player_crosswalk,
@@ -47,6 +48,14 @@ def build_db(path):
           shot_key TEXT,raw_model_id TEXT,signal_model_id TEXT,is_penalty INTEGER,
           sg_signal_uncentered REAL,transform_reason TEXT
         );
+        CREATE TABLE archive_hole_geometry(
+          geometry_key TEXT PRIMARY KEY,event_key TEXT,source TEXT,
+          source_event_id TEXT,course_id TEXT,round_no INTEGER,hole_no INTEGER,
+          par INTEGER,yardage REAL,coordinate_system TEXT,tee_x REAL,tee_y REAL,
+          tee_z REAL,pin_x REAL,pin_y REAL,pin_z REAL,fairway_center_x REAL,
+          fairway_center_y REAL,fairway_center_z REAL,first_seen_at TEXT,
+          last_seen_at TEXT,payload_json TEXT
+        );
         """
     )
     connection.execute("INSERT INTO archive_events VALUES ('pga:R2026525','pga',2026)")
@@ -89,6 +98,16 @@ def build_db(path):
     connection.execute(
         "INSERT INTO archive_shot_skill_signal VALUES ('shot-1','raw','signal',0,.2,'positive_linear')"
     )
+    connection.execute(
+        """
+        INSERT INTO archive_hole_geometry VALUES (
+          'geo-4-1','pga:R2026525','pga_tourcast','R2026525',
+          'layout:daily-r4',4,1,4,451,'tourcast_course_xyz_feet',
+          1,2,3,4,5,6,NULL,NULL,NULL,'2026-07-28T20:00:00Z',
+          '2026-07-28T20:00:00Z','{}'
+        )
+        """
+    )
     connection.commit()
     connection.close()
 
@@ -120,6 +139,18 @@ def test_reads_shot_level_accounting_and_signal(tmp_path):
     assert rows[0]["shot_key"] == "shot-1"
     assert rows[0]["sg_category"] == "ott"
     assert rows[0]["signal_model_id"] == "signal"
+
+
+def test_reads_round_specific_hole_geometry_without_course_join(tmp_path):
+    db = tmp_path / "shots.sqlite3"
+    build_db(db)
+    event_key, rows = read_hole_geometry(
+        525, 4, db_path=db, tour="pga", season=2026
+    )
+    assert event_key == "pga:R2026525"
+    assert len(rows) == 1
+    assert rows[0]["course_id"] == "layout:daily-r4"
+    assert rows[0]["yardage"] == 451
 
 
 def test_crosswalk_is_atomic_and_persistent(tmp_path):

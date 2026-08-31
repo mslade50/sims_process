@@ -557,9 +557,16 @@ python live_stats_engine.py
 For rounds 1-3, the same run also records a context-aware scoring forecast in
 the dedicated `Scoring Shadow` Sheet tab. It combines the target-round active
 cohort's completed scores, exact-course historical round transitions, realized
-weather, and a robust structural anchor. This is diagnostic only: it runs after
-the authoritative expected-score write, is not read by simulations or odds
-pricing, and any shadow calculation or storage failure is warning-only.
+weather, a robust structural anchor, and—when all 18 target-round holes are
+available—a guarded daily-setup yardage adjustment. The setup adjustment uses
+the rich shot archive's round-specific hole geometry, rejects incomplete or
+implausible layouts, and records its raw, historically centered, and capped
+values separately. Missing setup data is zero-impact and warning-only.
+
+The entire forecast remains diagnostic: it runs after the authoritative
+expected-score write and is not read by simulations or odds pricing. Any
+shadow calculation or storage failure therefore cannot change the published
+round expectation.
 
 ### 4.2b R1 Round Sim (with round=0 still in the sheet)
 ```bash

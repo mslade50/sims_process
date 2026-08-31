@@ -285,6 +285,70 @@ def read_player_shots(
         return resolved, [dict(row) for row in rows]
 
 
+def read_hole_geometry(
+    event_id: int | str, round_no: int | None = None, *,
+    db_path: str | Path | None = None, tour: str = "pga",
+    season: int | None = None, event_key: str | None = None,
+) -> tuple[str, list[dict]]:
+    """Read round-specific hole setup from the rich archive.
+
+    ``course_id`` is deliberately not used to join rounds.  PGA TOURCAST can
+    fall back to a layout-derived identifier, and that identifier changes when
+    the daily tee setup changes.  Event, round, and hole are the stable setup
+    identity for this single-event reader.
+    """
+    with _connect(db_path) as connection:
+        resolved = _resolve_event_key(
+            connection, event_id, tour=tour, season=season,
+            event_key=event_key,
+        )
+        available = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(archive_hole_geometry)"
+            ).fetchall()
+        }
+        required = {
+            "geometry_key", "event_key", "source", "source_event_id",
+            "course_id", "round_no", "hole_no", "par", "yardage",
+            "coordinate_system", "tee_x", "tee_y", "tee_z", "pin_x",
+            "pin_y", "pin_z",
+        }
+        missing = required - available
+        if missing:
+            raise sqlite3.OperationalError(
+                "archive_hole_geometry is missing required columns: "
+                + ", ".join(sorted(missing))
+            )
+        optional = [
+            "official_yardage", "actual_yardage", "yardage_source",
+            "fairway_center_x", "fairway_center_y", "fairway_center_z",
+            "first_seen_at", "last_seen_at",
+        ]
+        columns = [
+            "geometry_key", "event_key", "source", "source_event_id",
+            "course_id", "round_no", "hole_no", "par", "yardage",
+            *[column for column in optional if column in available],
+            "coordinate_system", "tee_x", "tee_y", "tee_z",
+            "pin_x", "pin_y", "pin_z",
+        ]
+        params: list[object] = [resolved]
+        round_filter = ""
+        if round_no is not None:
+            round_filter = " AND round_no=?"
+            params.append(int(round_no))
+        rows = connection.execute(
+            f"""
+            SELECT {', '.join(columns)}
+            FROM archive_hole_geometry
+            WHERE event_key=?{round_filter}
+            ORDER BY round_no, hole_no, geometry_key
+            """,
+            params,
+        ).fetchall()
+        return resolved, [dict(row) for row in rows]
+
+
 def write_player_crosswalk(
     matches: Iterable[Mapping], path: str | Path | None = None
 ) -> Path | None:

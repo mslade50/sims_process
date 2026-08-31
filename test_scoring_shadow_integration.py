@@ -215,6 +215,124 @@ class ScoringShadowIntegrationTests(unittest.TestCase):
                 )
         fetch.assert_not_called()
 
+    def test_missing_setup_calibration_is_zero_impact_and_fail_soft(self):
+        frame = pd.DataFrame({
+            "player_name": ["a", "b"],
+            "round": [-2, -1],
+            "event_name": ["Test Event", "Test Event"],
+            "course_name": ["Test Course", "Test Course"],
+        })
+        active = {
+            "players": 2,
+            "player_names": ["a", "b"],
+            "field_mean_skill": 1.0,
+        }
+        actual_grid = [
+            ["Round", "Wind Impact", "Dew Impact", "Structural Residual"],
+            ["R1", ".2", ".1", "-.4"],
+        ]
+        with (
+            patch("live_stats_engine.COURSE_SCORE_MAP", {}),
+            patch("live_stats_engine.os.path.exists", return_value=True),
+            patch("live_stats_engine.pd.read_csv", return_value=frame),
+            patch(
+                "scoring_shadow.load_setup_yardage_calibration",
+                side_effect=FileNotFoundError("setup calibration missing"),
+            ),
+            patch("live_stats_engine.fetch_img_hole_geometry") as geometry,
+            patch(
+                "scoring_shadow.compute_shadow_forecast",
+                return_value={"input_hash": "fail-soft"},
+            ) as compute,
+        ):
+            result = live_stats_engine._build_live_scoring_shadow(
+                completed_round=1,
+                baselines={1: 69.0, 2: 69.0},
+                active_context=active,
+                target_weather_effect=0.4,
+                production_candidate=69.0,
+                sheet_before=69.0,
+                published_after=69.0,
+                actual_grid=actual_grid,
+                cut_line=65,
+            )
+
+        geometry.assert_not_called()
+        setup = compute.call_args.kwargs["setup_yardage"]
+        self.assertEqual(setup["status"], "unavailable")
+        self.assertEqual(setup["adjustment"], 0.0)
+        self.assertEqual(setup["model_version"], "setup-yardage-unavailable")
+        self.assertIn("setup calibration missing", setup["reason"])
+        self.assertEqual(result["input_hash"], "fail-soft")
+
+    def test_builder_passes_physical_datagolf_course_id_to_setup_model(self):
+        frame = pd.DataFrame({
+            "player_name": ["a", "b"],
+            "round": [-2, -1],
+            "event_name": ["Test Event", "Test Event"],
+            "course_name": ["Test Course", "Test Course"],
+        })
+        active = {
+            "players": 2,
+            "player_names": ["a", "b"],
+            "field_mean_skill": 1.0,
+        }
+        actual_grid = [
+            ["Round", "Wind Impact", "Dew Impact", "Structural Residual"],
+            ["R1", ".2", ".1", "-.4"],
+        ]
+        geometry = pd.DataFrame([{
+            "round_no": 1,
+            "hole_no": 1,
+            "par": 4,
+            "yardage": 400,
+            "course_id": "layout:not-a-datagolf-id",
+        }])
+        geometry.attrs.update(source="local", event_key="pga:R2026060")
+        setup_signal = {
+            "status": "ok",
+            "reason": "",
+            "adjustment": 0.0,
+        }
+        with (
+            patch("live_stats_engine.COURSE_SCORE_MAP", {}),
+            patch("live_stats_engine.os.path.exists", return_value=True),
+            patch("live_stats_engine.pd.read_csv", return_value=frame),
+            patch(
+                "scoring_shadow.load_setup_yardage_calibration",
+                return_value={"calibration_version": "test"},
+            ),
+            patch(
+                "live_stats_engine.fetch_img_hole_geometry",
+                return_value=geometry,
+            ),
+            patch(
+                "scoring_shadow.compute_setup_yardage_signal",
+                return_value=setup_signal,
+            ) as setup_compute,
+            patch(
+                "scoring_shadow.compute_shadow_forecast",
+                return_value={"input_hash": "physical-course"},
+            ),
+        ):
+            result = live_stats_engine._build_live_scoring_shadow(
+                completed_round=1,
+                baselines={1: 69.0, 2: 69.0},
+                active_context=active,
+                target_weather_effect=0.4,
+                production_candidate=69.0,
+                sheet_before=69.0,
+                published_after=69.0,
+                actual_grid=actual_grid,
+                cut_line=65,
+            )
+
+        self.assertEqual(
+            setup_compute.call_args.kwargs["course_id"],
+            live_stats_engine.course_id,
+        )
+        self.assertEqual(result["input_hash"], "physical-course")
+
 
 if __name__ == "__main__":
     unittest.main()

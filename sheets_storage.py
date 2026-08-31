@@ -82,6 +82,16 @@ SCORING_SHADOW_HEADERS = [
     "shadow_minus_production", "calibration_hash", "model_input_hash",
     "weather_granularity", "target_baseline", "target_field_skill",
     "transition_pseudo_count", "reason",
+    "setup_yardage", "setup_status", "setup_reason",
+    "setup_calibration_hash", "setup_data_source", "setup_event_key",
+    "setup_target_yardage", "setup_prior_yardage_average",
+    "setup_yardage_delta", "setup_raw_expected_strokes_delta",
+    "setup_historical_round_reference",
+    "setup_centered_expected_strokes_delta", "setup_adjustment",
+    "setup_was_capped", "shadow_before_setup", "setup_reference_source",
+    "setup_reference_course_id", "setup_reference_course_n",
+    "setup_reference_pseudocount", "setup_global_round_reference",
+    "setup_course_round_mean",
 ]
 
 # Minimum Kelly edge (sim_prob * decimal_odds - 1, i.e. EV per unit staked) to
@@ -596,6 +606,8 @@ def append_scoring_shadow(record, spreadsheet=None):
             record.get(name) or {}, sort_keys=True, separators=(",", ":")
         )
 
+    setup = record.get("setup_yardage") or {}
+
     row = [
         record.get("run_timestamp")
         or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -644,6 +656,27 @@ def append_scoring_shadow(record, spreadsheet=None):
         record.get("target_field_skill", ""),
         record.get("transition_pseudo_count", ""),
         record.get("reason", ""),
+        _json_field("setup_yardage"),
+        record.get("setup_status", ""),
+        record.get("setup_reason", ""),
+        record.get("setup_calibration_hash", ""),
+        setup.get("data_source", ""),
+        setup.get("event_key", ""),
+        setup.get("target_yardage", ""),
+        setup.get("prior_yardage_average", ""),
+        setup.get("yardage_delta", ""),
+        setup.get("raw_expected_strokes_delta", ""),
+        setup.get("historical_round_reference", ""),
+        setup.get("centered_expected_strokes_delta", ""),
+        record.get("setup_adjustment", ""),
+        setup.get("was_capped", ""),
+        record.get("shadow_before_setup", ""),
+        setup.get("reference_source", ""),
+        setup.get("reference_course_id", ""),
+        setup.get("reference_course_n", ""),
+        setup.get("reference_pseudocount", ""),
+        setup.get("historical_round_reference_global", ""),
+        setup.get("historical_round_reference_course_mean", ""),
     ]
     ws = _get_or_create_tab(
         spreadsheet, TAB_SCORING_SHADOW, SCORING_SHADOW_HEADERS

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from statistics import median
 
@@ -18,6 +19,24 @@ CALIBRATION_PATH = (
     Path(__file__).resolve().parent
     / "permanent_data"
     / "live_scoring_shadow_calibration.json"
+)
+SETUP_YARDAGE_CALIBRATION_PATH = (
+    Path(__file__).resolve().parent
+    / "permanent_data"
+    / "live_scoring_setup_yardage_shadow.json"
+)
+
+# PGA TOUR benchmark tee expectations from Broadie (2012), Table B.1.  Keeping
+# the frozen curve here makes the scoring shadow independent of the collector
+# checkout and lets its input hash fully describe the prospective prediction.
+_TEE_DISTANCES_YD = (
+    100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340,
+    360, 380, 400, 420, 440, 460, 480, 500, 520, 540, 560, 580, 600,
+)
+_TEE_EXPECTED_STROKES = (
+    2.92, 2.99, 2.97, 2.99, 3.05, 3.12, 3.17, 3.25, 3.45,
+    3.65, 3.71, 3.79, 3.86, 3.92, 3.96, 3.99, 4.02, 4.08,
+    4.17, 4.28, 4.41, 4.54, 4.65, 4.74, 4.79, 4.82,
 )
 
 
@@ -54,6 +73,367 @@ def load_shadow_calibration(path=CALIBRATION_PATH):
         raise ShadowUnavailable(f"Calibration is not frozen shadow-only: {path}")
     calibration["_calibration_sha256"] = _calibration_hash(calibration)
     return calibration
+
+
+def load_setup_yardage_calibration(path=SETUP_YARDAGE_CALIBRATION_PATH):
+    """Load the independent, frozen daily-setup shadow calibration."""
+    path = Path(path)
+    with path.open(encoding="utf-8") as handle:
+        calibration = json.load(handle)
+    if calibration.get("schema_version") != "live-scoring-setup-yardage/v2":
+        raise ShadowUnavailable(f"Unsupported setup calibration schema: {path}")
+    if calibration.get("status") != "shadow_only" or not calibration.get("frozen"):
+        raise ShadowUnavailable(f"Setup calibration is not frozen shadow-only: {path}")
+    if not isinstance(calibration.get("round_reference_mean"), dict):
+        raise ShadowUnavailable(f"Setup calibration has no round references: {path}")
+    if not isinstance(calibration.get("round_reference_mode"), dict):
+        raise ShadowUnavailable(
+            f"Setup calibration has no round reference modes: {path}"
+        )
+    if not isinstance(calibration.get("round_course_eb_pseudocount"), dict):
+        raise ShadowUnavailable(
+            f"Setup calibration has no round course EB settings: {path}"
+        )
+    if not isinstance(calibration.get("course_references"), dict):
+        raise ShadowUnavailable(f"Setup calibration has no course references: {path}")
+    calibration["_calibration_sha256"] = _calibration_hash(calibration)
+    return calibration
+
+
+def _optional_finite(value):
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _tee_expected_strokes(distance_yd):
+    """Linearly interpolate/extrapolate the frozen Broadie tee curve."""
+    distance = _finite("hole yardage", distance_yd)
+    upper = next(
+        (
+            index for index, threshold in enumerate(_TEE_DISTANCES_YD)
+            if distance <= threshold
+        ),
+        len(_TEE_DISTANCES_YD),
+    )
+    if upper == 0:
+        lower, upper = 0, 1
+    elif upper == len(_TEE_DISTANCES_YD):
+        lower, upper = upper - 2, upper - 1
+    else:
+        lower = upper - 1
+    x0, x1 = _TEE_DISTANCES_YD[lower], _TEE_DISTANCES_YD[upper]
+    y0, y1 = _TEE_EXPECTED_STROKES[lower], _TEE_EXPECTED_STROKES[upper]
+    return y0 + (distance - x0) * (y1 - y0) / (x1 - x0)
+
+
+def unavailable_setup_yardage_signal(calibration, reason):
+    """Return an auditable zero-impact signal when setup data is unavailable."""
+    calibration = calibration if isinstance(calibration, Mapping) else {}
+    return {
+        "status": "unavailable",
+        "reason": str(reason),
+        "model_version": (
+            calibration.get("calibration_version")
+            or "setup-yardage-unavailable"
+        ),
+        "calibration_hash": (
+            _calibration_hash(calibration) if calibration else None
+        ),
+        "reference_source": "unavailable",
+        "reference_course_id": None,
+        "reference_course_n": None,
+        "reference_pseudocount": None,
+        "adjustment": 0.0,
+    }
+
+
+def _setup_round_reference(calibration, target_round, course_id):
+    """Return the exact-physical-course EB reference or the global fallback."""
+    global_reference = _finite(
+        f"R{target_round} global setup reference",
+        (calibration.get("round_reference_mean") or {}).get(str(target_round)),
+    )
+    mode = str(
+        (calibration.get("round_reference_mode") or {}).get(str(target_round))
+        or ""
+    ).strip()
+    if mode not in {"global", "course_eb"}:
+        raise ShadowUnavailable(
+            f"R{target_round} setup reference mode is invalid"
+        )
+
+    physical_course_id = None
+    if course_id not in (None, ""):
+        try:
+            physical_course_id = int(course_id)
+        except (TypeError, ValueError):
+            # A non-DataGolf identifier (including a TOURCAST layout ID) is not
+            # eligible for course centering and deliberately falls back global.
+            physical_course_id = None
+
+    if mode == "global":
+        return {
+            "reference": global_reference,
+            "global_reference": global_reference,
+            "course_mean": None,
+            "source": "global",
+            "course_id": physical_course_id,
+            "course_n": 0,
+            "pseudocount": None,
+        }
+
+    pseudo = _finite(
+        f"R{target_round} setup EB pseudocount",
+        (calibration.get("round_course_eb_pseudocount") or {}).get(
+            str(target_round)
+        ),
+    )
+    if pseudo < 0:
+        raise ShadowUnavailable("Setup EB pseudocount must be non-negative")
+
+    course_entry = (
+        (calibration.get("course_references") or {}).get(
+            str(physical_course_id)
+        )
+        if physical_course_id is not None
+        else None
+    )
+    if course_entry is None:
+        return {
+            "reference": global_reference,
+            "global_reference": global_reference,
+            "course_mean": None,
+            "source": "global",
+            "course_id": physical_course_id,
+            "course_n": 0,
+            "pseudocount": pseudo,
+        }
+    if not isinstance(course_entry, Mapping):
+        raise ShadowUnavailable(
+            f"Setup course reference {physical_course_id} is malformed"
+        )
+    try:
+        course_n = int(course_entry.get("n"))
+    except (TypeError, ValueError) as exc:
+        raise ShadowUnavailable(
+            f"Setup course reference {physical_course_id} has invalid n"
+        ) from exc
+    round_entry = (course_entry.get("rounds") or {}).get(str(target_round))
+    if course_n < 1 or not isinstance(round_entry, Mapping):
+        raise ShadowUnavailable(
+            f"Setup course reference {physical_course_id} has no R{target_round} data"
+        )
+    course_sum = _finite(
+        f"R{target_round} course setup sum", round_entry.get("sum_delta")
+    )
+    course_mean = course_sum / course_n
+    stored_mean = _finite(
+        f"R{target_round} stored course setup mean",
+        round_entry.get("mean_delta"),
+    )
+    if not math.isclose(course_mean, stored_mean, rel_tol=0.0, abs_tol=1e-12):
+        raise ShadowUnavailable(
+            f"Setup course reference {physical_course_id} mean is inconsistent"
+        )
+    reference = (course_sum + pseudo * global_reference) / (course_n + pseudo)
+    stored_reference = _finite(
+        f"R{target_round} stored course EB setup reference",
+        round_entry.get("eb_reference"),
+    )
+    if not math.isclose(reference, stored_reference, rel_tol=0.0, abs_tol=1e-12):
+        raise ShadowUnavailable(
+            f"Setup course reference {physical_course_id} EB value is inconsistent"
+        )
+    return {
+        "reference": reference,
+        "global_reference": global_reference,
+        "course_mean": course_mean,
+        "source": f"course_eb:{physical_course_id}",
+        "course_id": physical_course_id,
+        "course_n": course_n,
+        "pseudocount": pseudo,
+    }
+
+
+def compute_setup_yardage_signal(
+    calibration, geometry_rows, target_round, course_id=None
+):
+    """Convert complete daily hole setups into a guarded score adjustment.
+
+    The signal compares the target round's sum of expected strokes from the tee
+    with the mean of every strictly prior round.  It then subtracts the frozen
+    historical mean for that transition so a normal R2/R3/R4 setup is already
+    represented by the round baseline and paired transition calibration.
+    """
+    try:
+        target_round = int(target_round)
+    except (TypeError, ValueError) as exc:
+        raise ShadowUnavailable("Setup target round is invalid") from exc
+    if target_round not in (2, 3, 4):
+        raise ShadowUnavailable(f"Setup target must be R2-R4, got R{target_round}")
+
+    required_holes = int(_finite(
+        "required setup holes", calibration.get("required_holes")
+    ))
+    response_weight = _finite(
+        "setup response weight", calibration.get("response_weight")
+    )
+    max_adjustment = _finite(
+        "maximum setup adjustment", calibration.get("max_abs_adjustment")
+    )
+    max_round_delta = _finite(
+        "maximum round yardage delta",
+        calibration.get("max_abs_round_yardage_delta"),
+    )
+    max_actual_official = _finite(
+        "maximum actual/official hole delta",
+        calibration.get("max_abs_actual_official_hole_delta"),
+    )
+    reference_details = _setup_round_reference(
+        calibration, target_round, course_id
+    )
+    reference = reference_details["reference"]
+    if not 0 <= response_weight <= 1:
+        raise ShadowUnavailable("Setup response weight must be in [0, 1]")
+    if max_adjustment <= 0 or max_round_delta <= 0 or max_actual_official <= 0:
+        raise ShadowUnavailable("Setup guards must be positive")
+
+    guard_ranges = calibration.get("guards") or {}
+    par_ranges = {}
+    for par in (3, 4, 5, 6):
+        values = guard_ranges.get(f"par_{par}_yardage")
+        if not isinstance(values, list) or len(values) != 2:
+            raise ShadowUnavailable(f"Missing par-{par} setup guard")
+        par_ranges[par] = tuple(_finite(f"par-{par} guard", value) for value in values)
+
+    by_round = {rnd: {} for rnd in range(1, target_round + 1)}
+    round_course_ids = {rnd: set() for rnd in range(1, target_round + 1)}
+    for source in geometry_rows or []:
+        if not isinstance(source, Mapping):
+            raise ShadowUnavailable("Hole geometry rows must be mappings")
+        try:
+            rnd = int(source.get("round_no"))
+            hole = int(source.get("hole_no"))
+            par = int(source.get("par"))
+        except (TypeError, ValueError) as exc:
+            raise ShadowUnavailable("Hole geometry identity is invalid") from exc
+        if rnd not in by_round:
+            continue
+        if hole < 1 or hole > required_holes:
+            raise ShadowUnavailable(f"R{rnd} has invalid hole number {hole}")
+        if par not in par_ranges:
+            raise ShadowUnavailable(f"R{rnd}H{hole} has unsupported par {par}")
+        if hole in by_round[rnd]:
+            raise ShadowUnavailable(
+                f"R{rnd}H{hole} has duplicate geometry (multi-course or stale rows)"
+            )
+
+        official = _optional_finite(source.get("official_yardage"))
+        actual = _optional_finite(source.get("actual_yardage"))
+        canonical = _optional_finite(source.get("yardage"))
+        if actual is not None and official is not None and abs(actual - official) > max_actual_official:
+            raise ShadowUnavailable(
+                f"R{rnd}H{hole} actual/official yardage differs by "
+                f"{abs(actual - official):.1f} yards"
+            )
+        yardage = next(
+            (value for value in (actual, canonical, official) if value is not None),
+            None,
+        )
+        if yardage is None:
+            raise ShadowUnavailable(f"R{rnd}H{hole} has no usable yardage")
+        lower, upper = par_ranges[par]
+        if not lower <= yardage <= upper:
+            raise ShadowUnavailable(
+                f"R{rnd}H{hole} par-{par} yardage {yardage:.1f} is outside "
+                f"[{lower:.0f}, {upper:.0f}]"
+            )
+        by_round[rnd][hole] = {
+            "par": par,
+            "yardage": yardage,
+            "expected_strokes": _tee_expected_strokes(yardage),
+        }
+        course_value = str(source.get("course_id") or "").strip()
+        if course_value:
+            round_course_ids[rnd].add(course_value)
+
+    expected_holes = set(range(1, required_holes + 1))
+    for rnd, holes in by_round.items():
+        if set(holes) != expected_holes:
+            missing = sorted(expected_holes - set(holes))
+            raise ShadowUnavailable(
+                f"R{rnd} setup needs {required_holes} unique holes; "
+                f"missing {missing}"
+            )
+        if len(round_course_ids[rnd]) > 1:
+            raise ShadowUnavailable(f"R{rnd} setup contains multiple courses")
+
+    for hole in expected_holes:
+        pars = {by_round[rnd][hole]["par"] for rnd in by_round}
+        if len(pars) != 1:
+            raise ShadowUnavailable(
+                f"H{hole} par changes across rounds: {sorted(pars)}"
+            )
+
+    round_yardages = {
+        rnd: sum(item["yardage"] for item in holes.values())
+        for rnd, holes in by_round.items()
+    }
+    round_indices = {
+        rnd: sum(item["expected_strokes"] for item in holes.values())
+        for rnd, holes in by_round.items()
+    }
+    prior_rounds = list(range(1, target_round))
+    prior_yardage_average = sum(round_yardages[rnd] for rnd in prior_rounds) / len(prior_rounds)
+    yardage_delta = round_yardages[target_round] - prior_yardage_average
+    if abs(yardage_delta) > max_round_delta:
+        raise ShadowUnavailable(
+            f"R{target_round} setup yardage delta {yardage_delta:+.1f} exceeds "
+            f"the {max_round_delta:.0f}-yard guard"
+        )
+    prior_index_average = sum(round_indices[rnd] for rnd in prior_rounds) / len(prior_rounds)
+    raw_delta = round_indices[target_round] - prior_index_average
+    centered_delta = raw_delta - reference
+    uncapped_adjustment = response_weight * centered_delta
+    adjustment = max(-max_adjustment, min(max_adjustment, uncapped_adjustment))
+
+    return {
+        "status": "ok",
+        "reason": "",
+        "model_version": calibration.get("calibration_version"),
+        "calibration_hash": _calibration_hash(calibration),
+        "prior_rounds": prior_rounds,
+        "round_yardages": {str(key): value for key, value in round_yardages.items()},
+        "prior_yardage_average": prior_yardage_average,
+        "target_yardage": round_yardages[target_round],
+        "yardage_delta": yardage_delta,
+        "round_expected_strokes": {str(key): value for key, value in round_indices.items()},
+        "prior_expected_strokes_average": prior_index_average,
+        "target_expected_strokes": round_indices[target_round],
+        "raw_expected_strokes_delta": raw_delta,
+        "historical_round_reference_global": reference_details[
+            "global_reference"
+        ],
+        "historical_round_reference_course_mean": reference_details[
+            "course_mean"
+        ],
+        "historical_round_reference": reference,
+        "reference_source": reference_details["source"],
+        "reference_course_id": reference_details["course_id"],
+        "reference_course_n": reference_details["course_n"],
+        "reference_pseudocount": reference_details["pseudocount"],
+        "centered_expected_strokes_delta": centered_delta,
+        "response_weight": response_weight,
+        "uncapped_adjustment": uncapped_adjustment,
+        "max_abs_adjustment": max_adjustment,
+        "was_capped": not math.isclose(adjustment, uncapped_adjustment),
+        "adjustment": adjustment,
+    }
 
 
 def classify_cut_format(cut_line, opening_field_size):
@@ -150,6 +530,7 @@ def compute_shadow_forecast(
     sheet_before=None,
     published_after=None,
     cohort_members=None,
+    setup_yardage=None,
 ):
     """Compute a context-aware paired scoring forecast without side effects.
 
@@ -267,6 +648,25 @@ def compute_shadow_forecast(
         if published_after is None
         else _finite("published post-run value", published_after)
     )
+    if setup_yardage is None:
+        setup_yardage = {
+            "status": "unavailable",
+            "reason": "setup signal was not supplied",
+            "model_version": None,
+            "calibration_hash": None,
+            "adjustment": 0.0,
+        }
+    if not isinstance(setup_yardage, Mapping):
+        raise ShadowUnavailable("Setup yardage signal must be a mapping")
+    setup_yardage = dict(setup_yardage)
+    setup_status = str(setup_yardage.get("status") or "").strip().lower()
+    if setup_status not in {"ok", "unavailable"}:
+        raise ShadowUnavailable(f"Unknown setup yardage status: {setup_status!r}")
+    setup_adjustment = _finite(
+        "setup yardage adjustment", setup_yardage.get("adjustment", 0.0)
+    )
+    if setup_status != "ok" and not math.isclose(setup_adjustment, 0.0):
+        raise ShadowUnavailable("Unavailable setup yardage cannot move the shadow")
 
     ordered = [by_round[rnd] for rnd in sorted(by_round)]
     prior_score_average = sum(item["score"] for item in ordered) / len(ordered)
@@ -286,14 +686,20 @@ def compute_shadow_forecast(
         target_baseline - target_field_skill + target_weather_effect
     )
     robust_structural = structural_no_feedback + robust_weight * median_residual
-    shadow_unrounded = (
+    shadow_before_setup = (
         (1 - paired_weight) * robust_structural
         + paired_weight * weather_paired
     )
+    shadow_unrounded = shadow_before_setup + setup_adjustment
+
+    setup_model_version = setup_yardage.get("model_version")
+    model_version = calibration["calibration_version"]
+    if setup_model_version:
+        model_version = f"{model_version}+{setup_model_version}"
 
     calibration_hash = _calibration_hash(calibration)
     model_hash_payload = {
-        "model_version": calibration["calibration_version"],
+        "model_version": model_version,
         "calibration_hash": calibration_hash,
         "target_round": target_round,
         "course_id": course_id,
@@ -304,6 +710,7 @@ def compute_shadow_forecast(
         "target_baseline": target_baseline,
         "target_field_skill": target_field_skill,
         "target_weather_effect": target_weather_effect,
+        "setup_yardage": setup_yardage,
     }
     model_input_hash = hashlib.sha256(
         json.dumps(
@@ -327,8 +734,9 @@ def compute_shadow_forecast(
 
     return {
         "status": "ok",
-        "model_version": calibration["calibration_version"],
+        "model_version": model_version,
         "calibration_hash": calibration_hash,
+        "setup_calibration_hash": setup_yardage.get("calibration_hash"),
         "input_hash": input_hash,
         "model_input_hash": model_input_hash,
         "target_round": target_round,
@@ -369,6 +777,11 @@ def compute_shadow_forecast(
         "robust_residual_weight": robust_weight,
         "robust_structural": robust_structural,
         "paired_blend_weight": paired_weight,
+        "setup_yardage": setup_yardage,
+        "setup_status": setup_status,
+        "setup_reason": setup_yardage.get("reason", ""),
+        "setup_adjustment": setup_adjustment,
+        "shadow_before_setup": shadow_before_setup,
         "production_candidate": production_candidate,
         "sheet_before": sheet_before,
         "published_after": published_after,

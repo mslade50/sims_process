@@ -90,6 +90,7 @@ from api_utils import (
     fetch_historical_hourly_wind, blend_wind_with_climo,
     get_round_dates, climo_weight_for_lead,
     fetch_realized_wind,
+    fetch_img_hole_geometry,
 )
 
 # IMG shot data is diagnostic-only.  Keep the live pipeline runnable when the
@@ -2664,8 +2665,11 @@ def _build_live_scoring_shadow(
     from scoring_shadow import (
         ShadowUnavailable,
         classify_cut_format,
+        compute_setup_yardage_signal,
         compute_shadow_forecast,
+        load_setup_yardage_calibration,
         load_shadow_calibration,
+        unavailable_setup_yardage_signal,
     )
 
     target_round = completed_round + 1
@@ -2787,6 +2791,34 @@ def _build_live_scoring_shadow(
         cut_line = CUT_LINE
     cut_format = classify_cut_format(cut_line, opening_field_size)
     calibration = load_shadow_calibration()
+    setup_calibration = None
+    try:
+        setup_calibration = load_setup_yardage_calibration()
+        if not event_ids:
+            raise ShadowUnavailable("current event_id is unavailable")
+        geometry = fetch_img_hole_geometry(
+            event_ids[0],
+            season=datetime.now().year,
+            tour=tour,
+            event_key=os.getenv("IMG_SHOT_EVENT_KEY") or None,
+        )
+        if geometry is None or geometry.empty:
+            raise ShadowUnavailable("round-specific hole geometry is unavailable")
+        setup_yardage = compute_setup_yardage_signal(
+            setup_calibration,
+            geometry.to_dict("records"),
+            target_round,
+            course_id=course_id,
+        )
+        setup_yardage.update({
+            "data_source": geometry.attrs.get("source", "unknown"),
+            "event_key": geometry.attrs.get("event_key"),
+        })
+    except Exception as exc:
+        print(f"  [shadow] Setup yardage unavailable: {exc}")
+        setup_yardage = unavailable_setup_yardage_signal(
+            setup_calibration, exc
+        )
     record = compute_shadow_forecast(
         calibration,
         target_round=target_round,
@@ -2801,6 +2833,7 @@ def _build_live_scoring_shadow(
         production_candidate=production_candidate,
         sheet_before=sheet_before,
         published_after=published_after,
+        setup_yardage=setup_yardage,
     )
     record.update({
         "run_timestamp": datetime.utcnow().strftime(
@@ -2826,6 +2859,31 @@ def _print_scoring_shadow(record):
     print(
         f"  Paired={record['weather_paired']:.3f}, "
         f"robust structural={record['robust_structural']:.3f}, "
+        f"pre-setup shadow={record['shadow_before_setup']:.3f}"
+    )
+    if record.get("setup_status") == "ok":
+        setup = record["setup_yardage"]
+        setup_k = setup.get("reference_pseudocount")
+        setup_k_label = (
+            f"{setup_k:.0f}" if setup_k is not None else "global"
+        )
+        print(
+            f"  Daily setup: {setup['target_yardage']:.0f} yd vs "
+            f"{setup['prior_yardage_average']:.0f} prior avg "
+            f"({setup['yardage_delta']:+.0f}); centered tee-state shift="
+            f"{setup['centered_expected_strokes_delta']:+.3f}, "
+            f"applied to shadow={record['setup_adjustment']:+.3f}"
+        )
+        print(
+            f"  Setup reference={setup['historical_round_reference']:+.3f} "
+            f"({setup['reference_source']}, n={setup['reference_course_n']}, "
+            f"k={setup_k_label})"
+        )
+    else:
+        print(
+            f"  Daily setup unavailable: {record.get('setup_reason') or 'unknown'}"
+        )
+    print(
         f"shadow={record['shadow_unrounded']:.3f} "
         f"(display {record['shadow_display']:.1f}), "
         f"production candidate={record['production_candidate']:.3f}"
