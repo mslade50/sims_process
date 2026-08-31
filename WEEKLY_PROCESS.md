@@ -584,6 +584,32 @@ expected-score write and is not read by simulations or odds pricing. Any
 shadow calculation or storage failure therefore cannot change the published
 round expectation.
 
+For a prospective publication-timing audit, `pga_yardage_timing.py` polls the
+public PGA course-stats and tee-times pages and appends one immutable JSONL
+observation per run. A numbered round is considered available only when all 18
+`CourseHoleStats` yardages are present; the early `All Rounds` scorecard is
+retained as the nominal layout but never mistaken for that day's setup.
+
+```powershell
+python pga_yardage_timing.py `
+  --event-id R2026557 --season 2026 `
+  --slug biltmore-championship-asheville `
+  --event-name "Biltmore Championship Asheville" `
+  --output permanent_data/yardage_timing/biltmore_2026.jsonl
+```
+
+Each row includes per-source request/response times, the normalized setup hash,
+complete daily layouts, pin-coordinate availability, and the first official
+tee time by round. Use `setup_sha256`—not the render-volatile full-page hash—to
+identify yardage revisions. Poll at five-minute intervals beginning 36–48
+hours before R1 and continuously through one hour after each round's first tee.
+
+The one-event Biltmore audit is registered locally as
+`GolfPgaYardageTimingBiltmore2026`, every five minutes from September 14 at
+12:00 a.m. ET through September 20 at 6:00 p.m. ET. It writes to
+`permanent_data/yardage_timing/biltmore_2026.jsonl`, wakes the computer from
+sleep, retries failures twice, and ignores overlapping invocations.
+
 ### 4.2b R1 Round Sim (with round=0 still in the sheet)
 ```bash
 python round_sim.py

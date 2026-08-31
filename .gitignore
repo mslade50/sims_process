@@ -282,6 +282,7 @@ permanent_data/MAKER_HALT
 permanent_data/shadow_logs/
 permanent_data/maker_state.json
 permanent_data/maker_alert_state.json
+permanent_data/yardage_timing/
 
 # Local Task Scheduler wrapper (machine-specific python path)
 run_maker_shadow.cmd
