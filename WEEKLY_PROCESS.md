@@ -542,6 +542,22 @@ After R1 scores are final:
 | `dew` | R2 hourly dewpoint forecast |
 | `expected_score_1` | Actual R1 scoring avg |
 
+Before an R2-R4 live-scoring run, probe the target round's TOURCAST setup from
+the `golf_scraping` checkout while the event key and target round are known:
+
+```powershell
+$eventKey = "pga:R2026060"  # Replace only after verifying the current event.
+$targetRound = 4            # Set the exact target round (2-4).
+python -m shot_collector.pga_geometry_probe `
+  --event-key $eventKey --round $targetRound
+```
+
+The probe requires both values explicitly, stores geometry only, and never
+marks a shot scope complete. Add `--upload-cloud` only after the staged
+event/geometry Cloudflare path is active. If TOURCAST has not posted all 18
+validated hole lengths, it exits nonzero and the scoring shadow remains
+zero-impact for setup rather than using a partial layout.
+
 ```bash
 python live_stats_engine.py
 ```
