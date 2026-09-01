@@ -345,14 +345,6 @@ def _load_all_bets_from_sheets():
     # Sort by timestamp first to match grade_bets.py's "first write wins" semantics.
     if "run_timestamp" in df.columns:
         df = df.sort_values("run_timestamp", na_position="last")
-    # Legacy BetCRIS matchup audit rows have unknown settlement and are hidden
-    # from actionable/performance views without modifying the source Sheet.
-    is_matchup = df["bet_type"].isin(["round_matchup", "tournament_matchup"])
-    is_betcris = df["bookmaker"].astype(str).str.lower().str.contains(
-        "betcris|bookmaker", regex=True, na=False
-    )
-    verified = df["line_verified"].map(_is_truthy)
-    df = df.loc[~(is_matchup & is_betcris & ~verified)].copy()
 
     dedup_cols = [
         "event_id", "bet_type", "round", "bet_on", "opponent", "bookmaker",
