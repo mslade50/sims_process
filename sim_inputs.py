@@ -51,6 +51,11 @@ event_ids = [60]
 course_id = 688
 tourney = 'tourchamp'
 
+# Display/audit scope for the historical-yardage block on Scoring Baseline.
+# This does NOT broaden the production scoring-baseline/model scope above.
+# DataGolf used 933 for East Lake's renovated, par-71 2024 edition.
+yardage_history_course_ids = [688, 933]
+
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
 # unshrunk category means (factor 1.0); flip only for an intentional shadow run.

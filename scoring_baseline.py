@@ -21,6 +21,7 @@ import sys
 import sqlite3
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -86,6 +87,12 @@ try:
     from sim_inputs import expected_score_override
 except ImportError:
     expected_score_override = None
+try:
+    from sim_inputs import yardage_history_course_ids
+except ImportError:
+    # Display/audit scope only.  This does not change which course editions
+    # feed the scoring baseline itself.
+    yardage_history_course_ids = [course_id]
 
 # Paths
 DG_HISTORICAL_DB = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
@@ -1144,7 +1151,406 @@ def _to_native(val):
     return val
 
 
-def save_to_sheets(detail_df, final_estimates, weights):
+SCORING_BASELINE_TAB = "Scoring Baseline"
+SCORING_BASELINE_HEADERS = [
+    "Year", "Round", "Raw Avg", "Field Strength", "Field Adj",
+    "Cut Applied", "Wind Avg (mph)", "Wind Adj", "Dew Delta (F)",
+    "Baseline", "Weight",
+]
+YARDAGE_HISTORY_TITLE = "Historical Round Yardage"
+YARDAGE_HISTORY_HEADERS = [
+    "Year", "Event", "DG Course ID", "Par", "R1 Yards", "R2 Yards",
+    "R3 Yards", "R4 Yards", "R2 Delta", "R3 Delta vs Prior Avg",
+    "R4 Delta vs Prior Avg", "Event Key",
+]
+
+
+def _normalize_yardage_history_course_ids(values=None):
+    """Return explicit physical-course identities used for display only."""
+    raw = yardage_history_course_ids if values is None else values
+    if raw is None or isinstance(raw, (str, int, np.integer)):
+        raw = [raw] if raw is not None else []
+    normalized = {int(course_id)}
+    for value in raw:
+        try:
+            normalized.add(int(value))
+        except (TypeError, ValueError):
+            print(f"  WARNING: Ignoring invalid yardage history course ID: {value!r}")
+    return sorted(normalized)
+
+
+def _archive_event_key(year, event_id, tour):
+    """Build an exact rich-archive edition key, never an event-only lookup."""
+    tour = str(tour or "").strip().lower()
+    raw = str(event_id).strip()
+    if not raw.isdigit():
+        return None
+    if tour == "pga":
+        return f"pga:R{int(year)}{int(raw):03d}"
+    if tour == "dpwt":
+        source_id = raw if raw.startswith(str(int(year))) else f"{int(year)}{int(raw):03d}"
+        return f"dpwt:{source_id}"
+    return None
+
+
+def load_yardage_history_editions(course_ids=None, current_year=None):
+    """Resolve exact historical editions for the configured physical course.
+
+    DataGolf's ``(year, event_id, course_num)`` rows establish historical
+    identity.  The configured current edition is added because the historical
+    database is normally one completed event behind during the weekly run.
+    Optional aliases are display-only (for example East Lake's 2024 remodel)
+    and do not relax the scoring-baseline course filter.
+    """
+    accepted_ids = _normalize_yardage_history_course_ids(course_ids)
+    db_path = Path(DG_HISTORICAL_DB).expanduser().resolve()
+    if not db_path.is_file():
+        raise FileNotFoundError(f"DataGolf historical database not found: {db_path}")
+
+    placeholders = ",".join("?" for _ in accepted_ids)
+    event_clause = ""
+    params = [int(start_yr), str(tour_override).lower(), *accepted_ids]
+    if HISTORICAL_EVENT_FILTER_EXPLICIT:
+        scoped_event_ids = [int(value) for value in historical_event_ids]
+        event_placeholders = ",".join("?" for _ in scoped_event_ids)
+        event_clause = f" AND event_id IN ({event_placeholders})"
+        params.extend(scoped_event_ids)
+
+    with sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT year, event_id, MIN(event_name) AS event_name,
+                   course_num, MIN(course_name) AS course_name,
+                   MAX(course_par) AS course_par
+            FROM player_rounds
+            WHERE year >= ? AND LOWER(tour) = ?
+              AND course_num IN ({placeholders}){event_clause}
+            GROUP BY year, event_id, course_num
+            ORDER BY year, event_id, course_num
+            """,
+            params,
+        ).fetchall()
+
+    editions = [
+        {
+            "year": int(row["year"]),
+            "event_id": int(row["event_id"]),
+            "event_name": str(row["event_name"] or "").strip(),
+            "course_id": int(row["course_num"]),
+            "course_name": str(row["course_name"] or "").strip(),
+            "course_par": (
+                int(row["course_par"]) if row["course_par"] is not None else None
+            ),
+        }
+        for row in rows
+    ]
+
+    year_now = int(current_year or datetime.now().year)
+    current_course_id = int(course_id)
+    prior_by_event = {}
+    for edition in editions:
+        prior_by_event[edition["event_id"]] = edition
+    latest_course = next(
+        (
+            edition for edition in reversed(editions)
+            if edition["course_id"] == current_course_id
+        ),
+        editions[-1] if editions else None,
+    )
+    existing = {
+        (edition["year"], edition["event_id"], edition["course_id"])
+        for edition in editions
+    }
+    for configured_event_id in event_ids:
+        event_id_int = int(configured_event_id)
+        identity = (year_now, event_id_int, current_course_id)
+        if identity in existing:
+            continue
+        prior = prior_by_event.get(event_id_int) or latest_course or {}
+        editions.append({
+            "year": year_now,
+            "event_id": event_id_int,
+            "event_name": str(prior.get("event_name") or tourney).strip(),
+            "course_id": current_course_id,
+            "course_name": str(prior.get("course_name") or "").strip(),
+            "course_par": int(course_par),
+        })
+
+    for edition in editions:
+        edition["event_key"] = _archive_event_key(
+            edition["year"], edition["event_id"], tour_override
+        )
+    return sorted(
+        editions,
+        key=lambda row: (row["year"], row["event_id"], row["course_id"]),
+    )
+
+
+def _summarize_yardage_geometry(frame, edition):
+    """Validate one exact edition and total its four daily 18-hole setups."""
+    if frame is None or frame.empty:
+        return None, "no geometry rows"
+    required = {"round_no", "hole_no", "par", "course_id"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        return None, f"missing geometry columns: {', '.join(missing)}"
+
+    selected_yardage = pd.Series(np.nan, index=frame.index, dtype=float)
+    # DPWT exposes actual and official yardage separately.  PGA normally uses
+    # the canonical yardage column.  Prefer actual daily setup when present.
+    for column in ("actual_yardage", "yardage", "official_yardage"):
+        if column in frame.columns:
+            values = pd.to_numeric(frame[column], errors="coerce")
+            selected_yardage = selected_yardage.fillna(values)
+
+    work = frame.copy()
+    work["_yardage"] = selected_yardage
+    work["_round"] = pd.to_numeric(work["round_no"], errors="coerce")
+    work["_hole"] = pd.to_numeric(work["hole_no"], errors="coerce")
+    work["_par"] = pd.to_numeric(work["par"], errors="coerce")
+
+    round_yardages = {}
+    round_pars = {}
+    expected_holes = set(range(1, 19))
+    for round_no in range(1, 5):
+        round_rows = work.loc[work["_round"] == round_no].copy()
+        holes = set(round_rows["_hole"].dropna().astype(int))
+        layout_count = round_rows["course_id"].dropna().astype(str).str.strip().nunique()
+        if len(round_rows) != 18 or holes != expected_holes:
+            return None, f"R{round_no} is not one complete 18-hole setup"
+        if layout_count != 1:
+            return None, f"R{round_no} has {layout_count} layout identities"
+        if round_rows["_yardage"].isna().any() or not round_rows["_yardage"].between(40, 900).all():
+            return None, f"R{round_no} has missing or implausible yardage"
+        if round_rows["_par"].isna().any() or not round_rows["_par"].between(2, 6).all():
+            return None, f"R{round_no} has missing or implausible par"
+        total_yardage = float(round_rows["_yardage"].sum())
+        if abs(total_yardage - round(total_yardage)) > 1e-6:
+            return None, f"R{round_no} yardage total is not integral"
+        round_yardages[round_no] = int(round(total_yardage))
+        round_pars[round_no] = int(round_rows["_par"].sum())
+
+    if len(set(round_pars.values())) != 1:
+        return None, "round par changed within the edition"
+    geometry_par = round_pars[1]
+    expected_par = edition.get("course_par")
+    if expected_par is not None and int(expected_par) != geometry_par:
+        return None, (
+            f"geometry par {geometry_par} does not match DataGolf par {expected_par}"
+        )
+
+    summary = dict(edition)
+    summary.update({
+        "par": geometry_par,
+        "r1_yards": round_yardages[1],
+        "r2_yards": round_yardages[2],
+        "r3_yards": round_yardages[3],
+        "r4_yards": round_yardages[4],
+        "geometry_source": str(frame.attrs.get("source") or ""),
+    })
+    return summary, None
+
+
+def load_historical_round_yardages(
+    course_ids=None, current_year=None, geometry_db_path=None,
+):
+    """Return complete historical round-yardage rows plus omission warnings."""
+    try:
+        editions = load_yardage_history_editions(
+            course_ids=course_ids, current_year=current_year
+        )
+    except (FileNotFoundError, sqlite3.Error, ValueError) as exc:
+        return [], [str(exc)]
+
+    try:
+        from api_utils import fetch_img_hole_geometry
+    except ImportError as exc:
+        return [], [f"hole-geometry reader unavailable: {exc}"]
+
+    results = []
+    warnings = []
+    for edition in editions:
+        event_key = edition.get("event_key")
+        if not event_key:
+            warnings.append(
+                f"{edition['year']} {edition['event_name']}: unsupported tour key"
+            )
+            continue
+        try:
+            frame = fetch_img_hole_geometry(
+                edition["event_id"],
+                round_num=None,
+                db_path=geometry_db_path,
+                tour=tour_override,
+                season=edition["year"],
+                event_key=event_key,
+            )
+        except Exception as exc:
+            warnings.append(f"{event_key}: {exc}")
+            continue
+        summary, issue = _summarize_yardage_geometry(frame, edition)
+        if issue:
+            warnings.append(f"{event_key}: {issue}")
+            continue
+        results.append(summary)
+    return results, warnings
+
+
+def build_yardage_history_block(yardage_rows, start_row, warnings=None):
+    """Build the live Sheet block, keeping deltas formula-backed."""
+    rows = list(yardage_rows or [])
+    warnings = list(warnings or [])
+    course_names = sorted({
+        str(row.get("course_name") or "").strip() for row in rows
+        if str(row.get("course_name") or "").strip()
+    })
+    title = YARDAGE_HISTORY_TITLE
+    if len(course_names) == 1:
+        title = f"{title} - {course_names[0]}"
+
+    block = [[title, *([""] * 11)], YARDAGE_HISTORY_HEADERS.copy()]
+    data_start_row = int(start_row) + 2
+    for offset, row in enumerate(rows):
+        sheet_row = data_start_row + offset
+        block.append([
+            int(row["year"]),
+            str(row.get("event_name") or ""),
+            int(row["course_id"]),
+            int(row["par"]),
+            int(row["r1_yards"]),
+            int(row["r2_yards"]),
+            int(row["r3_yards"]),
+            int(row["r4_yards"]),
+            f"=ROUND(F{sheet_row}-E{sheet_row},1)",
+            f"=ROUND(G{sheet_row}-AVERAGE(E{sheet_row}:F{sheet_row}),1)",
+            f"=ROUND(H{sheet_row}-AVERAGE(E{sheet_row}:G{sheet_row}),1)",
+            str(row.get("event_key") or ""),
+        ])
+
+    block.append([""] * 12)
+    if rows:
+        block.append([
+            "Delta definition",
+            "R2 vs R1; R3/R4 vs the average yardage of every prior round that week.",
+            *([""] * 10),
+        ])
+        identities = sorted({
+            (int(row["course_id"]), int(row["par"])) for row in rows
+        })
+        if len(identities) > 1:
+            block.append([
+                "Identity note",
+                "Course ID/par changes are retained exactly so remodels and alternate layout identities stay visible.",
+                *([""] * 10),
+            ])
+        block.append([
+            "Source",
+            "Rich shot archive; only exact editions with complete 18-hole setups for R1-R4 are shown.",
+            *([""] * 10),
+        ])
+        if warnings:
+            block.append([
+                "Coverage note",
+                f"{len(warnings)} unavailable or incomplete edition(s) omitted.",
+                *([""] * 10),
+            ])
+    else:
+        status = "Historical yardage unavailable"
+        if warnings:
+            status += f": {warnings[0]}"
+        block.append([status, *([""] * 11)])
+    return block
+
+
+def write_historical_yardage_section(ws, yardage_rows, warnings=None):
+    """Idempotently append or replace the owned yardage-history tail block."""
+    current_values = ws.get_all_values()
+    marker_row = next(
+        (
+            index + 1 for index, row in enumerate(current_values)
+            if row and str(row[0]).startswith(YARDAGE_HISTORY_TITLE)
+        ),
+        None,
+    )
+    start_row = marker_row or (len(current_values) + 2)
+    if marker_row:
+        ws.batch_clear([f"A{start_row}:L{max(start_row, len(current_values))}"])
+
+    block = build_yardage_history_block(yardage_rows, start_row, warnings)
+    end_row = start_row + len(block) - 1
+    ws.update(
+        values=block,
+        range_name=f"A{start_row}:L{end_row}",
+        value_input_option="USER_ENTERED",
+    )
+
+    try:
+        data_start = start_row + 2
+        data_end = data_start + len(yardage_rows or []) - 1
+        formats = [
+            {
+                "range": f"A{start_row}:L{start_row}",
+                "format": {"textFormat": {"bold": True, "fontSize": 11}},
+            },
+            {
+                "range": f"A{start_row + 1}:L{start_row + 1}",
+                "format": {
+                    "textFormat": {"bold": True},
+                    "wrapStrategy": "WRAP",
+                    "verticalAlignment": "MIDDLE",
+                },
+            },
+        ]
+        if data_end >= data_start:
+            formats.append({
+                "range": f"I{data_start}:K{data_end}",
+                "format": {
+                    "numberFormat": {
+                        "type": "NUMBER", "pattern": "+0.0;-0.0;0.0"
+                    }
+                },
+            })
+        ws.batch_format(formats)
+        ws.spreadsheet.batch_update({
+            "requests": [
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id, "dimension": "COLUMNS",
+                            "startIndex": 1, "endIndex": 2,
+                        },
+                        "properties": {"pixelSize": 155},
+                        "fields": "pixelSize",
+                    }
+                },
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id, "dimension": "COLUMNS",
+                            "startIndex": 9, "endIndex": 12,
+                        },
+                        "properties": {"pixelSize": 135},
+                        "fields": "pixelSize",
+                    }
+                },
+            ]
+        })
+    except Exception as exc:
+        print(f"  WARNING: Yardage section formatting failed: {exc}")
+
+    return {
+        "start_row": start_row,
+        "end_row": end_row,
+        "data_start_row": start_row + 2,
+        "data_end_row": start_row + 1 + len(yardage_rows or []),
+    }
+
+
+def save_to_sheets(
+    detail_df, final_estimates, weights, yardage_rows=None,
+    yardage_warnings=None, spreadsheet=None,
+):
     """Write results to Google Sheets 'Scoring Baseline' tab."""
     try:
         from sheets_storage import get_spreadsheet, _get_or_create_tab
@@ -1152,20 +1558,16 @@ def save_to_sheets(detail_df, final_estimates, weights):
         print("  WARNING: sheets_storage not available — skipping Sheets write")
         return
 
-    TAB_NAME = "Scoring Baseline"
-    HEADERS = [
-        "Year", "Round", "Raw Avg", "Field Strength", "Field Adj",
-        "Cut Applied", "Wind Avg (mph)", "Wind Adj", "Dew Delta (F)",
-        "Baseline", "Weight",
-    ]
-
     try:
-        spreadsheet = get_spreadsheet()
-        ws = _get_or_create_tab(spreadsheet, TAB_NAME, HEADERS)
+        if spreadsheet is None:
+            spreadsheet = get_spreadsheet()
+        ws = _get_or_create_tab(
+            spreadsheet, SCORING_BASELINE_TAB, SCORING_BASELINE_HEADERS
+        )
 
         # Clear existing data (keep headers)
         ws.clear()
-        ws.append_row(HEADERS, value_input_option="RAW")
+        ws.append_row(SCORING_BASELINE_HEADERS, value_input_option="RAW")
 
         # Detail rows
         rows = []
@@ -1189,11 +1591,25 @@ def save_to_sheets(detail_df, final_estimates, weights):
         # Summary rows
         rows.append([])  # blank separator
         for rnd in sorted(final_estimates.keys()):
-            rows.append(["FINAL", int(rnd), "", "", "", "", "", "", "", "",
-                         float(final_estimates[rnd]), ""])
+            rows.append([
+                "FINAL", int(rnd), "", "", "", "", "", "", "",
+                float(final_estimates[rnd]), "",
+            ])
 
         ws.append_rows(rows, value_input_option="USER_ENTERED")
-        print(f"  [sheets] Wrote {len(rows)} rows to '{TAB_NAME}' tab")
+        if yardage_rows is None:
+            yardage_rows, loaded_warnings = load_historical_round_yardages()
+            if yardage_warnings is None:
+                yardage_warnings = loaded_warnings
+        section = write_historical_yardage_section(
+            ws, yardage_rows or [], yardage_warnings or []
+        )
+        print(
+            f"  [sheets] Wrote {len(rows)} baseline rows and "
+            f"{len(yardage_rows or [])} yardage rows to "
+            f"'{SCORING_BASELINE_TAB}' (yardage A{section['start_row']}:"
+            f"L{section['end_row']})"
+        )
 
     except Exception as e:
         print(f"  WARNING: Sheets write failed: {e}")
