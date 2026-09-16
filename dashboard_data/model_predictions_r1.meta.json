@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "event_id": "60",
-  "tourney": "tourchamp",
-  "sim_run_at": "2026-08-25 21:22:58 UTC",
-  "prediction_count": 30,
-  "active_field_count": 30,
-  "prediction_field_sha256": "6e55d4e932b67bf4991ccd0974f156b4a2c72023d750995a3786556d45a15783",
-  "active_field_sha256": "6e55d4e932b67bf4991ccd0974f156b4a2c72023d750995a3786556d45a15783",
+  "event_id": "557",
+  "tourney": "biltmore",
+  "sim_run_at": "2026-09-16 10:44:10 UTC",
+  "prediction_count": 132,
+  "active_field_count": 132,
+  "prediction_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
+  "active_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
   "withdrawn_or_extra_players": []
 }
