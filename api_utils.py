@@ -18,7 +18,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from sim_inputs import name_replacements
 from img_shot_local import (
     read_hole_geometry as read_local_img_hole_geometry,
     read_player_rounds as read_local_img_player_rounds,
@@ -42,6 +41,47 @@ ALL_STATS = [
 # --------------------------------------------------------------------------
 # DataGolf API Functions
 # --------------------------------------------------------------------------
+
+def fetch_pga_events_this_week(api_key, *, now=None):
+    """Read the PGA schedule for the Monday-Sunday week in Eastern time.
+
+    Schedule failures are errors, not evidence of an off week. This check must
+    work without importing sim_inputs (which reads the coefficients Sheet).
+    """
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+
+    if not api_key:
+        raise ValueError('DataGolf API key is required for the PGA schedule')
+    eastern = ZoneInfo('America/New_York')
+    now = now or datetime.now(eastern)
+    if now.tzinfo is None:
+        raise ValueError('PGA schedule check requires a timezone-aware time')
+    today = now.astimezone(eastern).date()
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    events = []
+    for year in sorted({monday.year, sunday.year}):
+        try:
+            response = requests.get(f'{DATAGOLF_BASE}/get-schedule', params={
+                'tour': 'pga', 'season': year, 'upcoming_only': 'no',
+                'file_format': 'json', 'key': api_key,
+            }, timeout=20)
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload['schedule']
+            if payload['tour'] != 'pga' or int(payload['season']) != year or not isinstance(rows, list) or not rows:
+                raise ValueError('invalid PGA season schedule')
+            for row in rows:
+                start = date.fromisoformat(row['start_date'])
+                if row['tour'] != 'pga':
+                    raise ValueError('unexpected tour in PGA schedule')
+                if monday <= start <= sunday and str(row.get('status', '')).lower() not in {'cancelled', 'canceled'}:
+                    events.append(row)
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            # requests exceptions can include the API key in the request URL.
+            raise RuntimeError(f'Could not verify the {year} PGA schedule') from None
+    return events
 
 def fetch_live_stats(round_num, api_key, include_score=False):
     """
@@ -87,6 +127,7 @@ def fetch_live_stats(round_num, api_key, include_score=False):
     df = df[cols]
 
     # Standardize names
+    from sim_inputs import name_replacements
     df["player_name"] = df["player_name"].str.lower().replace(name_replacements)
 
     # Round numeric columns (position excluded — handled by engine after T-stripping)
@@ -150,6 +191,7 @@ def _fetch_img_archive_json(path, params, base_url=None, read_token=None, timeou
 
 def _canonical_img_name(value):
     """Match PGA first-last names to the sims' lowercase last-first contract."""
+    from sim_inputs import name_replacements
     text = "".join(
         character
         for character in unicodedata.normalize("NFKD", str(value or ""))
@@ -378,6 +420,7 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
         keep.append("course")
 
     df = df[[c for c in keep if c in df.columns]].copy()
+    from sim_inputs import name_replacements
     df["player_name"] = df["player_name"].str.lower().replace(name_replacements)
 
     # If tee time column is missing or all empty (API returns structure before
@@ -951,6 +994,7 @@ def sim_round_from_dow(now_et=None) -> int:
 
 def clean_names(df):
     """Standardize player names to lowercase with replacement mapping."""
+    from sim_inputs import name_replacements
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
     df["player_name"] = df["player_name"].replace(name_replacements)
     return df

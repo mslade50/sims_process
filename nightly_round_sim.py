@@ -300,6 +300,7 @@ def main():
 
     project_root = _setup_env()
     python = sys.executable
+    _write_github_outputs({"should_publish": False})
 
     print("\n" + "=" * 60)
     print("  NIGHTLY ROUND SIM BACKUP (self-sufficient)")
@@ -307,6 +308,17 @@ def main():
 
     if args.dry_run:
         print("  MODE: DRY RUN")
+
+    # An old Sheet round pointer must not keep an off-week backup running.
+    try:
+        from api_utils import fetch_pga_events_this_week
+        events = fetch_pga_events_this_week(os.getenv('DATAGOLF_API_KEY'))
+    except Exception as exc:
+        print(f"  ERROR: PGA schedule check failed ({type(exc).__name__}).")
+        sys.exit(1)
+    if not events:
+        print("  No PGA event this week (Eastern time); skipping simulation and publication.")
+        sys.exit(0)
 
     # ------------------------------------------------------------------
     # Step 1: Detect completed round from Sheet config
