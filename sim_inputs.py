@@ -147,6 +147,7 @@ name_replacements.update({
     'brown, b': 'brown, blades',
     'horschel, b': 'horschel, billy',
     'poston, jt': 'poston, j.t.',
+    'james, benjamin': 'james, ben',
 })
 
 ##manual adjustments for players which we do not have requisite data on.
