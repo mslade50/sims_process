@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-09-18 01:47:15 UTC",
+  "generated_at": "2026-09-18 07:36:34 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-09-18 01:46:49 UTC",
-      "root_generated_at": "2026-09-18 01:46:49 UTC",
-      "expected_avg_authority": "cli",
+      "generated_at": "2026-09-18 07:36:13 UTC",
+      "root_generated_at": "2026-09-18 07:36:13 UTC",
+      "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r2.csv",
         "exists": true,
         "sha256": "71d057c8736055e56e283f5b31e925b92a64e66c17f41cdc8b8b665876c1f126",
-        "modified_at": "2026-09-18 01:46:43 UTC"
+        "modified_at": "2026-09-18 07:36:07 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -219,11 +219,11 @@
     },
     "approval": {
       "status": "approved",
-      "mode": "manual_cli",
-      "approved_by": "github:mslade50",
-      "approved_at": "2026-09-18 01:46:49 UTC"
+      "mode": "automatic_sheet",
+      "approved_by": "round-bet-health/v1",
+      "approved_at": "2026-09-18 07:36:13 UTC"
     },
-    "manifest_sha256": "68896dd2016aa8d1e5f24e4bef998641877548ee3e1669100d50e684b2e9b8af"
+    "manifest_sha256": "7384104178fe50a981509fc90cac3aead61088cd6b0abd6fdcd44a274954d914"
   },
   "files": {
     "final_scores": {
@@ -232,11 +232,11 @@
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "655af68e513efdd760758ae4e0e713677ff4a0b8847665a92e2eb06595d80f1b"
+      "sha256": "dfb5ffebdcc49c5af3dedc48969490b3479a4b6e981ec57c1a908604dc519817"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_biltmore.csv",
-      "sha256": "655af68e513efdd760758ae4e0e713677ff4a0b8847665a92e2eb06595d80f1b"
+      "sha256": "dfb5ffebdcc49c5af3dedc48969490b3479a4b6e981ec57c1a908604dc519817"
     },
     "made_cut": {
       "path": "made_cut_live_biltmore.npy",
@@ -252,5 +252,5 @@
     "num_players": 130,
     "num_sims": 100000
   },
-  "manifest_sha256": "0d476263ec1afd7a8449e17940f4cdea199eb8ee8bf2bad831cd87b1d9d891d5"
+  "manifest_sha256": "285bc1b11bc7d71a32be99e3d70a0830f7a56800c664ff6d4251808243097502"
 }
