@@ -161,6 +161,10 @@ field_replacements = {
     # 'cantlay, patrick': 'thorbjornsen, michael',
 }
 
+# Owner-approved live exclusion: late replacement lacks frozen pre-event inputs.
+# The season/event key prevents this from carrying into another tournament.
+live_sim_exclusions = {"2026:557": ["streb, robert"]}
+
 
 #for etr export to sheet
 dk_naming_convention= {

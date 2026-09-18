@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
+from live_sim_exclusions import filter_live_sim_players
 
 from round_matchup_coverage import (
     is_actionable_matchup_price,
@@ -261,7 +262,7 @@ def _check_datagolf_ready(api_key: str, completed_round: int, target_round: int,
                           min_rows: int = 10):
     from api_utils import fetch_field_updates, fetch_live_stats
 
-    stats = fetch_live_stats(completed_round, api_key)
+    stats = filter_live_sim_players(fetch_live_stats(completed_round, api_key))
     valid_stats = 0
     if stats is not None:
         if "sg_total" in stats.columns:
@@ -283,6 +284,7 @@ def _check_datagolf_ready(api_key: str, completed_round: int, target_round: int,
     )
     if field is None or tee_col not in field.columns:
         raise NotReady(f"DataGolf has not posted R{target_round} tee times")
+    field = filter_live_sim_players(field)
     tee_times = field[tee_col].replace("", None)
     posted = int(tee_times.notna().sum())
     if posted < min_rows:

@@ -57,6 +57,7 @@ from forecast_feedback import (
     single_published_forecast,
 )
 from r1_prediction_artifact import load_matching_r1_predictions
+from live_sim_exclusions import filter_live_sim_players
 
 load_dotenv()
 
@@ -326,6 +327,7 @@ def load_and_merge(round_num):
     df = fetch_live_stats(round_num, API_KEY, include_score=include_score)
     if df is None:
         raise RuntimeError(f"Failed to fetch live stats for round {round_num}")
+    df = filter_live_sim_players(df)
     df = _merge_img_round_summary(df, round_num)
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
