@@ -1,0 +1,64 @@
+{
+  "event_id": 557,
+  "course_id": 942,
+  "source": "Owner baseline; 70% PGA average / 30% Muirfield Village (23), 2026-09-14",
+  "baselines": {
+    "1": 70.5,
+    "2": 70.5,
+    "3": 70.55,
+    "4": 70.55
+  },
+  "field_strength": -0.4995479558436876,
+  "breakdown": [
+    [
+      "R1",
+      70.5,
+      0.4995,
+      0.4099,
+      -0.0958,
+      71.3137
+    ],
+    [
+      "R2",
+      70.5,
+      0.4995,
+      0.8441,
+      -0.1591,
+      71.6845
+    ],
+    [
+      "R3",
+      70.55,
+      0.1995,
+      0.4333,
+      -0.2151,
+      70.9678
+    ],
+    [
+      "R4",
+      70.55,
+      0.1995,
+      0.3,
+      -0.2166,
+      70.833
+    ]
+  ],
+  "parameters": {
+    "expected_score_r1": 71.3137,
+    "expected_score_r2": 71.6845,
+    "expected_score_r3": 70.9678,
+    "expected_score_r4": 70.833,
+    "expected_score_1": 71.3137,
+    "wind_override": 0.125,
+    "suggested_var_mult": 1.067118,
+    "cat_mult_ott": 1.027828,
+    "cat_skew_ott": -0.711,
+    "cat_mult_app": 1.063955,
+    "cat_skew_app": -0.157,
+    "cat_mult_arg": 1.057223,
+    "cat_skew_arg": -0.129,
+    "cat_mult_putt": 1.0,
+    "cat_skew_putt": -0.033
+  },
+  "sheet_written": true
+}

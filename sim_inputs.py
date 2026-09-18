@@ -17,8 +17,8 @@ from datetime import datetime
 ##New sim inputs
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
-PAR           = 70
-CUT_LINE      = 100  # no-cut playoff event; >= field size triggers no-cut handling in new_sim
+PAR           = 71
+CUT_LINE      = 65  # Biltmore: low 65 and ties after 36 holes
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -46,15 +46,28 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [60]
-# DataGolf's East Lake identity for the 2026 TOUR Championship.
-course_id = 688
-tourney = 'tourchamp'
+event_ids = [557]
+# Biltmore Championship Asheville, September 17-20, 2026.
+# DataGolf / PGA TOUR: The Cliffs at Walnut Cove; new venue, par 71.
+course_id = 942
+tourney = 'biltmore'
 
-# Display/audit scope for the historical-yardage block on Scoring Baseline.
-# This does NOT broaden the production scoring-baseline/model scope above.
-# DataGolf used 933 for East Lake's renovated, par-71 2024 edition.
-yardage_history_course_ids = [688, 933]
+# New-venue prior approved September 14: 70% average PGA venue, 30% Muirfield
+# Village (course 23). Course fit is recorded in course_random_effects.csv;
+# SD multipliers blend variances before taking the square root.
+lat_override = 35.463
+lon_override = -82.602
+manual_venue_profile = {
+    'event_id': 557,
+    'course_id': 942,
+    'source': 'Owner baseline; 70% PGA average / 30% Muirfield Village (23), 2026-09-14',
+    'historical_relative_scores': {1: -0.5, 2: -0.5, 3: -0.75, 4: -0.75},
+    'historical_weekend_field_adj': 0.3,
+    'weekend_field_adj': 0.3,
+    'category_mults': {'sg_ott': 1.027828, 'sg_app': 1.063955, 'sg_arg': 1.057223, 'sg_putt': 1.0},
+    'category_skew': {'sg_ott': -0.711, 'sg_app': -0.157, 'sg_arg': -0.129, 'sg_putt': -0.033},
+    'suggested_var_mult': 1.067118,
+}
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -78,12 +91,12 @@ ingest_events = []
 ingest_event_ids = [28]
 ingest_tour = 'pga'
 ingest_years = [2026]
-course_par = 70
+course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
 #for multiple course setups in the showdown sim
-course_id_1=876
+course_id_1=942
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
