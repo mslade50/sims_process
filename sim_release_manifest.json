@@ -1,74 +1,74 @@
 {
   "schema_version": "complete-live-package/v1",
-  "generation": "event-60-r4-93da3eeae2c7-e3b4a0ceaa1b",
-  "generated_at": "2026-08-30 11:45:59 UTC",
-  "event_id": "60",
-  "tourney": "tourchamp",
-  "round": 4,
-  "simulation_manifest_sha256": "93da3eeae2c75b61c7c014051efa3a17f25d49b3c0ed5dcb77219d3dcfea692e",
-  "live_tournament_manifest_sha256": "e3b4a0ceaa1b044dada3e4aefd63c528e806cb576f3431d36d22ea34808c5adf",
+  "generation": "event-557-r2-3ab51bf1963a-ad8ca6ceb49e",
+  "generated_at": "2026-09-18 01:09:26 UTC",
+  "event_id": "557",
+  "tourney": "biltmore",
+  "round": 2,
+  "simulation_manifest_sha256": "3ab51bf1963ae71efb40403a5810c0b388543b02b40601c46bf0a68fe4d292ba",
+  "live_tournament_manifest_sha256": "ad8ca6ceb49eeeabf1c9d7e2199d2f152dd33a7b8a4ad5d67fe2d55ce11ac933",
   "release_assets": {
     "matchup_scores_live": {
-      "name": "matchup_scores_live.event-60-r4-93da3eeae2c7-e3b4a0ceaa1b.faf679e17ceb7425.parquet",
-      "sha256": "faf679e17ceb7425d32fca8a18f093d1e5cafd6017eaed6071593296d2ca8cdc",
-      "size": 14187170
+      "name": "matchup_scores_live.event-557-r2-3ab51bf1963a-ad8ca6ceb49e.8e1e2fa17a589062.parquet",
+      "sha256": "8e1e2fa17a589062ce2fd0094d799a4b226439902c665aeab3e04ab28d7a72c2",
+      "size": 18052560
     },
     "tournament_made_cut_full": {
-      "name": "tournament_made_cut_full.event-60-r4-93da3eeae2c7-e3b4a0ceaa1b.c7e2c20addb48b68.parquet",
-      "sha256": "c7e2c20addb48b68c24ceced6d9dbdd05cc9f60af7f1aa66508b2ccfac0496b5",
-      "size": 49729030
+      "name": "tournament_made_cut_full.event-557-r2-3ab51bf1963a-ad8ca6ceb49e.342800ed4114e1e7.parquet",
+      "sha256": "342800ed4114e1e7cb50d5ce2b54c86b782fc99fc2391439d46a6d731fcf5153",
+      "size": 52131659
     },
     "tournament_samples_full": {
-      "name": "tournament_samples_full.event-60-r4-93da3eeae2c7-e3b4a0ceaa1b.3a40854d96b83e4e.parquet",
-      "sha256": "3a40854d96b83e4eac2eb80cb1bddbd6fbbd0b3e85ebb756a0e6777d0e42fbb5",
-      "size": 57015388
+      "name": "tournament_samples_full.event-557-r2-3ab51bf1963a-ad8ca6ceb49e.72ccc93ca1512b7c.parquet",
+      "sha256": "72ccc93ca1512b7c24a44b0be2d6719f83ad6becae3eeed0c78a6531243057ce",
+      "size": 72457594
     }
   },
   "git_files": {
-    "round_3ball_r4.parquet": {
-      "sha256": "0e635861f91ba2f5b313382ef969f04362eab62e41d827aa71c169f3f1e7fc4e",
-      "size": 2954
+    "round_3ball_r2.parquet": {
+      "sha256": "6071524af734ec0a228ddfb0517c09712c8200302f79ee8ef53cf5120310950a",
+      "size": 6928
     },
-    "round_3ball_r4_contract.json": {
-      "sha256": "a4100c0cf3ff715850307b90b67e91dfe1a8cfedb50a56535bd7fcf6627aa72d",
-      "size": 7695
+    "round_3ball_r2_contract.json": {
+      "sha256": "4f86ce4b383f523d6945b99ec1c4a1db9fbe8c793f9bbec0824d586b13f17940",
+      "size": 21841
     },
-    "round_3ball_r4_meta.json": {
-      "sha256": "390e69ed9c8704a1a1a540349f32f6cff697331fb4708289828e356e1c0e9d86",
-      "size": 1863
+    "round_3ball_r2_meta.json": {
+      "sha256": "5239d266ee1226bd42f13856c2bd5846672053b1d55c924b20d7411b480acb84",
+      "size": 8097
     },
-    "round_h2h_r4.parquet": {
-      "sha256": "44220d2a8ad37611dfc0fd423ec4c3d3bcfbf5d1faa12fa20e5a5cf9112561ee",
-      "size": 7775
+    "round_h2h_r2.parquet": {
+      "sha256": "1aa3cb201afa68350b9ceea346036c45dc474d59bd727e541135f2998e843598",
+      "size": 74488
     },
-    "round_h2h_r4_health.json": {
-      "sha256": "27b3bffaa15f89ac92d0fc27a697eb4ba9feeaeea377affd87020107a7812e9d",
-      "size": 5333
+    "round_h2h_r2_health.json": {
+      "sha256": "479d6ac8eb8f98b74d0d0194366a5dfb8ef204e67cfbcc1f67365fadd1d35020",
+      "size": 9244
     },
-    "round_h2h_r4_meta.json": {
-      "sha256": "fde85b999bc962a72442e724a181408790dbec5a942b5a94e400fb54089731ed",
-      "size": 2572
+    "round_h2h_r2_meta.json": {
+      "sha256": "c0541b47aaf0da56a9091f1f30363657acc3b153510190e31913cac6268d21c0",
+      "size": 10275
     },
     "round_samples.parquet": {
-      "sha256": "7fc75d3d18a27994cd65e3afbf94dda93e4ac408677ea9e06210b91e6bb3bae2",
-      "size": 1082743
+      "sha256": "8cfa52863232622b47e27e9afd2c77f89d137c16519ed9a344893681f7489f3c",
+      "size": 1248547
     },
     "sim_fairs.json": {
-      "sha256": "d635eaa21a017ecf76d760a23a430e4d45d140d23d33091e453d026c3113496d",
-      "size": 37999
+      "sha256": "00796a901a080d44c3899805664df847c7b89ec04021950bb8772e0c9651ae25",
+      "size": 472453
     },
-    "tournament_live_tourchamp_health.json": {
-      "sha256": "acf1c871990a5dd4a83d05257be437f007fee7b14292f0befdd832671ac1a7f5",
-      "size": 5817
+    "tournament_live_biltmore_health.json": {
+      "sha256": "d32375eecfc7ac9b509804c64d5e9c1185352bcb0dfe11557cf089d836ee4122",
+      "size": 9723
     },
     "tournament_made_cut.parquet": {
-      "sha256": "293905ebfd8eb5c211f6305733e882842c7cc60371734fad88a4d702d3c5eae6",
-      "size": 29484406
+      "sha256": "e0e9e5df288b86e19fe9fc80087892f243d2b59cdca1089bba1a1c984d3ab0bf",
+      "size": 29971555
     },
     "tournament_samples.parquet": {
-      "sha256": "5fbb4c28667dd0c3a40d16d35284f2a3138fd8394ff89e7a14137c2399237353",
-      "size": 31326828
+      "sha256": "2f3fa8ee442f6511915b0df28281b4e9f81206cb3a930170786f27aeab847144",
+      "size": 34421796
     }
   },
-  "manifest_sha256": "b5b6a11e17c7bde048440d2ae0fc92d4b9eb259d8891dd5ecb6a8e79b540c5e6"
+  "manifest_sha256": "7a81993a1041b20234a579616fcb3de384c1f10c2850e0cd663c1cd8270e0357"
 }
