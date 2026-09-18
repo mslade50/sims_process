@@ -131,6 +131,11 @@ def evaluate_odds_readiness(
 
     target_event = str(event_id).strip()
     file_event = str(data.get("event_id") or "").strip()
+    tagged_events = {
+        str(row.get("event_id") or "").strip()
+        for row in data.get("match_list") or []
+        if isinstance(row, dict) and str(row.get("event_id") or "").strip()
+    }
     counts = {book: set() for book in required_books}
     scoped_rows = 0
 
@@ -141,7 +146,8 @@ def evaluate_odds_readiness(
         if row_event:
             if row_event != target_event:
                 continue
-        elif not file_event or file_event != target_event:
+        elif (not file_event or file_event != target_event
+              or bool(tagged_events - {target_event})):
             continue
 
         row_round = row.get("round")

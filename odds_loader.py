@@ -181,16 +181,18 @@ def guard_scraped_data(data, market, *, round=None, event_ids=None,
     if targets and row_tagged:
         # Rows carry per-event tags (multi-event file by design: the board now
         # writes the FULL tagged list so an oppo-week sim keeps its scraped
-        # odds) — row-filter to OUR event. Untagged rows (registry blip) pass
-        # only when the file also carries rows tagged to OUR event; if every
-        # tagged row is foreign, untagged siblings are almost certainly the
-        # same stale week (Monday-morning bleed) and are dropped with them.
+        # odds) — row-filter to OUR event. A multi-event file cannot assign
+        # untagged rows to the top-level event: those rows may be another
+        # tournament's entire book (Biltmore/European R2, September 2026).
         rows = data.get(rows_key) or []
-        any_target_tagged = any(
-            str(r.get("event_id") or "").strip() in targets for r in rows)
+        tagged_events = {
+            str(r.get("event_id") or "").strip() for r in rows
+            if str(r.get("event_id") or "").strip()
+        }
+        untagged_is_scoped = bool(tagged_events) and tagged_events.issubset(targets)
         kept = [r for r in rows
                 if str(r.get("event_id") or "").strip() in targets
-                or (not str(r.get("event_id") or "").strip() and any_target_tagged)]
+                or (not str(r.get("event_id") or "").strip() and untagged_is_scoped)]
         if len(kept) != len(rows):
             logger.info(f"Scraped {market}: kept {len(kept)}/{len(rows)} rows for "
                         f"target event(s) {targets} (rest tagged to other events)")

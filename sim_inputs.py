@@ -142,6 +142,13 @@ name_replacements = {
     'spaun, jj': 'spaun, j.j.'
 }
 
+# Scraped R2 aliases verified against the Biltmore field.
+name_replacements.update({
+    'brown, b': 'brown, blades',
+    'horschel, b': 'horschel, billy',
+    'poston, jt': 'poston, j.t.',
+})
+
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {
