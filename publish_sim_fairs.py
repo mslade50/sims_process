@@ -2196,6 +2196,28 @@ def _build_round_3balls(
     return df, meta
 
 
+def _scope_live_tee_groups(contract, cache_players, unavailable_players):
+    """Omit whole groups only for explicitly excluded or confirmed WD/CUT/DQ players."""
+    missing = {
+        name for group in contract.get("groups", []) for name in group
+        if name not in cache_players
+    }
+    unexplained = missing - set(unavailable_players)
+    if unexplained:
+        raise RuntimeError(
+            "complete-live 3-ball groups contain unexplained players absent from "
+            "the simulation: " + ", ".join(sorted(unexplained))
+        )
+    omitted = [group for group in contract.get("groups", []) if set(group) & missing]
+    if not omitted:
+        return contract
+    kept = [group for group in contract["groups"] if not set(group) & missing]
+    if not kept:
+        raise RuntimeError("complete-live 3-ball contract has no eligible groups")
+    return {**contract, "groups": kept, "excluded_groups": omitted,
+            "excluded_players": sorted(missing)}
+
+
 def write_round_3ball(
     tourney: str,
     rnd,
@@ -2257,6 +2279,27 @@ def write_round_3ball(
         tee_contract["simulation_field_overlap"] = round(overlap, 6)
         tee_contract["simulation_tee_time_coverage"] = round(tee_overlap, 6)
         tee_contract["field_player_set_sha256"] = names_sha256(source_players)
+        missing_group_players = {
+            name for group in tee_contract.get("groups", []) for name in group
+            if name not in cache_players
+        }
+        if missing_group_players:
+            from live_sim_exclusions import filter_live_sim_players
+            missing_frame = pd.DataFrame({"player_name": sorted(missing_group_players)})
+            remaining = set(filter_live_sim_players(missing_frame)["player_name"])
+            unavailable = missing_group_players - remaining
+            if remaining:
+                from api_utils import fetch_live_stats
+                stats = fetch_live_stats(int(rnd) - 1, os.getenv("DATAGOLF_API_KEY", ""))
+                if stats is not None and "position" in stats:
+                    inactive = stats["position"].astype(str).str.upper().str.strip().isin(
+                        ["WD", "DQ", "CUT"]
+                    )
+                    unavailable.update(_norm(name, repl) for name in stats.loc[inactive, "player_name"])
+            tee_contract = _scope_live_tee_groups(tee_contract, cache_players, unavailable)
+            logger.info("round_3ball: omitted %s groups containing unavailable players %s",
+                        len(tee_contract.get("excluded_groups", [])),
+                        tee_contract.get("excluded_players", []))
     df, meta = _build_round_3balls(
         tourney, rnd, repl, tour=tour, tee_contract=tee_contract
     )
