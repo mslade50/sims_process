@@ -1,26 +1,26 @@
 {
   "schema_version": "complete-live-package/v1",
-  "generation": "event-557-r2-d631bd92381b-32ad5220f432",
-  "generated_at": "2026-09-18 01:32:44 UTC",
+  "generation": "event-557-r2-68896dd2016a-0d476263ec1a",
+  "generated_at": "2026-09-18 01:47:15 UTC",
   "event_id": "557",
   "tourney": "biltmore",
   "round": 2,
-  "simulation_manifest_sha256": "d631bd92381b62cf6f338838931244a80d3b671e39744f8dc04badb07859e2fd",
-  "live_tournament_manifest_sha256": "32ad5220f43278ffd14d0633f9881b6d674ddad7b5a15ed97a347b8b9963981a",
+  "simulation_manifest_sha256": "68896dd2016aa8d1e5f24e4bef998641877548ee3e1669100d50e684b2e9b8af",
+  "live_tournament_manifest_sha256": "0d476263ec1afd7a8449e17940f4cdea199eb8ee8bf2bad831cd87b1d9d891d5",
   "release_assets": {
     "matchup_scores_live": {
-      "name": "matchup_scores_live.event-557-r2-d631bd92381b-32ad5220f432.513b213ba1bdca37.parquet",
-      "sha256": "513b213ba1bdca37fe3e04a233e31336ba2299548d18ea453628529cfe3c2da5",
+      "name": "matchup_scores_live.event-557-r2-68896dd2016a-0d476263ec1a.38f2f74eb5fe8d0d.parquet",
+      "sha256": "38f2f74eb5fe8d0d7757fc96ad7fe13b50e60dce544f95aed9821bc09b2490ec",
       "size": 18056867
     },
     "tournament_made_cut_full": {
-      "name": "tournament_made_cut_full.event-557-r2-d631bd92381b-32ad5220f432.1a352efedc165408.parquet",
-      "sha256": "1a352efedc1654082b87e30511e3a14cd4b97eaa2af09b3faf78769c21af3e49",
+      "name": "tournament_made_cut_full.event-557-r2-68896dd2016a-0d476263ec1a.c035c4e622783e7d.parquet",
+      "sha256": "c035c4e622783e7de2417527318704ba18d8279892cf724485c3185b1b1de68b",
       "size": 52131152
     },
     "tournament_samples_full": {
-      "name": "tournament_samples_full.event-557-r2-d631bd92381b-32ad5220f432.2706794095aed3f0.parquet",
-      "sha256": "2706794095aed3f05caac7693290333b01f58a1b7b18de47d1df3e6ea776bd23",
+      "name": "tournament_samples_full.event-557-r2-68896dd2016a-0d476263ec1a.6c0574526864cf30.parquet",
+      "sha256": "6c0574526864cf300d0929729097987ce3ab64898e1cfab74747c4524d3e5f91",
       "size": 72465562
     }
   },
@@ -30,11 +30,11 @@
       "size": 6930
     },
     "round_3ball_r2_contract.json": {
-      "sha256": "05328c2e7db17c8c483f45bda60b706599167857a082eaac9a7281dd09c44e65",
+      "sha256": "83fe5986b12271ed90ff919bb12006a47cea68da13758e805a9bba31cda06506",
       "size": 21811
     },
     "round_3ball_r2_meta.json": {
-      "sha256": "6969c487edbbe0fe4335a691eb70441f2a2a7ca0d0292421eef66ba87a6f9465",
+      "sha256": "5b9713f77dae7508d00d07aadf823e624bee5e89927073df2947dbce170ce35e",
       "size": 8097
     },
     "round_h2h_r2.parquet": {
@@ -42,33 +42,33 @@
       "size": 74412
     },
     "round_h2h_r2_health.json": {
-      "sha256": "3b4ed60c57c84e371589639aa3b353698d8b69b45ed3e5090ea31073cfe9a906",
+      "sha256": "73cf84dd0d71da9c4325d8d6407ddae8f5c21ed6a089b134f8e095997d646f4c",
       "size": 9214
     },
     "round_h2h_r2_meta.json": {
-      "sha256": "f0b1e50bdb84f138c4e4c496c8954dab07c3dc645d03b7e3a9bd418900a64d1c",
+      "sha256": "a325601fa2e58ed72bfc2687c67f9e3b56a87a14e9cbab5eb89463147539a912",
       "size": 10270
     },
     "round_samples.parquet": {
-      "sha256": "34bbf92757f69530e4feb3dd6bcf82b337fbfa9695a7a31a44a6419292d81061",
+      "sha256": "9a1c582c13edf365e5e42a879888ee9319e3339f65db76f196817480ac559e79",
       "size": 1248811
     },
     "sim_fairs.json": {
-      "sha256": "63064975570b98e5d5b277ea6e5fb078066d55390f0c192a8dfb1a5bde0546e1",
+      "sha256": "b6be502fe84e4a3779509b61419682d3f52e6695a4361aea47ddaeb4f49e5cfa",
       "size": 472370
     },
     "tournament_live_biltmore_health.json": {
-      "sha256": "2caf454fa2e34f7c101876af4f44e139229d822d5c29af00e6a1d20946969256",
+      "sha256": "185f93b20c849f429e51108847a4141d7962cb03504706adcdb84c1fbf247845",
       "size": 9693
     },
     "tournament_made_cut.parquet": {
-      "sha256": "fa55f2a8a8ad0113dedd956c7ca8986e083c86f2debea87a77a1e775f7d54740",
+      "sha256": "c1252f419c4f75e9b0bc4e9d152d9584683d3d7a3db9ed807ce7bc12cfc270fd",
       "size": 29971557
     },
     "tournament_samples.parquet": {
-      "sha256": "a302547be7592de3fd7858f332c4d9c40eb5a544b32d736e1845ffe5c1af56b8",
+      "sha256": "3f798927670867dfab38c55b52a5c0384cdd03fe7837ddf17083281e1064d9fa",
       "size": 34421512
     }
   },
-  "manifest_sha256": "3c448d57853c95d1aea1bb0f4442048320b00b4b734bf6a3c1a4607848db4fd0"
+  "manifest_sha256": "90db9a90dece776bc2d122ecef03944f7b1ea122697cb9807e7e7b4b4773d2e9"
 }
