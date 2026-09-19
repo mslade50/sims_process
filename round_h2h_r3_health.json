@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-09-19 01:06:50 UTC",
+  "generated_at": "2026-09-19 07:36:11 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 3
     },
     "source": {
-      "generated_at": "2026-09-19 01:02:17 UTC",
-      "root_generated_at": "2026-09-19 01:02:17 UTC",
-      "expected_avg_authority": "cli",
+      "generated_at": "2026-09-19 07:31:57 UTC",
+      "root_generated_at": "2026-09-19 07:31:57 UTC",
+      "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r3.csv",
         "exists": true,
         "sha256": "3d2643138152ee117f2fb1c0bf2a888cad720631c51b73436fb455218eac1722",
-        "modified_at": "2026-09-19 01:02:12 UTC"
+        "modified_at": "2026-09-19 07:31:52 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -165,16 +165,16 @@
     },
     "approval": {
       "status": "approved",
-      "mode": "manual_cli",
-      "approved_by": "github:mslade50",
-      "approved_at": "2026-09-19 01:02:17 UTC"
+      "mode": "automatic_sheet",
+      "approved_by": "round-bet-health/v1",
+      "approved_at": "2026-09-19 07:31:57 UTC"
     },
-    "manifest_sha256": "879c2e927492758ce1a99aea36c56f34360f56a6596d9c3173af2a7a134bfd1d"
+    "manifest_sha256": "7087563f4cf2e09ae6e2858e1699426caaf0a6c1444fe3b6b1ec1c26af0c4f79"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r3_meta.json",
-      "sha256": "89e647e2c5ab8d3df9184e609744cfbe7856f59655d511151137a81a4a3faac1"
+      "sha256": "668c4749e4e26fcc35238ee48ca3cc8dcecb1e4d588cfd762d31f8c8caa999aa"
     },
     "h2h_parquet": {
       "path": "round_h2h_r3.parquet",
@@ -185,7 +185,7 @@
     "num_pairs": 2850,
     "num_players": 76,
     "num_sims": 100000,
-    "source_manifest_sha256": "879c2e927492758ce1a99aea36c56f34360f56a6596d9c3173af2a7a134bfd1d"
+    "source_manifest_sha256": "7087563f4cf2e09ae6e2858e1699426caaf0a6c1444fe3b6b1ec1c26af0c4f79"
   },
-  "manifest_sha256": "2b0dcbfb9a4afc8e2859bead07eeca90f3f4a7e42e52b8485d289a3bf09c5618"
+  "manifest_sha256": "c8f394aebc8831080b97443adf5f46e1b1d1af6e6bc8da25b80d9699c8a2ac33"
 }
