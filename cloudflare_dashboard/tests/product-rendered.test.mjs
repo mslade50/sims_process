@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { diagnosticRoundCount, weightedMean } from "../app/lib.ts";
 
 async function loadWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -92,6 +93,24 @@ test("restores the legacy Performance analysis controls and default exclusions",
     "Event summary",
     "Filtered bets",
   ]) assert.match(performanceView, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+});
+
+test("weights diagnostic player-event averages by their played rounds", async () => {
+  const rows = [
+    { miss: -1.5, rounds: 2 },
+    { miss: 1, rounds: 4 },
+  ];
+  assert.equal(weightedMean(rows, "miss"), 1 / 6);
+
+  const categoryRows = ["ott", "app", "arg", "putt", "total"].flatMap((category) => [
+    { year: 2026, event_id: 1, category, rounds: 2 },
+    { year: 2026, event_id: 2, category, rounds: 4 },
+  ]);
+  assert.equal(diagnosticRoundCount(categoryRows), 6);
+
+  const diagnosticsView = await readFile(new URL("../app/views.tsx", import.meta.url), "utf8");
+  assert.match(diagnosticsView, /weightedMean\(categoryRows, "miss"\)/);
+  assert.match(diagnosticsView, /diagnosticRoundCount\(playerRows\)/);
 });
 
 test("serves dashboard data from R2 and falls back to packaged assets", async () => {

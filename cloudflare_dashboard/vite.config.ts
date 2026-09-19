@@ -1,6 +1,6 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import { cloudflare } from "@cloudflare/vite-plugin";
+import { cloudflare, getLocalWorkerdCompatibilityDate } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -15,7 +15,6 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
   workers_dev: true,
   preview_urls: false,
   d1_databases: d1
@@ -32,7 +31,9 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
+  const localResearchPreview = process.env.RESEARCH_LOCAL_PREVIEW === "1";
+  const useNodePreview = localResearchPreview && command === "serve";
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -40,16 +41,21 @@ export default defineConfig(() => {
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    build: localResearchPreview ? { emptyOutDir: false } : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
+      proxy: { "/api/backtest": { target: "http://127.0.0.1:8766", changeOrigin: true } },
+    },
     plugins: [
       vinext(),
-      sites(),
-      cloudflare({
+      ...(!localResearchPreview ? [sites()] : []),
+      ...(!useNodePreview ? [cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
-      }),
+        config: localResearchPreview
+          ? { ...localBindingConfig, compatibility_date: getLocalWorkerdCompatibilityDate().date }
+          : localBindingConfig,
+        ...(localResearchPreview ? { remoteBindings: false, persistState: false } : {}),
+      })] : []),
     ],
   };
 });

@@ -117,6 +117,7 @@ name_replacements = {
     'norgaard, niklas': 'norgaard moller, niklas',
     'moller, niklas norgaard': 'norgaard moller, niklas',
     'stevens, sam': 'stevens, samuel',
+    'gordon, william': 'gordon, will',   # BetOnline spelling (Biltmore 2026 R3)
     # DK salary CSV -> our canonical (Zurich 2026)
     'brown, daniel': 'brown, dan',
     'l. smith, jordan': 'smith, jordan',

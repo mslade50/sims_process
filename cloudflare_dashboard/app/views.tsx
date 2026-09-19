@@ -20,7 +20,7 @@ import {
 } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
-import { DataRow, americanOdds, numberValue, palette, safeMean, sum, titleCase, uniqueStrings } from "./lib";
+import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, palette, safeMean, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
 
 const chartMargin = { top: 16, right: 18, bottom: 8, left: 0 };
 
@@ -627,7 +627,7 @@ export function PerformanceView() {
   );
 }
 
-type DiagnosticPayload = { sg: DataRow[]; market_regression: DataRow[] };
+type DiagnosticPayload = { sg: DataRow[]; level_bias?: DataRow[]; market_regression: DataRow[] };
 
 export function DiagnosticsView() {
   const { data, loading, error } = useDashboardData<DiagnosticPayload>("diagnostics.json");
@@ -637,37 +637,45 @@ export function DiagnosticsView() {
   if (error || !data) return <ErrorState message={error ?? "Diagnostics are unavailable."} />;
   const events = [...new Map(data.sg.map((row) => [String(row.event_id), String(row.event_name)])).entries()].sort((a, b) => numberValue(b[0]) - numberValue(a[0]));
   const rows = data.sg.filter((row) => event === "all" || String(row.event_id) === event);
+  const levelRows = (data.level_bias?.length ? data.level_bias : data.sg).filter((row) => event === "all" || String(row.event_id) === event);
   const players = uniqueStrings(rows, "player_name");
   const categories = ["ott", "app", "arg", "putt"];
-  const bias = categories.map((category) => {
-    const categoryRows = rows.filter((row) => String(row.category) === category);
-    return { category: category.toUpperCase(), miss: safeMean(categoryRows.map((row) => numberValue(row.miss))), centered: safeMean(categoryRows.map((row) => numberValue(row.miss_centered))), sample: sum(categoryRows.map((row) => numberValue(row.rounds))) };
+  const levelCategories = [...categories, "total"];
+  const bias = levelCategories.map((category) => {
+    const categoryRows = levelRows.filter((row) => String(row.category) === category);
+    return { category: category.toUpperCase(), miss: weightedMean(categoryRows, "miss"), sample: sum(categoryRows.map((row) => numberValue(row.rounds))) };
   });
   const archetypes = uniqueStrings(rows, "archetype").map((archetype) => {
     const archetypeRows = rows.filter((row) => String(row.archetype) === archetype);
     const point: DataRow = { archetype: titleCase(archetype) };
-    categories.forEach((category) => point[category] = safeMean(archetypeRows.filter((row) => String(row.category) === category).map((row) => numberValue(row.miss_centered))));
+    categories.forEach((category) => point[category] = weightedMean(archetypeRows.filter((row) => String(row.category) === category), "miss_centered"));
     return point;
   });
   const recurring = players.map((name) => {
     const playerRows = rows.filter((row) => String(row.player_name) === name);
-    const point: DataRow = { player_name: name, rounds: sum(playerRows.map((row) => numberValue(row.rounds))) };
-    categories.forEach((category) => point[category] = safeMean(playerRows.filter((row) => String(row.category) === category).map((row) => numberValue(row.miss_centered))));
+    const totalRows = playerRows.filter((row) => String(row.category) === "total");
+    const point: DataRow = {
+      player_name: name,
+      archetype: totalRows[0]?.archetype,
+      events: diagnosticEventCount(totalRows.length ? totalRows : playerRows),
+      rounds: diagnosticRoundCount(playerRows),
+    };
+    categories.forEach((category) => point[category] = weightedMean(playerRows.filter((row) => String(row.category) === category), "miss_centered"));
     point.max_abs_miss = Math.max(...categories.map((category) => Math.abs(numberValue(point[category]))));
     return point;
-  }).sort((a, b) => numberValue(b.max_abs_miss) - numberValue(a.max_abs_miss));
+  }).filter((row) => event !== "all" || numberValue(row.events) >= 2).sort((a, b) => numberValue(b.max_abs_miss) - numberValue(a.max_abs_miss));
   const selectedRows = rows.filter((row) => !player || String(row.player_name) === player);
 
   return (
     <>
-      <PageIntro eyebrow="Model QA" title="Diagnostics" description="Field-adjusted prediction misses, archetype tilt, recurring player patterns, and market-regression checks in one place." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: `${titleCase(label)} · ${value}` }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
+      <PageIntro eyebrow="Model QA" title="Diagnostics" description="Full-field R1-R2 level calibration, round-weighted archetype tilt, recurring player patterns, and market-regression checks. Total is the clean overall level check; category actuals include DataGolf's field-strength allocation." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: `${titleCase(label)} · ${value}` }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
       <div className="kpi-grid">{bias.map((row) => <Kpi key={row.category} label={`${row.category} level bias`} value={`${row.miss >= 0 ? "+" : ""}${row.miss.toFixed(3)}`} detail={`${row.sample.toLocaleString()} rounds`} tone={Math.abs(row.miss) < 0.05 ? "positive" : Math.abs(row.miss) > 0.15 ? "negative" : "neutral"}/>)}</div>
       <div className="two-column">
-        <Panel title="Category level bias" eyebrow="Actual minus predicted"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+        <Panel title="R1-R2 SG level bias" eyebrow="Actual minus predicted · full field, weighted by played rounds"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
         <Panel title="Archetype tilt" eyebrow="Field-centered category misses"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypes.slice(0, 10)} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="archetype" stroke="var(--muted)" angle={-20} textAnchor="end" height={70}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{categories.map((category, index) => <Bar key={category} dataKey={category} fill={palette[index]} radius={[3,3,0,0]}/>)}</BarChart></ResponsiveContainer></div></Panel>
       </div>
       {player && <Panel title={titleCase(player)} eyebrow="Event/category prediction detail"><DataTable rows={selectedRows} label="Player diagnostics" preferredColumns={["event_name", "category", "predicted_sg", "actual_sg", "miss", "miss_centered", "rounds", "archetype"]}/></Panel>}
-      <Panel title="Largest recurring misses" eyebrow="Players ranked by maximum category miss"><DataTable rows={recurring} label="Recurring misses" preferredColumns={["player_name", "archetype", "ott", "app", "arg", "putt", "max_abs_miss", "rounds"]} pageSize={30}/></Panel>
+      <Panel title={event === "all" ? "Largest recurring misses" : "Largest player misses"} eyebrow={event === "all" ? "Players with at least two events, ranked by maximum category miss" : "Players ranked by maximum category miss"}><DataTable rows={recurring} label={event === "all" ? "Recurring misses" : "Player misses"} preferredColumns={["player_name", "archetype", "events", "rounds", "ott", "app", "arg", "putt", "max_abs_miss"]} pageSize={30}/></Panel>
       <Panel title="Market regression" eyebrow="Prediction adjustment versus actual SG"><DataTable rows={data.market_regression} label="Market regression" preferredColumns={["event_name", "player_name", "pred", "my_pred_regressed", "actual_sg", "error_raw", "error_regressed", "regress_helped", "mkt_adj", "mu_adj"]}/></Panel>
     </>
   );

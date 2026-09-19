@@ -55,6 +55,38 @@ export function safeMean(values: number[]): number {
   return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : 0;
 }
 
+export function weightedMean(rows: DataRow[], valueKey: string, weightKey = "rounds"): number {
+  let weightedTotal = 0;
+  let totalWeight = 0;
+
+  for (const row of rows) {
+    const value = numberValue(row[valueKey], Number.NaN);
+    const weight = numberValue(row[weightKey], 0);
+    if (!Number.isFinite(value) || weight <= 0) continue;
+    weightedTotal += value * weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight > 0) return weightedTotal / totalWeight;
+  return safeMean(rows.map((row) => numberValue(row[valueKey], Number.NaN)));
+}
+
+export function diagnosticRoundCount(rows: DataRow[]): number {
+  const totalRows = rows.filter((row) => String(row.category) === "total");
+  if (totalRows.length) return sum(totalRows.map((row) => numberValue(row.rounds)));
+
+  const roundsByEvent = new Map<string, number>();
+  for (const row of rows) {
+    const eventKey = `${String(row.year ?? "")}:${String(row.event_id ?? "")}`;
+    roundsByEvent.set(eventKey, Math.max(roundsByEvent.get(eventKey) ?? 0, numberValue(row.rounds)));
+  }
+  return sum([...roundsByEvent.values()]);
+}
+
+export function diagnosticEventCount(rows: DataRow[]): number {
+  return new Set(rows.map((row) => `${String(row.year ?? "")}:${String(row.event_id ?? "")}`)).size;
+}
+
 export function sum(values: number[]): number {
   return values.filter(Number.isFinite).reduce((total, value) => total + value, 0);
 }

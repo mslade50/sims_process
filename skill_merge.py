@@ -23,7 +23,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-from api_utils import fetch_player_decompositions
+from api_utils import fetch_player_decompositions, get_round_dates
 from sim_inputs import tourney, name_replacements
 
 load_dotenv()
@@ -58,8 +58,10 @@ if "teetimes" in field_df.columns:
         field_df = pd.concat([field_df, parsed], axis=1)
     field_df = field_df.drop(columns=["teetimes"])
 
-default_time = datetime.strptime(
-    "6/15/2025  10:09:00 AM", "%m/%d/%Y  %I:%M:%S %p"
+round_dates = get_round_dates()
+default_date = round_dates[0] if round_dates else datetime.now()
+default_time = default_date.replace(
+    hour=10, minute=0, second=0, microsecond=0
 ).strftime("%Y-%m-%d %H:%M")
 
 field_df["player_name"] = field_df["player_name"].str.lower().replace(name_replacements)

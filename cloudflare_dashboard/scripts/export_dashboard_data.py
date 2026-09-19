@@ -121,6 +121,44 @@ def _diagnostic_summary(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return _records(summary)
 
 
+def _diagnostic_level_bias(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return full-field R1-R2 category calibration by event.
+
+    Weekend fields are selected by the cut, so their mean predictions and the
+    event-wide adjusted-SG reference are not comparable as an absolute level
+    diagnostic. Keeping the event grain lets the client filter events while
+    round counts recover the exact player-round-weighted mean.
+    """
+    if frame.empty or "round" not in frame.columns or "category" not in frame.columns:
+        return []
+
+    adjusted = frame.copy()
+    if "sg_type" in adjusted.columns:
+        adjusted = adjusted[adjusted["sg_type"].astype(str).str.lower() == "adjusted"]
+    adjusted["_round_numeric"] = pd.to_numeric(adjusted["round"], errors="coerce")
+    adjusted["category"] = adjusted["category"].astype(str).str.lower()
+    adjusted = adjusted[
+        adjusted["_round_numeric"].isin([1, 2])
+        & adjusted["category"].isin(["ott", "app", "arg", "putt", "total"])
+    ]
+    keys = [
+        column
+        for column in ["event_id", "event_name", "year", "category"]
+        if column in adjusted.columns
+    ]
+    metrics = {
+        column: "mean"
+        for column in ["predicted_sg", "actual_sg", "miss"]
+        if column in adjusted.columns
+    }
+    if not keys or not metrics or adjusted.empty:
+        return []
+
+    summary = adjusted.groupby(keys, dropna=False).agg(metrics).reset_index()
+    counts = adjusted.groupby(keys, dropna=False).size().rename("rounds").reset_index()
+    return _records(summary.merge(counts, on=keys, how="left"))
+
+
 def export(output: Path) -> None:
     generated_at = datetime.now(timezone.utc).isoformat()
     config = get_tournament_config()
@@ -196,6 +234,7 @@ def export(output: Path) -> None:
         output / "diagnostics.json",
         {
             "sg": _diagnostic_summary(diagnostics),
+            "level_bias": _diagnostic_level_bias(diagnostics),
             "market_regression": _records(market_regress),
         },
     )

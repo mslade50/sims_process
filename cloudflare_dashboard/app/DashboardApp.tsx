@@ -16,6 +16,7 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
+import { ResearchView } from "./ResearchView";
 import { useDashboardData } from "./data";
 import { displayDate, titleCase } from "./lib";
 import {
@@ -28,7 +29,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
+export type ViewKey = "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
 
 type Manifest = {
   generated_at: string;
@@ -60,12 +61,14 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
     label: "Review",
     items: [
       { key: "performance", label: "Performance", description: "P&L and attribution", icon: TrendingUp },
+      { key: "research", label: "Betting backtests", description: "Model experiments", icon: Microscope },
       { key: "diagnostics", label: "Diagnostics", description: "Model quality", icon: Microscope },
     ],
   },
 ];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  research: ResearchView,
   distributions: DistributionsView,
   "sg-distributions": SgDistributionsView,
   "round-scores": RoundScoresView,
