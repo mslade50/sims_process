@@ -2202,7 +2202,7 @@ def _build_score_lines(
 
     results = sorted(results, key=lambda x: x.get("best_edge", 0), reverse=True)
     if not _has_valid_book_quote(results, ("over", "under")):
-        raise OddsScreenContractError(
+        raise OddsScreenSkip(
             "fresh round score payload has no usable book quote; "
             "retaining prior generation"
         )
