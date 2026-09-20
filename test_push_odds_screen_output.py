@@ -15,6 +15,7 @@ import pyarrow.parquet as pq
 
 from push_odds_screen import (
     OddsScreenContractError,
+    OddsScreenSkip,
     _atomic_upload_plan,
     _build_outrights,
     _build_round_matchups,
@@ -30,6 +31,7 @@ from push_odds_screen import (
     _validate_sim_fairs_semantics,
     _write_atomic_payload_bundle,
     _write_payload_files,
+    main,
 )
 from sim_health_gate import file_sha256, names_sha256, seal_manifest
 
@@ -531,6 +533,46 @@ class PushOddsScreenOutputTests(unittest.TestCase):
         with self.assertRaisesRegex(OddsScreenContractError, "top_20"):
             _validate_odds_screen_payloads(payloads)
 
+    def test_skip_exits_clean_without_staging_a_bundle(self):
+        release = {
+            "manifest": {
+                "tourney": "test_event",
+                "event_id": "99",
+                "generation": "release-generation",
+                "manifest_sha256": "a" * 64,
+                "simulation_manifest_sha256": "b" * 64,
+                "live_tournament_manifest_sha256": "c" * 64,
+            },
+            "fairs": {"event_name": "Test Event"},
+            "source_git_sha": "d" * 40,
+        }
+        config = {"tourney": "test_event", "event_id": 99, "round_num": 3}
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "odds-screen"
+            with patch("sheet_config.load_config", return_value=config), patch(
+                "push_odds_screen._load_committed_release_contract",
+                return_value=release,
+            ), patch(
+                "push_odds_screen._build_round_matchups",
+                side_effect=OddsScreenSkip(
+                    "fresh event/round-scoped matchup odds are unavailable; "
+                    "retaining prior generation"
+                ),
+            ), patch(
+                "sys.argv",
+                ["push_odds_screen.py", "--output-dir", str(output_dir)],
+            ), patch(
+                "sys.stdout", new_callable=io.StringIO
+            ) as stdout:
+                main()
+
+            self.assertIn(
+                "::warning title=Odds screen publish skipped::"
+                "fresh event/round-scoped matchup odds are unavailable",
+                stdout.getvalue(),
+            )
+            self.assertFalse((output_dir / "meta.json").exists())
+
 
 class CommittedReleaseContractTests(unittest.TestCase):
     @staticmethod
@@ -899,6 +941,101 @@ class CommittedReleaseContractTests(unittest.TestCase):
                     _build_round_matchups(
                         "test_event", 4, {}, event_id=99, release=release
                     )
+
+    def test_round_builder_skips_offers_outside_the_sealed_round_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root)
+            release = _load_committed_release_contract(
+                expected_tourney="test_event",
+                expected_event_id=99,
+                expected_round=4,
+                project_root=root,
+                verify_git=False,
+            )
+            quoted = {"betcris": {"p1": -110, "p2": -110}}
+            offered = {
+                "match_list": [
+                    {
+                        "p1_player_name": "a",
+                        "p2_player_name": "b",
+                        "ties": "void",
+                        "odds": quoted,
+                    },
+                    {
+                        "p1_player_name": "Bridgeman, J",
+                        "p2_player_name": "Koivun, J",
+                        "ties": "void",
+                        "odds": {"buckeye": {"p1": -110, "p2": -110}},
+                    },
+                ]
+            }
+            with patch("push_odds_screen._fetch_scraped_guarded", return_value=offered):
+                rows = _build_round_matchups(
+                    "test_event", 4, {}, event_id=99, release=release
+                )
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual((rows[0]["p1"], rows[0]["p2"]), ("a", "b"))
+
+    def test_round_builder_still_rejects_in_field_missing_fair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root)
+            release = _load_committed_release_contract(
+                expected_tourney="test_event",
+                expected_event_id=99,
+                expected_round=4,
+                project_root=root,
+                verify_git=False,
+            )
+            release["round_h2h"] = pd.DataFrame(
+                [
+                    {"player_a": "a", "player_b": "b", "p_a_lt_b": 0.55, "p_tie": 0.1},
+                    {"player_a": "b", "player_b": "c", "p_a_lt_b": 0.55, "p_tie": 0.1},
+                ]
+            )
+            offered = {
+                "match_list": [
+                    {
+                        "p1_player_name": "a",
+                        "p2_player_name": "c",
+                        "ties": "void",
+                        "odds": {"betcris": {"p1": -110, "p2": -110}},
+                    }
+                ]
+            }
+            with patch("push_odds_screen._fetch_scraped_guarded", return_value=offered):
+                with self.assertRaises(OddsScreenContractError) as caught:
+                    _build_round_matchups(
+                        "test_event", 4, {}, event_id=99, release=release
+                    )
+
+            self.assertNotIsInstance(caught.exception, OddsScreenSkip)
+            self.assertIn("lack a sealed model fair", str(caught.exception))
+
+    def test_unavailable_fresh_odds_is_a_skip_not_a_breach(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_strict_release(root)
+            release = _load_committed_release_contract(
+                expected_tourney="test_event",
+                expected_event_id=99,
+                expected_round=4,
+                project_root=root,
+                verify_git=False,
+            )
+            with patch("push_odds_screen._fetch_scraped_guarded", return_value=None):
+                with self.assertRaises(OddsScreenSkip) as caught:
+                    _build_round_matchups(
+                        "test_event", 4, {}, event_id=99, release=release
+                    )
+
+            self.assertIsInstance(caught.exception, OddsScreenContractError)
+            self.assertIn("retaining prior generation", str(caught.exception))
+
+            with self.assertRaises(OddsScreenSkip):
+                self._build_tournament_fixture(offered_pairs=())
 
     def test_tournament_builder_uses_manifest_bound_full_joint_for_tie_losses(self):
         class Response:

@@ -63,6 +63,16 @@ class OddsScreenContractError(RuntimeError):
     """The committed model package is not safe to activate on the odds screen."""
 
 
+class OddsScreenSkip(OddsScreenContractError):
+    """Nothing fresh is publishable this cycle; the prior generation stays live.
+
+    Subclasses the contract error so existing strict handlers keep failing closed,
+    while the publish entry point can treat these benign cycles as a clean no-op
+    (round-transition windows where the scraper has already rolled to the next
+    round, or offers that never join the sealed model).
+    """
+
+
 def _require_recent_timestamp(value, *, label: str) -> datetime:
     """Apply the simulation health gate's production age/future-skew limits."""
     from sim_health_gate import DEFAULT_MAX_AGE_HOURS
@@ -1866,21 +1876,28 @@ def _build_round_matchups(
 ) -> list:
     """Join fresh offered odds to the manifest-bound current-round H2H table."""
     lookup = _round_h2h_lookup(release)
+    sealed_field = {player for pair in lookup for player in pair}
     scraped = _fetch_scraped_guarded(
         "round_matchups", round=sim_round, event_id=event_id
     )
     rows = (scraped or {}).get("match_list")
     if not isinstance(rows, list) or not rows:
-        raise OddsScreenContractError(
+        raise OddsScreenSkip(
             "fresh event/round-scoped matchup odds are unavailable; retaining prior generation"
         )
 
     matchups = {}
     missing_fairs = set()
+    skipped_nonparticipants = set()
     for match in rows:
         p1 = _norm(match.get("p1_player_name", ""), repl)
         p2 = _norm(match.get("p2_player_name", ""), repl)
         if not p1 or not p2 or p1 == p2:
+            continue
+        # Books that publish initial-only first names (and withdrawn players) never
+        # join the sealed field; that is a quote-side quirk, not a model breach.
+        if p1 not in sealed_field or p2 not in sealed_field:
+            skipped_nonparticipants.add((p1, p2))
             continue
         probabilities = _oriented_h2h_probability(lookup, p1, p2)
         if probabilities is None:
@@ -1927,13 +1944,19 @@ def _build_round_matchups(
             rec["edge"][f"{book}_p1"] = _edge_pct(p1_prob, p1_odds)
             rec["edge"][f"{book}_p2"] = _edge_pct(p2_prob, p2_odds)
 
+    if skipped_nonparticipants:
+        logger.warning(
+            "Skipped %s round matchup pair(s) outside the sealed round field: %s",
+            len(skipped_nonparticipants),
+            sorted(skipped_nonparticipants),
+        )
     if missing_fairs:
         raise OddsScreenContractError(
             f"{len(missing_fairs)} fresh offered round matchup pair(s) lack a "
             "sealed model fair; retaining prior generation"
         )
     if not matchups:
-        raise OddsScreenContractError(
+        raise OddsScreenSkip(
             "no fresh offered round matchup could be joined to the sealed H2H table"
         )
     if not _has_valid_book_quote(list(matchups.values()), ("p1", "p2")):
@@ -2020,7 +2043,7 @@ def _build_tournament_matchups(
     scraped = _fetch_scraped_guarded("tournament_matchups", event_id=event_id)
     offered = (scraped or {}).get("match_list")
     if not isinstance(offered, list) or not offered:
-        raise OddsScreenContractError(
+        raise OddsScreenSkip(
             "fresh event-scoped tournament matchup odds are unavailable; "
             "retaining prior generation"
         )
@@ -2078,7 +2101,7 @@ def _build_tournament_matchups(
             "lack a sealed model fair; retaining prior generation"
         )
     if not matchups:
-        raise OddsScreenContractError(
+        raise OddsScreenSkip(
             "fresh tournament matchup odds do not join the sealed tournament model"
         )
     if not _has_valid_book_quote(list(matchups.values()), ("p1", "p2")):
@@ -2486,27 +2509,34 @@ def main():
         release["source_git_sha"][:12],
     )
 
-    # Build all markets
-    round_mu = _build_round_matchups(
-        tourney,
-        sim_round,
-        repl,
-        event_id=event_id,
-        release=release,
-    )
-    tourn_mu = _build_tournament_matchups(
-        tourney, repl, event_id=event_id, release=release
-    )
-    score_lines = _build_score_lines(
-        tourney,
-        sim_round,
-        repl,
-        event_id=event_id,
-        release=release,
-    )
-    outrights = _build_outrights(
-        tourney, repl, event_id=event_id, release=release
-    )
+    # Build all markets. A skip means the quote side has nothing fresh that joins
+    # the sealed model this cycle (typically a round-transition window), so no
+    # bundle is staged and the prior published generation stays live.
+    try:
+        round_mu = _build_round_matchups(
+            tourney,
+            sim_round,
+            repl,
+            event_id=event_id,
+            release=release,
+        )
+        tourn_mu = _build_tournament_matchups(
+            tourney, repl, event_id=event_id, release=release
+        )
+        score_lines = _build_score_lines(
+            tourney,
+            sim_round,
+            repl,
+            event_id=event_id,
+            release=release,
+        )
+        outrights = _build_outrights(
+            tourney, repl, event_id=event_id, release=release
+        )
+    except OddsScreenSkip as skip:
+        logger.warning("Odds screen publish skipped: %s", skip)
+        print(f"::warning title=Odds screen publish skipped::{skip}")
+        return
 
     payloads = {
         "round_matchups.json": {
