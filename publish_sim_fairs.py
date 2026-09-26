@@ -196,6 +196,38 @@ def _made_cut_path(tourney: str, *, use_live: bool = False) -> Path | None:
     return _find(f"{tourney}/made_cut.npy", f"made_cut_{tourney}.npy")
 
 
+# new_sim.py writes make_cut_probs_{t}.csv minutes before the {t}/final_scores.npy
+# cache; a CSV older than the tape by more than this is from an earlier run.
+MAKE_CUT_CSV_MAX_LAG_S = 3600
+
+
+def _paired_mask_make_cut(mc_path: Path, fs_path: Path, pn_path: Path, kind: str):
+    """(names, P(make cut)) from a made-cut mask checked against its paired
+    final_scores tape and name sidecar; None (with a warning) on any mismatch."""
+    import numpy as np
+
+    mask = np.load(mc_path, mmap_mode="r")
+    fs_shape = np.load(fs_path, mmap_mode="r").shape
+    names = json.loads(Path(pn_path).read_text(encoding="utf-8"))
+    if mask.ndim != 2 or mask.shape != fs_shape or mask.shape[0] != len(names):
+        logger.warning(
+            f"make_cut {kind} pair mismatch: mask={mask.shape}, "
+            f"final_scores={fs_shape}, names={len(names)} — refusing fallback"
+        )
+        return None
+    mask_values = np.asarray(mask)
+    probs = mask_values.astype(float).mean(axis=1)
+    if (not np.isfinite(mask_values).all()
+            or not np.isin(mask_values, (0, 1)).all()
+            or not np.isfinite(probs).all()
+            or ((probs < 0) | (probs > 1)).any()):
+        logger.warning(
+            f"make_cut {kind} mask produced invalid probabilities — refusing fallback"
+        )
+        return None
+    return names, probs
+
+
 ROUND_CACHE_MAX_AGE_DAYS = 10
 
 
@@ -496,8 +528,6 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
     # could silently mix a fresh live winner/top-N family with week-start cut
     # probabilities. Never fall back across that provenance boundary.
     if use_live:
-        import numpy as np
-
         mc_path = _made_cut_path(tourney, use_live=True)
         fs_path, pn_path, _ = _tournament_score_paths(tourney, use_live=True)
         if mc_path is None or fs_path is None or pn_path is None:
@@ -505,41 +535,50 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
                 "make_cut live pair missing — refusing pre-event make-cut fallback"
             )
         else:
-            mask = np.load(mc_path, mmap_mode="r")
-            fs_shape = np.load(fs_path, mmap_mode="r").shape
-            names = json.loads(Path(pn_path).read_text(encoding="utf-8"))
-            if mask.ndim != 2 or mask.shape != fs_shape or mask.shape[0] != len(names):
-                logger.warning(
-                    f"make_cut live pair mismatch: mask={mask.shape}, "
-                    f"final_scores={fs_shape}, names={len(names)} — refusing fallback"
+            paired = _paired_mask_make_cut(mc_path, fs_path, pn_path, "live")
+            if paired is not None:
+                for nm, p in zip(*paired):
+                    if p > 0:
+                        out["make_cut"][_norm(nm, repl)] = round(float(p), 5)
+                logger.info(
+                    f"make_cut from {mc_path.name} (paired live mask): "
+                    f"{len(out['make_cut'])}"
                 )
-            else:
-                mask_values = np.asarray(mask)
-                probs = mask_values.astype(float).mean(axis=1)
-                if (not np.isfinite(mask_values).all()
-                        or not np.isin(mask_values, (0, 1)).all()
-                        or not np.isfinite(probs).all()
-                        or ((probs < 0) | (probs > 1)).any()):
-                    logger.warning(
-                        "make_cut live mask produced invalid probabilities — refusing fallback"
-                    )
-                else:
-                    for nm, p in zip(names, probs):
-                        if p > 0:
-                            out["make_cut"][_norm(nm, repl)] = round(float(p), 5)
-                    logger.info(
-                        f"make_cut from {mc_path.name} (paired live mask): "
-                        f"{len(out['make_cut'])}"
-                    )
     else:
-        # Pre-event: prefer the exact cut simulation persisted by new_sim.py
-        # (true cut: top-N + ties + 10-shot rule). Fall back to a rank-prob
-        # estimate using raw min-rank probability when the exact file is absent.
+        # Pre-event: publish the exact simulated cut (top-N + ties, plus the
+        # 10-shot rule when enabled) = mean of the made-cut mask new_sim.py
+        # saves on the same draw axis as final_scores. The mask always wins;
+        # make_cut_probs_{tourney}.csv is read only when the mask is absent and
+        # the CSV is not older than the pre-event tape (a leftover from an
+        # earlier run must never win). No rank-prob fallback: P(rank <= cut)
+        # counts ties at the cut as misses (+200 sentinel) and understated
+        # make-cut by ~4 pp (2026-09 audit) — omit the market instead.
+        mc_path = _made_cut_path(tourney, use_live=False)
+        fs_path, pn_path, _ = _tournament_score_paths(tourney, use_live=False)
         mc_file = _find(
             f"make_cut_probs_{tourney}.csv",
             f"{tourney}/make_cut_probs_{tourney}.csv",
         )
-        if mc_file is not None:
+        if mc_path is not None:
+            if fs_path is None or pn_path is None:
+                logger.warning(
+                    f"make_cut: {mc_path.name} has no paired final_scores/player_names "
+                    "— omitting make_cut"
+                )
+            else:
+                paired = _paired_mask_make_cut(mc_path, fs_path, pn_path, "pre-event")
+                if paired is not None:
+                    for nm, p in zip(*paired):
+                        if p > 0:
+                            out["make_cut"][_norm(nm, repl)] = round(float(p), 5)
+                    logger.info(
+                        f"make_cut from {mc_path.name} (exact simulated cut mask): "
+                        f"{len(out['make_cut'])}"
+                    )
+        elif mc_file is not None and (
+            fs_path is None
+            or mc_file.stat().st_mtime >= fs_path.stat().st_mtime - MAKE_CUT_CSV_MAX_LAG_S
+        ):
             df = pd.read_csv(mc_file)
             for _, r in df.iterrows():
                 p = r["make_cut"]
@@ -547,22 +586,20 @@ def _build_outrights(tourney: str, cut_line: int, repl: dict, use_live: bool = T
                     out["make_cut"][_norm(r["player_name"], repl)] = round(
                         float(min(p, 1.0)), 5
                     )
-            logger.info(
-                f"make_cut from {mc_file.name} (exact sim cut): "
+            logger.warning(
+                f"make_cut: no made_cut mask — using {mc_file.name} (exact sim cut): "
                 f"{len(out['make_cut'])}"
             )
+        elif mc_file is not None:
+            logger.warning(
+                f"make_cut: no made_cut mask and {mc_file.name} predates {fs_path.name} "
+                "(stale, earlier run) — omitting make_cut"
+            )
         else:
-            rk = _find(f"rank_probs_live_{tourney}.parquet", f"{tourney}/rank_probs_live_{tourney}.parquet",
-                       f"rank_probs_updated_{tourney}.parquet", f"{tourney}/rank_probs_updated_{tourney}.parquet")
-            if rk is not None:
-                rp = pd.read_parquet(rk)
-                col = "prob_ndh" if "prob_ndh" in rp.columns else "prob_u"
-                if {"player_name", "rank"} <= set(rp.columns) and col in rp.columns:
-                    mc = rp[rp["rank"] <= cut_line].groupby("player_name")[col].sum()
-                    for nm, p in mc.items():
-                        if p > 0:
-                            out["make_cut"][_norm(nm, repl)] = round(float(min(p, 1.0)), 5)
-                    logger.info(f"make_cut from {rk.name} [{col}] (cut<={cut_line}): {len(out['make_cut'])}")
+            logger.warning(
+                "make_cut: no made_cut mask or make_cut_probs CSV — omitting make_cut "
+                "(the rank<=cut_line estimate is biased low and is never published)"
+            )
 
     return ({k: v for k, v in out.items() if v},
             {k: v for k, v in out_nodh.items() if v})
@@ -2349,7 +2386,13 @@ def write_round_3ball(
     return [pq, mj]
 
 
-def _check_outright_mass(outrights: dict, tourney: str) -> None:
+def _check_outright_mass(
+    outrights: dict,
+    tourney: str,
+    *,
+    cut_line: int | None = None,
+    field_size: int = 0,
+) -> None:
     """Refuse to publish an outright book whose probability mass is impossible.
 
     The pre-event finish_equity/top_finish layers can refill live-zeroed players
@@ -2358,7 +2401,10 @@ def _check_outright_mass(outrights: dict, tourney: str) -> None:
     +50000 is a massive fake edge that freezes into the closing and gets
     CLV-graded. Bands: winner must sum to ~1; top_N to ~N. make_cut/nodh are
     deliberately unbanded (post-cut they legitimately sum to the survivor
-    count). Raises so nothing ships; Telegram carries the numbers."""
+    count). Pre-event only (pass cut_line + field_size): make_cut must sum to
+    at least the cut line when the field exceeds it — top-N plus ties can never
+    send fewer than N through; a lower sum is the biased rank<=cut_line estimate.
+    Raises so nothing ships; Telegram carries the numbers."""
     bands = {"winner": (0.97, 1.05), "top_5": (5 * 0.95, 5 * 1.05),
              "top_10": (10 * 0.95, 10 * 1.05), "top_20": (20 * 0.95, 20 * 1.05)}
     problems = []
@@ -2369,10 +2415,17 @@ def _check_outright_mass(outrights: dict, tourney: str) -> None:
         s = sum(float(p) for p in probs.values())
         if not (lo <= s <= hi):
             problems.append(f"{mkt}: sum={s:.3f} (band {lo:.2f}-{hi:.2f}, n={len(probs)})")
+    make_cut = outrights.get("make_cut") or {}
+    if cut_line and make_cut and field_size > cut_line:
+        s = sum(float(p) for p in make_cut.values())
+        if s < cut_line - 0.01:
+            problems.append(f"make_cut: sum={s:.3f} < cut line {cut_line} "
+                            f"(field {field_size}, n={len(make_cut)}); ties at the cut dropped")
     if problems:
         msg = (f"outright probability mass INSANE for {tourney} — refusing to publish: "
                + "; ".join(problems)
-               + ". Likely pre-event layers refilling live-zeroed players.")
+               + ". Likely pre-event layers refilling live-zeroed players, or a "
+                 "pre-event make_cut not taken from the simulated cut mask.")
         _alert(msg)
         raise RuntimeError(msg)
 
@@ -2413,7 +2466,18 @@ def build_payload(*, require_complete_live: bool = False) -> dict:
             tourney, cut_line, repl, use_live=use_live
         )
         strict_field = None
-    _check_outright_mass(outrights, tourney)
+    field = (
+        strict_field
+        if strict_field is not None
+        else _build_field(tourney, repl, use_live=use_live)
+    )
+    pre_event_cut = not use_live and not require_complete_live
+    _check_outright_mass(
+        outrights,
+        tourney,
+        cut_line=cut_line if pre_event_cut else None,
+        field_size=len(field),
+    )
     matchup_source, matchup_run_at = _matchups_provenance(tourney, use_live=use_live)
     payload = {
         "event_id": event_id,
@@ -2422,11 +2486,7 @@ def build_payload(*, require_complete_live: bool = False) -> dict:
         "generated_at": now,                # publish wall-clock (display only)
         "sim_run_at": sim_run_at,           # when the SIM ran — consumers gate on this
         "round": rnd,                       # live round these round_* markets price
-        "field": (
-            strict_field
-            if strict_field is not None
-            else _build_field(tourney, repl, use_live=use_live)
-        ),
+        "field": field,
         "outrights": outrights,
         # no-dead-heat top-N fairs for books that settle a top-N as a clean binary
         # (Kalshi, NoVig). The board grades those books against these instead of the

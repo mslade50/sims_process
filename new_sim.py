@@ -2488,18 +2488,6 @@ if not args.price_only:
                 else:
                     made_cut_mask[:, j] = top_cut
 
-        # Persist exact P(make cut) for the odds board. The downstream rank-prob
-        # re-derivation is biased (dead-heat spread + ignores the 10-shot rule),
-        # so ship the simulated cut mask mean directly (true cut: top-N + ties,
-        # plus the 10-shot rule when enabled). Rows are in player_names order.
-        try:
-            pd.DataFrame({"player_name": player_names,
-                          "make_cut": made_cut_mask.mean(axis=1)}).to_csv(
-                f"make_cut_probs_{tourney}.csv", index=False)
-            print(f"  [make_cut] wrote make_cut_probs_{tourney}.csv")
-        except Exception as _mc_e:
-            print(f"  [make_cut] persist failed: {_mc_e}")
-
 
         # ======================
         # R2 -> R3 skill update (position buckets; uses R1+R2 stats)
@@ -2699,6 +2687,21 @@ if not args.price_only:
         # Final integer 72-hole totals
         final_scores = r1_r2_scores + r3_r4
         np.save(f"final_scores_{tourney}.npy", final_scores)
+
+    # Persist exact P(make cut) for the odds board from EITHER cascade (Rust
+    # kernel or --use-python). The downstream rank-prob re-derivation is biased
+    # (ties at the cut + the 10-shot rule), so ship the simulated cut mask mean
+    # directly (true cut: top-N + ties, plus the 10-shot rule when enabled).
+    # Rows are in player_names order. The publisher prefers {tourney}/made_cut.npy
+    # and reads this CSV only when the mask is absent.
+    if made_cut_mask is not None:
+        try:
+            pd.DataFrame({"player_name": player_names,
+                          "make_cut": made_cut_mask.mean(axis=1)}).to_csv(
+                f"make_cut_probs_{tourney}.csv", index=False)
+            print(f"  [make_cut] wrote make_cut_probs_{tourney}.csv")
+        except Exception as _mc_e:
+            print(f"  [make_cut] persist failed: {_mc_e}")
 
 
     if _python_drew:

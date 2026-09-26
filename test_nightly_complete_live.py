@@ -330,6 +330,95 @@ def test_live_make_cut_uses_paired_mask_not_conflicting_pre_event_csv(
     }
 
 
+def _write_pre_event_cut_fixture(root: Path, tourney: str, *, with_mask=True):
+    """100 players x 400 draws, cut line 65 with ties: 70 make it every draw.
+    Also a rank-prob parquet whose rank<=65 sum is only 65 (the old biased path)."""
+    rng = np.random.default_rng(7)
+    n_players, draws = 100, 400
+    players = [f"player {i:03d}" for i in range(n_players)]
+    skill = np.linspace(2.0, -2.0, n_players)
+    mask = np.zeros((n_players, draws), dtype=bool)
+    for j in range(draws):
+        mask[np.argsort(-(skill + rng.normal(0, 1.5, n_players)))[:70], j] = True
+    event_dir = root / tourney
+    event_dir.mkdir(exist_ok=True)
+    np.save(event_dir / "final_scores.npy", np.where(mask, 280, 480).astype(np.int32))
+    (event_dir / "player_names.json").write_text(json.dumps(players), encoding="utf-8")
+    if with_mask:
+        np.save(event_dir / "made_cut.npy", mask)
+    pd.DataFrame(
+        {"player_name": np.repeat(players, 2), "rank": np.tile([1, 66], n_players),
+         "prob_ndh": np.tile([0.65, 0.35], n_players)}
+    ).to_parquet(root / f"rank_probs_updated_{tourney}.parquet", index=False)
+    return players, mask
+
+
+def test_publish_make_cut_pre_event_uses_mask(tmp_path, monkeypatch):
+    tourney = "test_event"
+    players, mask = _write_pre_event_cut_fixture(tmp_path, tourney)
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+
+    outrights, _ = psf._build_outrights(tourney, cut_line=65, repl={}, use_live=False)
+
+    expected = {
+        nm: round(float(p), 5) for nm, p in zip(players, mask.mean(axis=1)) if p > 0
+    }
+    assert outrights["make_cut"] == expected
+    assert sum(outrights["make_cut"].values()) >= 65
+    assert sum(outrights["make_cut"].values()) == pytest.approx(70.0, abs=1e-3)
+
+
+def test_publish_make_cut_pre_event_mask_beats_stale_csv(tmp_path, monkeypatch):
+    tourney = "test_event"
+    players, mask = _write_pre_event_cut_fixture(tmp_path, tourney)
+    csv = tmp_path / f"make_cut_probs_{tourney}.csv"
+    pd.DataFrame({"player_name": players, "make_cut": 0.99}).to_csv(csv, index=False)
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+
+    outrights, _ = psf._build_outrights(tourney, cut_line=65, repl={}, use_live=False)
+    assert outrights["make_cut"]["player 050"] == round(float(mask[50].mean()), 5)
+
+    # Mask gone: a CSV older than the tape is from an earlier run -> omitted.
+    (tmp_path / tourney / "made_cut.npy").unlink()
+    old = (tmp_path / tourney / "final_scores.npy").stat().st_mtime - 2 * 3600
+    os.utime(csv, (old, old))
+    outrights, _ = psf._build_outrights(tourney, cut_line=65, repl={}, use_live=False)
+    assert "make_cut" not in outrights
+
+    # Mask gone, CSV from the same run -> used.
+    now = time.time()
+    os.utime(csv, (now, now))
+    outrights, _ = psf._build_outrights(tourney, cut_line=65, repl={}, use_live=False)
+    assert outrights["make_cut"]["player 050"] == 0.99
+
+
+def test_publish_make_cut_pre_event_never_uses_rank_fallback(tmp_path, monkeypatch):
+    tourney = "test_event"
+    _write_pre_event_cut_fixture(tmp_path, tourney, with_mask=False)
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+
+    outrights, _ = psf._build_outrights(tourney, cut_line=65, repl={}, use_live=False)
+    assert "make_cut" not in outrights
+
+
+def test_outright_mass_guard_requires_pre_event_make_cut_to_cover_cut_line(monkeypatch):
+    alerts = []
+    monkeypatch.setattr(psf, "_alert", alerts.append)
+    exact = {f"p{i}": 0.7 for i in range(100)}          # sums to 70
+    biased = {f"p{i}": 0.66 for i in range(100)}        # sums to 66 >= 65: ok
+    too_low = {f"p{i}": 0.6 for i in range(100)}        # sums to 60 < 65
+
+    psf._check_outright_mass({"make_cut": exact}, "t", cut_line=65, field_size=100)
+    psf._check_outright_mass({"make_cut": biased}, "t", cut_line=65, field_size=100)
+    with pytest.raises(RuntimeError, match="make_cut: sum=60.000 < cut line 65"):
+        psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=65, field_size=100)
+    assert len(alerts) == 1
+    # Field no bigger than the cut (no-cut event) and live/post-cut books are unbanded.
+    psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=65, field_size=60)
+    psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=None, field_size=100)
+    psf._check_outright_mass({"make_cut": too_low}, "t")
+
+
 def test_strict_live_outrights_ignore_fallbacks_and_preserve_zeroes(
     tmp_path, monkeypatch
 ):
