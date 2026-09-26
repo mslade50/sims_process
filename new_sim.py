@@ -3024,6 +3024,13 @@ if not args.price_only:
             "Fresh sim produced no made-cut mask but a stale made_cut.npy is "
             "present; refusing to seal or publish a mixed cache"
         )
+    # The cut rule this tape was simulated with (Sheet cut_line, which can differ
+    # from sim_inputs.CUT_LINE) so the publisher's make-cut mass guard checks
+    # against the sim's own cut, paired to the tape by shape.
+    with open(os.path.join(_cache_dir, "sim_cut.json"), "w", encoding="utf-8") as _f:
+        _sim_json.dump({"cut_line": int(CUT_LINE),
+                        "use_10_shot_rule": bool(USE_10_SHOT_RULE),
+                        "shape": [int(d) for d in np.shape(final_scores)]}, _f)
     _cache_artifact_paths = {
         "final_scores": _fs_path,
         "player_names": _pn_path,

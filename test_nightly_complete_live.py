@@ -401,22 +401,44 @@ def test_publish_make_cut_pre_event_never_uses_rank_fallback(tmp_path, monkeypat
     assert "make_cut" not in outrights
 
 
-def test_outright_mass_guard_requires_pre_event_make_cut_to_cover_cut_line(monkeypatch):
+def test_outright_mass_guard_rocket_sums(monkeypatch):
+    """Rocket 2026: the rank<=65 fallback published 66.15; the mask gives 72.09."""
     alerts = []
     monkeypatch.setattr(psf, "_alert", alerts.append)
-    exact = {f"p{i}": 0.7 for i in range(100)}          # sums to 70
-    biased = {f"p{i}": 0.66 for i in range(100)}        # sums to 66 >= 65: ok
-    too_low = {f"p{i}": 0.6 for i in range(100)}        # sums to 60 < 65
+    corrected = {f"p{i}": 72.09 / 143 for i in range(143)}
+    old = {f"p{i}": 66.15 / 143 for i in range(143)}
+    kw = dict(cut_line=65, field_size=143)
 
-    psf._check_outright_mass({"make_cut": exact}, "t", cut_line=65, field_size=100)
-    psf._check_outright_mass({"make_cut": biased}, "t", cut_line=65, field_size=100)
-    with pytest.raises(RuntimeError, match="make_cut: sum=60.000 < cut line 65"):
-        psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=65, field_size=100)
-    assert len(alerts) == 1
+    # Mask present: the sum must match the simulated survivor count within 0.5.
+    psf._check_outright_mass({"make_cut": corrected}, "rocket", mask_survivors=72.09, **kw)
+    with pytest.raises(RuntimeError, match="vs simulated survivors 72.090"):
+        psf._check_outright_mass({"make_cut": old}, "rocket", mask_survivors=72.09, **kw)
+    # No mask (CSV path): the sum must reach cut_line + 2.
+    psf._check_outright_mass({"make_cut": corrected}, "rocket", **kw)
+    with pytest.raises(RuntimeError, match="< cut line 65 \\+ 2"):
+        psf._check_outright_mass({"make_cut": old}, "rocket", **kw)
+    assert len(alerts) == 2
     # Field no bigger than the cut (no-cut event) and live/post-cut books are unbanded.
-    psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=65, field_size=60)
-    psf._check_outright_mass({"make_cut": too_low}, "t", cut_line=None, field_size=100)
-    psf._check_outright_mass({"make_cut": too_low}, "t")
+    psf._check_outright_mass({"make_cut": old}, "rocket", cut_line=150, field_size=143)
+    psf._check_outright_mass({"make_cut": old}, "rocket", cut_line=None, field_size=143)
+    psf._check_outright_mass({"make_cut": old}, "rocket")
+
+
+def test_guard_inputs_come_from_the_sim_not_sim_inputs(tmp_path, monkeypatch):
+    tourney = "test_event"
+    _, mask = _write_pre_event_cut_fixture(tmp_path, tourney)
+    monkeypatch.setattr(psf, "PROJECT_ROOT", tmp_path)
+    assert psf._pre_event_mask_survivors(tourney) == pytest.approx(float(mask.sum()) / 400)
+
+    # No sidecar -> sim_inputs fallback (with a warning).
+    assert psf._sim_cut_line(tourney, 65) == 65
+    sidecar = tmp_path / tourney / "sim_cut.json"
+    sidecar.write_text(json.dumps({"cut_line": 60, "use_10_shot_rule": False,
+                                   "shape": [100, 400]}), encoding="utf-8")
+    assert psf._sim_cut_line(tourney, 65) == 60
+    # A sidecar that doesn't pair with the tape is ignored.
+    sidecar.write_text(json.dumps({"cut_line": 60, "shape": [99, 400]}), encoding="utf-8")
+    assert psf._sim_cut_line(tourney, 65) == 65
 
 
 def test_strict_live_outrights_ignore_fallbacks_and_preserve_zeroes(

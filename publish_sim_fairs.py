@@ -228,6 +228,40 @@ def _paired_mask_make_cut(mc_path: Path, fs_path: Path, pn_path: Path, kind: str
     return names, probs
 
 
+def _pre_event_mask_survivors(tourney: str) -> float | None:
+    """Mean simulated survivor count from the paired pre-event cut mask, or None."""
+    mc_path = _made_cut_path(tourney, use_live=False)
+    fs_path, pn_path, _ = _tournament_score_paths(tourney, use_live=False)
+    if mc_path is None or fs_path is None or pn_path is None:
+        return None
+    paired = _paired_mask_make_cut(mc_path, fs_path, pn_path, "pre-event")
+    return None if paired is None else float(paired[1].sum())
+
+
+def _sim_cut_line(tourney: str, fallback: int) -> int:
+    """The cut line new_sim.py simulated this tape with ({tourney}/sim_cut.json,
+    from the Sheet), so a Sheet/sim_inputs mismatch can't fail a correct publish.
+    Falls back to sim_inputs.CUT_LINE, with a warning, when it is unavailable."""
+    import numpy as np
+
+    fs_path, _, _ = _tournament_score_paths(tourney, use_live=False)
+    sc = _find(f"{tourney}/sim_cut.json")
+    if sc is not None and fs_path is not None:
+        try:
+            meta = json.loads(sc.read_text(encoding="utf-8"))
+            shape = list(np.load(fs_path, mmap_mode="r").shape)
+            fresh = sc.stat().st_mtime >= fs_path.stat().st_mtime - MAKE_CUT_CSV_MAX_LAG_S
+            if meta.get("shape") == shape and fresh:
+                return int(meta["cut_line"])
+            logger.warning(f"{sc.name} does not pair with {fs_path.name} "
+                           f"(shape {meta.get('shape')} vs {shape}, fresh={fresh})")
+        except Exception as e:
+            logger.warning(f"{sc.name} unreadable ({e})")
+    logger.warning(f"sim cut line unavailable for {tourney} — make_cut guard uses "
+                   f"sim_inputs.CUT_LINE={fallback}")
+    return fallback
+
+
 ROUND_CACHE_MAX_AGE_DAYS = 10
 
 
@@ -2392,6 +2426,7 @@ def _check_outright_mass(
     *,
     cut_line: int | None = None,
     field_size: int = 0,
+    mask_survivors: float | None = None,
 ) -> None:
     """Refuse to publish an outright book whose probability mass is impossible.
 
@@ -2401,10 +2436,13 @@ def _check_outright_mass(
     +50000 is a massive fake edge that freezes into the closing and gets
     CLV-graded. Bands: winner must sum to ~1; top_N to ~N. make_cut/nodh are
     deliberately unbanded (post-cut they legitimately sum to the survivor
-    count). Pre-event only (pass cut_line + field_size): make_cut must sum to
-    at least the cut line when the field exceeds it — top-N plus ties can never
-    send fewer than N through; a lower sum is the biased rank<=cut_line estimate.
-    Raises so nothing ships; Telegram carries the numbers."""
+    count). Pre-event only (pass the sim's cut_line + field_size), when the field
+    exceeds the cut: with the simulated cut mask present (mask_survivors = its
+    mean survivor count) make_cut must sum to that count within 0.5; without it
+    (CSV path) the sum must be >= cut_line + 2 — ties at the cut line make the
+    expected survivor count exceed the line; a sum at or below cut_line + 2
+    indicates the rank fallback or a stale file (Rocket 2026: 66.15 published
+    vs 72.09 simulated). Raises so nothing ships; Telegram carries the numbers."""
     bands = {"winner": (0.97, 1.05), "top_5": (5 * 0.95, 5 * 1.05),
              "top_10": (10 * 0.95, 10 * 1.05), "top_20": (20 * 0.95, 20 * 1.05)}
     problems = []
@@ -2418,9 +2456,14 @@ def _check_outright_mass(
     make_cut = outrights.get("make_cut") or {}
     if cut_line and make_cut and field_size > cut_line:
         s = sum(float(p) for p in make_cut.values())
-        if s < cut_line - 0.01:
-            problems.append(f"make_cut: sum={s:.3f} < cut line {cut_line} "
-                            f"(field {field_size}, n={len(make_cut)}); ties at the cut dropped")
+        if mask_survivors is not None:
+            if abs(s - mask_survivors) > 0.5:
+                problems.append(f"make_cut: sum={s:.3f} vs simulated survivors "
+                                f"{mask_survivors:.3f} (tolerance 0.5, n={len(make_cut)})")
+        elif s < min(cut_line + 2, field_size):
+            problems.append(f"make_cut: sum={s:.3f} < cut line {cut_line} + 2 with no cut "
+                            f"mask (field {field_size}, n={len(make_cut)}); rank fallback "
+                            f"or stale file")
     if problems:
         msg = (f"outright probability mass INSANE for {tourney} — refusing to publish: "
                + "; ".join(problems)
@@ -2475,8 +2518,9 @@ def build_payload(*, require_complete_live: bool = False) -> dict:
     _check_outright_mass(
         outrights,
         tourney,
-        cut_line=cut_line if pre_event_cut else None,
+        cut_line=_sim_cut_line(tourney, cut_line) if pre_event_cut else None,
         field_size=len(field),
+        mask_survivors=_pre_event_mask_survivors(tourney) if pre_event_cut else None,
     )
     matchup_source, matchup_run_at = _matchups_provenance(tourney, use_live=use_live)
     payload = {
