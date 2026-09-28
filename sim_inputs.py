@@ -18,7 +18,7 @@ from datetime import datetime
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 71
-CUT_LINE      = 65  # Biltmore: low 65 and ties after 36 holes
+CUT_LINE      = 65  # Low 65 and ties after 36 holes
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -46,28 +46,16 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [557]
-# Biltmore Championship Asheville, September 17-20, 2026.
-# DataGolf / PGA TOUR: The Cliffs at Walnut Cove; new venue, par 71.
-course_id = 942
-tourney = 'biltmore'
+event_ids = [554]
+# Bank of Utah Championship, October 1-4, 2026.
+# DataGolf / PGA TOUR: Black Desert Resort; par 71.
+course_id = 930
+tourney = 'utah'
 
-# New-venue prior approved September 14: 70% average PGA venue, 30% Muirfield
-# Village (course 23). Course fit is recorded in course_random_effects.csv;
-# SD multipliers blend variances before taking the square root.
-lat_override = 35.463
-lon_override = -82.602
-manual_venue_profile = {
-    'event_id': 557,
-    'course_id': 942,
-    'source': 'Owner baseline; 70% PGA average / 30% Muirfield Village (23), 2026-09-14',
-    'historical_relative_scores': {1: -0.5, 2: -0.5, 3: -0.75, 4: -0.75},
-    'historical_weekend_field_adj': 0.3,
-    'weekend_field_adj': 0.3,
-    'category_mults': {'sg_ott': 1.027828, 'sg_app': 1.063955, 'sg_arg': 1.057223, 'sg_putt': 1.0},
-    'category_skew': {'sg_ott': -0.711, 'sg_app': -0.157, 'sg_arg': -0.129, 'sg_putt': -0.033},
-    'suggested_var_mult': 1.067118,
-}
+# Black Desert has course history; no new-venue prior is needed.
+lat_override = 37.168
+lon_override = -113.653
+manual_venue_profile = None
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -96,7 +84,7 @@ course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
 #for multiple course setups in the showdown sim
-course_id_1=942
+course_id_1=930
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -117,7 +105,6 @@ name_replacements = {
     'norgaard, niklas': 'norgaard moller, niklas',
     'moller, niklas norgaard': 'norgaard moller, niklas',
     'stevens, sam': 'stevens, samuel',
-    'gordon, william': 'gordon, will',   # BetOnline spelling (Biltmore 2026 R3)
     # DK salary CSV -> our canonical (Zurich 2026)
     'brown, daniel': 'brown, dan',
     'l. smith, jordan': 'smith, jordan',
@@ -143,14 +130,6 @@ name_replacements = {
     'spaun, jj': 'spaun, j.j.'
 }
 
-# Scraped R2 aliases verified against the Biltmore field.
-name_replacements.update({
-    'brown, b': 'brown, blades',
-    'horschel, b': 'horschel, billy',
-    'poston, jt': 'poston, j.t.',
-    'james, benjamin': 'james, ben',
-})
-
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {
@@ -169,10 +148,6 @@ manual_boosts={
 field_replacements = {
     # 'cantlay, patrick': 'thorbjornsen, michael',
 }
-
-# Owner-approved live exclusion: late replacement lacks frozen pre-event inputs.
-# The season/event key prevents this from carrying into another tournament.
-live_sim_exclusions = {"2026:557": ["streb, robert"]}
 
 
 #for etr export to sheet
