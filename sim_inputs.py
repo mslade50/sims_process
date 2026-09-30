@@ -135,6 +135,8 @@ name_replacements = {
 # it joins those feeds to the field by name. sim_prep joins by dg_id and must
 # not merge them into name_replacements.
 feed_name_aliases = {
+    'james, benjamin': 'james, ben',
+    'petersen, rasmus neergaard': 'neergaard-petersen, rasmus',
     'brown, daniel': 'brown, dan',
     'bauchou, zachary': 'bauchou, zach',
     'kim, seonghyeon': 'kim, s.h.',
