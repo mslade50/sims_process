@@ -1718,3 +1718,62 @@ def test_calibration_gate_precedes_all_top_level_delivery_calls():
     required_kw = next(keyword for keyword in main_email.keywords if keyword.arg == "required")
     assert isinstance(required_kw.value, ast.Constant)
     assert required_kw.value.value is True
+
+
+def _weather_split_parser():
+    presets = next(
+        node
+        for node in TREE.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "WEATHER_CAT_SPLIT_PRESETS"
+            for target in node.targets
+        )
+    )
+    namespace = _load_definitions("_parse_weather_cat_split")
+    exec(
+        compile(ast.fix_missing_locations(ast.Module(body=[presets], type_ignores=[])),
+                str(SOURCE_PATH), "exec"),
+        namespace,
+    )
+    return namespace["_parse_weather_cat_split"]
+
+
+@pytest.mark.parametrize("raw", [None, "", "  ", "approach", " Approach "])
+def test_weather_split_defaults_to_approach(raw):
+    parse = _weather_split_parser()
+    assert parse(raw) == ("approach", (0.0, 0.73, 0.08, 0.19))
+
+
+def test_weather_split_legacy_and_custom():
+    parse = _weather_split_parser()
+    assert parse("legacy") == ("legacy", (0.35, 0.35, 0.15, 0.15))
+    name, values = parse("0.1, 0.6, 0.1, 0.2")
+    assert name == "custom"
+    assert values == pytest.approx((0.1, 0.6, 0.1, 0.2))
+    assert parse("0.25,0.25,0.25,0.2500001")[0] == "custom"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["bogus", "0.5,0.5,0.5", "0.4,0.4,0.1,0.2", "0.5,0.5,x,0", "nan,0.5,0.25,0.25",
+     "-0.1,0.9,0.1,0.1", "0.25,0.25,0.25,0.25,0"],
+)
+def test_weather_split_rejects_bad_input(raw):
+    parse = _weather_split_parser()
+    with pytest.raises(ValueError, match="SIMS_WEATHER_CAT_SPLIT"):
+        parse(raw)
+
+
+def test_weather_split_reaches_rust_kernel_and_python_path():
+    rust_call = next(
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run_pretournament"
+    )
+    split_kw = [kw for kw in rust_call.keywords if kw.arg == "weather_cat_split"]
+    assert len(split_kw) == 1
+    assert "WEATHER_CAT_SPLIT" in ast.unparse(split_kw[0].value)
+    assert "WEATHER_CAT_SPLIT = np.array([" not in SOURCE

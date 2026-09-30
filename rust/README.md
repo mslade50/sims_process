@@ -1,25 +1,25 @@
 # `sims_kernel` — Rust Monte Carlo kernel
 
-> ## ⚠ REBUILD REQUIRED — kernel 0.3.0 (2026-08-18, week-level latent)
+> ## ⚠ REBUILD REQUIRED — kernel 0.4.0 (2026-09-30, weather category split)
 >
-> `run_pretournament` grew a trailing `week_latent_sd` argument (the shared
-> week-level form draw; see CLAUDE.md "Week-level form latent"). **`git pull`
-> does NOT update your installed kernel** — until you rebuild, every
-> `new_sim.py` run on this machine prints
-> `[rust] WARNING: Rust kernel unavailable/failed (TypeError...)` and falls
-> back to the Python cascade. The fallback DOES include the latent, so fairs
-> are still correct — it's just ~20s slower and the warning is noise.
+> `run_pretournament` grew an optional keyword `weather_cat_split` ([OTT, APP,
+> ARG, PUTT] share of the R1/R2 weather delta; omitted = legacy
+> 0.35/0.35/0.15/0.15). `new_sim.py` always passes it (`SIMS_WEATHER_CAT_SPLIT`,
+> default `approach` = 0/0.73/0.08/0.19). 0.3.0 added the trailing
+> `week_latent_sd` argument. **`git pull` does NOT update your installed
+> kernel** — an older kernel rejects the keyword and `new_sim.py` stops with
+> `Production sims_kernel.run_pretournament failed` (no silent fallback).
 >
 > **Rebuild (machine with cargo):**
 > ```bash
 > cd rust
-> cargo test --release                                  # expect 27 green
+> cargo test --release                                  # expect 28 green
 > cargo build --release --features pyo3/extension-module
 > python -c "import sims_kernel, pathlib; print(pathlib.Path(sims_kernel.__file__).parent)"
 > # back up, then overwrite <that dir>/sims_kernel.pyd with:
 > #   rust/target/release/sims_kernel.dll  (rename to sims_kernel.pyd)
 > python -c "import sims_kernel; print(sims_kernel.version(), sims_kernel.selftest())"
-> # expect: 0.3.0 True
+> # expect: 0.4.0 True
 > ```
 >
 > **No cargo on the machine?** The `.pyd` is an abi3 Windows-x64 binary —

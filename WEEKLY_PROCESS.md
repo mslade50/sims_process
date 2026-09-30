@@ -397,6 +397,7 @@ next-round publisher still requires the real groups once each re-pair is posted.
 - Uses `COURSE_CAT_MULTS` from Google Sheet to scale per-category variance
 - Re-centers category means to sum to `my_pred` so only variance structure changes, not base predictions
 - Uses the Rust tournament-draw kernel by default; a kernel failure stops the run instead of silently changing math. Use `--use-python` only as an explicit operator choice.
+- Splits each player's R1/R2 weather delta across categories using `SIMS_WEATHER_CAT_SPLIT` (OTT/APP/ARG/PUTT). The default is `approach` (0/0.73/0.08/0.19). Set `legacy` for the old 0.35/0.35/0.15/0.15, or give four comma-separated shares that sum to 1. The run logs `[weather] Category split (...)` and fails on bad input. The Rust kernel must be 0.4.0 or later.
 - Fetches betting odds from DataGolf matchup/outright APIs
 - Runs Monte Carlo tournament simulation (matchups + finish positions)
 - Produces `pre_sim_summary_{tourney}.csv`, `finish_equity_{tourney}.csv`, matchup CSVs

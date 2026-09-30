@@ -833,8 +833,40 @@ else:
 # Matchup weather-impact report settings (doesn't affect sim)
 wind_calculation_report = WIND_FACTOR_SIM
 
-# Weather delta distribution across categories [OTT, APP, ARG, PUTT]
-WEATHER_CAT_SPLIT = np.array([0.35, 0.35, 0.15, 0.15])
+# Weather delta distribution across categories [OTT, APP, ARG, PUTT].
+# SIMS_WEATHER_CAT_SPLIT: "approach" (default; weather loads on approach),
+# "legacy" (pre-2026-09 0.35/0.35/0.15/0.15), or four comma-separated shares
+# summing to 1. The total weather delta is unchanged; only the category path sees it.
+WEATHER_CAT_SPLIT_PRESETS = {
+    "approach": (0.0, 0.73, 0.08, 0.19),
+    "legacy": (0.35, 0.35, 0.15, 0.15),
+}
+
+
+def _parse_weather_cat_split(raw):
+    text = (raw or "").strip().lower() or "approach"
+    if text in WEATHER_CAT_SPLIT_PRESETS:
+        return text, WEATHER_CAT_SPLIT_PRESETS[text]
+    parts = [p.strip() for p in text.split(",")]
+    try:
+        values = tuple(float(p) for p in parts)
+    except ValueError:
+        values = ()
+    if (len(values) != 4 or not all(math.isfinite(v) and v >= 0.0 for v in values)
+            or abs(sum(values) - 1.0) > 1e-6):
+        raise ValueError(
+            f"SIMS_WEATHER_CAT_SPLIT={raw!r} is invalid: use 'approach', 'legacy', or four "
+            "non-negative comma-separated shares [OTT,APP,ARG,PUTT] summing to 1"
+        )
+    return "custom", values
+
+
+WEATHER_CAT_SPLIT_NAME, _weather_split_values = _parse_weather_cat_split(
+    os.getenv("SIMS_WEATHER_CAT_SPLIT")
+)
+WEATHER_CAT_SPLIT = np.array(_weather_split_values, dtype=float)
+print(f"[weather] Category split ({WEATHER_CAT_SPLIT_NAME}) OTT/APP/ARG/PUTT = "
+      + "/".join(f"{v:.2f}" for v in WEATHER_CAT_SPLIT))
 
 CAT_ORDER = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
 CLIP_CAT = (-8.0, 8.0)
@@ -2276,11 +2308,15 @@ if not args.price_only:
             r3_30up=_c3(coefficients_r3_high),
             cut_line=int(CUT_LINE), use_10_shot_rule=bool(USE_10_SHOT_RULE),
             sims=int(SIMULATIONS), seed=456, week_latent_sd=float(WEEK_LATENT),
+            weather_cat_split=np.asarray(WEATHER_CAT_SPLIT, dtype=float),
             player_names=np.asarray(player_names, dtype=object),
         )
         print(f"  [fixture] dumped kernel inputs -> {_dump_path}"
               + ("" if WEEK_LATENT == 0.0 else
-                 "  [NOTE: latent ON — bit-for-bit A-check needs --no-week-latent]"))
+                 "  [NOTE: latent ON — bit-for-bit A-check needs --no-week-latent]")
+              + ("" if WEATHER_CAT_SPLIT_NAME == "legacy" else
+                 "  [NOTE: reference cascade uses the legacy split — capture with "
+                 "SIMS_WEATHER_CAT_SPLIT=legacy]"))
 
     # ─── Rust kernel (PRODUCTION DEFAULT; --use-python forces legacy Python draw) ───
     # Compute final_scores + per-category SG means via the Rust sims_kernel up
@@ -2311,6 +2347,7 @@ if not args.price_only:
                 _r3(coefficients_r3), _r3(coefficients_r3_mid), _r3(coefficients_r3_high),
                 int(CUT_LINE), bool(USE_10_SHOT_RULE), int(SIMULATIONS), 456,
                 float(WEEK_LATENT),
+                weather_cat_split=[float(v) for v in WEATHER_CAT_SPLIT],
             )
             if len(_ret) >= 7:
                 _fs, _win, _cm1, _cm2, _cm3, _cm4, _mc = _ret[:7]

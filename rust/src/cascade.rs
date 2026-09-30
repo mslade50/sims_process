@@ -9,7 +9,7 @@
 //!  * np.rint -> round_ties_even (ops::rint_i64)
 //!  * rank(method='min') -> exact competition ranking (routes coeff buckets)
 //!  * serial single RNG stream for all draws; choice tiebreak after
-//!  * weather distributed via WEATHER_CAT_SPLIT; skill shift spread /4 evenly
+//!  * weather distributed via Inputs::weather_cat_split; skill shift spread /4 evenly
 //!
 //! Statistical target: the RNG stream differs from numpy, so `final_scores`
 //! differs sim-by-sim, but the aggregate distributions match within MC SE.
@@ -18,7 +18,9 @@ use crate::ops::{rint_i64, sum4, Skew};
 use crate::rng::NormalStream;
 
 const PAR: f64 = 72.0;
-const WEATHER_CAT_SPLIT: [f64; 4] = [0.35, 0.35, 0.15, 0.15];
+/// Pre-0.4.0 weather split [OTT, APP, ARG, PUTT]; the default when a caller
+/// does not pass one (new_sim.py passes its configured split explicitly).
+pub const LEGACY_WEATHER_CAT_SPLIT: [f64; 4] = [0.35, 0.35, 0.15, 0.15];
 const CLIP_CAT: (f64, f64) = (-8.0, 8.0);
 const MISSED_CUT_PENALTY: i64 = 200;
 
@@ -97,6 +99,11 @@ pub struct Inputs {
     /// unchanged. 0.0 disables — bit-identical to the pre-latent cascade
     /// (the latent uses its own RNG stream, never the main seed stream).
     pub week_latent_sd: f64,
+    /// Share of each player's (mean-centered) R1/R2 weather delta assigned to
+    /// [OTT, APP, ARG, PUTT]. Sums to 1, so the total weather delta is
+    /// unchanged; only the category path (in-play update coefficients and the
+    /// category clamp) sees the split.
+    pub weather_cat_split: [f64; 4],
 }
 
 pub struct Output {
@@ -217,6 +224,7 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
     let n = inp.n;
     let sims = inp.sims;
     let ns = n * sims;
+    let wcs = inp.weather_cat_split;
 
     // Precompute per-(player,category) skew transforms once.
     let skew: Vec<[Skew; 4]> = (0..n)
@@ -260,16 +268,16 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
     };
 
     // ---- R1 ----
-    // base_cat = mu - weather_delta_r1 * WEATHER_CAT_SPLIT
+    // base_cat = mu - weather_delta_r1 * inp.weather_cat_split
     let base_cat_r1: Vec<[f64; 4]> = (0..n)
         .map(|i| {
             let m = inp.mu[i];
             let w = inp.weather_delta_r1[i];
             [
-                m[0] - w * WEATHER_CAT_SPLIT[0],
-                m[1] - w * WEATHER_CAT_SPLIT[1],
-                m[2] - w * WEATHER_CAT_SPLIT[2],
-                m[3] - w * WEATHER_CAT_SPLIT[3],
+                m[0] - w * wcs[0],
+                m[1] - w * wcs[1],
+                m[2] - w * wcs[2],
+                m[3] - w * wcs[3],
             ]
         })
         .collect();
@@ -337,10 +345,10 @@ pub fn run_pretournament(inp: &Inputs) -> Output {
             let m = inp.mu[i];
             let w = inp.weather_delta_r2[i];
             [
-                m[0] - w * WEATHER_CAT_SPLIT[0],
-                m[1] - w * WEATHER_CAT_SPLIT[1],
-                m[2] - w * WEATHER_CAT_SPLIT[2],
-                m[3] - w * WEATHER_CAT_SPLIT[3],
+                m[0] - w * wcs[0],
+                m[1] - w * wcs[1],
+                m[2] - w * wcs[2],
+                m[3] - w * wcs[3],
             ]
         })
         .collect();
@@ -620,6 +628,34 @@ mod tests {
             cut_line: 65,
             use_10_shot_rule: true,
             week_latent_sd: 0.0,
+            weather_cat_split: LEGACY_WEATHER_CAT_SPLIT,
+        }
+    }
+
+    #[test]
+    fn weather_split_moves_categories_not_totals_without_updates() {
+        // Zero update coefficients: the round total mean is mu.sum() - w for
+        // any split summing to 1, so R1 totals match while R1 category means
+        // follow the split.
+        let n = 10usize;
+        let sims = 4000usize;
+        let mut a = tiny_inputs(n, sims);
+        a.weather_delta_r1 = vec![1.0; n];
+        a.cut_line = n;
+        let mut b = tiny_inputs(n, sims);
+        b.weather_delta_r1 = vec![1.0; n];
+        b.cut_line = n;
+        b.weather_cat_split = [0.0, 0.73, 0.08, 0.19];
+        let oa = run_pretournament(&a);
+        let ob = run_pretournament(&b);
+        for i in 0..n {
+            let ca = &oa.cat_means_r1[i * 4..i * 4 + 4];
+            let cb = &ob.cat_means_r1[i * 4..i * 4 + 4];
+            let ta: f64 = ca.iter().sum();
+            let tb: f64 = cb.iter().sum();
+            assert!((ta - tb).abs() < 1e-9, "totals differ {ta} vs {tb}");
+            assert!((cb[0] - ca[0] - 0.35).abs() < 1e-9, "OTT shift");
+            assert!((cb[1] - ca[1] + 0.38).abs() < 1e-9, "APP shift");
         }
     }
 

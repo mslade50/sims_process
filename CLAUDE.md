@@ -27,7 +27,7 @@ See `WEEKLY_PROCESS.md` for exact commands and day-by-day schedule.
 **Key details**:
 - Uses `course_cat_mults` from the Google Sheet `round_config` tab (written by `scoring_baseline.py`)
 - Category means are **re-centered to sum to `my_pred`** so category-first draws only change variance structure, not base predictions
-- Weather delta distributed as 0.35 OTT, 0.35 APP, 0.15 ARG, 0.15 PUTT
+- Weather delta distributed as 0 OTT, 0.73 APP, 0.08 ARG, 0.19 PUTT (2026-09-30, research: weather loads on approach; R1 and R2 of `new_sim.py` and `rust/src/cascade.rs`, kernel ≥0.4.0). Env `SIMS_WEATHER_CAT_SPLIT`: `approach` (default), `legacy` (the old 0.35/0.35/0.15/0.15), or four comma-separated shares summing to 1. The total weather delta is unchanged. The round-sim copies (`round_sim.py`, `rust/src/round_cascade.rs`) still use the legacy split. Parity fixtures (`SIMS_DUMP_FIXTURE`) must be captured with `SIMS_WEATHER_CAT_SPLIT=legacy`, because `rust/fixtures/ref_pretournament.py` hardcodes it.
 - Skill update shifts are distributed evenly across 4 categories (`shift / 4.0`) to preserve course covariance structure
 - Per-category course multipliers and skew are computed for the exact physical course by `scoring_baseline.py`, written to `round_config`, and consumed through `sheet_config.py`
 - **Week-level form latent** (`sim_inputs.WEEK_LATENT_SD`, 2026-08): one shared draw per (player, sim) added as `+w/4` to every round's category means, with idiosyncratic category stds shrunk (`sqrt(1 − σ²/round_var)`) so per-round total variance is UNCHANGED — round matchup pricing does not reprice; only the cross-round linkage changes. Fixes the missing 72-hole dependence (sim ratio was 1.019 vs empirical 1.09–1.38; target 1.15–1.20, re-scored monthly vs the closing line within [1.09, 1.30]). Lives in BOTH `new_sim.py` and `rust/src/cascade.rs` (kernel ≥0.3.0; `run_pretournament` takes `week_latent_sd` as its last arg — an old kernel TypeErrors and falls back to Python). Drawn from a separate RNG stream: `--no-week-latent` (or sd=0) is BIT-IDENTICAL to the pre-latent cascade, which is what parity fixtures must be captured with (`SIMS_DUMP_FIXTURE=1 python new_sim.py --sim-only --use-python --no-week-latent`; pin the sha256 sidecar from the ROOT `final_scores_{t}.npy`, which is saved pre-top-up).
@@ -136,12 +136,13 @@ after pulling any change to `rust/src/`, the kernel must be rebuilt or the sims
 silently keep running old logic while the Python fallbacks run new logic
 (this exact drift shipped a stale 0.1.0 kernel once).
 
-**Current minimum: 0.3.0** (2026-08-18, week-level latent — `run_pretournament`
-grew a trailing `week_latent_sd` arg). A machine with an older kernel prints a
-`[rust] WARNING ... TypeError` on every new_sim run and falls back to the
-Python cascade (correct fairs, ~20s slower). Rebuild note with copy-paste
-commands: `rust/README.md` (top banner). Verify:
-`python -c "import sims_kernel; print(sims_kernel.version())"` → `0.3.0`.
+**Current minimum: 0.4.0** (2026-09-30, weather category split — `run_pretournament`
+takes an optional `weather_cat_split` keyword, which `new_sim.py` always passes;
+0.3.0 added the trailing `week_latent_sd` arg). With an older kernel, new_sim
+stops with `Production sims_kernel.run_pretournament failed` (no silent Python
+fallback; `--use-python` is an explicit operator choice). Rebuild note with
+copy-paste commands: `rust/README.md` (top banner). Verify:
+`python -c "import sims_kernel; print(sims_kernel.version())"` → `0.4.0`.
 
 Update ritual (maturin is typically NOT installed; use cargo directly):
 1. `cd rust && cargo test --release` (expect all green)

@@ -146,7 +146,17 @@ fn rows4(a: &numpy::ndarray::ArrayView2<f64>) -> Vec<[f64; 4]> {
 ///          cat_means_r1, cat_means_r2, cat_means_r3, cat_means_r4 — each (n,4) f64,
 ///          per-player per-category SG means over sims; feed avg_expected_cat_sg,
 ///          made_cut (n,sims) bool — pairs with final_scores draw-for-draw).
+/// `weather_cat_split` (0.4.0+, keyword-optional): [OTT, APP, ARG, PUTT] share
+/// of the R1/R2 weather delta; omitted -> the legacy 0.35/0.35/0.15/0.15.
 #[pyfunction]
+#[pyo3(signature = (
+    mu, std_course, eff_skew, l_corr, my_pred_base, r2_mu, r3_mu, r4_mu,
+    weather_delta_r1, weather_delta_r2,
+    r1_high, r1_midh, r1_midl, r1_low, r2_lt6, r2_6_30, r2_30up,
+    r3_lt6, r3_6_20, r3_30up,
+    cut_line, use_10_shot_rule, sims, seed, week_latent_sd,
+    weather_cat_split=None,
+))]
 #[allow(clippy::too_many_arguments)]
 fn run_pretournament<'py>(
     py: Python<'py>,
@@ -168,6 +178,7 @@ fn run_pretournament<'py>(
     sims: usize,
     seed: u64,
     week_latent_sd: f64,
+    weather_cat_split: Option<[f64; 4]>,
 ) -> (
     Bound<'py, PyArray2<i64>>,
     Bound<'py, PyArray1<f64>>,
@@ -216,6 +227,7 @@ fn run_pretournament<'py>(
         cut_line,
         use_10_shot_rule,
         week_latent_sd,
+        weather_cat_split: weather_cat_split.unwrap_or(cascade::LEGACY_WEATHER_CAT_SPLIT),
     };
     let out = cascade::run_pretournament(&inp);
     let no = out.n;
