@@ -52,8 +52,9 @@ _pass_group = _parser.add_mutually_exclusive_group()
 _pass_group.add_argument(
     "--calibration-pass",
     action="store_true",
-    help=("Use the default raw/pre-sim calibration input and prohibit email, bet "
-          "storage, dashboard pushes, and sim-fairs publication."),
+    help=("Price the DataGolf-blended pre_sim_summary_<tourney>.csv (lineage-"
+          "checked against pre_course_fit) and prohibit email, bet storage, "
+          "dashboard pushes, and sim-fairs publication."),
 )
 _pass_group.add_argument(
     "--final-pass",
@@ -512,6 +513,7 @@ def _build_cache_replay_context(
 
 def _select_prediction_input(
     final_path,
+    blended_path,
     pre_course_path,
     *,
     requested_pass="calibration",
@@ -519,10 +521,12 @@ def _select_prediction_input(
 ):
     """Select the prediction artifact and classify the two-pass run.
 
-    Calibration deliberately ignores stale generated artifacts and always uses
-    pre_course_fit. Final mode refuses to downgrade when its regressed artifact
-    is absent. There is intentionally no auto-final mode: tournament slugs repeat
-    annually, so file existence alone is not authorization to publish.
+    Calibration always prices pre_sim_skill's DataGolf-blended, Sheet-boosted
+    pre_sim_summary and never falls back to the raw pre_course_fit (whose pred
+    has no DG blend, cold-start replacement or Sheet boosts). Final mode refuses
+    to downgrade when its regressed artifact is absent. There is intentionally
+    no auto-final mode: tournament slugs repeat annually, so file existence
+    alone is not authorization to publish.
     """
     if requested_pass not in {"calibration", "final"}:
         raise ValueError(f"Unknown tournament-sim pass: {requested_pass!r}")
@@ -534,11 +538,58 @@ def _select_prediction_input(
             )
         return final_path, "final"
 
-    if not path_exists(pre_course_path):
-        raise FileNotFoundError(
-            f"Calibration pass requires raw predictions at {pre_course_path!r}"
+    for required in (blended_path, pre_course_path):
+        if not path_exists(required):
+            raise FileNotFoundError(
+                f"Calibration pass requires {required!r} "
+                "(pre_sim_skill.py blended predictions and their pre_course_fit source)"
+            )
+    return blended_path, "calibration"
+
+
+def _require_blended_lineage(blended, pre_course, *, blended_path, pre_course_path,
+                             tolerance=0.006):
+    """Fail closed unless the blended summary was built from this pre_course_fit.
+
+    pre_sim_skill.py writes pred_base = pre_course_fit pred (rounded to 2 dp)
+    and pred = pred_base + boost + override_adj + dg_adj + sheet_boost. File
+    mtimes cannot prove freshness (new_sim rewrites pre_course_fit with tee
+    times every run), so lineage is proven by content: identical field and
+    pred_base matching pre_course_fit pred within rounding.
+    """
+    for label, frame, columns in (
+        (blended_path, blended, ("player_name", "pred", "pred_base")),
+        (pre_course_path, pre_course, ("player_name", "pred")),
+    ):
+        missing = [c for c in columns if c not in frame.columns]
+        if missing:
+            raise RuntimeError(f"{label!r} is missing required columns {missing}")
+    blended_names = set(blended["player_name"])
+    pre_course_names = set(pre_course["player_name"])
+    if blended_names != pre_course_names:
+        only_blended = sorted(blended_names - pre_course_names)[:5]
+        only_pre_course = sorted(pre_course_names - blended_names)[:5]
+        raise RuntimeError(
+            f"Stale {blended_path!r}: field differs from {pre_course_path!r} "
+            f"(only in blended: {only_blended}; only in pre_course_fit: "
+            f"{only_pre_course}). Re-run pre_sim_skill.py."
         )
-    return pre_course_path, "calibration"
+    joined = blended.set_index("player_name")[["pred", "pred_base"]].join(
+        pre_course.set_index("player_name")[["pred"]].rename(
+            columns={"pred": "pre_course_pred"}
+        )
+    )
+    if joined[["pred", "pred_base", "pre_course_pred"]].isna().any().any():
+        raise RuntimeError(f"Null predictions in {blended_path!r} or {pre_course_path!r}")
+    drift = (joined["pred_base"] - joined["pre_course_pred"]).abs()
+    if (drift > tolerance).any():
+        worst = drift.idxmax()
+        raise RuntimeError(
+            f"Stale {blended_path!r}: pred_base for {worst!r} is "
+            f"{joined.at[worst, 'pred_base']:.3f} but {pre_course_path!r} pred is "
+            f"{joined.at[worst, 'pre_course_pred']:.3f}. Re-run pre_sim_skill.py."
+        )
+    return int((joined["pred"] - joined["pre_course_pred"]).abs().gt(tolerance).sum())
 
 
 def _load_required_variance_inputs(sim_inputs_module, config_path):
@@ -818,9 +869,12 @@ SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]
 HALF_SHOT_ADJ = {"betonline": 25, "betcris": 30}
 
 # Input predictions are pass-bound, never selected from generated-file presence:
-#   calibration -> pre_course_fit_{tourney}.csv
+#   calibration -> pre_sim_summary_{tourney}.csv (pre_sim_skill.py: DG blend,
+#                  cold-start/override DG replacement and Sheet boosts baked
+#                  in; lineage-checked against pre_course_fit_{tourney}.csv)
 #   final       -> final_predictions_{tourney}.csv (requires --final-pass)
 _final_pred_path = f"final_predictions_{tourney}.csv"
+_blended_pred_path = f"pre_sim_summary_{tourney}.csv"
 _pre_course_path = f"pre_course_fit_{tourney}.csv"
 _requested_pass = (
     "final" if args.final_pass else "calibration"
@@ -828,6 +882,7 @@ _requested_pass = (
 try:
     PRED_PATH, RUN_PASS = _select_prediction_input(
         _final_pred_path,
+        _blended_pred_path,
         _pre_course_path,
         requested_pass=_requested_pass,
     )
@@ -1714,6 +1769,23 @@ model_preds['player_name'] = (
 )
 model_preds = model_preds.drop_duplicates(subset=['player_name']).reset_index(drop=True)
 
+if RUN_PASS == "calibration":
+    _pcf_lineage = pd.read_csv(_pre_course_path, usecols=['player_name', 'pred'])
+    _pcf_lineage['player_name'] = (
+        _pcf_lineage['player_name'].astype(str).str.lower().str.strip()
+        .replace(name_replacements)
+    )
+    _n_blend_moved = _require_blended_lineage(
+        model_preds.rename(columns={'my_pred': 'pred'}),
+        _pcf_lineage.drop_duplicates(subset=['player_name']),
+        blended_path=PRED_PATH,
+        pre_course_path=_pre_course_path,
+    )
+    print(f"[pass] Calibration prices blended {PRED_PATH} "
+          f"({len(model_preds)} players; {_n_blend_moved} differ from raw "
+          f"{_pre_course_path} via DG blend/overrides/Sheet boosts)")
+    del _pcf_lineage
+
 # --- Archetype boosts from Google Sheet (first pass only) ---
 if _sheet_archetype_boosts and PRED_PATH != _final_pred_path:
     try:
@@ -1743,42 +1815,28 @@ elif _sheet_archetype_boosts:
 else:
     _precomputed_arch_map = None
 
-# --- Manual boosts from Google Sheet (calibration input only) ---
-# pre_sim_skill.py already bakes sheet boosts into pre_sim_summary's pred
-# (tracked in its 'sheet_boost' column), and final_predictions inherits them
-# through init_sim_skill -> mkt_regress. The raw pre_course_fit calibration
-# input has not seen them yet.
-if _sheet_manual_boosts and PRED_PATH == _pre_course_path:
-    _boost_applied = 0
-    for name, boost in _sheet_manual_boosts.items():
-        mask = model_preds['player_name'] == name
-        if mask.any():
-            old_val = model_preds.loc[mask, 'my_pred'].iloc[0]
-            model_preds.loc[mask, 'my_pred'] += boost
-            print(f"[boost] {name}: {old_val:.3f} -> {old_val + boost:.3f} ({boost:+.3f})")
-            _boost_applied += 1
-        else:
-            print(f"[boost] Warning: {name} not found in field")
-    print(f"[boost] Applied {_boost_applied} manual boosts from Sheet")
-elif _sheet_manual_boosts:
-    print("[boost] Second pass - skipping manual boosts (already baked into final_predictions)")
+# --- Manual boosts from Google Sheet: never re-applied here ---
+# pre_sim_skill.py bakes Sheet manual boosts into pre_sim_summary's pred
+# (tracked in its 'sheet_boost' column) and final_predictions inherits them
+# through init_sim_skill -> mkt_regress. Re-applying would double-boost.
+if _sheet_manual_boosts:
+    print(f"[boost] Skipping {len(_sheet_manual_boosts)} Sheet manual boosts "
+          f"(already baked into {PRED_PATH})")
 
 # --- Save init_sim_skill for mkt_regress (first pass only) ---
-# DG blending is handled upstream by pre_sim_skill.py — no override here.
-# Saved AFTER the boost blocks so archetype/manual boosts reach mkt_regress's
+# DG blending, cold-start/override DG replacement and Sheet manual boosts are
+# applied upstream by pre_sim_skill.py and arrive here in pre_sim_summary's
+# pred, so init_sim_skill carries the same blended pred the calibration priced.
+# Saved AFTER the archetype block so archetype boosts reach mkt_regress's
 # base pred; saving first made mkt_regress regress boosted sim probs against an
 # un-boosted base, partially inverting the boost in final_predictions.
-if PRED_PATH != _final_pred_path:
-    _pss_path = f"pre_sim_summary_{tourney}.csv"
-    if os.path.exists(_pss_path):
-        _pss_df = pd.read_csv(_pss_path)
-        _pss_df['player_name'] = _pss_df['player_name'].str.lower().str.strip().replace(name_replacements)
-        _init_skill = model_preds[['player_name', 'my_pred']].rename(columns={'my_pred': 'pred'})
-        _init_skill = _init_skill.merge(_pss_df[['player_name', 'c_adj', 'sample']], on='player_name', how='left')
-        _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
-        print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players)")
-    else:
-        print(f"[warn] {_pss_path} not found — init_sim_skill_{tourney}.csv not saved (mkt_regress may fail)")
+if RUN_PASS == "calibration":
+    _init_skill = model_preds[['player_name', 'my_pred', 'c_adj', 'sample']].rename(
+        columns={'my_pred': 'pred'}
+    )
+    _init_skill.to_csv(f"init_sim_skill_{tourney}.csv", index=False)
+    print(f"[ok] Saved init_sim_skill_{tourney}.csv ({len(_init_skill)} players, "
+          f"blended pred from {PRED_PATH})")
 else:
     print("[init_sim_skill] Second pass — skipping (regressed predictions already in final_predictions)")
 

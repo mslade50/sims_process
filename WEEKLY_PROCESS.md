@@ -179,14 +179,15 @@ shot_rule = 0        # 10-shot rule: 0 = off, 10 = on
 ### 1.2 Generate Skill Predictions (external)
 Run the skill model outside this repo. It produces:
 
-- **`pre_course_fit_{tourney}.csv`** — baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` for the first-pass sim.
+- **`pre_course_fit_{tourney}.csv`** — baseline predictions (`pred`, `std_dev`, `sample`, `dg_id`). Used by `scoring_baseline.py` for field strength and by `new_sim.py` as the lineage source for the first-pass input.
+- **`pre_sim_summary_{tourney}.csv`** — `pre_sim_skill.py`'s DataGolf-blended `pred` (tiered blend; cold-start/override players replaced by DG outright; Sheet manual boosts baked in, tracked in `sheet_boost`). This is what the calibration pass prices.
 
-**`final_predictions_{tourney}.csv`** is NOT generated externally — it is produced by `mkt_regress.py` (see Phase 3.2) after the calibration pass. Pass selection is explicit: `--calibration-pass` requires `pre_course_fit_{tourney}.csv`, while `--final-pass` requires `final_predictions_{tourney}.csv`. A no-flag run is calibration-only; file existence never authorizes external delivery because tournament slugs repeat across years.
+**`final_predictions_{tourney}.csv`** is NOT generated externally — it is produced by `mkt_regress.py` (see Phase 3.2) after the calibration pass. Pass selection is explicit: `--calibration-pass` requires `pre_sim_summary_{tourney}.csv` plus the `pre_course_fit_{tourney}.csv` it was built from (it fails closed if the field or `pred_base` no longer matches), while `--final-pass` requires `final_predictions_{tourney}.csv`. A no-flag run is calibration-only; file existence never authorizes external delivery because tournament slugs repeat across years.
 
 **Downstream consumers:**
 - `scoring_baseline.py` — reads `pre_course_fit` for field strength adjustment
 - `cat_dists_player.py` (runs in sim_prep) — uses `pre_course_fit` as the field and checks it for hot players missing the sample cut
-- `new_sim.py` — reads the pass-bound prediction artifact (`pre_course_fit` for calibration; `final_predictions` only with `--final-pass`)
+- `new_sim.py` — reads the pass-bound prediction artifact (blended `pre_sim_summary` for calibration, which it also writes to `init_sim_skill` for `mkt_regress`; `final_predictions` only with `--final-pass`)
 - `mkt_regress.py` — reads first-pass sim outputs + market odds, produces `final_predictions`
 - `live_stats_engine.py` — reads `final_predictions` for round=0 baseline (live rounds only)
 - `sheets_storage.py` — reads `pre_course_fit` for `dg_id` lookup
@@ -367,7 +368,7 @@ The tournament sim is a **two-pass process**: first pass uses raw predictions, m
 python new_sim.py --calibration-pass
 ```
 
-The calibration pass reads exactly `pre_course_fit_{tourney}.csv`, even if generated files from an earlier run still exist. It writes local simulation/pricing artifacts for `mkt_regress.py`, then exits before email, Sheets/ledger storage, dashboard pushes, or sim-fairs publication.
+The calibration pass reads exactly the DataGolf-blended `pre_sim_summary_{tourney}.csv` (never the unblended `pre_course_fit` pred and never `final_predictions`, even if generated files from an earlier run still exist), refuses a summary whose field or `pred_base` does not match the current `pre_course_fit_{tourney}.csv`, does not re-apply Sheet manual boosts (already baked in), and saves that same pred to `init_sim_skill_{tourney}.csv`. It writes local simulation/pricing artifacts for `mkt_regress.py`, then exits before email, Sheets/ledger storage, dashboard pushes, or sim-fairs publication.
 
 **Monday tee-time rule (America/New_York):** missing R1 or R2 tee times are
 expected and do not block calibration, the final tournament sim, or email. Any
@@ -927,7 +928,7 @@ python write_base_rates.py                       # Step 5: Base rates reference 
 python hole_baselines.py                         # ETR only: exact-course hole profile
 
 # Pre-tournament sim (two-pass)
-python new_sim.py --calibration-pass             # First pass (pre_course_fit; local artifacts only)
+python new_sim.py --calibration-pass             # First pass (blended pre_sim_summary; local artifacts only)
 python mkt_regress.py                            # Market regression -> final_predictions
 # Shadow comparison only: mkt_regress.py --local-only (no OneDrive/ETR handoff)
 python new_sim.py --final-pass                   # Second pass (strict email/storage/publish)

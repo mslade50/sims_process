@@ -52,28 +52,72 @@ def _load_definitions(*names):
     return namespace
 
 
-def test_calibration_uses_only_pre_course_fit_even_when_final_exists():
+def test_calibration_uses_only_blended_summary_even_when_final_exists():
     select = _load_definitions("_select_prediction_input")["_select_prediction_input"]
     existing = {"final.csv", "pre_sim_summary.csv", "pre_course_fit.csv"}
 
     selected, run_pass = select(
         "final.csv",
+        "pre_sim_summary.csv",
         "pre_course_fit.csv",
         path_exists=existing.__contains__,
     )
 
-    assert (selected, run_pass) == ("pre_course_fit.csv", "calibration")
+    assert (selected, run_pass) == ("pre_sim_summary.csv", "calibration")
+
+
+def test_calibration_never_falls_back_to_unblended_pre_course_fit():
+    select = _load_definitions("_select_prediction_input")["_select_prediction_input"]
+
+    with pytest.raises(FileNotFoundError, match="pre_sim_summary.csv"):
+        select(
+            "final.csv",
+            "pre_sim_summary.csv",
+            "pre_course_fit.csv",
+            path_exists={"final.csv", "pre_course_fit.csv"}.__contains__,
+        )
+    with pytest.raises(FileNotFoundError, match="pre_course_fit.csv"):
+        select(
+            "final.csv",
+            "pre_sim_summary.csv",
+            "pre_course_fit.csv",
+            path_exists={"pre_sim_summary.csv"}.__contains__,
+        )
+
+
+def test_blended_lineage_rejects_stale_summary():
+    check = _load_definitions("_require_blended_lineage")["_require_blended_lineage"]
+    pre_course = pd.DataFrame({"player_name": ["a", "b"], "pred": [1.004, -0.5]})
+    blended = pd.DataFrame(
+        {"player_name": ["a", "b"], "pred_base": [1.0, -0.5], "pred": [1.2, -0.5]}
+    )
+    kwargs = {"blended_path": "pss.csv", "pre_course_path": "pcf.csv"}
+
+    assert check(blended, pre_course, **kwargs) == 1
+
+    with pytest.raises(RuntimeError, match="pred_base"):
+        check(blended.assign(pred_base=[0.9, -0.5]), pre_course, **kwargs)
+    with pytest.raises(RuntimeError, match="field differs"):
+        check(blended.iloc[:1], pre_course, **kwargs)
+    with pytest.raises(RuntimeError, match="missing required columns"):
+        check(blended.drop(columns="pred_base"), pre_course, **kwargs)
 
 
 def test_calibration_and_final_inputs_are_required_not_downgraded():
     select = _load_definitions("_select_prediction_input")["_select_prediction_input"]
 
     with pytest.raises(FileNotFoundError, match="Calibration pass requires"):
-        select("final.csv", "pre_course_fit.csv", path_exists=lambda _path: False)
+        select(
+            "final.csv",
+            "pre_sim_summary.csv",
+            "pre_course_fit.csv",
+            path_exists=lambda _path: False,
+        )
 
     with pytest.raises(FileNotFoundError, match="Final pass requires"):
         select(
             "final.csv",
+            "pre_sim_summary.csv",
             "pre_course_fit.csv",
             requested_pass="final",
             path_exists=lambda _path: False,
