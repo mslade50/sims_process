@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "event_id": "557",
-  "tourney": "biltmore",
-  "sim_run_at": "2026-09-16 19:18:32 UTC",
-  "prediction_count": 132,
-  "active_field_count": 132,
-  "prediction_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
-  "active_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
+  "event_id": "554",
+  "tourney": "utah",
+  "sim_run_at": "2026-09-30 20:39:33 UTC",
+  "prediction_count": 120,
+  "active_field_count": 0,
+  "prediction_field_sha256": "d85eadfdfff19355b88074011d6d2e2e9a3f52aac3ab79504423ca3d10c3c3e9",
+  "active_field_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "withdrawn_or_extra_players": []
 }
