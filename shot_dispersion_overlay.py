@@ -252,4 +252,20 @@ def apply_shot_dispersion_overlay(
         f"[shot-dispersion] feature={feature_path.name} sha256={actual_feature_hash[:12]}... "
         f"dists={dists.name} sha256={actual_dists_hash[:12]}..."
     )
+    # Apply owner-requested event overrides after field normalization so the
+    # requested variance ratio is exact and other players are unchanged.
+    manual = config.get("manual_variance_multipliers", {})
+    if not isinstance(manual, dict):
+        raise ValueError("manual_variance_multipliers must be a player-to-factor mapping")
+    seen = set()
+    for name, factor in manual.items():
+        player = _normalise_name(name)
+        if player in seen or player not in features.index:
+            raise ValueError(f"Invalid manual variance player: {name}")
+        seen.add(player)
+        if isinstance(factor, bool) or not isinstance(factor, (int, float)) or not np.isfinite(factor) or factor <= 0:
+            raise ValueError(f"Invalid manual variance multiplier for {player}: {factor}")
+        if player in players:
+            effective.loc[player, cat_order] *= np.sqrt(factor)
+            print(f"[shot-dispersion] Manual {player}: category variance x{factor:.6f}")
     return effective

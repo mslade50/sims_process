@@ -17,7 +17,8 @@ def _sha256(path):
     return lf_normalized_sha256(path)
 
 
-def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path):
+@pytest.mark.parametrize("manual_factor", [None, 0.875, 0, -1, float("nan"), True, "0.875"])
+def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path, manual_factor):
     players = ["alpha, a", "beta, b"]
     base = pd.DataFrame(
         {
@@ -55,10 +56,16 @@ def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path):
                 "feature_sha256": _sha256(feature_path),
                 "distribution_sha256": _sha256(dists_path),
                 "weights": weights,
+                "manual_variance_multipliers": {} if manual_factor is None else {"alpha, a": manual_factor},
             }
         ),
         encoding="utf-8",
     )
+
+    if manual_factor is not None and (isinstance(manual_factor, (bool, str)) or not np.isfinite(manual_factor) or manual_factor <= 0):
+        with pytest.raises(ValueError, match="Invalid manual variance multiplier"):
+            apply_shot_dispersion_overlay(base, players, CATS, tourney="bmw", event_id=28, dists_path=dists_path, config_path=config_path)
+        return
 
     actual = apply_shot_dispersion_overlay(
         base,
@@ -77,8 +84,10 @@ def test_overlay_matches_variance_formula_and_preserves_field_mean(tmp_path):
         shot_var = features[shot_col].to_numpy()
         scaled_shot_var = shot_var * base_var.mean() / shot_var.mean()
         expected_var = (1.0 - weights[cat]) * base_var + weights[cat] * scaled_shot_var
-        np.testing.assert_allclose(actual[cat].to_numpy() ** 2, expected_var)
         np.testing.assert_allclose(expected_var.mean(), base_var.mean())
+        if manual_factor is not None:
+            expected_var[0] *= manual_factor
+        np.testing.assert_allclose(actual[cat].to_numpy() ** 2, expected_var)
 
 
 def test_live_overlay_accepts_a_subset_of_the_frozen_roster(tmp_path):
@@ -110,6 +119,7 @@ def test_live_overlay_accepts_a_subset_of_the_frozen_roster(tmp_path):
                 "feature_sha256": _sha256(feature_path),
                 "distribution_sha256": _sha256(dists_path),
                 "weights": {cat: 0.9 for cat in CATS},
+                "manual_variance_multipliers": {"beta, b": 0.875},
             }
         ),
         encoding="utf-8",
