@@ -1792,8 +1792,10 @@ def _normalize_scraped_event_ids(data):
 
 def _load_name_replacements() -> dict:
     try:
+        import sim_inputs
         from sim_inputs import name_replacements
-        return name_replacements
+        # Feed/book spellings -> DataGolf field display (getattr: older sim_inputs lack it).
+        return {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
     except ImportError:
         return {}
 

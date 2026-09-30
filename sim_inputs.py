@@ -130,6 +130,16 @@ name_replacements = {
     'spaun, jj': 'spaun, j.j.'
 }
 
+# Feed aliases: map book / DG-rounds / database spellings to the DataGolf field
+# display name. sims_process applies them (merged over name_replacements) where
+# it joins those feeds to the field by name. sim_prep joins by dg_id and must
+# not merge them into name_replacements.
+feed_name_aliases = {
+    'brown, daniel': 'brown, dan',
+    'bauchou, zachary': 'bauchou, zach',
+    'kim, seonghyeon': 'kim, s.h.',
+}
+
 ##manual adjustments for players which we do not have requisite data on.
 ##number here is a replacement for the skill prediction pre course fit etc
 overrides = {

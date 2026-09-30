@@ -390,9 +390,11 @@ def _parse_datagolf_json(data: dict) -> pd.DataFrame:
     if not df.empty:
         # Apply name_replacements for consistency with sim player names
         try:
+            import sim_inputs
             from sim_inputs import name_replacements
-            df["Player 1"] = df["Player 1"].replace(name_replacements)
-            df["Player 2"] = df["Player 2"].replace(name_replacements)
+            feed_map = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
+            df["Player 1"] = df["Player 1"].replace(feed_map)
+            df["Player 2"] = df["Player 2"].replace(feed_map)
         except ImportError:
             pass
         df = df.drop_duplicates(
@@ -475,9 +477,11 @@ def _parse_3ball_json(data: dict) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if not df.empty:
         try:
+            import sim_inputs
             from sim_inputs import name_replacements
+            feed_map = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
             for c in ("Player 1", "Player 2", "Player 3"):
-                df[c] = df[c].replace(name_replacements)
+                df[c] = df[c].replace(feed_map)
         except ImportError:
             pass
         df = df.drop_duplicates(subset=["Player 1", "Player 2", "Player 3", "Bookmaker"],
@@ -723,9 +727,11 @@ def scrape_betonline_live(market_type: str = "tournament_matchup") -> pd.DataFra
     df = pd.DataFrame(rows)
     if not df.empty:
         try:
+            import sim_inputs
             from sim_inputs import name_replacements
-            df["Player 1"] = df["Player 1"].replace(name_replacements)
-            df["Player 2"] = df["Player 2"].replace(name_replacements)
+            feed_map = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
+            df["Player 1"] = df["Player 1"].replace(feed_map)
+            df["Player 2"] = df["Player 2"].replace(feed_map)
         except ImportError:
             pass
         df["P1 Odds"] = pd.to_numeric(df["P1 Odds"], errors="coerce")

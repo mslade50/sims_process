@@ -29,7 +29,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import sim_inputs
 from sim_inputs import tourney, event_ids, name_replacements
+
+# Feed/database spellings -> DataGolf field display (getattr: older sim_inputs lack it).
+FEED_NAME_MAP = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
 from api_utils import fetch_historical_rounds, clean_names
 
 # ---------------------------------------------------------------------------
@@ -87,7 +91,7 @@ def _normalize_db_names(df):
     matches the sims' lowercase 'last, first' contract. Do NOT flip to
     'first last'; the whole pipeline keys on last-first."""
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
-    df["player_name"] = df["player_name"].replace(name_replacements)
+    df["player_name"] = df["player_name"].replace(FEED_NAME_MAP)
     return df
 
 
@@ -114,7 +118,7 @@ def build_archetype_file(event_id=None, field_players=None):
                 fdf["player_name"] = (
                     fdf["player_name"].astype(str).str.lower().str.strip()
                 )
-                fdf["player_name"] = fdf["player_name"].replace(name_replacements)
+                fdf["player_name"] = fdf["player_name"].replace(FEED_NAME_MAP)
                 field_players = fdf["player_name"].dropna().unique().tolist()
                 print(f"  Field from {fname}: {len(field_players)} players")
                 break
@@ -200,7 +204,7 @@ def load_predictions(tourney_name):
 
     df = pd.read_csv(path)
     df["player_name"] = df["player_name"].astype(str).str.lower().str.strip()
-    df["player_name"] = df["player_name"].replace(name_replacements)
+    df["player_name"] = df["player_name"].replace(FEED_NAME_MAP)
 
     rows = []
     for _, row in df.iterrows():

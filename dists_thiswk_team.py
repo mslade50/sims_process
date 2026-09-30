@@ -32,7 +32,11 @@ import os
 import shutil
 import numpy as np
 import pandas as pd
+import sim_inputs
 from sim_inputs import name_replacements, course_id
+
+# Feed/database spellings -> DataGolf field display (getattr: older sim_inputs lack it).
+FEED_NAME_MAP = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
 
 # ---------------- config ----------------
 REF_MODE = "vs_tour"  # or: "vs_avg_course_unweighted", "vs_avg_course_weighted"
@@ -62,7 +66,7 @@ MIN_STD_ALLOWED    = 1e-6
 # ---------------- helpers ----------------
 def normalize_name(name):
     key = str(name).strip().lower()
-    return name_replacements.get(key, key)
+    return FEED_NAME_MAP.get(key, key)
 
 
 def choose_ref_cols(mode):

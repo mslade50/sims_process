@@ -38,7 +38,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import sim_inputs
 from sim_inputs import name_replacements
+
+# Feed/database spellings -> DataGolf field display (getattr: older sim_inputs lack it).
+FEED_NAME_MAP = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
 from sheets_storage import get_spreadsheet, update_ledger_grades
 
 # Email config
@@ -165,7 +169,7 @@ def fetch_historical_results(event_id, year=None, tour="pga"):
 
         # Normalize player names
         if "player_name" in df.columns:
-            df["player_name"] = df["player_name"].str.lower().str.strip().replace(name_replacements)
+            df["player_name"] = df["player_name"].str.lower().str.strip().replace(FEED_NAME_MAP)
 
         # Parse fin_text to get numeric position
         if "fin_text" in df.columns:

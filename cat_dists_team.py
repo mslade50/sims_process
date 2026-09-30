@@ -25,7 +25,11 @@ import pandas as pd
 import os
 from dotenv import load_dotenv
 load_dotenv()
+import sim_inputs
 from sim_inputs import name_replacements
+
+# Feed/database spellings -> DataGolf field display (getattr: older sim_inputs lack it).
+FEED_NAME_MAP = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}
 from sheet_config import load_config as _load_cfg
 _cfg = _load_cfg()
 tourney = _cfg["tourney"]
@@ -454,7 +458,7 @@ if os.path.exists(IN_FIELD):
     # Normalize names on both sides
     def normalize_name(name):
         key = str(name).strip().lower()
-        return name_replacements.get(key, key)
+        return FEED_NAME_MAP.get(key, key)
 
     player_df["player_key"] = player_df["player_name"].apply(normalize_name)
     field["player_key"] = field["player_name"].apply(normalize_name)
