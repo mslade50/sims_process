@@ -13,6 +13,7 @@ title/slug matchers. An optional per-slug event_tag override (sim_inputs.kalshi_
 acts as a tie-breaker, never as the sole signal.
 """
 import re
+from kalshi_winner import winner_player, winner_title_parts
 
 # Surname particles that belong WITH the surname:
 # 'Erik van Rooyen' -> 'van rooyen, erik';  'Adrien Dumont de Chassart' -> 'dumont de chassart, adrien'
@@ -84,6 +85,9 @@ def norm_name(s, name_replacements=None, field_set=None):
 def _player_from_title(title):
     """Outright/maker titles: 'RBC Canadian Open: Will X finish...' / 'Will X win the ...'."""
     t = title or ""
+    player, _ = winner_title_parts(t)
+    if player:
+        return player
     m = re.match(r".*?:\s*Will (.+?) (?:finish|make|miss|lead|win)", t)
     if m:
         return m.group(1).strip()
@@ -97,6 +101,10 @@ def player_from_market(m, kind="subtitle"):
     """Raw player name from a Kalshi market.
     kind='subtitle' -> yes_sub_title (ancillary leader/top-N/3-ball), title fallback.
     kind='title'    -> parse the title (outright/maker)."""
+    if str(m.get("ticker") or "").split("-", 1)[0] in {"KXPGATOUR", "KXPGAWIN"}:
+        return winner_player(m)
+    if kind == "title" and winner_title_parts(m.get("title"))[0]:
+        return ""  # An outright winner title cannot prove another series' outcome.
     if kind == "subtitle":
         st = (m.get("yes_sub_title") or "").strip()
         if st:

@@ -1683,8 +1683,12 @@ def _kalshi_taker_fee(price):
 def _kalshi_outright_player(title):
     """Extract a player from legacy and current Kalshi outright titles."""
     import re
+    from kalshi_winner import winner_title_parts
 
     value = str(title or "").strip()
+    player, _ = winner_title_parts(value)
+    if player:
+        return player
     match = re.match(
         r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", value, re.I
     )
@@ -1714,8 +1718,12 @@ def _kalshi_outright_player(title):
 def _kalshi_outright_tournament(market):
     """Resolve tournament identity from title or Kalshi resolution metadata."""
     import re
+    from kalshi_winner import winner_title_parts
 
     title = str((market or {}).get("title") or "").strip()
+    _, winner_event = winner_title_parts(title)
+    if winner_event:
+        return winner_event
     # Prefer an explicit event suffix. A generic ``in the`` search incorrectly
     # treats "finish in the top 5 at the TOUR Championship" as an event named
     # "top 5 at the TOUR Championship".
@@ -2018,7 +2026,11 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         if (ask - bid) > 0.10:
             continue
 
-        player_raw = _kalshi_outright_player(title)
+        if mtype == "winner":
+            from kalshi_winner import winner_player
+            player_raw = winner_player(mkt)
+        else:
+            player_raw = _kalshi_outright_player(title)
         if not player_raw:
             continue
         player = norm(player_raw)
