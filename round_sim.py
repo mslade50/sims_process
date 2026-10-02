@@ -334,8 +334,28 @@ def _load_catfirst_dists(player_names, *, allow_player_subset=False):
             f"Required category-first distributions not found: {DISTS_FILE_V2}"
         )
 
+    from late_field_replacements import (
+        extend_category_distributions, validated_late_players,
+        replacement_category_distributions,
+    )
+
+    frozen = pd.read_csv(DISTS_FILE_V2)
+    late_players = validated_late_players(_event_id, tourney) if allow_player_subset else set()
+    missing = set(player_names) - set(frozen["player_name"])
+    if missing and late_players:
+        catalog = pd.read_csv("sg_dist_player.csv")
+        for player in sorted(missing & set(late_players) - set(catalog["player_name"])):
+            catalog = pd.concat([catalog, replacement_category_distributions(
+                player, late_players[player], CAT_ORDER, frozen,
+            )], ignore_index=True)
+        dists, frozen_players, added_players = extend_category_distributions(
+            frozen, catalog, player_names, CAT_ORDER,
+            late_players, replacements=name_replacements,
+        )
+    else:
+        dists, frozen_players, added_players = frozen, [], []
     dists, active_players = require_complete_category_distributions(
-        pd.read_csv(DISTS_FILE_V2),
+        dists,
         player_names,
         CAT_ORDER,
         name_replacements=name_replacements,
@@ -351,13 +371,17 @@ def _load_catfirst_dists(player_names, *, allow_player_subset=False):
     # applied before course multipliers and does not change category means.
     std_w = apply_shot_dispersion_overlay(
         std_w,
-        active_players,
+        frozen_players if added_players else active_players,
         CAT_ORDER,
         tourney=tourney,
         event_id=_event_id,
         dists_path=DISTS_FILE_V2,
-        allow_active_subset=allow_player_subset,
+        allow_active_subset=allow_player_subset and not added_players,
     )
+    if added_players:
+        print("[late-field] Pre-event SG category distributions for "
+              + ", ".join(added_players)
+              + "; frozen roster overlay retained, no shot overlay for replacements")
     active_stds = std_w.loc[active_players, CAT_ORDER].to_numpy(dtype=float)
     if not np.isfinite(active_stds).all() or np.any(active_stds <= 0.0):
         raise ValueError(

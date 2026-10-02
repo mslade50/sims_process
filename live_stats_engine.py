@@ -57,6 +57,7 @@ from forecast_feedback import (
     single_published_forecast,
 )
 from r1_prediction_artifact import load_matching_r1_predictions
+from late_field_replacements import replacement_ema20
 from live_sim_exclusions import filter_live_sim_players
 
 load_dotenv()
@@ -328,6 +329,8 @@ def load_and_merge(round_num):
     if df is None:
         raise RuntimeError(f"Failed to fetch live stats for round {round_num}")
     df = filter_live_sim_players(df)
+    # Withdrawals do not need prediction coverage or replacement estimates.
+    df = df[~df["position"].astype(str).str.contains("WD|DQ", na=False)].copy()
     df = _merge_img_round_summary(df, round_num)
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
@@ -377,6 +380,35 @@ def _merge_r1(df):
     R1 merge: load model_predictions_r1.csv (created pre-event).
     Source: live_stats.py lines 148-162
     """
+    def build_late_players(missing, locked, manifest):
+        from sim_inputs import feed_name_aliases
+
+        cutoff = pd.to_datetime(df["r1_teetime"], errors="coerce").min()
+        if pd.isna(cutoff):
+            raise ValueError("Cannot determine the R1 date for late-player history cutoff")
+        wind_factor = compute_wind_factor(event_ids, wind_override, baseline_wind, course_id)
+        # Recover the original dew centering offset from the locked snapshot.
+        # Do not re-center or otherwise alter any existing player's prediction.
+        if "dew_r1" not in locked:
+            raise ValueError("Locked R1 snapshot lacks raw dew values for late-player weather")
+        dew_center = (locked["dew_r1"] * dew_calculation - locked["dew_adj1"]).median()
+        rows = []
+        for player in missing:
+            row = replacement_ema20(player, cutoff, aliases={**name_replacements, **feed_name_aliases})
+            tt = df.loc[df["player_name"].eq(player), "r1_teetime"].iloc[0]
+            row.update({
+                "player_name": player,
+                "wind_adj1": calculate_average_wind(tt, WIND_ARRAYS[1]) * wind_factor,
+                "dew_adj1": calculate_average_wind(tt, DEW_ARRAYS[1]) * dew_calculation - dew_center,
+                "fallback_event_id": manifest["event_id"],
+                "fallback_tourney": manifest["tourney"],
+            })
+            print(f"  [late-field] {player}: EMA20={row['my_pred']:+.4f}, "
+                  f"{row['fallback_history_rounds']} prior rounds, last={row['fallback_last_round']}; "
+                  "locked players unchanged")
+            rows.append(row)
+        return pd.DataFrame(rows)
+
     preds, prediction_path, field_details = load_matching_r1_predictions(
         (
             "model_predictions_r1.csv",
@@ -385,6 +417,7 @@ def _merge_r1(df):
         active_players=df["player_name"],
         expected_event_ids=event_ids,
         expected_tourney=tourney,
+        late_player_builder=build_late_players,
     )
     print(f"  [skill] Using complete R1 prediction snapshot: {prediction_path}")
     if field_details["extra_players"]:
@@ -397,6 +430,7 @@ def _merge_r1(df):
 
     merge_cols = ["player_name", "wind_adj1", "dew_adj1", "pred"]
     merge_cols = [c for c in merge_cols if c in preds.columns]
+    merge_cols += [c for c in preds.columns if c.startswith("fallback_")]
     df = df.merge(preds[merge_cols], on="player_name", how="left")
 
     # Datetime conversion for spline
