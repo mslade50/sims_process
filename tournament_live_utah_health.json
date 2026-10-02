@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
-  "kind": "published_round_h2h",
-  "generated_at": "2026-10-02 01:58:45 UTC",
+  "kind": "live_tournament_tape",
+  "generated_at": "2026-10-02 01:54:47 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -215,20 +215,31 @@
     "manifest_sha256": "9119a5aef5268895329439123563e2630385ab61bd6f003126c7244a6800651d"
   },
   "files": {
-    "h2h_meta": {
-      "path": "round_h2h_r2_meta.json",
-      "sha256": "ca30dd1e83b058cbb76ec43cbeb618c73145f8b09b13d866632d41087cde6e69"
+    "final_scores": {
+      "path": "final_scores_live_utah.npy",
+      "sha256": "41ea9cb8c25399cdd756ada1a2c104b7efd3ae7542e7a403ed13266fca5d722e"
     },
-    "h2h_parquet": {
-      "path": "round_h2h_r2.parquet",
-      "sha256": "b8ff07275b56db758631e4aa337f9c8e6af661ef4b28316dda65a97d4fd2c824"
+    "finish_probs": {
+      "path": "simulated_probs_live.csv",
+      "sha256": "8b3154826ae595df299a4db626bafc7bd9778b61a7ece7ef6b6a2d874697d737"
+    },
+    "finish_probs_event": {
+      "path": "top_finish_probs_live_utah.csv",
+      "sha256": "8b3154826ae595df299a4db626bafc7bd9778b61a7ece7ef6b6a2d874697d737"
+    },
+    "made_cut": {
+      "path": "made_cut_live_utah.npy",
+      "sha256": "404024084cb2372c5d9a874c2395ba58fd2d62d4dd282276a171eac1081ad023"
+    },
+    "player_names": {
+      "path": "player_names_live_utah.json",
+      "sha256": "75bf61f2f8fd58102bd27ccb9e9c87fcb55b902700e00d706d14038177d3f41f"
     }
   },
   "extra": {
-    "num_pairs": 7021,
+    "field_player_set_sha256": "5a68c4dbb8c8048796c9db8b70f97ace18029e043bf7abcd3f47c4a31b39facb",
     "num_players": 119,
-    "num_sims": 100000,
-    "source_manifest_sha256": "9119a5aef5268895329439123563e2630385ab61bd6f003126c7244a6800651d"
+    "num_sims": 100000
   },
-  "manifest_sha256": "a0696993e4c8dff8cd7cea916e14d603c8a1e7b7f85b5819c68f23c2f1b9fe9d"
+  "manifest_sha256": "83fdbec79bba6e7fc7f5e42cdc000820378fc1f8fee5c8e5ca8ee568bf5899f3"
 }
