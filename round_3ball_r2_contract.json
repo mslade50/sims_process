@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-02 01:58:57 UTC",
+  "generated_at": "2026-10-02 09:04:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -13,14 +13,14 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-10-02 01:54:25 UTC",
-      "root_generated_at": "2026-10-02 01:54:25 UTC",
+      "generated_at": "2026-10-02 08:59:09 UTC",
+      "root_generated_at": "2026-10-02 08:59:09 UTC",
       "expected_avg_authority": "sheet",
       "prediction_artifact": {
         "path": "model_predictions_r2.csv",
         "exists": true,
         "sha256": "f6094f88d258e03fc4dc692b70ba4eb59962a28259875e0ef30e03860c705d2a",
-        "modified_at": "2026-10-02 01:54:17 UTC"
+        "modified_at": "2026-10-02 08:59:04 UTC"
       },
       "parent_manifest_sha256": null,
       "derivation": {}
@@ -210,14 +210,14 @@
       "status": "approved",
       "mode": "automatic_sheet",
       "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-10-02 01:54:25 UTC"
+      "approved_at": "2026-10-02 08:59:09 UTC"
     },
-    "manifest_sha256": "9119a5aef5268895329439123563e2630385ab61bd6f003126c7244a6800651d"
+    "manifest_sha256": "2dd29fc3ceb12cfadce2e4afa28de417a5cc2951b988e38fb74a2f56a765587e"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "db5faf2242641265eba97df8955435f0e3090b3959b0e064f0fea171a88acb80"
+      "sha256": "a67b3fe4548cd9e8607a9537553ed3533576ba905a60c87c8d53496bc38360d2"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
@@ -429,7 +429,7 @@
         ]
       ],
       "field_players": 120,
-      "tee_time_players": 120,
+      "tee_time_players": 119,
       "tee_time_names": [
         "akina, kihei",
         "an, seonghyeon",
@@ -504,7 +504,6 @@
         "meissner, mac",
         "moore, taylor",
         "mouw, william",
-        "neergaard-petersen, rasmus",
         "nyholm, pontus",
         "parry, john",
         "pavon, matthieu",
@@ -553,7 +552,7 @@
         "yu, kevin"
       ],
       "group_sizes": [
-        3,
+        2,
         3,
         3,
         3,
@@ -722,23 +721,13 @@
       "source_event_id": "554",
       "event_identity_basis": "datagolf_event_id",
       "tour": "pga",
-      "fetched_at": "2026-10-02 01:58:45 UTC",
+      "fetched_at": "2026-10-02 09:03:48 UTC",
       "attempts": 1,
       "event_identity_verified": true,
       "simulation_field_overlap": 1.0,
       "simulation_tee_time_coverage": 1.0,
-      "field_player_set_sha256": "efea6f2df344be9c71099fc78fd80cc2ea670985358e606be1c19d7a8fde6b94",
-      "excluded_groups": [
-        [
-          "hardy, nick",
-          "neergaard-petersen, rasmus",
-          "parry, john"
-        ]
-      ],
-      "excluded_players": [
-        "neergaard-petersen, rasmus"
-      ]
+      "field_player_set_sha256": "efea6f2df344be9c71099fc78fd80cc2ea670985358e606be1c19d7a8fde6b94"
     }
   },
-  "manifest_sha256": "fdc8c71afbf4d52c9b65a8709ccadaba58440aea1abaf036bf6fe3d43bbf9145"
+  "manifest_sha256": "5ea540ca108961bbec9c52b1d70a0360a1bf993a914b1fdb8c6f2d1af8818843"
 }
