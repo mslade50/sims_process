@@ -3,6 +3,7 @@
 from pathlib import Path
 import os
 import sqlite3
+import time
 
 import numpy as np
 import pandas as pd
@@ -11,24 +12,41 @@ from category_distribution_guard import require_complete_category_distributions
 
 
 def historical_database_path():
-    """Reuse existing snapshots; never download, prune, or mutate history."""
+    """Reuse readable history, or fetch a verified snapshot into the runner's cache."""
     override = os.getenv("DG_HISTORICAL_DB")
     if override:
         return Path(override)
     homes = [Path.home()]
     if os.name == "nt":
-        homes += list(Path("C:/Users").glob("*"))
+        try:
+            homes += list(Path("C:/Users").glob("*"))
+        except PermissionError:
+            pass
     snapshots = []
     for home in homes:
         cache = home / "AppData/Local/etr-golf/cache/dg_historical"
-        snapshots += [p for p in cache.glob("*.db") if p.with_suffix(".sha256").is_file()]
+        try:
+            snapshots += [p for p in cache.glob("*.db") if p.with_suffix(".sha256").is_file()]
+        except PermissionError:
+            continue
     if snapshots:
         return max(snapshots, key=lambda p: p.name)
     for home in homes:
         candidate = home / "OneDrive/dg_historical.db"
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("No historical SG snapshot available for late-player EMA20")
+        try:
+            if candidate.is_file():
+                return candidate
+        except PermissionError:
+            continue
+    # Automation's service account has separate profile permissions. Use the
+    # existing read-only R2 reader and configured secrets in its own cache.
+    from dgdata_fetch import fetch_snapshot
+    base = Path(os.getenv("LOCALAPPDATA", Path.home() / ".cache"))
+    destination = base / "etr-golf/cache/late-replacements/dg_historical.db"
+    if destination.is_file() and time.time() - destination.stat().st_mtime < 24 * 3600:
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return fetch_snapshot("dg_historical", out=str(destination))
 
 
 def replacement_ema20(player, cutoff, *, db_path=None, aliases=None):

@@ -80,6 +80,9 @@ jobs:
       shell: powershell
       env:
         DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         REQUIRE_SIMS_KERNEL: '1'
       run: |

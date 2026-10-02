@@ -13,6 +13,7 @@ import numpy as np
 from late_field_replacements import (
     replacement_ema20, replacement_category_distributions,
     extend_category_distributions, validated_late_players,
+    historical_database_path,
 )
 
 CATS = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
@@ -52,6 +53,15 @@ class LateFieldTests(unittest.TestCase):
         self.assertEqual(result["fallback_history_rounds"], 3)
         with self.assertRaisesRegex(ValueError, "No pre-event"):
             replacement_ema20("unknown", "2026-10-04", db_path=self.db)
+
+    def test_service_account_skips_inaccessible_profiles_and_fetches_own_snapshot(self):
+        with patch.dict(os.environ,{"DG_HISTORICAL_DB":"","LOCALAPPDATA":str(self.root)}), \
+             patch("late_field_replacements.Path.home",return_value=self.root), \
+             patch("late_field_replacements.Path.glob",side_effect=PermissionError("profile denied")), \
+             patch("dgdata_fetch.fetch_snapshot",return_value=self.db) as fetch:
+            self.assertEqual(historical_database_path(),self.db)
+        fetch.assert_called_once_with("dg_historical",out=str(
+            self.root/"etr-golf/cache/late-replacements/dg_historical.db"))
 
     def test_category_history_excludes_current_results(self):
         result = replacement_category_distributions("hardy, nick", "2026-10-04", CATS,
