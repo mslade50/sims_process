@@ -344,6 +344,9 @@ def _load_catfirst_dists(player_names, *, allow_player_subset=False):
     missing = set(player_names) - set(frozen["player_name"])
     if missing and late_players:
         catalog = pd.read_csv("sg_dist_player.csv")
+        catalog["player_name"] = (
+            catalog["player_name"].astype(str).str.strip().str.lower().replace(name_replacements)
+        )
         for player in sorted(missing & set(late_players) - set(catalog["player_name"])):
             catalog = pd.concat([catalog, replacement_category_distributions(
                 player, late_players[player], CAT_ORDER, frozen,

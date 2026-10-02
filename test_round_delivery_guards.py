@@ -61,7 +61,7 @@ def test_late_replacement_retains_frozen_roster_overlay(round_module, monkeypatc
         return [{"player_name":player,"category_clean":cat,"mean":0.,"std":1.,
                  "skew":0.,"n_eff":50.} for cat in cats]
     pd.DataFrame(rows("locked")+rows("withdrawn")).to_csv(tmp_path/"weekly.csv",index=False)
-    pd.DataFrame(rows("replacement")).to_csv(tmp_path/"sg_dist_player.csv",index=False)
+    pd.DataFrame(rows("Replacement")).to_csv(tmp_path/"sg_dist_player.csv",index=False)
     pd.DataFrame([{"player_name":"replacement","fallback_source":"historical_sg_ema20",
         "fallback_event_id":999,"fallback_tourney":"guard_test","fallback_cutoff":"2026-10-01"}]).to_csv(
             tmp_path/"r1_live_model.csv",index=False)
