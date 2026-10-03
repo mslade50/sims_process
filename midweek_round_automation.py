@@ -751,6 +751,7 @@ def run_pipeline(args) -> int:
             os.environ[ENV] = str(provisional_path)
             tee_contract(event_id, 3)  # Reject schedule collisions before Sheet writes.
             os.environ["BOARD_SUPPRESS_SIM_CASCADE"] = "1"
+            os.environ["BOARD_REFRESH_QUOTES"] = "1"
             os.environ["REQUIRE_ROUND_SIM_EMAIL"] = "1"
     else:
         field = _check_datagolf_ready(

@@ -2698,6 +2698,14 @@ def _dispatch_board_build(sha: str | None = None) -> bool:
                 # downstream repricing simulation.  This is opt-in so routine
                 # publishes retain the existing cascade behavior.
                 client_payload["suppress_sim_cascade"] = True
+            if (os.environ.get("BOARD_REFRESH_QUOTES") or "").strip().lower() in (
+                "1", "true", "yes"
+            ):
+                # Refresh sportsbook quotes and the sim-facing export without
+                # launching another simulation or sending duplicate bet alerts.
+                client_payload.update(
+                    refresh_quotes=True, safe_refresh=True, suppress_sim_cascade=True
+                )
             if client_payload:
                 body["client_payload"] = client_payload
             resp = requests.post(

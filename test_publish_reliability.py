@@ -109,3 +109,22 @@ def test_reprice_skips_odds_screen_when_release_contract_is_missing():
     )[1].split("- name: Telegram on failure", 1)[0]
     assert required_gate in build_step
     assert required_gate in publish_step
+
+
+def test_board_dispatch_can_refresh_quotes_without_alerts_or_sim_cascade():
+    response = SimpleNamespace(status_code=204, text="")
+    with (
+        patch.dict(os.environ, {
+            "GH_TOKEN": "test-token",
+            "BOARD_REFRESH_QUOTES": "1",
+            "BOARD_SUPPRESS_SIM_CASCADE": "",
+        }),
+        patch("requests.post", return_value=response) as post_mock,
+    ):
+        assert psf._dispatch_board_build("r3-fairs-sha") is True
+    assert post_mock.call_args.kwargs["json"]["client_payload"] == {
+        "sha": "r3-fairs-sha",
+        "refresh_quotes": True,
+        "safe_refresh": True,
+        "suppress_sim_cascade": True,
+    }
