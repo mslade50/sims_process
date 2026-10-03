@@ -98,6 +98,10 @@ def fetch_live_stats(round_num, api_key, include_score=False):
     Returns:
         DataFrame with live stats + metadata columns, or None on failure.
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and int(round_num) == 2:
+        return pd.DataFrame(provisional["stats"])
     stats = ALL_STATS + (["score"] if include_score else [])
     params = {
         "stats": ",".join(stats),
@@ -380,6 +384,10 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
     Returns:
         DataFrame with player_name + requested columns, or None on failure.
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and teetime_col == "r3_teetime":
+        return pd.DataFrame(provisional["field"])
     params = {"tour": "pga", "file_format": "json", "key": api_key}
     resp = requests.get(f"{DATAGOLF_BASE}/field-updates", params=params)
 
@@ -405,12 +413,15 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
                 return pd.Series({teetime_col: None, "course": None})
             for entry in teetimes:
                 if entry.get("round_num") == round_num:
-                    return pd.Series({teetime_col: entry.get("teetime"), "course": entry.get("course_code")})
+                    return pd.Series({teetime_col: entry.get("teetime"), "course": entry.get("course_code"),
+                                      "starting_tee": entry.get("starting_tee", entry.get("start_tee", 1))})
             return pd.Series({teetime_col: None, "course": None})
 
         parsed = df["teetimes"].apply(_extract_teetime)
         df[teetime_col] = parsed[teetime_col]
         df["course"] = parsed["course"]
+        if "starting_tee" in parsed:
+            df["starting_tee"] = parsed["starting_tee"]
 
     # Build list of columns to keep
     keep = ["player_name"]
@@ -418,6 +429,8 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
         keep.append(teetime_col)
     if include_course and "course" in df.columns:
         keep.append("course")
+    if "starting_tee" in df.columns:
+        keep.append("starting_tee")
 
     df = df[[c for c in keep if c in df.columns]].copy()
     from sim_inputs import name_replacements

@@ -2079,6 +2079,10 @@ def _fetch_tee_group_contract(
     size-three tee groups is conclusive (normally R4 twosomes) and may be sealed as
     an explicit ``no_groups_offered`` contract.
     """
+    from provisional_round import tee_contract
+    provisional = tee_contract(event_id, rnd)
+    if provisional:
+        return provisional
     import os
     import requests
     import time
@@ -3090,6 +3094,15 @@ def publish(
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
     payload = build_payload(require_complete_live=require_complete_live)
+    from provisional_round import current_inputs
+    provisional = current_inputs(event_id=payload.get("event_id"),
+                                 target_round=payload.get("round"))
+    if provisional:
+        payload["provisional"] = {"label": provisional["label"],
+                                  "input_sha256": provisional["sha256"],
+                                  "cut_total": provisional["cut_total"],
+                                  "timezone": provisional["timezone"]}
+        payload["event_name"] = "PROVISIONAL — " + str(payload.get("event_name") or payload["tourney"])
     strict_live_health = None
     strict_release = None
     if require_complete_live:

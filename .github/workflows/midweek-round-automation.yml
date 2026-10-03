@@ -17,6 +17,14 @@ on:
         description: "Manual repair only: require BetOnline + Pinnacle instead of BetCRIS + BetOnline"
         type: boolean
         default: false
+      provisional_r3:
+        description: "Explicit provisional R2-final cut and generated R3 tee-time fallback"
+        type: boolean
+        default: false
+      provisional_date:
+        description: "Provisional R3 Saturday date (YYYY-MM-DD, America/Denver 09:20-11:30)"
+        type: string
+        default: ''
 
 concurrency:
   group: round-sim
@@ -56,6 +64,8 @@ jobs:
       - name: Check whether a full transition is needed
         id: readiness
         env:
+          PROVISIONAL_R3: ${{ github.event_name == 'workflow_dispatch' && inputs.provisional_r3 || false }}
+          PROVISIONAL_DATE: ${{ inputs.provisional_date }}
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ github.event_name == 'workflow_dispatch' && inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
         run: |
@@ -64,7 +74,11 @@ jobs:
           if [ "${{ inputs.force_rebuild }}" = "true" ]; then
             FORCE_ARG="--force"
           fi
-          python midweek_round_automation.py --gate-only $FORCE_ARG
+          PROVISIONAL_ARGS=()
+          if [ "$PROVISIONAL_R3" = "true" ]; then
+            PROVISIONAL_ARGS=(--provisional-r3 --provisional-date "$PROVISIONAL_DATE")
+          fi
+          python midweek_round_automation.py --gate-only $FORCE_ARG "${PROVISIONAL_ARGS[@]}"
           RC=$?
           set -e
           if [ "$RC" -eq 0 ]; then
@@ -143,6 +157,8 @@ jobs:
       - name: Run guarded midweek pipeline
         shell: powershell
         env:
+          PROVISIONAL_R3: ${{ github.event_name == 'workflow_dispatch' && inputs.provisional_r3 || false }}
+          PROVISIONAL_DATE: ${{ inputs.provisional_date }}
           DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -168,6 +184,9 @@ jobs:
           ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ github.event_name == 'workflow_dispatch' && inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
         run: |
           $automationArgs = @()
+          if ($env:PROVISIONAL_R3 -eq "true") {
+            $automationArgs += @("--provisional-r3", "--provisional-date", $env:PROVISIONAL_DATE)
+          }
           if ("${{ inputs.dry_run }}" -eq "true") {
             $automationArgs += "--dry-run"
           }

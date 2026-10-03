@@ -674,6 +674,28 @@ Manual preflight:
 ```bash
 python midweek_round_automation.py --dry-run
 ```
+
+Explicit provisional weekend repair (manual only):
+
+```bash
+python midweek_round_automation.py --provisional-r3 --provisional-date 2026-10-03 --dry-run
+python midweek_round_automation.py --provisional-r3 --provisional-date 2026-10-03
+```
+
+This mode targets R3 independently of stale R2 market feeds. It snapshots the
+original R2 scores and actual holes completed under `permanent_data/provisional/`,
+assumes those scores final for a low-65-and-ties cut, and fills missing individual
+times with three-player groups from 09:20 to 11:30 America/Denver. The better half
+uses tee 1 with leaders last; the lower half uses tee 10 with worst last. Ties sort
+by canonical name, the odd player enters the better half, and each half's last
+group can contain one or two players. Official individual times take precedence.
+It rebuilds the R1/R2 skill chain, labels predictions, health manifests, workbook,
+email and published fairs as provisional, and records SMTP acceptance. Only the
+market-coverage/completed-round/official-tee gates are replaced by these explicit
+assumptions; event identity, weather, centering and strict artifact lineage remain
+required. Normal runs refuse retained provisional R2 files until officially rebuilt.
+The manual midweek workflow exposes `provisional_r3` and `provisional_date`; its
+concurrency lock covers the full run. Normal scraper dispatches never enable it.
 - Uses single Google auth (1 connection, not 2)
 
 **Backup & reprice cache:** `round_sim.py` automatically triggers the

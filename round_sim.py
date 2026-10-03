@@ -187,7 +187,11 @@ def require_pricing_pipeline_healthy(
             for book in required_matchup_books
             if int(counts.get(book, 0) or 0) < floor
         }
-        if missing:
+        from provisional_round import current_inputs
+        provisional = current_inputs()
+        if missing and provisional:
+            print("  PROVISIONAL: missing matchup coverage: " + str(missing))
+        if missing and not provisional:
             detail = ", ".join(
                 f"{book}={count}/{floor}" for book, count in missing.items()
             )
@@ -681,6 +685,8 @@ def load_known_rounds(completed_round, course_map, default_par):
         made_cut: np.array[bool] (True if player made cut)
         course_x: dict {player: course_code}
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
     result = {
         "player_names": [],
         "strokes": {},
@@ -720,6 +726,8 @@ def load_known_rounds(completed_round, course_map, default_par):
                 continue
 
         df = pd.read_csv(live_file)
+        if 'assumed_r2_strokes' in df and not provisional:
+            raise SimulationHealthError("Provisional R2 artifact requires an explicit provisional run or official rebuild")
         df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
 
         if all_players is None:
@@ -763,7 +771,11 @@ def load_known_rounds(completed_round, course_map, default_par):
 
             # Get strokes
             sg_col = f"sg_total_r{rnd}" if f"sg_total_r{rnd}" in df.columns else "sg_total"
-            if sg_col in df.columns and pd.notna(row.get(sg_col)):
+            if provisional and rnd == 1 and pd.notna(row.get('round')):
+                strokes_arr[i] = player_par + row['round']
+            elif 'assumed_r2_strokes' in df.columns and rnd == 2:
+                strokes_arr[i] = row['assumed_r2_strokes']
+            elif sg_col in df.columns and pd.notna(row.get(sg_col)):
                 strokes_arr[i] = player_par - row[sg_col]
             elif 'total' in df.columns:
                 strokes_arr[i] = row['total']
@@ -3817,6 +3829,12 @@ def export_results(combined, sharp, score_card, sim_round,
 
     with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
         workbook = writer.book
+        from provisional_round import current_inputs
+        provisional = current_inputs()
+        if provisional:
+            pd.DataFrame([{"assumptions": provisional["label"],
+                           "input_sha256": provisional["sha256"]}]).to_excel(
+                writer, sheet_name="PROVISIONAL", index=False)
 
         # --- Matchups: Combined ---
         if not combined.empty:
@@ -4764,6 +4782,11 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
+        from provisional_round import email_notice
+        notice = email_notice()
+        if notice:
+            msg.replace_header("Subject", "PROVISIONAL — " + msg["Subject"])
+            html = notice + html
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(recipients)
 
@@ -4847,7 +4870,11 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, password)
-            server.sendmail(EMAIL_FROM, recipients, msg.as_string())
+            refused = server.sendmail(EMAIL_FROM, recipients, msg.as_string())
+            if refused:
+                raise EmailDeliveryError("Mail transport refused report recipients")
+        from provisional_round import record_email_delivery
+        record_email_delivery(msg["Subject"], len(recipients))
 
         print("  Round sim email sent")
         return True

@@ -332,6 +332,15 @@ def load_and_merge(round_num):
     # Withdrawals do not need prediction coverage or replacement estimates.
     df = df[~df["position"].astype(str).str.contains("WD|DQ", na=False)].copy()
     df = _merge_img_round_summary(df, round_num)
+    # Retain the observations and explicitly separate assumed final strokes.
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and round_num == 2:
+        observed = pd.DataFrame(provisional["stats"]).set_index("player_name")
+        df["original_r2_score"] = df.player_name.map(observed["round"])
+        df["actual_holes_completed"] = df.player_name.map(observed["thru"])
+        df["assumed_r2_strokes"] = course_par + df["original_r2_score"]
+        df["provisional_assumptions"] = provisional["label"]
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
     if field is not None:
@@ -1148,6 +1157,11 @@ def create_next_round_predictions(round_num):
         keep_cols.append("std_dev")
 
     preds = live_model[[c for c in keep_cols if c in live_model.columns]].copy()
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and next_round == 3:
+        preds["provisional_assumptions"] = provisional["label"]
+        preds["provisional_input_sha256"] = provisional["sha256"]
 
     # Standardize skill column name: my_pred for R1, my_pred{N} for R2+
     pred_name = "my_pred" if next_round == 1 else f"my_pred{next_round}"
@@ -1972,6 +1986,11 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
         msg["Subject"] = f"R{round_num} Skill Update — {event_name.replace('_', ' ').title()}"
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
+        from provisional_round import email_notice
+        notice = email_notice()
+        if notice:
+            msg.replace_header("Subject", "PROVISIONAL — " + msg["Subject"])
+            html = notice + html
 
         # HTML body (+ temporary pin-high verification block on the R1 email)
         if round_num == 1:
@@ -2575,6 +2594,8 @@ def main():
         try:
             from sheet_config import load_config
             config = load_config()
+            if args.round is not None:
+                config = {**config, "round_num": args.round}
             _apply_sheet_overrides(config)
             round_num = config["round_num"]
         except Exception as e:
@@ -2600,7 +2621,8 @@ def main():
     # Step 1b: Write actuals for the completed round. The nightly backup is a
     # read-only model refresh; its workflow passes --no-sheet-writes so a retry
     # cannot mutate the human-controlled weekly config.
-    if args.no_sheet_writes:
+    from provisional_round import current_inputs
+    if args.no_sheet_writes or current_inputs():
         print("\n  [no-sheet-writes] Skipping round actuals write")
     else:
         try:

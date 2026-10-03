@@ -823,6 +823,11 @@ def build_simulation_manifest(
         "checks": {"errors": errors, "passed": not errors},
         "approval": approval,
     }
+    from provisional_round import current_inputs
+    provisional = current_inputs(event_id=event_id, target_round=sim_round)
+    if provisional:
+        manifest["source"]["provisional"] = {
+            "label": provisional["label"], "input_sha256": provisional["sha256"]}
     return seal_manifest(manifest)
 
 

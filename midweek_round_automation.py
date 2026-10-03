@@ -629,10 +629,10 @@ def _load_gate_context(args):
     load_dotenv()
 
     odds_path = Path(args.odds_file).resolve()
-    if not odds_path.exists():
+    provisional_mode = getattr(args, "provisional_r3", False)
+    if not odds_path.exists() and not provisional_mode:
         raise NotReady(f"Odds file is missing: {odds_path}")
-    with odds_path.open(encoding="utf-8") as handle:
-        odds_data = json.load(handle)
+    odds_data = json.loads(odds_path.read_text(encoding="utf-8")) if odds_path.exists() else {}
 
     from sheet_config import load_config
 
@@ -643,13 +643,20 @@ def _load_gate_context(args):
 
     required_books = resolve_required_matchup_books()
     print("  Required matchup books: " + ", ".join(required_books))
-    readiness = evaluate_odds_readiness(
-        odds_data,
-        event_id,
-        min_book_matchups=args.min_book_matchups,
-        max_age_hours=args.max_age_hours,
-        required_books=required_books,
-    )
+    if provisional_mode:
+        if not args.provisional_date:
+            raise PipelineFailure("--provisional-r3 requires --provisional-date")
+        from api_utils import get_round_dates
+        if datetime.fromisoformat(args.provisional_date).date() != get_round_dates()[2].date():
+            raise PipelineFailure("Provisional date must match the current event's R3 Saturday")
+        print(f"  PROVISIONAL R3 requested explicitly; odds feed targets R{odds_data.get('round')}. "
+              "Book coverage cannot gate this assumption-based model release.")
+        readiness = OddsReadiness(3, "", {}, 0)
+    else:
+        readiness = evaluate_odds_readiness(
+            odds_data, event_id, min_book_matchups=args.min_book_matchups,
+            max_age_hours=args.max_age_hours, required_books=required_books,
+        )
     target_round = readiness.target_round
     completed_round = target_round - 1
     print(
@@ -713,9 +720,42 @@ def run_pipeline(args) -> int:
     api_key = os.getenv("DATAGOLF_API_KEY", "").strip()
     if not api_key:
         raise PipelineFailure("DATAGOLF_API_KEY is not configured")
-    field = _check_datagolf_ready(
-        api_key, completed_round, target_round, min_rows=args.min_datagolf_rows
-    )
+    provisional_mode = getattr(args, "provisional_r3", False)
+    provisional_path = None
+    if provisional_mode:
+        from api_utils import fetch_live_stats, fetch_field_updates
+        from provisional_round import build_inputs, write_inputs, ENV, tee_contract
+        # Fetch without an inherited provisional override: every requested run
+        # starts from current provider observations and current official times.
+        os.environ.pop(ENV, None)
+        stats = fetch_live_stats(2, api_key, include_score=True)
+        official = fetch_field_updates(api_key, teetime_col="r3_teetime",
+                                       include_course=True, fill_missing_teetimes=False)
+        if stats is None or len(stats) < args.min_datagolf_rows or official is None:
+            raise PipelineFailure("Provisional run cannot fetch current R2 stats/R3 field")
+        if not stats.event_name.astype(str).str.contains("Bank of Utah", case=False).all() and str(tourney) == "utah":
+            raise PipelineFailure("Provisional R2 stats are for the wrong event")
+        raw_stats = stats.copy()
+        stats = filter_live_sim_players(stats)
+        payload = build_inputs(stats, official, event_id=event_id, tourney=tourney,
+                               course_id=course_id, par=sim_inputs.course_par,
+                               cut=sim_inputs.CUT_LINE, date=args.provisional_date,
+                               start=args.provisional_start, end=args.provisional_end,
+                               tz=args.provisional_timezone)
+        payload["provider_stats"] = json.loads(raw_stats.to_json(orient="records"))
+        print("  " + payload["label"])
+        field = pd.DataFrame(payload["field"])
+        if not args.dry_run:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            provisional_path = write_inputs(payload, ROOT / "permanent_data" / "provisional" / f"{tourney}_r3_{stamp}.json")
+            os.environ[ENV] = str(provisional_path)
+            tee_contract(event_id, 3)  # Reject schedule collisions before Sheet writes.
+            os.environ["BOARD_SUPPRESS_SIM_CASCADE"] = "1"
+            os.environ["REQUIRE_ROUND_SIM_EMAIL"] = "1"
+    else:
+        field = _check_datagolf_ready(
+            api_key, completed_round, target_round, min_rows=args.min_datagolf_rows
+        )
 
     pin_high_warning = None
     if (
@@ -777,6 +817,10 @@ def run_pipeline(args) -> int:
     target_weather = forecast["rounds"][target_round]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
+        if provisional_mode:
+            snapshot = spreadsheet.worksheet("round_config").get_all_values()
+            provisional_path.with_suffix(".sheet-before.json").write_text(
+                json.dumps(snapshot), encoding="utf-8")
         update_round_config_weather(
             forecast["rounds"], target_round, spreadsheet=spreadsheet
         )
@@ -797,6 +841,7 @@ def run_pipeline(args) -> int:
                     for book, count in readiness.counts.items()
                 ),
                 "automation_message": "",
+                "automation_provisional": payload["label"] if provisional_mode else "",
             },
             notes={
                 "round": f"Advanced automatically for R{target_round} markets",
@@ -813,6 +858,11 @@ def run_pipeline(args) -> int:
             f"target sim R{target_round}"
         )
 
+        if provisional_mode:
+            # Rebuild the full R1 -> R2 skill chain; stale prior-event root files
+            # must never seed the provisional R3 estimates.
+            _run([sys.executable, "live_stats_engine.py", "--round", "1",
+                  "--dry-run", "--no-sheet-writes"], "Rebuild current-event R1/R2 skill chain")
         _run(
             [sys.executable, "live_stats_engine.py", "--automation"],
             "live_stats_engine.py --automation",
@@ -821,6 +871,10 @@ def run_pipeline(args) -> int:
         sim_started_at = datetime.now(timezone.utc).timestamp()
         _run_complete_live_round_sim()
         _verify_outputs(target_round, tourney, started_at=sim_started_at)
+        if provisional_mode:
+            receipts = json.loads(provisional_path.with_suffix(".email.json").read_text(encoding="utf-8"))
+            if not any("R3 Round Sim" in item["subject"] for item in receipts):
+                raise PipelineFailure("Provisional R3 report has no SMTP acceptance receipt")
         completion_message = (
             f"R{target_round} predictions, simulation, and fairs completed"
         )
@@ -893,6 +947,12 @@ def main():
         action="store_true",
         help="Rebuild the current completed target round during a manual repair run",
     )
+    parser.add_argument("--provisional-r3", action="store_true",
+                        help="Explicit provisional R2-final cut/R3 tee-time fallback; normal gates unchanged")
+    parser.add_argument("--provisional-date", help="Course-local R3 date YYYY-MM-DD")
+    parser.add_argument("--provisional-start", default="09:20")
+    parser.add_argument("--provisional-end", default="11:30")
+    parser.add_argument("--provisional-timezone", default="America/Denver")
     args = parser.parse_args()
 
     try:

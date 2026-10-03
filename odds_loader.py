@@ -632,7 +632,7 @@ def load_matchup_odds(
         logger.info(f"Using DataGolf API only, sharp books excluded ({len(df)} lines)")
     else:
         logger.warning("No odds available from any source")
-        df = pd.DataFrame()
+        df = pd.DataFrame(columns=["Player 1", "Player 2", "Bookmaker", "P1 Odds", "P2 Odds", "DG_p1", "DG_p2", "Ties", "source"])
 
     if not df.empty:
         df = deduplicate_matchup_contracts(df)
