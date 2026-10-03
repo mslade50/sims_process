@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-03 10:56:42 UTC",
+  "generated_at": "2026-10-03 11:07:30 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -170,7 +170,7 @@
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r3_meta.json",
-      "sha256": "781b826a67550f29c482de34962ac8b68594dd858a139c5910064b1c3310d8d1"
+      "sha256": "bedeefc255218d59ff0f73f780a84be587aaa14cb1d34d742fb9d2c93dc236bf"
     },
     "h2h_parquet": {
       "path": "round_h2h_r3.parquet",
@@ -183,5 +183,5 @@
     "num_sims": 100000,
     "source_manifest_sha256": "bb0065281f0067e1dc06031071b4226973545c2b8b7492998e4effec6289e1e9"
   },
-  "manifest_sha256": "bad0283899385d97f076bd0e18cbb40db9e29d71c13478c69e6d70d167fadac2"
+  "manifest_sha256": "ff598eadee8c52de082f30b7b28e007e3a8591ccfc40834ef425b1955617ac77"
 }

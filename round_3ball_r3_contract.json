@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "round-bet-health/v1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-03 10:56:52 UTC",
+  "generated_at": "2026-10-03 11:07:40 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "round-bet-health/v1",
@@ -170,7 +170,7 @@
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r3_meta.json",
-      "sha256": "6d10b9ffc6d6e366fe9b1e8dfe961575bf12672cef2428ad29f93e7895272a26"
+      "sha256": "1e3a7af69a65164cdbec23a9f01466eb0eacde78022850ca639f0860ab4092d2"
     },
     "threeball_parquet": {
       "path": "round_3ball_r3.parquet",
@@ -475,5 +475,5 @@
       "field_player_set_sha256": "7d354ddbb27b17194d0c571c33101c8a54a8ccdda6fec0753e9881792ba1836d"
     }
   },
-  "manifest_sha256": "80152bd44dfe29da22e2370f15f103ebca6ad69c33d4f5be0083a0229e1863b9"
+  "manifest_sha256": "379954b10759da6e4591567e410443b9490dccc68b8054a958ad22fc123a0157"
 }

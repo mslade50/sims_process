@@ -30,11 +30,11 @@
       "size": 5411
     },
     "round_3ball_r3_contract.json": {
-      "sha256": "e75a2091dcbcae7752765fa34df032755791f433da08f32256327d7aef899bdf",
+      "sha256": "eb8445950387a2050433b1f114d12e16e3abfe8a585e2f787d335c4e4ed26b5a",
       "size": 14171
     },
     "round_3ball_r3_meta.json": {
-      "sha256": "6d10b9ffc6d6e366fe9b1e8dfe961575bf12672cef2428ad29f93e7895272a26",
+      "sha256": "1e3a7af69a65164cdbec23a9f01466eb0eacde78022850ca639f0860ab4092d2",
       "size": 4700
     },
     "round_h2h_r3.parquet": {
@@ -42,11 +42,11 @@
       "size": 25768
     },
     "round_h2h_r3_health.json": {
-      "sha256": "dbddeaf955d951f214c407dfce048b4cb5d9a8071717be08eab0c1a8c480ebdb",
+      "sha256": "8c9584031609325853fb41af1ea1afad8c13bb87ae76b658ba6732629049cd4d",
       "size": 7268
     },
     "round_h2h_r3_meta.json": {
-      "sha256": "781b826a67550f29c482de34962ac8b68594dd858a139c5910064b1c3310d8d1",
+      "sha256": "bedeefc255218d59ff0f73f780a84be587aaa14cb1d34d742fb9d2c93dc236bf",
       "size": 6574
     },
     "round_samples.parquet": {
@@ -54,8 +54,8 @@
       "size": 1159118
     },
     "sim_fairs.json": {
-      "sha256": "b19b8317a624b9ae3f131f7c1a5243d6e16bbaa595e1b10ac0f4ed502350e70e",
-      "size": 150415
+      "sha256": "152e9bf9f6766dac90cdfaf2309523756f3e9dab6b32ecfdac73057c382b040b",
+      "size": 150396
     },
     "tournament_live_utah_health.json": {
       "sha256": "e9704e1b06ecc7b2f9c9641cb5c4e0ac98120b9fe9b7945370af57a5d569fcb3",
@@ -70,5 +70,5 @@
       "size": 32555921
     }
   },
-  "manifest_sha256": "6a2153e5b83f427a99a5ef157b93f31744e3d3f87b7c675569259414a2694bc5"
+  "manifest_sha256": "dcd863adab6f26d9a17d2d6a102c91a26c0baf2ff20b54a93a1789489e0b3c87"
 }
