@@ -3102,7 +3102,6 @@ def publish(
                                   "input_sha256": provisional["sha256"],
                                   "cut_total": provisional["cut_total"],
                                   "timezone": provisional["timezone"]}
-        payload["event_name"] = "PROVISIONAL — " + str(payload.get("event_name") or payload["tourney"])
     strict_live_health = None
     strict_release = None
     if require_complete_live:
