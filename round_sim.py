@@ -3193,6 +3193,8 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
 
     Returns (combined_df, sharp_df).
     """
+    if df.empty:
+        return df.copy(), df.copy()
     from reprice_core import actionable_matchup_mask
     quarantined = ~actionable_matchup_mask(df)
     if quarantined.any():

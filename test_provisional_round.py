@@ -74,6 +74,13 @@ class ProvisionalTests(unittest.TestCase):
             odds = odds_loader.load_matchup_odds("round_matchups", api_key="test", round=3)
         self.assertTrue(odds.empty)
         self.assertTrue({"Player 1", "Player 2", "Bookmaker", "P1 Odds", "P2 Odds"} <= set(odds))
+        config = {"tourney": "utah", "std_dev": 2.8, "cut_line": 65,
+                  "use_10_shot_rule": False, "simulations": 100000, "event_id": 554}
+        with patch("sheet_config.load_config", return_value=config):
+            import round_sim
+        priced = round_sim.calculate_edges(round_sim.price_matchups(odds, {}))
+        combined, sharp = round_sim.build_matchup_outputs(priced, 3, {}, {})
+        self.assertTrue(combined.empty and sharp.empty)
 
 
 if __name__ == "__main__": unittest.main()
