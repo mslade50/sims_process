@@ -687,6 +687,7 @@ def load_known_rounds(completed_round, course_map, default_par):
     """
     from provisional_round import current_inputs
     provisional = current_inputs()
+    from official_round_history import completed_strokes
     result = {
         "player_names": [],
         "strokes": {},
@@ -770,11 +771,14 @@ def load_known_rounds(completed_round, course_map, default_par):
             player_par = course_map.get(player_course, {}).get("par", default_par) if player_course else default_par
 
             # Get strokes
+            official_strokes = completed_strokes(row, player_par)
             sg_col = f"sg_total_r{rnd}" if f"sg_total_r{rnd}" in df.columns else "sg_total"
             if provisional and rnd == 1 and pd.notna(row.get('round')):
                 strokes_arr[i] = player_par + row['round']
             elif 'assumed_r2_strokes' in df.columns and rnd == 2:
                 strokes_arr[i] = row['assumed_r2_strokes']
+            elif official_strokes is not None:
+                strokes_arr[i] = official_strokes
             elif sg_col in df.columns and pd.notna(row.get(sg_col)):
                 strokes_arr[i] = player_par - row[sg_col]
             elif 'total' in df.columns:

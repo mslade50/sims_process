@@ -2587,7 +2587,12 @@ def main():
         ),
     )
 
+    parser.add_argument("--historical-rebuild", action="store_true",
+                        help="Rebuild history using per-round Sheet weather/baselines")
     args = parser.parse_args()
+    if args.historical_rebuild and (not args.dry_run or not args.no_sheet_writes
+                                   or args.cli or args.round not in (1, 2, 3)):
+        parser.error("--historical-rebuild requires --round 1-3, Sheet mode, --dry-run and --no-sheet-writes")
 
     # ── Google Sheet mode (default) ──────────────────────────────────────
     if not args.cli:
@@ -2596,9 +2601,14 @@ def main():
             config = load_config()
             if args.round is not None:
                 config = {**config, "round_num": args.round}
+            if args.historical_rebuild:
+                from official_round_history import historical_config
+                config = historical_config(config)
             _apply_sheet_overrides(config)
             round_num = config["round_num"]
         except Exception as e:
+            if args.historical_rebuild:
+                raise
             print(f"\n[warn] Could not read Google Sheet: {e}")
             print("   Falling back to CLI args. Use --cli flag to suppress this.\n")
             if args.round is None:
@@ -2638,7 +2648,7 @@ def main():
         except Exception as e:
             print(f"\n[warn] Weather update could not complete: {e}")
             print(f"   Skill update is saved. Run again once R{round_num + 1} tee times are available.")
-            if args.automation:
+            if args.automation or args.historical_rebuild:
                 raise
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")

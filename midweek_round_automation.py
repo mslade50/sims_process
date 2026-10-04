@@ -757,6 +757,9 @@ def run_pipeline(args) -> int:
         field = _check_datagolf_ready(
             api_key, completed_round, target_round, min_rows=args.min_datagolf_rows
         )
+        from official_round_history import reconcile
+        reconcile(ROOT, completed_round, event_id, course_id, tourney,
+                  sim_inputs.course_par, api_key, _run, dry_run=args.dry_run)
 
     pin_high_warning = None
     if (

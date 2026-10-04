@@ -446,6 +446,12 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
         df[teetime_col] = default_teetime
         print(f"  WARNING: {teetime_col} unavailable — defaulting to {default_teetime}")
 
+    df.attrs.update(
+        event_id=data.get("event_id"), event_name=data.get("event_name"),
+        course_ids=sorted({int(tee["course_num"]) for player in data["field"]
+                           for tee in player.get("teetimes", [])
+                           if tee.get("course_num") is not None}),
+    )
     return df
 
 
