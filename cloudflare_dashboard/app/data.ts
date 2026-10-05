@@ -32,8 +32,10 @@ export function useDashboardData<T>(name: string): LoadState<T> {
       if (!response.ok) throw new Error(`Data request failed (${response.status})`);
       return (await response.json()) as T;
     };
-    readJson(`/api/data/${name}`)
-      .catch(() => readJson(`/data/${name}`))
+    // golfprice objects (published by golfprice/publish_dashboard.py) are served from R2 at /api/golfprice/; a packaged copy under public/golfprice/ is the fallback.
+    const isGolfprice = name.startsWith("golfprice/");
+    readJson(isGolfprice ? `/api/${name}` : `/api/data/${name}`)
+      .catch(() => readJson(isGolfprice ? `/${name}` : `/data/${name}`))
       .then((payload) => {
         cache.set(name, payload);
         if (active) setState({ data: payload, loading: false, error: null });

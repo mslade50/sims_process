@@ -13,9 +13,11 @@ import {
   Menu,
   Microscope,
   Settings2,
+  SlidersHorizontal,
   TrendingUp,
   X,
 } from "lucide-react";
+import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { useDashboardData } from "./data";
 import { displayDate, titleCase } from "./lib";
@@ -29,7 +31,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
+export type ViewKey = "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
 
 type Manifest = {
   generated_at: string;
@@ -52,6 +54,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
   {
     label: "Model",
     items: [
+      { key: "inputs", label: "Model inputs", description: "Skill, course fit, variance, adjust", icon: SlidersHorizontal },
       { key: "distributions", label: "Finish distributions", description: "Rank probability curves", icon: ChartNoAxesCombined },
       { key: "sg-distributions", label: "SG distributions", description: "Category inputs", icon: Activity },
       { key: "history", label: "History", description: "Archived simulations", icon: Archive },
@@ -68,6 +71,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
 ];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  inputs: InputsView,
   research: ResearchView,
   distributions: DistributionsView,
   "sg-distributions": SgDistributionsView,

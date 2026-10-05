@@ -1,0 +1,95 @@
+{
+ "fields": [
+  {
+   "field": "skill_delta",
+   "hi": 1.0,
+   "kind": "number",
+   "lo": -1.0,
+   "scope": "player",
+   "unit": "strokes gained per round",
+   "what": "added to the player's challenger mean"
+  },
+  {
+   "field": "sd_mult",
+   "hi": 1.5,
+   "kind": "number",
+   "lo": 0.7,
+   "scope": "player",
+   "unit": "x",
+   "what": "multiplies the player's per-round SD (the V1 SD the hole engine pins)"
+  },
+  {
+   "field": "withdraw",
+   "kind": "bool",
+   "scope": "player",
+   "unit": "flag",
+   "what": "player removed from the challenger field (zero prices; the rest is re-simulated without him)"
+  },
+  {
+   "field": "scoring_avg_delta",
+   "hi": 3.0,
+   "kind": "number",
+   "lo": -3.0,
+   "scope": "course",
+   "unit": "strokes per round",
+   "what": "shifts every hole's expected score so the course average moves by this much (level only; see engine_notes/inputs_export.md)"
+  },
+  {
+   "field": "sd_mult",
+   "hi": 1.25,
+   "kind": "number",
+   "lo": 0.8,
+   "scope": "course",
+   "unit": "x",
+   "what": "multiplies every player's per-round SD"
+  },
+  {
+   "field": "cut_rule",
+   "keys": {
+    "cut_round": [
+     0,
+     3
+    ],
+    "mdf_round": [
+     2,
+     3
+    ],
+    "mdf_top_n": [
+     0,
+     156
+    ],
+    "mdf_trigger": [
+     -1,
+     156
+    ],
+    "top_n": [
+     1,
+     156
+    ],
+    "within": [
+     0,
+     20
+    ]
+   },
+   "kind": "cut_rule",
+   "scope": "engine",
+   "unit": "rule",
+   "what": "replaces fields of the event's cut rule (cut_round, top_n, within, mdf_trigger, mdf_top_n, mdf_round)"
+  }
+ ],
+ "key": "overrides/active.json",
+ "max_lifetime_days": 28,
+ "record": {
+  "author": "string",
+  "created_at": "UTC ISO",
+  "event": "event_uid | event id | all",
+  "expires_at": "UTC ISO, required",
+  "field": "see fields",
+  "id": "string",
+  "reason": "required, >= 5 chars",
+  "scope": "player | course | engine",
+  "target": "dg_id (player scope)",
+  "value": "number | true | object"
+ },
+ "schema": "golfprice.overrides_schema.v1"
+}

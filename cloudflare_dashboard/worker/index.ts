@@ -1,10 +1,14 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleOverridesApi } from "./overrides-api";
 
 interface Env {
   ASSETS: Fetcher;
   DASHBOARD_DATA?: R2Bucket;
+  /** Optional: set both to verify the Cloudflare Access JWT signature on override writes. */
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   DB: D1Database;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -29,6 +33,9 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    const apiResponse = await handleOverridesApi(request, env);
+    if (apiResponse) return apiResponse;
 
     if (url.pathname.startsWith("/api/data/")) {
       const requested = decodeURIComponent(url.pathname.slice("/api/data/".length));

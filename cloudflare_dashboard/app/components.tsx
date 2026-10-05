@@ -179,11 +179,16 @@ export function DataTable({
   preferredColumns = [],
   label,
   pageSize = 25,
+  onRowClick,
+  activeRow,
 }: {
   rows: DataRow[];
   preferredColumns?: string[];
   label: string;
   pageSize?: number;
+  /** Optional: makes rows clickable (used by the Model inputs player table). */
+  onRowClick?: (row: DataRow) => void;
+  activeRow?: DataRow | null;
 }) {
   const allColumns = useMemo(() => {
     const found = [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((column) =>
@@ -300,7 +305,11 @@ export function DataTable({
           </thead>
           <tbody>
             {paged.map((row, rowIndex) => (
-              <tr key={`${currentPage}-${rowIndex}`}>
+              <tr
+                key={`${currentPage}-${rowIndex}`}
+                className={`${onRowClick ? "clickable-row" : ""} ${activeRow && activeRow === row ? "active-row" : ""}`}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+              >
                 {activeColumns.map((column) => {
                   const value = row[column];
                   const numeric = numberValue(value, Number.NaN);

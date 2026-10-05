@@ -362,3 +362,49 @@ td.negative { color: var(--negative); }
   .choice-grid { grid-template-columns: 1fr; }
   .performance-filter-grid, .performance-filter-grid-six, .performance-kpi-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- Model inputs (golfprice) ---- */
+.inputs-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -6px 0 18px; color: var(--muted); font-size: 11px; }
+.inputs-meta b { color: var(--foreground); }
+.inputs-meta .sha { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.inputs-muted { color: var(--muted); font-size: 11px; }
+.inputs-note { margin: 0 0 12px; color: var(--muted-strong); font-size: 12px; line-height: 1.55; }
+.inputs-note.accent { color: var(--accent); }
+.inputs-note.mono, .config-file pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.inputs-h3 { margin: 20px 0 10px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.inputs-banner { display: grid; gap: 4px; margin: 0 0 14px; padding: 12px 14px; color: var(--muted-strong); font-size: 12px; line-height: 1.5; background: color-mix(in srgb, var(--accent) 6%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 12px; }
+.inputs-banner strong { color: var(--foreground); }
+.inputs-banner.warn { background: color-mix(in srgb, var(--warning) 8%, var(--surface)); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+.inputs-banner code { color: var(--accent); }
+.inputs-split { align-items: start; }
+.kv-table { display: grid; gap: 1px; }
+.kv-table > div { display: flex; justify-content: space-between; gap: 18px; padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 11px; }
+.kv-table span { color: var(--muted); text-transform: capitalize; }
+.kv-table b { color: var(--foreground); font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.waterfall { height: 400px; }
+.clickable-row { cursor: pointer; }
+.active-row { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.dim-row { opacity: .5; }
+.wrap-cell { white-space: normal; min-width: 180px; }
+.row-actions { display: flex; gap: 6px; }
+.th-text { display: block; min-height: 37px; padding: 12px 10px 0; color: var(--muted); font-size: 9px; font-weight: 780; letter-spacing: .06em; text-transform: uppercase; }
+.config-file { margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); }
+.config-file summary { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; cursor: pointer; font-size: 12px; }
+.config-file summary span { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 10px; }
+.config-file pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border-top: 1px solid var(--line); color: var(--muted-strong); }
+.inputs-button { min-height: 34px; padding: 0 12px; color: var(--muted-strong); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 9px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.inputs-button:hover:not(:disabled) { color: var(--foreground); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.inputs-button.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.inputs-button.danger { color: var(--negative); border-color: color-mix(in srgb, var(--negative) 35%, transparent); }
+.inputs-button.subtle { background: transparent; }
+.inputs-button:disabled { opacity: .4; cursor: not-allowed; }
+.override-form { display: grid; gap: 14px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: end; }
+.field-label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
+.field-label input, .field-label textarea { min-height: 38px; padding: 8px 10px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 9px; outline: none; font: inherit; text-transform: none; letter-spacing: 0; }
+.field-label textarea { resize: vertical; }
+.field-label input:focus, .field-label textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.quick-expiry, .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.problem-list { margin: 4px 0 0; padding-left: 18px; color: var(--warning); font-size: 11px; line-height: 1.6; }
+@media (max-width: 900px) { .waterfall { height: 460px; } .kv-table > div { flex-direction: column; gap: 2px; } .kv-table b { text-align: left; } }
+
