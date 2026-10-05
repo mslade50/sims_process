@@ -12,10 +12,12 @@ import math
 import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from weakref import WeakKeyDictionary
 
 from forecast_feedback import forecast_feedback, single_published_forecast
 
 TAB = "Scoring Feedback"
+_WORKSHEETS = WeakKeyDictionary()
 LEDGER_HEADERS = ["Receipt ID", "Event ID", "Year", "Course ID", "Round", "Stage", "Status", "Receipt JSON"]
 ACTUAL_HEADERS = [
     "Round", "Realized Wind", "Forecast Dew", "Realized Dew", "Wind Impact",
@@ -23,6 +25,19 @@ ACTUAL_HEADERS = [
     "Structural Wx Baseline", "Structural Residual", "Event ID", "Year",
     "Course ID", "Actual Receipt", "Feedback Status", "Forecast Receipt",
 ]
+
+
+def sheet_request(operation):
+    from sheet_config import _retry_sheet_request
+    return _retry_sheet_request(operation, "scoring feedback")
+
+
+def worksheet(spreadsheet, name):
+    """Reuse handles; gspread's worksheet lookup itself costs a metadata read."""
+    handles = _WORKSHEETS.setdefault(spreadsheet, {})
+    if name not in handles:
+        handles[name] = sheet_request(lambda: spreadsheet.worksheet(name))
+    return handles[name]
 
 
 def digest(value):
@@ -59,10 +74,12 @@ def same_event(left, right):
 def read_receipts(spreadsheet):
     import gspread
     try:
-        rows = spreadsheet.worksheet(TAB).get_all_values()
+        rows = sheet_request(lambda: worksheet(spreadsheet, TAB).get_all_values())
     except gspread.WorksheetNotFound:
         return []
-    if not rows or rows[0] != LEDGER_HEADERS:
+    if not rows:
+        return []
+    if rows[0] != LEDGER_HEADERS:
         raise ValueError("Scoring Feedback ledger headers are invalid")
     records = []
     for row in rows[1:]:
@@ -79,13 +96,23 @@ def save_receipt(spreadsheet, record):
     if any(r["receipt_id"] == record["receipt_id"] for r in records):
         return record
     try:
-        ws = spreadsheet.worksheet(TAB)
+        ws = worksheet(spreadsheet, TAB)
     except gspread.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(title=TAB, rows=1000, cols=8)
-        ws.append_row(LEDGER_HEADERS, value_input_option="RAW")
-    ws.append_row([record["receipt_id"], record["event_id"], record["year"],
-                   record["course_id"], record["round"], record["stage"], record["status"],
-                   json.dumps(record, sort_keys=True, allow_nan=False)], value_input_option="RAW")
+        _WORKSHEETS.setdefault(spreadsheet, {})[TAB] = ws
+    if not records:
+        sheet_request(lambda: ws.update(range_name="A1:H1", values=[LEDGER_HEADERS], value_input_option="RAW"))
+    attempted = False
+    def append_once():
+        nonlocal attempted
+        # An uncertain append may already have succeeded. Inspect before retry.
+        if attempted and any(r["receipt_id"] == record["receipt_id"] for r in read_receipts(spreadsheet)):
+            return
+        attempted = True
+        ws.append_row([record["receipt_id"], record["event_id"], record["year"],
+                       record["course_id"], record["round"], record["stage"], record["status"],
+                       json.dumps(record, sort_keys=True, allow_nan=False)], value_input_option="RAW")
+    sheet_request(append_once)
     if not any(r["receipt_id"] == record["receipt_id"] for r in read_receipts(spreadsheet)):
         raise RuntimeError("Scoring receipt readback failed")
     print(f"  [feedback] {record['stage']} R{record['round']}: {record['status']} ({record['receipt_id'][:12]})")
@@ -215,13 +242,13 @@ def record_actuals(spreadsheet, config, round_num, *, year=None, frame=None,
         record = receipt(ctx, "actuals", "applied", actual=actual, completed_players=len(scores),
                          scores=scores, forecast=published, forecast_receipt=forecast["receipt_id"] if forecast else "",
                          feedback_status=feedback_status, forecast_miss=miss, coverage=coverage)
-        ws = spreadsheet.worksheet("round_config")
+        ws = worksheet(spreadsheet, "round_config")
         values = [f"R{round_num}", "", "", "", "", "", published if published is not None else "",
                   round(actual, 2), miss if miss is not None else "", "", "", ctx["event_id"],
                   ctx["year"], ctx["course_id"], record["receipt_id"], feedback_status, record["forecast_receipt"]]
-        ws.update(range_name="U10:AK10", values=[ACTUAL_HEADERS], value_input_option="RAW")
-        ws.update(range_name=f"U{10 + round_num}:AK{10 + round_num}", values=[values], value_input_option="RAW")
-        if ws.get(f"AI{10 + round_num}")[0][0] != record["receipt_id"]:
+        sheet_request(lambda: ws.update(range_name="U10:AK10", values=[ACTUAL_HEADERS], value_input_option="RAW"))
+        sheet_request(lambda: ws.update(range_name=f"U{10 + round_num}:AK{10 + round_num}", values=[values], value_input_option="RAW"))
+        if sheet_request(lambda: ws.get(f"AI{10 + round_num}"))[0][0] != record["receipt_id"]:
             raise RuntimeError("Actuals Sheet readback failed")
         save_receipt(spreadsheet, record)
     except Exception as exc:
@@ -236,10 +263,10 @@ def record_actuals(spreadsheet, config, round_num, *, year=None, frame=None,
         fields = [diagnostics.get(k, "") for k in ("wind", "forecast_dew", "dew", "wind_impact", "dew_impact")]
         baseline = diagnostics.get("structural_baseline")
         if baseline is not None:
-            ws.update(range_name=f"AD{10 + round_num}:AE{10 + round_num}",
-                      values=[[round(baseline, 2), round(actual - baseline, 2)]], value_input_option="RAW")
+            sheet_request(lambda: ws.update(range_name=f"AD{10 + round_num}:AE{10 + round_num}",
+                      values=[[round(baseline, 2), round(actual - baseline, 2)]], value_input_option="RAW"))
         if diagnostics:
-            ws.update(range_name=f"V{10 + round_num}:Z{10 + round_num}", values=[fields], value_input_option="RAW")
+            sheet_request(lambda: ws.update(range_name=f"V{10 + round_num}:Z{10 + round_num}", values=[fields], value_input_option="RAW"))
         weather_status = "applied" if baseline is not None else "missing"
         save_receipt(spreadsheet, receipt(ctx, "weather", weather_status, diagnostics=diagnostics))
     except Exception as exc:
@@ -255,7 +282,7 @@ def ingest_feedback(spreadsheet, config, completed_round, *, year=None):
                                                reason="No later round to adjust"))
     try:
         records = {r["receipt_id"]: r for r in read_receipts(spreadsheet)}
-        grid = spreadsheet.worksheet("round_config").get("U10:AK14")
+        grid = sheet_request(lambda: worksheet(spreadsheet, "round_config").get("U10:AK14"))
         usable, sources, missing, failed = [], [], [], []
         for rnd in range(1, completed_round + 1):
             row = grid[rnd] if len(grid) > rnd else []
@@ -320,7 +347,7 @@ def realized_diagnostics(config, round_num, metadata, spreadsheet):
         result["dew"] = float(dew)
         result["dew_impact"] = (float(dew) - float(config.get("dewpoint_base") or 0)) * float(config.get("dew_calculation") or 0)
     if "wind_impact" in result and "dew_impact" in result:
-        baseline = spreadsheet.worksheet("round_config").get(f"V{2 + round_num}:W{2 + round_num}")[0]
+        baseline = sheet_request(lambda: worksheet(spreadsheet, "round_config").get(f"V{2 + round_num}:W{2 + round_num}"))[0]
         result["structural_baseline"] = sum(map(float, baseline)) + result["wind_impact"] + result["dew_impact"]
     return result
 
@@ -349,14 +376,14 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     snapshot = output / "round_config_before.json"
     if not snapshot.exists():
-        snapshot.write_text(json.dumps(ss.worksheet("round_config").get_all_values()), encoding="utf-8")
+        snapshot.write_text(json.dumps(sheet_request(lambda: worksheet(ss, "round_config").get_all_values())), encoding="utf-8")
     actuals = []
     for forecast in plan["forecasts"]:
         actuals.append(record_actuals(ss, config, forecast["round"], year=plan["year"], forecast=forecast,
                       weather_loader=lambda metadata, rnd=forecast["round"]: realized_diagnostics(config, rnd, metadata, ss)))
     ingestion = [ingest_feedback(ss, config, rnd, year=plan["year"]) for rnd in range(1, 5)]
     evidence = {"actuals": actuals, "ingestion": ingestion,
-                "sheet_actuals": ss.worksheet("round_config").get("U10:AK14")}
+                "sheet_actuals": sheet_request(lambda: worksheet(ss, "round_config").get("U10:AK14"))}
     (output / "verification.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     if any(r["status"] != "applied" or r["feedback_status"] != "applied" for r in actuals):
         raise RuntimeError("Backfill actuals/forecast validation did not pass")

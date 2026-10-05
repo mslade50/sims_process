@@ -29,6 +29,8 @@ class Worksheet:
         if self.fail_update:
             raise RuntimeError("write failed")
         self.ranges[range_name] = [[str(v) for v in row] for row in values]
+        if range_name == "A1:H1":
+            self.rows = [[str(v) for v in row] for row in values] + self.rows[1:]
 
     def get(self, cell_range):
         if cell_range.startswith("AI"):
@@ -134,6 +136,28 @@ class ScoringFeedbackTests(unittest.TestCase):
         again = self.record()
         self.assertEqual(first["receipt_id"], again["receipt_id"])
         self.assertEqual(len(feedback.read_receipts(self.ss)), length)
+
+    def test_uncertain_append_is_verified_before_retry(self):
+        self.record()
+        ledger = self.ss.worksheet(feedback.TAB)
+        original = ledger.append_row
+        class TransientError(Exception):
+            code = 503
+        def uncertain(row, **kwargs):
+            original(row, **kwargs)
+            raise TransientError()
+        next_receipt = feedback.receipt(feedback.context(CONFIG, 2, 2026), "weather", "missing")
+        with patch.object(ledger, "append_row", side_effect=uncertain) as append, patch("sheet_config.time.sleep"):
+            feedback.save_receipt(self.ss, next_receipt)
+        append.assert_called_once()
+        self.assertEqual(sum(r["receipt_id"] == next_receipt["receipt_id"] for r in feedback.read_receipts(self.ss)), 1)
+
+    def test_worksheet_handles_are_reused_but_receipts_are_read_fresh(self):
+        self.record()
+        with patch.object(self.ss, "worksheet", wraps=self.ss.worksheet) as lookup:
+            self.record()
+            feedback.read_receipts(self.ss)
+        lookup.assert_not_called()
 
     def test_hindsight_forecast_rejected_but_actual_still_recorded(self):
         fc = forecast()
