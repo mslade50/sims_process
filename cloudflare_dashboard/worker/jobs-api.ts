@@ -82,6 +82,29 @@ function randomHex(): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+export type AppendResult = { ok: true } | { ok: false; status: number; error: string };
+
+/**
+ * Append one job to jobs/queue.json under the same-type rate limit (one non-terminal job per type, see rateLimitProblem), with an etag-guarded
+ * write and three retries. Shared by POST /api/jobs and the cron handler (worker/cron.ts); it never validates identity, the callers do.
+ */
+export async function appendJob(bucket: R2Bucket, job: JobRecord, now: number): Promise<AppendResult> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { jobs, etag } = await readQueue(bucket);
+    const candidates = jobs.filter((j) => j.type === job.type && now - (parseUtc(j.requested_at) ?? 0) < MAX_AGE_MS);
+    const statuses: Record<string, JobStatus | null> = {};
+    await Promise.all(candidates.map(async (j) => (statuses[j.id] = await readStatus(bucket, j.id))));
+    const blocked = rateLimitProblem(job.type, jobs, statuses, now);
+    if (blocked) return { ok: false, status: 409, error: blocked };
+    if (await writeQueue(bucket, [...jobs, job], etag)) return { ok: true };
+  }
+  return { ok: false, status: 409, error: "the job queue changed while saving; try again" };
+}
+
+export function randomJobSuffix(): string {
+  return randomHex();
+}
+
 export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.now()): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -141,17 +164,9 @@ export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.n
       }
       const built = buildJob(body, identity.email, identity.verified, now, randomHex());
       if (!built.job) return fail(422, "job rejected", built.problems);
-      const job = built.job;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const { jobs, etag } = await readQueue(bucket);
-        const candidates = jobs.filter((j) => j.type === job.type && now - (parseUtc(j.requested_at) ?? 0) < MAX_AGE_MS);
-        const statuses: Record<string, JobStatus | null> = {};
-        await Promise.all(candidates.map(async (j) => (statuses[j.id] = await readStatus(bucket, j.id))));
-        const blocked = rateLimitProblem(job.type, jobs, statuses, now);
-        if (blocked) return fail(409, blocked);
-        if (await writeQueue(bucket, [...jobs, job], etag)) return json({ ok: true, job }, 201);
-      }
-      return fail(409, "the job queue changed while saving; try again");
+      const appended = await appendJob(bucket, built.job, now);
+      if (!appended.ok) return fail(appended.status, appended.error);
+      return json({ ok: true, job: built.job }, 201);
     }
 
     const id = decodeURIComponent((cancelMatch as RegExpExecArray)[1]);

@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleScheduled } from "./cron";
 import { handleJobsApi } from "./jobs-api";
 import { handleOverridesApi } from "./overrides-api";
 
@@ -32,6 +33,15 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
+  /** Cron triggers (vite.config.ts localBindingConfig.triggers): the Monday 09:30 New York settle job. Never reachable over HTTP. */
+  async scheduled(controller: { scheduledTime: number; cron?: string }, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      handleScheduled(controller, env).then((outcome) => {
+        console.log(`cron ${controller.cron ?? ""}: ${outcome.enqueued ? `enqueued ${outcome.job?.id}` : `skipped (${outcome.reason})`}`);
+      }),
+    );
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 

@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
+import { GolfpriceScorecardSection } from "./ScorecardSection";
 import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, palette, safeMean, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
 
 const chartMargin = { top: 16, right: 18, bottom: 8, left: 0 };
@@ -575,6 +576,7 @@ export function PerformanceView() {
   return (
     <>
       <PageIntro eyebrow="Bet review" title="Performance" description="Historical results with the original analysis universe, inclusion rules, advanced filters, and P&L breakdowns restored." />
+      <GolfpriceScorecardSection />
       <Panel title="Filters & inclusion rules" eyebrow={`${activeFilterCount} active filter${activeFilterCount === 1 ? "" : "s"}`} actions={<button type="button" className="icon-button" onClick={resetFilters}>Reset filters</button>} className="performance-filter-panel">
         <div className="inclusion-rules" aria-label="Default bet inclusion rules">
           <span className={typesSelected.includes("score_bet") ? "included" : "excluded"}><b>Score bets</b>{typesSelected.includes("score_bet") ? "Included by selection" : "Excluded by default"}</span>
