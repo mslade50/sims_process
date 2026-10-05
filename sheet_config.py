@@ -664,8 +664,8 @@ def reset_for_new_week():
         print("  [reset] mid-tournament rerun — keeping this week's actuals block")
     else:
         try:
-            ws.batch_clear(["U11:AC14"])
-            cells_updated.append("actuals block (U11:AC14)")
+            ws.batch_clear(["U11:AK14"])
+            cells_updated.append("actuals block (U11:AK14)")
         except Exception as exc:
             print(f"  WARNING: could not clear actuals block: {exc}")
 

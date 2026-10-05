@@ -5731,6 +5731,20 @@ def main():
             )
             approved_cache_saved = True
 
+            if not args.dry_run and not args.no_store:
+                try:
+                    from scoring_feedback import capture_forecast
+                    from sheets_storage import get_spreadsheet
+                    capture_forecast(
+                        get_spreadsheet(), _cfg, sim_round, expected_avg,
+                        model_preds,
+                        published_at=active_health_manifest["source"]["generated_at"],
+                        source={"kind": "approved_simulation",
+                                "manifest_sha256": active_health_manifest["manifest_sha256"]},
+                    )
+                except Exception as exc:
+                    print(f"  Forecast receipt: failed ({type(exc).__name__})")
+
         if args.sim_only:
             if approved_cache_saved:
                 print("\n  Sim complete (--sim-only). Approved cache saved for --price-only / --reprice.")

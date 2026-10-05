@@ -83,6 +83,51 @@ def fetch_pga_events_this_week(api_key, *, now=None):
             raise RuntimeError(f'Could not verify the {year} PGA schedule') from None
     return events
 
+def fetch_scoring_round(event_id, year, round_num, course_id, api_key):
+    """Bind official live scores to the requested season/event/physical course.
+
+    Field-updates may already describe the next tournament on Monday. The
+    season schedule still identifies the completed event; the live endpoint's
+    event, course and stat_round must all agree before its results are used.
+    """
+    def read(endpoint, params):
+        try:
+            response = requests.get(f"{DATAGOLF_BASE}/{endpoint}", params={
+                **params, "file_format": "json", "key": api_key}, timeout=30)
+            if response.status_code != 200:
+                raise RuntimeError(f"DataGolf scoring HTTP {response.status_code}")
+            return response.json()
+        except (requests.RequestException, ValueError):
+            raise RuntimeError("DataGolf scoring request failed") from None
+
+    schedule = read("get-schedule", {"tour": "pga", "season": year, "upcoming_only": "no"})
+    if str(schedule.get("season")) != str(year) or schedule.get("tour") != "pga":
+        raise ValueError("Scoring schedule has the wrong season/tour")
+    events = [r for r in schedule.get("schedule", []) if str(r.get("event_id")) == str(event_id)]
+    if len(events) != 1 or str(events[0].get("course_key")) != str(course_id):
+        raise ValueError("Scoring schedule has the wrong event/course identity")
+    event = events[0]
+    payload = read("preds/live-tournament-stats", {
+        "stats": "sg_total,score", "round": round_num, "display": "value"})
+    if (payload.get("event_name") != event["event_name"]
+            or payload.get("course_name") != event["course"]
+            or str(payload.get("stat_round")) != str(round_num)):
+        raise ValueError("Stale-event or wrong-round scoring results")
+    updated = datetime.strptime(payload.get("last_updated", ""), "%Y-%m-%d %H:%M:%S UTC")
+    start = datetime.fromisoformat(event["start_date"])
+    if start.year != int(year) or not 0 <= (updated.date() - start.date()).days <= 14:
+        raise ValueError("Stale-season scoring results")
+    frame = pd.DataFrame(payload.get("live_stats", []))
+    if not frame.empty:
+        from sim_inputs import name_replacements
+        frame["player_name"] = frame["player_name"].str.lower().str.strip().replace(name_replacements)
+    frame.attrs.update(event_id=str(event_id), year=int(year), round_num=int(round_num),
+                       course_id=int(course_id), event_name=event["event_name"],
+                       course_name=event["course"], start_date=event["start_date"],
+                       latitude=event.get("latitude"), longitude=event.get("longitude"))
+    return frame
+
+
 def fetch_live_stats(round_num, api_key, include_score=False):
     """
     Fetch live tournament stats from DataGolf.

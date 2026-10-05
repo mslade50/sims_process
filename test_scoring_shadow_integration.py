@@ -72,6 +72,12 @@ class ScoringShadowIntegrationTests(unittest.TestCase):
             else {"return_value": shadow_record}
         )
         with (
+            patch(
+                "scoring_feedback.ingest_feedback",
+                return_value={"status": "applied", "correction": -0.233,
+                              "receipt_id": "verified-current-event"},
+            ),
+            patch("scoring_feedback.capture_forecast"),
             patch("live_stats_engine.os.path.exists") as exists,
             patch("live_stats_engine.pd.read_csv", return_value=baselines),
             patch(
