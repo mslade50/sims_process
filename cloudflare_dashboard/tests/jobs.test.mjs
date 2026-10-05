@@ -1,0 +1,232 @@
+import assert from "node:assert/strict";
+import { createSign, generateKeyPairSync } from "node:crypto";
+import test from "node:test";
+import { JOB_ID_RE, JOB_TYPES, MAX_QUEUE, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue } from "../app/jobs-rules.ts";
+
+const NOW = Date.parse("2026-10-05T14:00:00Z");
+
+const job = (over = {}) => ({ id: "j-20261005T130000-aaaaaa", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-05T13:00:00Z", verified: true, ...over });
+
+test("the allow-list is exactly the owner-approved moments plus publish", () => {
+  assert.deepEqual(
+    JOB_TYPES.map((s) => s.type),
+    ["monday_settle", "monday_week", "tuesday", "wednesday", "thursday", "thursday_close", "after_round", "daily_health", "publish"],
+  );
+});
+
+test("unknown types, unknown keys and free text are rejected", () => {
+  assert.match(checkRequest({ type: "rm -rf" }).problems.join(), /type must be one of/);
+  assert.match(checkRequest({ type: "week" }).problems.join(), /type must be one of/);
+  assert.match(checkRequest({ type: "tuesday", command: "x" }).problems.join(), /command is set by the server/);
+  assert.match(checkRequest({ type: "tuesday", id: "j-1" }).problems.join(), /id is set by the server/);
+  assert.match(checkRequest({ type: "tuesday", params: { event: "pga:1" } }).problems.join(), /param event is not allowed/);
+  assert.match(checkRequest({ type: "tuesday", params: { supersede: "yes" } }).problems.join(), /true or false/);
+  assert.match(checkRequest(null).problems.join(), /JSON object/);
+  assert.match(checkRequest([]).problems.join(), /JSON object/);
+  assert.match(checkRequest({ type: "tuesday", params: [] }).problems.join(), /params must be an object/);
+});
+
+test("flags are accepted only where the moment accepts them", () => {
+  assert.deepEqual(checkRequest({ type: "tuesday", params: { no_pull: true, supersede: true } }), { problems: [], type: "tuesday", params: { no_pull: true, supersede: true } });
+  assert.deepEqual(checkRequest({ type: "tuesday", params: { no_pull: false } }).params, {});
+  assert.match(checkRequest({ type: "daily_health", params: { supersede: true } }).problems.join(), /does not accept supersede/);
+  assert.match(checkRequest({ type: "publish", params: { no_pull: true } }).problems.join(), /does not accept no_pull/);
+  assert.match(checkRequest({ type: "monday_settle", params: { supersede: true } }).problems.join(), /does not accept supersede/);
+  assert.match(checkRequest({ type: "thursday_close", params: { no_pull: true } }).problems.join(), /does not accept no_pull/);
+  assert.deepEqual(checkRequest({ type: "monday_settle", params: { no_pull: true } }).problems, []);
+});
+
+test("after_round is 1, 2 or 3 and only on after_round", () => {
+  for (const n of [1, 2, 3]) assert.deepEqual(checkRequest({ type: "after_round", params: { after_round: n } }).params, { after_round: n });
+  for (const n of [0, 4, "2", 1.5, null]) assert.match(checkRequest({ type: "after_round", params: { after_round: n } }).problems.join(), /after_round must be 1, 2 or 3/);
+  assert.deepEqual(checkRequest({ type: "after_round" }).problems, []);
+  assert.match(checkRequest({ type: "wednesday", params: { after_round: 1 } }).problems.join(), /does not take after_round/);
+});
+
+test("job creation needs a verified identity; the server sets id, requester and time", () => {
+  assert.match(buildJob({ type: "tuesday" }, "o@example.com", false, NOW, "abc123").problems.join(), /not verified/);
+  const built = buildJob({ type: "tuesday", params: { supersede: true } }, "o@example.com", true, NOW, "abc123");
+  assert.deepEqual(built.job, { id: "j-20261005T140000-abc123", type: "tuesday", params: { supersede: true }, requested_by: "o@example.com", requested_at: "2026-10-05T14:00:00Z", verified: true });
+  assert.match(built.job.id, JOB_ID_RE);
+  assert.ok(makeJobId(NOW, "000000") < makeJobId(NOW + 1000, "000000"), "ids sort by time");
+});
+
+test("rate limit: one non-terminal job per type, unless older than 6 h", () => {
+  const none = {};
+  assert.match(rateLimitProblem("tuesday", [job()], none, NOW), /already queued/);
+  assert.equal(rateLimitProblem("wednesday", [job()], none, NOW), null, "other types are unaffected");
+  assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "running" } }, NOW), /already running/);
+  assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "claimed" } }, NOW), /already claimed/);
+  for (const state of ["done", "failed", "expired", "cancelled"]) assert.equal(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state } }, NOW), null, state);
+  assert.equal(rateLimitProblem("tuesday", [job({ cancelled_at: "2026-10-05T13:30:00Z" })], none, NOW), null, "cancelled in the queue is terminal");
+  assert.equal(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T07:59:00Z" })], none, NOW), null, "older than 6 h no longer blocks");
+  assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already queued/);
+  assert.equal(rateLimitProblem("tuesday", [], none, NOW), null);
+});
+
+test("cancel applies only to a job the runner has not claimed", () => {
+  assert.equal(cancelProblem(job(), null), null);
+  assert.match(cancelProblem(undefined, null), /no such job/);
+  assert.match(cancelProblem(job({ cancelled_at: "2026-10-05T13:30:00Z" }), null), /already cancelled/);
+  assert.match(cancelProblem(job(), { id: "x", state: "claimed" }), /already claimed/);
+  assert.match(cancelProblem(job(), { id: "x", state: "done" }), /already done/);
+  assert.equal(effectiveState(job({ cancelled_at: "2026-10-05T13:30:00Z" }), null), "cancelled");
+  assert.equal(effectiveState(job(), { id: "x", state: "running" }), "running");
+});
+
+test("the queue keeps the newest 200", () => {
+  const many = Array.from({ length: 230 }, (_, i) => job({ id: `j-${i}` }));
+  const kept = trimQueue(many);
+  assert.equal(kept.length, MAX_QUEUE);
+  assert.equal(kept[0].id, "j-30");
+  assert.equal(kept.at(-1).id, "j-229");
+});
+
+/* ---------------------------------------------------------------- Worker integration (built bundle, signed Access JWT, in-memory R2) */
+async function loadWorker() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
+  return (await import(workerUrl.href)).default;
+}
+
+function fakeBucket(initial = {}) {
+  const store = new Map(Object.entries(initial).map(([k, v]) => [k, { body: typeof v === "string" ? v : JSON.stringify(v), v: 1 }]));
+  const wrap = (key) => {
+    const o = store.get(key);
+    if (!o) return null;
+    return { key, etag: `e${o.v}`, text: async () => o.body, json: async () => JSON.parse(o.body), writeHttpMetadata() {} };
+  };
+  return {
+    store,
+    get: async (key) => wrap(key),
+    put: async (key, body, options = {}) => {
+      const existing = store.get(key);
+      const cond = options.onlyIf;
+      if (cond?.etagMatches && (!existing || `e${existing.v}` !== cond.etagMatches)) return null;
+      if (cond?.etagDoesNotMatch === "*" && existing) return null;
+      store.set(key, { body: String(body), v: (existing?.v ?? 0) + 1 });
+      return { key };
+    },
+    list: async ({ prefix = "" } = {}) => ({ objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })), truncated: false }),
+  };
+}
+
+const TEAM = "team.example.cloudflareaccess.com";
+const AUD = "aud-123";
+const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const b64url = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
+
+function signedHeaders(email = "owner@example.com") {
+  const head = b64url({ alg: "RS256", kid: "k1" });
+  const payload = b64url({ email, aud: [AUD], iss: `https://${TEAM}`, exp: Math.floor(Date.now() / 1000) + 3600, sub: "u1" });
+  const sig = createSign("RSA-SHA256").update(`${head}.${payload}`).sign(privateKey).toString("base64url");
+  return { "cf-access-authenticated-user-email": email, "cf-access-jwt-assertion": `${head}.${payload}.${sig}` };
+}
+
+function unsignedHeaders(email = "owner@example.com") {
+  const jwt = `${b64url({ alg: "RS256", kid: "k1" })}.${b64url({ email, exp: Math.floor(Date.now() / 1000) + 3600 })}.c2ln`;
+  return { "cf-access-authenticated-user-email": email, "cf-access-jwt-assertion": jwt };
+}
+
+const realFetch = globalThis.fetch;
+test.before(() => {
+  globalThis.fetch = async (input, init) => {
+    const href = typeof input === "string" ? input : input.url;
+    if (href === `https://${TEAM}/cdn-cgi/access/certs`) return Response.json({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1" }] });
+    return realFetch(input, init);
+  };
+});
+test.after(() => {
+  globalThis.fetch = realFetch;
+});
+
+const context = { waitUntil() {}, passThroughOnException() {} };
+const assets = { fetch: async () => new Response("nf", { status: 404 }) };
+
+async function call(worker, bucket, path, { method = "GET", headers = {}, body, access = true } = {}) {
+  const init = { method, headers: { ...headers, ...(body !== undefined ? { "content-type": "application/json" } : {}) } };
+  if (body !== undefined) init.body = typeof body === "string" ? body : JSON.stringify(body);
+  const env = { ASSETS: assets, DASHBOARD_DATA: bucket, ...(access ? { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD } : {}) };
+  return worker.fetch(new Request(`https://golf.example${path}`, init), env, context);
+}
+
+test("POST /api/jobs: identity, verification, origin, allow-list, rate limit", async () => {
+  const worker = await loadWorker();
+  const bucket = fakeBucket();
+  const body = { type: "tuesday", params: { supersede: true } };
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", body })).status, 401, "no identity");
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", headers: unsignedHeaders(), body, access: false })).status, 403, "identity not verifiable");
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", headers: unsignedHeaders(), body })).status, 401, "bad signature");
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", headers: { ...signedHeaders(), origin: "https://evil.example" }, body })).status, 403);
+  const bad = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "shell" } });
+  assert.equal(bad.status, 422);
+  assert.equal(bucket.store.size, 0, "nothing written by refused requests");
+
+  const ok = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders("Owner@Example.com"), body });
+  assert.equal(ok.status, 201);
+  const created = (await ok.json()).job;
+  assert.match(created.id, JOB_ID_RE);
+  assert.equal(created.requested_by, "owner@example.com");
+  assert.equal(created.verified, true);
+  const queue = JSON.parse(bucket.store.get("jobs/queue.json").body);
+  assert.deepEqual(queue.jobs.map((j) => j.id), [created.id]);
+
+  const again = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "tuesday" } });
+  assert.equal(again.status, 409, "same type already queued");
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "wednesday" } })).status, 201);
+
+  // once the runner reports the first job done, the type is free again
+  bucket.store.set(`jobs/status/${created.id}.json`, { body: JSON.stringify({ id: created.id, state: "done" }), v: 1 });
+  assert.equal((await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "tuesday" } })).status, 201);
+});
+
+test("GET /api/jobs lists newest first with statuses, derived states and heartbeats; log endpoint", async () => {
+  const worker = await loadWorker();
+  const a = job({ id: "j-20261005T120000-aaaaaa", type: "tuesday" });
+  const b = job({ id: "j-20261005T130000-bbbbbb", type: "wednesday" });
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [a, b] },
+    [`jobs/status/${a.id}.json`]: { id: a.id, state: "done", machine: "desktop-2ki41v6", exit_code: 0, summary: "ok" },
+    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: "2026-10-05T13:58:00Z", state: "idle" },
+    [`jobs/logs/${a.id}.txt`]: "line 1\nline 2\n",
+  });
+  const response = await call(worker, bucket, "/api/jobs");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.jobs.map((j) => [j.id, j.state]), [[b.id, "queued"], [a.id, "done"]]);
+  assert.equal(data.jobs[1].status.machine, "desktop-2ki41v6");
+  assert.equal(data.heartbeats.length, 1);
+  const log = await call(worker, bucket, `/api/jobs/${a.id}/log`);
+  assert.equal(await log.text(), "line 1\nline 2\n");
+  assert.equal((await call(worker, bucket, "/api/jobs/not-an-id/log")).status, 400);
+  assert.equal((await call(worker, fakeBucket(), "/api/jobs")).status, 200, "an empty bucket is an empty list");
+});
+
+test("POST /api/jobs/<id>/cancel marks a queued job; claimed or unknown jobs are refused", async () => {
+  const worker = await loadWorker();
+  const a = job({ id: "j-20261005T120000-aaaaaa", type: "tuesday" });
+  const b = job({ id: "j-20261005T130000-bbbbbb", type: "wednesday" });
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [a, b] },
+    [`jobs/status/${b.id}.json`]: { id: b.id, state: "claimed", machine: "m" },
+  });
+  assert.equal((await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", body: {} })).status, 401);
+  assert.equal((await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", headers: unsignedHeaders(), body: {}, access: false })).status, 403);
+  const ok = await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} });
+  assert.equal(ok.status, 200);
+  const queue = JSON.parse(bucket.store.get("jobs/queue.json").body);
+  assert.equal(queue.jobs[0].cancelled_by, "owner@example.com");
+  assert.ok(queue.jobs[0].cancelled_at);
+  assert.equal(queue.jobs[1].cancelled_at, undefined);
+  assert.equal((await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} })).status, 409, "already cancelled");
+  assert.equal((await call(worker, bucket, `/api/jobs/${b.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} })).status, 409, "claimed");
+  assert.equal((await call(worker, bucket, "/api/jobs/j-20261005T110000-cccccc/cancel", { method: "POST", headers: signedHeaders(), body: {} })).status, 404);
+});
+
+test("a corrupt queue is never overwritten", async () => {
+  const worker = await loadWorker();
+  const bucket = fakeBucket({ "jobs/queue.json": "{nope" });
+  const response = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "tuesday" } });
+  assert.equal(response.status, 500);
+  assert.equal(bucket.store.get("jobs/queue.json").body, "{nope");
+});

@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleJobsApi } from "./jobs-api";
 import { handleOverridesApi } from "./overrides-api";
 
 interface Env {
@@ -36,6 +37,8 @@ const worker = {
 
     const apiResponse = await handleOverridesApi(request, env);
     if (apiResponse) return apiResponse;
+    const jobsResponse = await handleJobsApi(request, env);
+    if (jobsResponse) return jobsResponse;
 
     if (url.pathname.startsWith("/api/data/")) {
       const requested = decodeURIComponent(url.pathname.slice("/api/data/".length));

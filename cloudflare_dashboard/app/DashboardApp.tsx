@@ -11,6 +11,7 @@ import {
   CircleGauge,
   CloudSun,
   Menu,
+  Play,
   Microscope,
   Settings2,
   SlidersHorizontal,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
+import { RunView } from "./RunView";
 import { useDashboardData } from "./data";
 import { displayDate, titleCase } from "./lib";
 import {
@@ -31,7 +33,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
+export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
 
 type Manifest = {
   generated_at: string;
@@ -44,6 +46,10 @@ type Manifest = {
 };
 
 const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: string; description: string; icon: typeof CircleGauge }> }> = [
+  {
+    label: "Operate",
+    items: [{ key: "run", label: "Run", description: "Start a golfprice job from your phone", icon: Play }],
+  },
   {
     label: "Live",
     items: [
@@ -71,6 +77,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
 ];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  run: RunView,
   inputs: InputsView,
   research: ResearchView,
   distributions: DistributionsView,
