@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
+import { matchPlayers, matchText } from "./inputs-search";
 import { DataRow, numberValue, palette, titleCase } from "./lib";
 import { ALLOWED, CUT_BOUNDS, MAX_LIFETIME_DAYS, checkOverride, isExpired, isoSeconds, specFor, type FieldSpec, type OverrideRecord, type Scope } from "./overrides-rules";
 
@@ -50,6 +52,7 @@ const TABS = [
   { value: "weather", label: "Weather and waves" },
   { value: "odds", label: "Odds freshness" },
   { value: "config", label: "Config" },
+  { value: "features", label: "Features" },
   { value: "adjust", label: "Adjust" },
 ] as const;
 type Tab = (typeof TABS)[number]["value"];
@@ -165,7 +168,78 @@ function waterfall(player: Obj) {
   return steps;
 }
 
-function PlayerDetail({ player, onAdjust }: { player: Obj; onAdjust: (dgId: number) => void }) {
+type PlayerChoice = { name: string; dg_id: number };
+
+/** Type-ahead over the field's player names ("first last" or "last, first", accent and case-insensitive); picking one selects that player. */
+function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (dgId: number) => void }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const matches = useMemo(() => matchPlayers(players, query, 8), [players, query]);
+  const showList = open && query.trim() !== "";
+  const pick = (choice: PlayerChoice | undefined) => {
+    if (!choice) return;
+    onPick(choice.dg_id);
+    setQuery("");
+    setOpen(false);
+  };
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setHighlight((current) => Math.min(current + 1, Math.max(0, matches.length - 1)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlight((current) => Math.max(current - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      pick(matches[Math.min(highlight, matches.length - 1)]);
+    } else if (event.key === "Escape") {
+      setQuery("");
+      setOpen(false);
+    }
+  };
+  return (
+    <div className="player-search">
+      <label className="search-box">
+        <Search size={15} />
+        <input
+          type="search"
+          role="combobox"
+          aria-expanded={showList}
+          aria-controls="player-search-list"
+          aria-autocomplete="list"
+          aria-label="Find a player"
+          autoComplete="off"
+          value={query}
+          placeholder="Find a player…"
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setHighlight(0);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onKeyDown={onKeyDown}
+        />
+      </label>
+      {showList && (
+        <ul className="player-search-list" id="player-search-list" role="listbox">
+          {matches.length === 0 && <li className="player-search-empty">No player matches “{query.trim()}”</li>}
+          {matches.map((choice, index) => (
+            <li key={choice.dg_id} role="option" aria-selected={index === highlight}>
+              <button type="button" className={index === highlight ? "active" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => pick(choice)} onMouseEnter={() => setHighlight(index)}>
+                {choice.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PlayerDetail({ player, choices, onPick, onAdjust }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust: (dgId: number) => void }) {
   const ch = obj(player.challenger);
   const bd = obj(ch.breakdown);
   const steps = useMemo(() => waterfall(player), [player]);
@@ -181,7 +255,12 @@ function PlayerDetail({ player, onAdjust }: { player: Obj; onAdjust: (dgId: numb
       className="player-detail"
       eyebrow="Player detail"
       title={String(player.name ?? "")}
-      actions={<button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>}
+      actions={
+        <>
+          <PlayerSearch players={choices} onPick={onPick} />
+          <button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>
+        </>
+      }
     >
       <div className="mini-stat-grid">
         <div><span>Final mu</span><strong>{signed(ch.mu)}</strong></div>
@@ -261,6 +340,7 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
   const [selected, setSelected] = useState<number | null>(null);
   const current = players.find((p) => num(p.dg_id) === selected) ?? players[0];
   const currentRow = rows.find((row) => row.dg_id === num(current?.dg_id)) ?? null;
+  const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
   const preferred = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut", "fit_rs_ddacc", "override_total", ...FAMILIES.map(([key]) => `chl_${key}`)];
   const mus = rows.map((row) => numberValue(row.mu)).filter(Number.isFinite);
   const withOverride = rows.filter((row) => numberValue(row.override_total) !== 0).length;
@@ -274,10 +354,10 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
         <Kpi label="Mean round SD" value={sdMean.toFixed(2)} detail="challenger, after overrides" />
         <Kpi label="Players with an override" value={String(withOverride)} detail="untouched numbers are kept" tone={withOverride ? "positive" : "neutral"} />
       </div>
-      <Panel eyebrow="Challenger inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row for the breakdown</span>}>
+      <Panel eyebrow="Challenger inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row, or search below, for the breakdown</span>}>
         <DataTable rows={rows} preferredColumns={preferred} label="Model inputs players" pageSize={30} onRowClick={(row) => setSelected(num(row.dg_id))} activeRow={currentRow} />
       </Panel>
-      {current && <PlayerDetail player={current} onAdjust={onAdjust} />}
+      {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} />}
     </div>
   );
 }
@@ -519,6 +599,146 @@ function ConfigTab({ doc }: { doc: Obj }) {
         })}
       </Panel>
       <Panel eyebrow="Provenance" title="Where this run came from"><KeyValue data={{ ...prov, code_hashes: undefined }} /></Panel>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ features (golfprice.feature_glossary.v1, published by golfprice/feature_glossary.py) */
+type WeightSet = Record<string, number | null | undefined>;
+type GlossaryFeature = { base: string; family: string; family_label: string; name: string; measures: string; computed: string; sign_intuition: string; weights: { chl: WeightSet; v21: WeightSet }; abs_weight_chl: number; abs_weight_v21: number };
+type GlossaryFamily = { key: string; label: string; summary: string; n_features: number; sum_base_weight_chl: number; share_abs_weight_chl: number; share_abs_weight_v21: number };
+type GlossaryLocation = { base: string; part: string; name: string; measures: string; weights: { v21: WeightSet } };
+type Glossary = {
+  schema: string;
+  season: number;
+  model: Obj;
+  variants: Array<{ key: string; label: string; suffix: string; text: string }>;
+  standardisation: string;
+  fit: string[];
+  reading_weights: string;
+  families: GlossaryFamily[];
+  features: GlossaryFeature[];
+  location: { note: string; columns: GlossaryLocation[]; n_columns_2026: number };
+};
+
+const VARIANT_SHORT: Record<string, string> = { base: "All players", xeuro: "DPWT copy", xband0: "<30 rounds", xband1: "30-100 rounds", miss: "Missing flag", miss_xeuro: "Missing, DPWT" };
+type WeightModel = "chl" | "v21";
+type SortMode = "model" | "weight";
+
+function WeightStrip({ weights, keys = Object.keys(VARIANT_SHORT) }: { weights: WeightSet; keys?: string[] }) {
+  return (
+    <div className="feature-weights">
+      {keys.map((key) => {
+        const value = num(weights[key]);
+        return (
+          <div key={key} className={value === null ? "absent" : value > 0 ? "positive" : value < 0 ? "negative" : ""} title={value === null ? "this variant column does not exist for this feature" : `${VARIANT_SHORT[key]}: ${value}`}>
+            <span>{VARIANT_SHORT[key]}</span>
+            <b>{value === null ? "—" : signed(value, 3)}</b>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeaturesTab() {
+  const { data: glossary, loading, error } = useDashboardData<Glossary>("golfprice/feature_glossary.json");
+  const [query, setQuery] = useState("");
+  const [family, setFamily] = useState("all");
+  const [model, setModel] = useState<WeightModel>("chl");
+  const [sort, setSort] = useState<SortMode>("model");
+  const features = useMemo(() => glossary?.features ?? [], [glossary]);
+  const shown = useMemo(() => {
+    const abs = (f: GlossaryFeature) => (model === "chl" ? f.abs_weight_chl : f.abs_weight_v21);
+    const list = features.filter((f) => (family === "all" || f.family === family) && matchText(`${f.name} ${f.base} ${f.measures} ${f.computed} ${f.family_label}`, query));
+    return sort === "weight" ? [...list].sort((a, b) => abs(b) - abs(a)) : list;
+  }, [features, family, model, query, sort]);
+  const locShown = useMemo(() => (glossary?.location.columns ?? []).filter((c) => (family === "all" || family === "location") && matchText(`${c.name} ${c.base} ${c.measures} ${c.part} location`, query)), [glossary, family, query]);
+  if (loading) return <LoadingState label="Loading the feature glossary" />;
+  if (error || !glossary) return <ErrorState message={error ?? "The feature glossary has not been published yet (golfprice/feature_glossary.json)."} />;
+  const m = glossary.model;
+  const share = (f: GlossaryFamily) => (model === "chl" ? f.share_abs_weight_chl : f.share_abs_weight_v21);
+  const visibleFamilies = glossary.families.filter((f) => shown.some((x) => x.family === f.key));
+  return (
+    <div className="stack-lg">
+      <div className="kpi-grid">
+        <Kpi label="Features" value={String(glossary.features.length)} detail={`${num(m.n_design_columns_2026) ?? "—"} design columns in ${glossary.season}`} tone="accent" />
+        <Kpi label="Ridge penalty" value={fx(m.ridge_lambda_2026, 0)} detail={`chosen by rolling-origin CV, ${glossary.season} season`} />
+        <Kpi label="Fitted on" value={String(m.train_seasons_2026 ?? "—")} detail={`${(num(m.n_train_2026) ?? 0).toLocaleString()} player-events, frozen all season`} />
+        <Kpi label="Location columns" value={String(glossary.location.n_columns_2026)} detail="home base, travel and nationality (v2.1)" />
+      </div>
+      <Panel eyebrow="How to read this" title="What the weights mean">
+        <p className="inputs-note">{String(m.overview ?? "")}</p>
+        <p className="inputs-note">{glossary.reading_weights}</p>
+        <h3 className="inputs-h3">Variants of each feature</h3>
+        <div className="kv-table variant-help">
+          {glossary.variants.map((v) => (
+            <div key={v.key}><span>{v.label}{v.suffix ? ` (${v.suffix})` : ""}</span><b>{v.text}</b></div>
+          ))}
+        </div>
+        <details className="config-file">
+          <summary><b>Standardisation and how the weights are fitted</b><span>walk-forward ridge, per season</span></summary>
+          <div className="glossary-prose">
+            <p className="inputs-note">{glossary.standardisation}</p>
+            <ul>{glossary.fit.map((line) => <li key={line}>{line}</li>)}</ul>
+          </div>
+        </details>
+      </Panel>
+      <Panel eyebrow="Find a feature" title="Filter">
+        <div className="glossary-controls">
+          <label className="search-box">
+            <Search size={15} />
+            <input type="search" aria-label="Search features" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, column or explanation…" />
+          </label>
+          <Select label="Family" value={family} onChange={setFamily} options={[{ value: "all", label: "All families" }, ...glossary.families.map((f) => ({ value: f.key, label: `${f.label} (${f.n_features})` })), { value: "location", label: `Location (${glossary.location.columns.length})` }]} />
+          <Select label="Order" value={sort} onChange={(v) => setSort(v as SortMode)} options={[{ value: "model", label: "Model order" }, { value: "weight", label: "Largest weight first" }]} />
+          <SegmentedControl label="Weights from" value={model} onChange={setModel} options={[{ value: "chl", label: "CHL (frozen)" }, { value: "v21", label: "v2.1 refit" }]} />
+        </div>
+        <p className="inputs-muted">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardised coefficients ({model === "chl" ? "frozen CHL ridge" : "v2.1 refit, CHL columns re-estimated jointly with the location columns"}).</p>
+      </Panel>
+      {visibleFamilies.map((fam) => (
+        <Panel key={fam.key} eyebrow={`${fam.n_features} features · ${(share(fam) * 100).toFixed(1)}% of total absolute weight`} title={fam.label}>
+          <p className="inputs-note">{fam.summary}</p>
+          <div className="feature-grid">
+            {shown.filter((f) => f.family === fam.key).map((f) => (
+              <article className="feature-card" key={f.base} id={`feature-${f.base}`}>
+                <header>
+                  <h3>{f.name}</h3>
+                  <code className="feature-code">{f.base}</code>
+                </header>
+                <p>{f.measures}</p>
+                <WeightStrip weights={model === "chl" ? f.weights.chl : f.weights.v21} />
+                <details>
+                  <summary>How it is computed and what sign to expect</summary>
+                  <h4>How it is computed</h4>
+                  <p>{f.computed}</p>
+                  <h4>Expected sign</h4>
+                  <p>{f.sign_intuition}</p>
+                </details>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      ))}
+      {locShown.length > 0 && (
+        <Panel eyebrow={`${glossary.location.columns.length} columns · v2.1 refit only`} title="Location columns">
+          <p className="inputs-note">{glossary.location.note}</p>
+          <div className="feature-grid">
+            {locShown.map((c) => (
+              <article className="feature-card" key={c.base}>
+                <header>
+                  <h3>{c.name}</h3>
+                  <code className="feature-code">{c.base}</code>
+                </header>
+                <p>{c.measures}</p>
+                <WeightStrip weights={c.weights.v21} keys={["base", "xeuro"]} />
+                <span className="inputs-muted">{c.part}</span>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      )}
+      {shown.length + locShown.length === 0 && <EmptyState title="No feature matches" detail="Try fewer words or clear the family filter." />}
     </div>
   );
 }
@@ -797,7 +1017,7 @@ export function InputsView() {
   const [eventUid, setEventUid] = useState<string>("");
   const [runKey, setRunKey] = useState<string>("");
   const [tab, setTab] = useState<Tab>(() => {
-    // Deep link: /inputs?tab=course|variance|weather|odds|config|adjust
+    // Deep link: /inputs?tab=course|variance|weather|odds|config|features|adjust
     const wanted = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("tab");
     return TABS.find((t) => t.value === wanted)?.value ?? "players";
   });
@@ -819,7 +1039,7 @@ export function InputsView() {
       <PageIntro
         eyebrow="Model"
         title="Model inputs"
-        description="What went into the simulation: player skill components, course and hole table, variance and engine settings, weather, odds and config. Adjust applies one-off owner overrides."
+        description="What went into the simulation: player skill components, course and hole table, variance and engine settings, weather, odds and config. Features explains every skill-model feature; Adjust applies one-off owner overrides."
         controls={
           <div className="control-row wrap">
             <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})` }))} />
@@ -844,6 +1064,7 @@ export function InputsView() {
       {doc && tab === "weather" && <WeatherTab doc={doc} />}
       {doc && tab === "odds" && <OddsTab doc={doc} />}
       {doc && tab === "config" && <ConfigTab doc={doc} />}
+      {tab === "features" && <FeaturesTab />}
       {doc && tab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} />}
     </div>
   );

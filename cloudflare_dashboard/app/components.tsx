@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { DataRow, formatCell, numberValue, titleCase } from "./lib";
 
@@ -221,6 +221,14 @@ export function DataTable({
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
   const paged = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
+  // When the highlighted row is changed from outside the table (a player search), show the page that holds it. Manual paging is left alone.
+  const jumpedTo = useRef<DataRow | null>(activeRow ?? null);
+  useEffect(() => {
+    if (!activeRow || jumpedTo.current === activeRow) return;
+    jumpedTo.current = activeRow;
+    const index = filtered.indexOf(activeRow);
+    if (index >= 0) queueMicrotask(() => setPage(Math.floor(index / pageSize)));
+  }, [activeRow, filtered, pageSize]);
 
   function toggleSort(column: string) {
     setSort((current) =>
