@@ -126,6 +126,7 @@ function playerRows(players: Obj[]): DataRow[] {
       name: String(p.name ?? ""),
       mu: num(ch.mu),
       mu_untouched: num(ch.mu_untouched),
+      vs_avg_pga_tour_player: num(ch.mu_tour),
       sd: num(ch.sd),
       sd_untouched: num(ch.sd_untouched),
       se_kernel: num(ch.se_kernel),
@@ -263,8 +264,9 @@ function PlayerDetail({ player, choices, onPick, onAdjust }: { player: Obj; choi
       }
     >
       <div className="mini-stat-grid">
-        <div><span>Final mu</span><strong>{signed(ch.mu)}</strong></div>
+        <div><span>{"Final mu (vs this week's field)"}</span><strong>{signed(ch.mu)}</strong></div>
         <div><span>Untouched mu</span><strong>{signed(ch.mu_untouched)}</strong></div>
+        <div title="Strokes per round vs an average PGA Tour player (DataGolf-style scale). Reference only; prices use the field-relative number."><span>vs avg PGA Tour player</span><strong>{signed(ch.mu_tour)}</strong></div>
         <div><span>Round SD</span><strong>{fx(ch.sd, 2)}</strong></div>
         <div><span>Untouched SD</span><strong>{fx(ch.sd_untouched, 2)}</strong></div>
         <div><span>Kernel SE</span><strong>{fx(ch.se_kernel, 3)}</strong></div>
@@ -341,8 +343,10 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
   const current = players.find((p) => num(p.dg_id) === selected) ?? players[0];
   const currentRow = rows.find((row) => row.dg_id === num(current?.dg_id)) ?? null;
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
-  const preferred = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut", "fit_rs_ddacc", "override_total", ...FAMILIES.map(([key]) => `chl_${key}`)];
+  const preferred = ["name", "mu", "vs_avg_pga_tour_player", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut", "fit_rs_ddacc", "override_total", ...FAMILIES.map(([key]) => `chl_${key}`)];
   const mus = rows.map((row) => numberValue(row.mu)).filter(Number.isFinite);
+  const strength = obj(obj(doc.event).field_strength);
+  const fieldOffset = num(strength.field_offset);
   const withOverride = rows.filter((row) => numberValue(row.override_total) !== 0).length;
   const sdMean = rows.length ? rows.reduce((total, row) => total + numberValue(row.sd), 0) / rows.length : 0;
   if (!players.length) return <EmptyState title="No players in this run" detail="The run published no player objects." />;
@@ -351,10 +355,15 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
       <div className="kpi-grid">
         <Kpi label="Players" value={String(players.length)} detail={`${players.filter((p) => p.amateur).length} amateurs`} tone="accent" />
         <Kpi label="Best mu" value={signed(Math.max(...mus), 2)} detail="strokes per round better than this week's field average (field average = 0)" />
+        <Kpi
+          label="Field strength"
+          value={fieldOffset === null ? "—" : signed(fieldOffset, 2)}
+          detail={fieldOffset === null ? "No tour-scale estimate for this run" : `this field is ${Math.abs(fieldOffset).toFixed(2)} strokes per round ${fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour field (skills as of ${String(strength.vintage ?? "").slice(0, 10)}). Reference only: prices use the field-relative mu.`}
+        />
         <Kpi label="Mean round SD" value={sdMean.toFixed(2)} detail="challenger, after overrides" />
         <Kpi label="Players with an override" value={String(withOverride)} detail="untouched numbers are kept" tone={withOverride ? "positive" : "neutral"} />
       </div>
-      <Panel eyebrow="Challenger inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row, or search below, for the breakdown</span>}>
+      <Panel eyebrow="Challenger inputs" title="Every player, every component" actions={<span className="inputs-muted">{"Click a row, or search below, for the breakdown. \"Vs avg PGA Tour player\" is for reference; prices use mu (vs this week's field)."}</span>}>
         <DataTable rows={rows} preferredColumns={preferred} label="Model inputs players" pageSize={30} onRowClick={(row) => setSelected(num(row.dg_id))} activeRow={currentRow} />
       </Panel>
       {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} />}
