@@ -29,6 +29,12 @@ const localBindingConfig = {
   r2_buckets: r2
     ? [{ binding: r2, bucket_name: DASHBOARD_R2_BUCKET }]
     : [],
+  // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). With both set, the Worker verifies the
+  // Cf-Access-Jwt-Assertion signature, audience, issuer and expiry before accepting override writes (worker/access.ts).
+  vars: {
+    ACCESS_TEAM_DOMAIN: "denaliassetmanagement.cloudflareaccess.com",
+    ACCESS_AUD: "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0",
+  },
 };
 
 export default defineConfig(({ command }) => {
