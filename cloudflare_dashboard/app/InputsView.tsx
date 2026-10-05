@@ -350,7 +350,7 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
     <div className="stack-lg">
       <div className="kpi-grid">
         <Kpi label="Players" value={String(players.length)} detail={`${players.filter((p) => p.amateur).length} amateurs`} tone="accent" />
-        <Kpi label="Best mu" value={signed(Math.max(...mus), 2)} detail="strokes per round vs field" />
+        <Kpi label="Best mu" value={signed(Math.max(...mus), 2)} detail="strokes per round better than this week's field average (field average = 0)" />
         <Kpi label="Mean round SD" value={sdMean.toFixed(2)} detail="challenger, after overrides" />
         <Kpi label="Players with an override" value={String(withOverride)} detail="untouched numbers are kept" tone={withOverride ? "positive" : "neutral"} />
       </div>
@@ -621,7 +621,7 @@ type Glossary = {
   location: { note: string; columns: GlossaryLocation[]; n_columns_2026: number };
 };
 
-const VARIANT_SHORT: Record<string, string> = { base: "All players", xeuro: "DPWT copy", xband0: "<30 rounds", xband1: "30-100 rounds", miss: "Missing flag", miss_xeuro: "Missing, DPWT" };
+const VARIANT_SHORT: Record<string, string> = { base: "All players, all events", xeuro: "+ at DPWT events", xband0: "+ player <30 rounds", xband1: "+ player 30-100 rounds", miss: "+ if missing", miss_xeuro: "+ if missing, DPWT event" };
 type WeightModel = "chl" | "v21";
 type SortMode = "model" | "weight";
 
