@@ -89,7 +89,7 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("content-type", requested.endsWith(".csv") ? "text/csv; charset=utf-8" : "application/json; charset=utf-8");
-    headers.set("cache-control", /(^|\/)(manifest|index)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
+    headers.set("cache-control", /(^|\/)(manifest|index|latest)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
     headers.set("etag", object.httpEtag);
     return new Response(request.method === "HEAD" ? null : object.body, { headers });
   }

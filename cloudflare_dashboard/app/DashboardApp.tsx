@@ -21,6 +21,7 @@ import {
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
+import { WeatherEffectsView } from "./WeatherEffectsView";
 import { useDashboardData } from "./data";
 import { displayDate, titleCase } from "./lib";
 import {
@@ -33,7 +34,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather";
+export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects";
 
 type Manifest = {
   generated_at: string;
@@ -55,6 +56,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
     items: [
       { key: "round-scores", label: "Round scores", description: "Score distributions", icon: CircleGauge },
       { key: "weather", label: "Weather", description: "Forecast and impact", icon: CloudSun },
+      { key: "weather-effects", label: "Weather effects", description: "Forecast, mean and variance by tee time", icon: CloudSun },
     ],
   },
   {
@@ -87,6 +89,7 @@ const views: Record<ViewKey, React.ComponentType> = {
   performance: PerformanceView,
   diagnostics: DiagnosticsView,
   weather: WeatherView,
+  "weather-effects": WeatherEffectsView,
 };
 
 const accents = [
@@ -106,6 +109,17 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
   const activeView = views[initialView] ? initialView : "performance";
   const ActiveView = views[activeView];
   const { data: manifest } = useDashboardData<Manifest>("manifest.json");
+  // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
+  // falling back to the legacy sims_process manifest only when the golfprice index is unavailable.
+  const { data: gpIndex } = useDashboardData<{ events?: Array<{ name?: string; course?: string; date_start?: string; event_uid?: string; runs?: Array<{ as_of?: string }> }> }>("golfprice/index.json");
+  const gpCurrent = useMemo(() => {
+    const evs = (gpIndex?.events ?? []).filter((e) => e.date_start);
+    if (!evs.length) return null;
+    const newest = evs.map((e) => e.date_start as string).sort().at(-1);
+    const week = evs.filter((e) => e.date_start === newest);
+    const asOf = week.flatMap((e) => (e.runs ?? []).map((r) => r.as_of ?? "")).sort().at(-1);
+    return { title: week.map((e) => e.name ?? e.event_uid ?? "").join(" · "), sub: week.map((e) => e.course ?? "").filter(Boolean).join(" · "), asOf };
+  }, [gpIndex]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -169,8 +183,12 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
           </div>
           <div className="event-context">
             <span className="live-indicator"><i /> Published</span>
-            <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}{manifest?.event_id ? ` · Event ${manifest.event_id}` : ""}</small></div>
-            <div className="freshness"><strong>{displayDate(manifest?.generated_at)}</strong><small>Data snapshot</small></div>
+            {gpCurrent ? (
+              <div><strong>{gpCurrent.title}</strong><small>{gpCurrent.sub || "golfprice"}</small></div>
+            ) : (
+              <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}{manifest?.event_id ? ` · Event ${manifest.event_id}` : ""}</small></div>
+            )}
+            <div className="freshness"><strong>{displayDate(gpCurrent?.asOf || manifest?.generated_at)}</strong><small>{gpCurrent ? "Latest golfprice run" : "Data snapshot"}</small></div>
           </div>
         </header>
         <div className="content-frame"><ActiveView /></div>
