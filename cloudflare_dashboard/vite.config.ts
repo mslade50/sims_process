@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 import { cloudflare, getLocalWorkerdCompatibilityDate } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
-import { MONDAY_SETTLE_CRONS } from "./worker/cron-rules";
+import { SCHEDULE_CRONS } from "./worker/cron-rules";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -30,8 +30,8 @@ const localBindingConfig = {
   r2_buckets: r2
     ? [{ binding: r2, bucket_name: DASHBOARD_R2_BUCKET }]
     : [],
-  // Monday 08:30 America/New_York settle job (before production grading at 14:00 UTC): triggered at 12:30 and 13:30 UTC (EDT / EST); worker/cron.ts enqueues only at 08:30 New York.
-  triggers: { crons: [...MONDAY_SETTLE_CRONS] },
+  // One trigger every 30 minutes; worker/cron.ts enqueues what the America/New_York schedule in worker/cron-rules.ts says is due (Monday settle, weekly moments, odds reprice, watch).
+  triggers: { crons: [...SCHEDULE_CRONS] },
   // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). With both set, the Worker verifies the
   // Cf-Access-Jwt-Assertion signature, audience, issuer and expiry before accepting override writes (worker/access.ts).
   vars: {

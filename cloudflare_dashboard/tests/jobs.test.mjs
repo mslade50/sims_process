@@ -7,10 +7,10 @@ const NOW = Date.parse("2026-10-05T14:00:00Z");
 
 const job = (over = {}) => ({ id: "j-20261005T130000-aaaaaa", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-05T13:00:00Z", verified: true, ...over });
 
-test("the allow-list is exactly the owner-approved moments plus publish", () => {
+test("the allow-list is exactly the owner-approved moments plus publish, the cross-tour base refresh and publish, the odds check and the input watch", () => {
   assert.deepEqual(
     JOB_TYPES.map((s) => s.type),
-    ["monday_settle", "monday_week", "tuesday", "wednesday", "thursday", "thursday_close", "after_round", "daily_health", "publish"],
+    ["monday_settle", "monday_week", "tuesday", "wednesday", "thursday", "thursday_close", "after_round", "daily_health", "xtour", "xtour_publish", "publish", "odds_reprice", "watch"],
   );
 });
 
@@ -34,6 +34,11 @@ test("flags are accepted only where the moment accepts them", () => {
   assert.match(checkRequest({ type: "monday_settle", params: { supersede: true } }).problems.join(), /does not accept supersede/);
   assert.match(checkRequest({ type: "thursday_close", params: { no_pull: true } }).problems.join(), /does not accept no_pull/);
   assert.deepEqual(checkRequest({ type: "monday_settle", params: { no_pull: true } }).problems, []);
+  for (const type of ["xtour", "xtour_publish"]) {
+    assert.deepEqual(checkRequest({ type }).problems, []);
+    for (const flag of ["no_pull", "supersede"]) assert.match(checkRequest({ type, params: { [flag]: true } }).problems.join(), new RegExp(`does not accept ${flag}`));
+    assert.match(checkRequest({ type, params: { after_round: 1 } }).problems.join(), /does not take after_round/);
+  }
 });
 
 test("after_round is 1, 2 or 3 and only on after_round", () => {

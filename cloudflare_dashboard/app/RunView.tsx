@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
+import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { GROUPS, JOB_TYPES, STALE_HEARTBEAT_MS, isTerminal, parseUtc, specFor, type JobParams, type JobRecord, type JobSpec, type JobStatus } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
@@ -102,6 +103,7 @@ export function RunView() {
   const [now, setNow] = useState(() => Date.now());
   const [pending, setPending] = useState<JobSpec | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showChecks, setShowChecks] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string; problems?: string[] } | null>(null);
 
   const reload = useCallback(async () => {
@@ -148,6 +150,11 @@ export function RunView() {
     setNotice(result.ok ? { tone: "ok", text: "Job cancelled." } : { tone: "error", text: result.body.error ?? `HTTP ${result.status}` });
     void reload();
   };
+
+  // The automatic 30-minute odds checks and hourly watches would bury everything else: hide the finished ones unless asked.
+  const isAutoCheck = (job: JobRow) => job.requested_by === "cron" && (job.type === "odds_reprice" || job.type === "watch") && job.state === "done";
+  const visibleJobs = (data?.jobs ?? []).filter((job) => showChecks || !isAutoCheck(job));
+  const hiddenChecks = (data?.jobs ?? []).length - visibleJobs.length;
 
   const busyTypes = new Set((data?.jobs ?? []).filter((job) => !isTerminal(job.state) && now - (parseUtc(job.requested_at) ?? 0) < 6 * 3_600_000).map((job) => job.type));
 
@@ -199,12 +206,18 @@ export function RunView() {
         </Panel>
       ))}
 
+      <OddsSignalsPanel />
+
       <Panel eyebrow="Latest 50" title="Jobs" actions={<button type="button" className="inputs-button" onClick={() => void reload()}>Refresh</button>}>
+        <label className="run-check">
+          <input type="checkbox" checked={showChecks} onChange={(event) => setShowChecks(event.target.checked)} />
+          <span>Show finished automatic odds checks and watches{hiddenChecks > 0 && !showChecks ? ` (${hiddenChecks} hidden)` : ""}</span>
+        </label>
         {error && <div className="inputs-banner warn" role="alert"><strong>Could not load jobs</strong>{error}</div>}
         {!data && !error && <LoadingState label="Loading jobs" />}
         {data && data.jobs.length === 0 && <EmptyState title="No jobs yet" detail="Press one of the buttons above to queue the first run." />}
         <div className="run-jobs">
-          {(data?.jobs ?? []).map((job) => {
+          {visibleJobs.map((job) => {
             const status = job.status;
             const spec = specFor(job.type);
             return (

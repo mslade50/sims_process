@@ -33,11 +33,11 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
-  /** Cron triggers (vite.config.ts localBindingConfig.triggers): the Monday 09:30 New York settle job. Never reachable over HTTP. */
+  /** Cron triggers (vite.config.ts localBindingConfig.triggers, schedule in worker/cron-rules.ts): enqueue the jobs due at this New York time. Never reachable over HTTP. */
   async scheduled(controller: { scheduledTime: number; cron?: string }, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       handleScheduled(controller, env).then((outcome) => {
-        console.log(`cron ${controller.cron ?? ""}: ${outcome.enqueued ? `enqueued ${outcome.job?.id}` : `skipped (${outcome.reason})`}`);
+        console.log(`cron ${controller.cron ?? ""}: ${outcome.jobs.length ? `enqueued ${outcome.jobs.map((j) => `${j.type} ${j.id}`).join(", ")}` : `skipped (${outcome.reason})`}${outcome.skipped.length ? `; not queued: ${outcome.skipped.map((x) => `${x.type} (${x.reason})`).join("; ")}` : ""}`);
       }),
     );
   },
