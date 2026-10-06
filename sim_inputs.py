@@ -18,7 +18,7 @@ from datetime import datetime
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 71
-CUT_LINE      = 65  # Low 65 and ties after 36 holes
+CUT_LINE      = 72  # Baycurrent: all 72 players play four rounds (no cut)
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -46,16 +46,22 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [554]
-# Bank of Utah Championship, October 1-4, 2026.
-# DataGolf / PGA TOUR: Black Desert Resort; par 71.
-course_id = 930
-tourney = 'utah'
+event_ids = [527]
+# Baycurrent Classic, October 8-11, 2026.
+# DataGolf / PGA TOUR: Yokohama Country Club (West Course); par 71.
+course_id = 936
+tourney = 'baycurrent'
 
-# Black Desert has course history; no new-venue prior is needed.
-lat_override = 37.168
-lon_override = -113.653
+# Yokohama has course history; no new-venue prior is needed.
+lat_override = 35.446
+lon_override = 139.549
 manual_venue_profile = None
+
+# Owner-approved extra shrinkage for Yokohama's single year of history.
+# Exact event/venue/date scope prevents carrying this into another weekly run.
+course_adjustment_scale_overrides = {
+    'pga:527:936:2026-10-08': {'fit': 0.5, 'history': 0.5},
+}
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -84,21 +90,27 @@ course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
 #for multiple course setups in the showdown sim
-course_id_1=930
+course_id_1=936
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
 cutline = CUT_LINE
 shot_rule=0
 
-#for players who we don't have a birthday (monday q guys etc.)
+# Legacy: no longer used for ages. Birthdays come from
+# permanent_data/player_birthdates.csv by dg_id and unknown age stays NaN with an
+# indicator; the name is kept only because older importers still reference it.
 default_birthday = datetime(1995, 1, 1)
 
 #expected tee time range on the weekend to forecast weather in sims
 tee_time_start="8:30"
 tee_time_end="1:00"
 
-#any names that cause trouble, want to ensure consistency
+#any names that cause trouble, want to ensure consistency.
+# Never map a spelling that player_rounds uses to one it does not: the rules
+# 'brown, daniel', 'ayora, angel', 'bauchou, zachary' and 'kim, seonghyeon' did,
+# which hid 1,241 rows from LOWER(player_name) lookups. Joins between database
+# artifacts and the DataGolf field go through dg_id instead.
 name_replacements = {
     'chacarra, eugenio': 'lopez-chacarra, eugenio',
     'echavarria, nico': 'echavarria, nicolas',
@@ -106,10 +118,10 @@ name_replacements = {
     'moller, niklas norgaard': 'norgaard moller, niklas',
     'stevens, sam': 'stevens, samuel',
     # DK salary CSV -> our canonical (Zurich 2026)
-    'brown, daniel': 'brown, dan',
     'l. smith, jordan': 'smith, jordan',
     'smith, jordan l.': 'smith, jordan',
     'li, hao-tong': 'li, haotong',
+    'lee, sang-hee': 'lee, sanghee',  # DataGolf field -> database name, dg_id 13923
     'mccarty, matthew': 'mccarty, matt',
     'skov olesen, jacob': 'olesen, jacob skov',
     'davis, cam': 'davis, cameron',
@@ -118,11 +130,8 @@ name_replacements = {
     'schmid, matti': 'schmid, matthias',
     'dumont de chassart, adrien': 'dumont de chassart, adrien',
     'nesmith, matthew': 'nesmith, matt',
-    'ayora, angel': 'ayora fanegas, angel',
     'capan, frankie': 'capan iii, frankie',
     'stallings, stephen jr': 'stallings jr., stephen',
-    'bauchou, zachary': 'bauchou, zach',
-    'kim, seonghyeon': 'kim, s.h.',
     'chassart, adrien dumont de': 'dumont de chassart, adrien',
     'keefer, john': 'keefer, johnny',
     'kim, sh': 'kim, s.h.',
@@ -135,12 +144,12 @@ name_replacements = {
 # it joins those feeds to the field by name. sim_prep joins by dg_id and must
 # not merge them into name_replacements.
 feed_name_aliases = {
-    'ewart, aj': 'ewart, a.j.',
-    'james, benjamin': 'james, ben',
-    'petersen, rasmus neergaard': 'neergaard-petersen, rasmus',
     'brown, daniel': 'brown, dan',
     'bauchou, zachary': 'bauchou, zach',
     'kim, seonghyeon': 'kim, s.h.',
+    'ewart, aj': 'ewart, a.j.',
+    'james, benjamin': 'james, ben',
+    'petersen, rasmus neergaard': 'neergaard-petersen, rasmus',
 }
 
 ##manual adjustments for players which we do not have requisite data on.
@@ -178,6 +187,8 @@ from coeff_loader import load_sheet_coefficients as _load_sheet_coefficients
 globals().update(_load_sheet_coefficients())
 
 # majors scalar comes from the sheet (scalars/major_adjustment); the event
-# lists are event identity, not tunable values, so they stay here
-major_adjustment = major_adjustment if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0  # noqa: F821
-links_adjustment = 1 if any(eid in [100, 541] for eid in event_ids) else 0
+# lists are event identity, not tunable values, so they stay here. They are PGA
+# ids: other tours reuse them (KFT Utah is 26, KFT Kansas City is 100).
+_pga_event = str(tour).strip().lower() == 'pga'
+major_adjustment = major_adjustment if _pga_event and any(eid in [33, 14, 100, 26] for eid in event_ids) else 0  # noqa: F821
+links_adjustment = 1 if _pga_event and any(eid in [100, 541] for eid in event_ids) else 0
