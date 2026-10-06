@@ -2052,6 +2052,14 @@ def send_results_email(metrics, graded_bets, event_name, filter_label=None, clv_
     try:
         html = build_results_email_html(metrics, graded_bets, event_name, filter_label, clv_stats=clv_stats)
 
+        if not filter_label:
+            # Optional golfprice scorecard block prepared by monday_grading.py (golfprice_email_block); never fails the email.
+            try:
+                from golfprice_email_block import with_block
+                html = with_block(html)
+            except Exception:
+                pass
+
         units_won = metrics.get("units_won", 0)
         emoji = "+" if units_won >= 0 else ""
 
