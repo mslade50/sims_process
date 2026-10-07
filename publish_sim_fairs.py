@@ -310,6 +310,32 @@ def _alert(text: str) -> None:
         logger.warning(f"telegram alert failed ({e})")
 
 
+EXTERNAL_MARKER = "SIM_FAIRS_EXTERNAL.json"
+
+
+def _external_owner() -> str | None:
+    """golfprice cutover guard. When origin/main carries SIM_FAIRS_EXTERNAL.json (committed by
+    `python -m golfprice.board publish`), another publisher owns sim_fairs.json and this module
+    must not rebuild, overwrite or re-dispatch it. SIM_FAIRS_FORCE_PRODUCTION=1 overrides
+    (manual rollback). Returns the owner name, or None when production owns the file. Uses the
+    last fetched origin/main when the fetch fails (fail-safe: a marker already seen stays honoured)."""
+    import subprocess
+    if (os.environ.get("SIM_FAIRS_FORCE_PRODUCTION") or "").strip().lower() in ("1", "true", "yes"):
+        return None
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(PROJECT_ROOT), *args], capture_output=True, text=True)
+
+    git("fetch", "origin", "main")
+    shown = git("show", f"origin/main:{EXTERNAL_MARKER}")
+    if shown.returncode != 0:
+        return None
+    try:
+        return str(json.loads(shown.stdout).get("owner") or "external")
+    except ValueError:
+        return "external"
+
+
 def _sim_run_at(tourney: str, rnd) -> str | None:
     """When the SIM actually ran — the max mtime of the source files build_payload
     reads — NOT the publish wall-clock. `generated_at` is stamped at publish time,
@@ -3101,6 +3127,13 @@ def publish(
     """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
+    owner = _external_owner()
+    if owner:
+        logger.warning(f"sim publish skipped: sim_fairs.json is owned by '{owner}' "
+                       f"(origin/main:{EXTERNAL_MARKER}); nothing written, uploaded or pushed")
+        # a non-empty receipt keeps new_sim._publish_sim_fairs_required / the strict
+        # nightly callers green; nothing was published by production
+        return {"skipped": "external_owner", "owner": owner}
     payload = build_payload(require_complete_live=require_complete_live)
     from provisional_round import current_inputs
     provisional = current_inputs(event_id=payload.get("event_id"),
@@ -3319,6 +3352,9 @@ def main():
         ap.error("--expected-round requires --require-complete-live")
 
     if args.round_h2h_only:
+        if _external_owner():
+            logger.warning("round-h2h-only skipped: sim_fairs.json is owned by an external publisher")
+            return
         si = _sim_inputs()
         tourney = getattr(si, "tourney", None)
         if not tourney:
