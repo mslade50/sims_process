@@ -87,6 +87,17 @@ test("the queue keeps the newest 200", () => {
   assert.equal(kept.at(-1).id, "j-229");
 });
 
+test("a full queue drops the oldest automatic watch / odds jobs before any pricing job", () => {
+  const jobs = [];
+  for (let i = 0; i < 210; i += 1) jobs.push(job({ id: `bg-${i}`, type: i % 2 ? "watch" : "odds_reprice", requested_by: "cron" }));
+  jobs.splice(5, 0, job({ id: "tue-priced", type: "tuesday", requested_by: "cron" }));
+  jobs.splice(9, 0, job({ id: "phone-watch", type: "watch", requested_by: "o@example.com" }));
+  const kept = trimQueue(jobs);
+  assert.equal(kept.length, MAX_QUEUE);
+  assert.ok(kept.some((j) => j.id === "tue-priced") && kept.some((j) => j.id === "phone-watch"));
+  assert.equal(kept.at(-1).id, "bg-209");
+});
+
 /* ---------------------------------------------------------------- Worker integration (built bundle, signed Access JWT, in-memory R2) */
 async function loadWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);

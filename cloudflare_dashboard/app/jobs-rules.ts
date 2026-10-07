@@ -64,14 +64,14 @@ export const JOB_TYPES: JobSpec[] = [
   { type: "tuesday", group: "Tuesday", label: "Tuesday refresh", does: "Re-prices the week on Tuesday's data, then signals, report, comparison, publish and health.", when: "Tuesday, after the market has moved.", no_pull: true, supersede: true, after_round: false },
   { type: "wednesday", group: "Wednesday", label: "Wednesday reprice", does: "Re-prices with the tee-time gate and the Wednesday-arm view, then signals, report, comparison, publish and health.", when: "Wednesday, once tee times are out.", no_pull: true, supersede: true, after_round: false },
   { type: "thursday", group: "Thursday", label: "Thursday morning price", does: "Final pre-tee pricing run, then signals, report, comparison, publish and health.", when: "Thursday morning before the first tee.", no_pull: true, supersede: true, after_round: false },
-  { type: "thursday_close", group: "Thursday", label: "Thursday close", does: "Pre-event live state (nothing in play yet), publish and health.", when: "Thursday, just before the first tee.", no_pull: false, supersede: true, after_round: false },
-  { type: "after_round", group: "During event", label: "After a round", does: "Re-prices the live state after a finished round, then publishes and health. Leave the round on automatic to infer it.", when: "Each evening of the event once the round is complete.", no_pull: false, supersede: true, after_round: true },
+  { type: "thursday_close", group: "Thursday", label: "Thursday close", does: "Pre-event live state (nothing in play yet), publish and health.", when: "Runs by itself 30 minutes before each event's own first tee (the input watch starts it); press it only to force a look.", no_pull: false, supersede: true, after_round: false },
+  { type: "after_round", group: "During event", label: "After a round", does: "Re-prices the live state after a finished round, then publishes and health. Leave the round on automatic to infer it.", when: "Runs by itself the moment the feed shows a round complete (the input watch starts it, per event); press it only to force a look.", no_pull: false, supersede: true, after_round: true },
   { type: "daily_health", group: "Anytime", label: "Health check", does: "Checks expected runs, stale prices, blocking checks and stored files. Changes nothing else.", when: "Any time you want to know if all is well.", no_pull: false, supersede: false, after_round: false },
   { type: "xtour", group: "Monday", label: "Refresh cross-tour base", does: "Rebuilds the cross-tour base from the newest foundation (paced DataGolf pull), then publishes it to R2 so every runner prices on the same base, then a health check. Prices nothing.", when: "Monday after the new foundation snapshot exists, if the Monday job did not refresh it.", no_pull: false, supersede: false, after_round: false },
   { type: "xtour_publish", group: "Anytime", label: "Publish cross-tour base", does: "Publishes the local cross-tour base to R2 (idempotent; LATEST written last). Does not rebuild or price anything.", when: "If another machine reports it cannot see the newest base.", no_pull: false, supersede: false, after_round: false },
   { type: "publish", group: "Anytime", label: "Publish model inputs", does: "Publishes the latest model inputs to this dashboard. Does not price anything.", when: "If the Model inputs page looks out of date.", no_pull: false, supersede: false, after_round: false },
   { type: "odds_reprice", group: "Anytime", label: "Odds check (no re-simulation)", does: "Re-reads the latest odds, recomputes signals against the fairs of the last full run, publishes them here and alerts on a new or moved live signal. Takes seconds.", when: "Runs by itself every 30 minutes from Monday afternoon to the Thursday tee; press it for an immediate look.", no_pull: true, supersede: false, after_round: false },
-  { type: "watch", group: "Anytime", label: "Input watch", does: "Checks the field, tee times and forecast against the last full run; re-prices only if something that moves prices changed (rate limited), and runs the pre-tee close just before the first tee.", when: "Runs by itself hourly before the event; press it after a withdrawal or tee-sheet news.", no_pull: true, supersede: false, after_round: false },
+  { type: "watch", group: "Anytime", label: "Input watch", does: "Checks the field, tee times and forecast against the last full run; re-prices only if something that moves prices changed (rate limited), runs the pre-tee close per event and prices each completed round.", when: "Runs by itself every 15 minutes all week: re-prices on a withdrawal or tee-sheet news, closes each event 30 minutes before its own first tee, prices each round as soon as it is complete. Press it only to force a look now.", no_pull: true, supersede: false, after_round: false },
 ];
 
 export const TERMINAL = ["done", "failed", "cancelled", "expired"] as const;
@@ -207,6 +207,18 @@ export function cancelProblem(job: JobRecord | undefined, status: JobStatus | nu
   return null;
 }
 
+/** Automatic background jobs (every 15 / 30 minutes) are dropped first when the queue is full, so they never push the pricing moments off the Run page. */
+const BACKGROUND_TYPES = new Set(["watch", "odds_reprice"]);
+
 export function trimQueue(jobs: JobRecord[]): JobRecord[] {
-  return jobs.length > MAX_QUEUE ? jobs.slice(jobs.length - MAX_QUEUE) : jobs;
+  if (jobs.length <= MAX_QUEUE) return jobs;
+  let excess = jobs.length - MAX_QUEUE;
+  const kept = jobs.filter((job) => {
+    if (excess > 0 && BACKGROUND_TYPES.has(job.type) && job.requested_by === "cron") {
+      excess -= 1;
+      return false;
+    }
+    return true;
+  });
+  return kept.length > MAX_QUEUE ? kept.slice(kept.length - MAX_QUEUE) : kept;
 }

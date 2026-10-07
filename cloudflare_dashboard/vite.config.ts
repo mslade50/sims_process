@@ -30,7 +30,7 @@ const localBindingConfig = {
   r2_buckets: r2
     ? [{ binding: r2, bucket_name: DASHBOARD_R2_BUCKET }]
     : [],
-  // One trigger every 30 minutes; worker/cron.ts enqueues what the America/New_York schedule in worker/cron-rules.ts says is due (Monday settle, weekly moments, odds reprice, watch).
+  // One trigger every 15 minutes; worker/cron.ts enqueues what the America/New_York schedule in worker/cron-rules.ts says is due (Monday settle, weekly moments, odds reprice, watch).
   triggers: { crons: [...SCHEDULE_CRONS] },
   // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). With both set, the Worker verifies the
   // Cf-Access-Jwt-Assertion signature, audience, issuer and expiry before accepting override writes (worker/access.ts).
