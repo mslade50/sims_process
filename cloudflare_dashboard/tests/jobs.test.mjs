@@ -266,8 +266,8 @@ test("machineStatus: offline without a heartbeat or when stale; running and idle
 test("waitingFor: only queued jobs addressed to a machine; says why", () => {
   const beats = [{ machine: "desktop-2ki41v6", at: "2026-10-05T13:59:30Z", state: "idle" }];
   assert.equal(waitingFor(job(), "queued", beats, NOW), null);
-  assert.match(waitingFor(job({ target_machine: "mckinley_home" }), "queued", beats, NOW), /waiting for Laptop .*offline/);
-  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", beats, NOW), /waiting for Desktop to pick it up/);
+  assert.match(waitingFor(job({ target_machine: "mckinley_home" }), "queued", beats, NOW), /waiting for Desktop \(big\) .*offline/);
+  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", beats, NOW), /waiting for Desktop \(always-on\) to pick it up/);
   assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", [{ ...beats[0], state: "running" }], NOW), /finish its current job/);
   assert.equal(waitingFor(job({ target_machine: "mckinley_home" }), "running", beats, NOW), null);
 });

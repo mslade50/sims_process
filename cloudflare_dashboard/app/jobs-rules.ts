@@ -17,8 +17,8 @@ export const STALE_HEARTBEAT_MS = 10 * 60_000;
 /** Machines a job can be addressed to (the Worker rejects any other name; golfprice/jobrunner.py MACHINE_RE is the runner side). */
 export type MachineSpec = { name: string; label: string; role: "primary" | "backup" };
 export const MACHINES: MachineSpec[] = [
-  { name: "desktop-2ki41v6", label: "Desktop", role: "primary" },
-  { name: "mckinley_home", label: "Laptop", role: "backup" },
+  { name: "desktop-2ki41v6", label: "Desktop (always-on)", role: "primary" },
+  { name: "mckinley_home", label: "Desktop (big)", role: "backup" },
 ];
 export const isKnownMachine = (name: unknown): name is string => typeof name === "string" && MACHINES.some((m) => m.name === name);
 export const machineLabel = (name: string | undefined | null): string => MACHINES.find((m) => m.name === name)?.label ?? name ?? "";
@@ -175,7 +175,7 @@ export function effectiveState(job: JobRecord, status: JobStatus | null | undefi
   return "queued";
 }
 
-/** Text for a queued job addressed to a machine that is not reporting in ("waiting for Laptop"), else null. Untargeted jobs never wait on a named machine. */
+/** Text for a queued job addressed to a machine that is not reporting in ("waiting for Desktop (big)"), else null. Untargeted jobs never wait on a named machine. */
 export function waitingFor(job: JobRecord, state: string, beats: MachineBeat[] | undefined, now: number): string | null {
   if (state !== "queued" || !job.target_machine) return null;
   const spec = MACHINES.find((m) => m.name === job.target_machine);
