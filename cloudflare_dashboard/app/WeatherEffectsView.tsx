@@ -13,11 +13,11 @@ import {
 type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null };
 type PublishIndex = { events?: IndexEvent[] };
 
-const WIND = "#54d6c8";
-const GUST = "#a58cff";
-const TEMP = "#ffba69";
-const RAIN = "#8ca7ff";
-const WAVE_SHADES = ["rgba(160,170,180,0.16)", "rgba(160,170,180,0.34)"];
+const WIND = "var(--wx-wind)";
+const GUST = "var(--wx-gust)";
+const TEMP = "var(--wx-temp)";
+const RAIN = "var(--wx-rain)";
+const WAVE_SHADES = ["var(--wave-am-fill)", "var(--wave-pm-fill)"];
 
 export const weatherKey = (event: IndexEvent) => event.weather_key || `golfprice/weather/${event.event_uid.replace(/:/g, "_")}/latest.json`;
 

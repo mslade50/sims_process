@@ -14,6 +14,34 @@ export const MAX_QUEUE = 200;
 export const MAX_AGE_MS = 6 * 3_600_000; // a request older than this is never run, and no longer blocks a new one
 export const STALE_HEARTBEAT_MS = 10 * 60_000;
 
+/** Machines a job can be addressed to (the Worker rejects any other name; golfprice/jobrunner.py MACHINE_RE is the runner side). */
+export type MachineSpec = { name: string; label: string; role: "primary" | "backup" };
+export const MACHINES: MachineSpec[] = [
+  { name: "desktop-2ki41v6", label: "Desktop", role: "primary" },
+  { name: "mckinley_home", label: "Laptop", role: "backup" },
+];
+export const isKnownMachine = (name: unknown): name is string => typeof name === "string" && MACHINES.some((m) => m.name === name);
+export const machineLabel = (name: string | undefined | null): string => MACHINES.find((m) => m.name === name)?.label ?? name ?? "";
+
+export type MachineBeat = { machine?: string; at?: string; state?: string; job_id?: string | null; commit?: string | null; code?: string | null; role?: string | null };
+export type MachineStatus = { name: string; label: string; role: "primary" | "backup"; status: "offline" | "idle" | "running"; lastSeen: string | null; jobId: string | null; commit: string | null };
+
+/** Live status of one allow-listed machine from its heartbeat object: offline = no heartbeat or older than STALE_HEARTBEAT_MS. */
+export function machineStatus(spec: MachineSpec, beats: MachineBeat[] | undefined, now: number): MachineStatus {
+  const beat = (beats ?? []).find((b) => b && b.machine === spec.name);
+  const at = parseUtc(beat?.at);
+  const alive = at !== null && now - at <= STALE_HEARTBEAT_MS;
+  return {
+    name: spec.name,
+    label: spec.label,
+    role: spec.role,
+    status: !alive ? "offline" : beat?.state === "running" ? "running" : "idle",
+    lastSeen: beat?.at ?? null,
+    jobId: alive && beat?.state === "running" ? (beat.job_id ?? null) : null,
+    commit: beat?.commit ?? null,
+  };
+}
+
 export type JobGroup = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "During event" | "Anytime";
 export const GROUPS: JobGroup[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "During event", "Anytime"];
 
@@ -57,6 +85,8 @@ export type JobRecord = {
   requested_by: string;
   requested_at: string;
   verified: boolean;
+  /** Optional: only this machine may run the job (absent = Auto: the desktop, the laptop only on failover). */
+  target_machine?: string;
   cancelled_at?: string;
   cancelled_by?: string;
 };
@@ -92,17 +122,22 @@ export function makeJobId(now: number, rand: string): string {
 export const JOB_ID_RE = /^j-\d{8}T\d{6}-[0-9a-f]{6}$/;
 
 /** Validate a create request body. Unknown keys are rejected; flags the type does not accept are rejected, never ignored. */
-export function checkRequest(body: unknown): { problems: string[]; type?: string; params?: JobParams } {
+export function checkRequest(body: unknown): { problems: string[]; type?: string; params?: JobParams; target_machine?: string } {
   const problems: string[] = [];
   if (!body || typeof body !== "object" || Array.isArray(body)) return { problems: ["body must be a JSON object"] };
   const raw = body as Record<string, unknown>;
   for (const key of Object.keys(raw)) {
-    if (!["type", "params"].includes(key)) problems.push(`${key} is set by the server or not allowed`);
+    if (!["type", "params", "target_machine"].includes(key)) problems.push(`${key} is set by the server or not allowed`);
   }
   const spec = specFor(raw.type);
   if (!spec) {
     problems.push(`type must be one of: ${JOB_TYPES.map((s) => s.type).join(", ")}`);
     return { problems };
+  }
+  let target: string | undefined;
+  if (raw.target_machine !== undefined && raw.target_machine !== null && raw.target_machine !== "auto") {
+    if (isKnownMachine(raw.target_machine)) target = raw.target_machine;
+    else problems.push(`target_machine must be one of: ${MACHINES.map((m) => m.name).join(", ")} (or omitted for Auto)`);
   }
   const params = raw.params === undefined || raw.params === null ? {} : raw.params;
   if (typeof params !== "object" || Array.isArray(params)) return { problems: [...problems, "params must be an object"] };
@@ -120,7 +155,7 @@ export function checkRequest(body: unknown): { problems: string[]; type?: string
       problems.push(`param ${key} is not allowed`);
     }
   }
-  return { problems, type: spec.type, params: clean };
+  return target ? { problems, type: spec.type, params: clean, target_machine: target } : { problems, type: spec.type, params: clean };
 }
 
 export function buildJob(body: unknown, email: string, verified: boolean, now: number, rand: string): { job?: JobRecord; problems: string[] } {
@@ -129,7 +164,7 @@ export function buildJob(body: unknown, email: string, verified: boolean, now: n
   if (checked.problems.length || !checked.type || !checked.params) return { problems: checked.problems };
   return {
     problems: [],
-    job: { id: makeJobId(now, rand), type: checked.type, params: checked.params, requested_by: email, requested_at: isoSeconds(now), verified: true },
+    job: { id: makeJobId(now, rand), type: checked.type, params: checked.params, requested_by: email, requested_at: isoSeconds(now), verified: true, ...(checked.target_machine ? { target_machine: checked.target_machine } : {}) },
   };
 }
 
@@ -138,6 +173,17 @@ export function effectiveState(job: JobRecord, status: JobStatus | null | undefi
   if (status?.state && status.state !== "queued") return status.state;
   if (job.cancelled_at) return "cancelled";
   return "queued";
+}
+
+/** Text for a queued job addressed to a machine that is not reporting in ("waiting for Laptop"), else null. Untargeted jobs never wait on a named machine. */
+export function waitingFor(job: JobRecord, state: string, beats: MachineBeat[] | undefined, now: number): string | null {
+  if (state !== "queued" || !job.target_machine) return null;
+  const spec = MACHINES.find((m) => m.name === job.target_machine);
+  if (!spec) return `waiting for ${job.target_machine}`;
+  const m = machineStatus(spec, beats, now);
+  if (m.status === "offline") return `waiting for ${m.label} (${spec.name}), which is offline`;
+  if (m.status === "running") return `waiting for ${m.label} to finish its current job`;
+  return `waiting for ${m.label} to pick it up`;
 }
 
 /** One job of a type at a time: a new request is refused while an earlier one of the same type is queued, claimed or running and under 6 h old. */

@@ -341,11 +341,11 @@ const PERFORMANCE_TYPE_OPTIONS: FilterOption[] = [
   { value: "score_bet", label: "Score Bet" },
 ];
 const PERFORMANCE_TYPE_COLORS: Record<string, string> = {
-  tournament_matchup: "#54d6c8",
-  round_matchup: "#ffba69",
-  finish_position: "#8ca7ff",
-  finish_position_live: "#f27ea9",
-  score_bet: "#a58cff",
+  tournament_matchup: "var(--chart-3)",
+  round_matchup: "var(--chart-2)",
+  finish_position: "var(--chart-1)",
+  finish_position_live: "var(--chart-4)",
+  score_bet: "var(--chart-5)",
 };
 
 function americanToProbability(value: unknown): number {
@@ -540,9 +540,9 @@ export function PerformanceView() {
     return { book: titleCase(name), roi: risked ? sum(bookRows.map((row) => row._units_won)) / risked * 100 : 0, bets: bookRows.length };
   }).filter((row) => row.bets >= 3).sort((a, b) => a.roi - b.roi);
   const bucketRows = [
-    ...bucketRoi(resolved, "Raw edge", "#54d6c8", [{ label: "0–2%", min: 0, max: 2 }, { label: "2–4%", min: 2, max: 4 }, { label: "4–6%", min: 4, max: 6 }, { label: "6%+", min: 6, max: 1000 }], (row) => numberValue(row.raw_edge, Number.NaN)),
-    ...bucketRoi(resolved, "Kelly edge", "#ffba69", [{ label: "3–5%", min: 3, max: 5 }, { label: "5–8%", min: 5, max: 8 }, { label: "8%+", min: 8, max: 1000 }], (row) => numberValue(row.edge, Number.NaN)),
-    ...bucketRoi(resolved, "Odds", "#8ca7ff", [{ label: "<2.0", min: 0, max: 2 }, { label: "2.0–2.5", min: 2, max: 2.5 }, { label: "2.5–3.5", min: 2.5, max: 3.5 }, { label: "3.5–8.0", min: 3.5, max: 8 }, { label: "8.0+", min: 8, max: 1000 }], (row) => numberValue(row.dec_odds, Number.NaN)),
+    ...bucketRoi(resolved, "Raw edge", "var(--chart-3)", [{ label: "0–2%", min: 0, max: 2 }, { label: "2–4%", min: 2, max: 4 }, { label: "4–6%", min: 4, max: 6 }, { label: "6%+", min: 6, max: 1000 }], (row) => numberValue(row.raw_edge, Number.NaN)),
+    ...bucketRoi(resolved, "Kelly edge", "var(--chart-2)", [{ label: "3–5%", min: 3, max: 5 }, { label: "5–8%", min: 5, max: 8 }, { label: "8%+", min: 8, max: 1000 }], (row) => numberValue(row.edge, Number.NaN)),
+    ...bucketRoi(resolved, "Odds", "var(--chart-1)", [{ label: "<2.0", min: 0, max: 2 }, { label: "2.0–2.5", min: 2, max: 2.5 }, { label: "2.5–3.5", min: 2.5, max: 3.5 }, { label: "3.5–8.0", min: 3.5, max: 8 }, { label: "8.0+", min: 8, max: 1000 }], (row) => numberValue(row.dec_odds, Number.NaN)),
   ];
   const activeArchetypes = uniqueStrings(resolved, "archetype");
   const archetypeSeries = new Map(activeArchetypes.map((archetype) => {

@@ -1,6 +1,7 @@
 export type DataRow = Record<string, unknown>;
 
-export const palette = ["#54d6c8", "#ffba69", "#8ca7ff", "#f27ea9", "#a58cff", "#81d77a"];
+/** Chart series colors as CSS variables (tokens.css), so charts follow the light/dark theme. */
+export const palette = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 
 export function numberValue(value: unknown, fallback = 0): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : fallback;

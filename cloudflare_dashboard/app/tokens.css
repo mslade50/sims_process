@@ -1,0 +1,181 @@
+/*
+ * Golf Model design tokens. Dark-first ("ink fairway" base, warm sand/gold highlight) with a matching
+ * light ("paper") theme. Theme selection: data-theme="dark|light" on <html> forces one; otherwise the
+ * OS preference (prefers-color-scheme) decides. The accent is user-selectable (Customize): the app sets
+ * --accent-d / --accent-l on <html>; --accent resolves to the right one per theme.
+ * Text tokens are validated >= 4.5:1 on every surface and chart tokens >= 3:1 by tests/theme.test.mjs.
+ * Keep the dark and light blocks in sync: the test compares their token names.
+ */
+:root {
+  color-scheme: dark;
+  /* surfaces */
+  --background: #07110e;
+  --surface: #0d1b17;
+  --surface-raised: #132721;
+  --surface-soft: #1a342b;
+  --popover: #0b1814;
+  --sidebar-bg: rgba(8, 18, 15, 0.94);
+  --topbar-bg: rgba(7, 17, 14, 0.82);
+  --sheen: rgba(255, 255, 255, 0.025);
+  --glow: rgba(230, 191, 106, 0.09);
+  /* text */
+  --foreground: #f1f3ea;
+  --muted: #94aaa0;
+  --muted-strong: #c0d1c8;
+  --line: rgba(190, 222, 208, 0.11);
+  --line-strong: rgba(190, 222, 208, 0.22);
+  --tint-1: rgba(255, 255, 255, 0.025);
+  --tint-2: rgba(255, 255, 255, 0.045);
+  /* accent: user-selectable, defaults to sand gold */
+  --accent-d: #e6bf6a;
+  --accent-l: #7d5600;
+  --accent: var(--accent-d);
+  --accent-ink: #1b1403;
+  /* semantic */
+  --positive: #62dba0;
+  --negative: #ff8b80;
+  --warning: #f4b55c;
+  --model: #79b4ff;
+  --market: #e6bf6a;
+  --wave-am: #f4a259;
+  --wave-pm: #9b94ff;
+  --wave-am-fill: rgba(244, 162, 89, 0.16);
+  --wave-pm-fill: rgba(155, 148, 255, 0.16);
+  /* weather series */
+  --wx-wind: #5ed4c4;
+  --wx-gust: #a99bff;
+  --wx-temp: #f4b55c;
+  --wx-rain: #79b4ff;
+  /* chart palette, colorblind-safe (Okabe-Ito derived), validated >= 3:1 on --surface */
+  --chart-1: #56b4e9;
+  --chart-2: #e8b04a;
+  --chart-3: #3fd0a0;
+  --chart-4: #e07aa8;
+  --chart-5: #a99bff;
+  --chart-6: #f08a4b;
+  --chart-7: #d6dc5c;
+  --chart-8: #9fb0aa;
+  /* type scale */
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: clamp(28px, 3vw, 42px);
+  /* spacing + shape + motion */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 30px rgba(0, 0, 0, 0.2);
+  --shadow-lift: 0 14px 38px rgba(0, 0, 0, 0.34);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur: 260ms;
+  --dur-slow: 600ms;
+  --focus-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--accent);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --background: #f3f1e8;
+    --surface: #fffefa;
+    --surface-raised: #f6f4ea;
+    --surface-soft: #ebe7d9;
+    --popover: #fffefa;
+    --sidebar-bg: rgba(252, 250, 242, 0.95);
+    --topbar-bg: rgba(243, 241, 232, 0.86);
+    --sheen: rgba(255, 255, 255, 0.6);
+    --glow: rgba(125, 86, 0, 0.07);
+    --foreground: #14231d;
+    --muted: #55685f;
+    --muted-strong: #33453d;
+    --line: rgba(20, 45, 35, 0.12);
+    --line-strong: rgba(20, 45, 35, 0.24);
+    --tint-1: rgba(20, 45, 35, 0.035);
+    --tint-2: rgba(20, 45, 35, 0.06);
+    --accent: var(--accent-l);
+    --accent-ink: #ffffff;
+    --positive: #09683f;
+    --negative: #b3261e;
+    --warning: #8a5600;
+    --model: #1d5fb8;
+    --market: #7d5600;
+    --wave-am: #9c4a0a;
+    --wave-pm: #5448c8;
+    --wave-am-fill: rgba(156, 74, 10, 0.14);
+    --wave-pm-fill: rgba(84, 72, 200, 0.12);
+    --wx-wind: #066a5f;
+    --wx-gust: #5448c8;
+    --wx-temp: #8a5600;
+    --wx-rain: #1d5fb8;
+    --chart-1: #0a6fb0;
+    --chart-2: #a86a00;
+    --chart-3: #007a5a;
+    --chart-4: #b03a78;
+    --chart-5: #5448c8;
+    --chart-6: #b8501a;
+    --chart-7: #6e7400;
+    --chart-8: #5c6b66;
+    --shadow: 0 14px 40px rgba(40, 50, 30, 0.14);
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 6px 22px rgba(40, 50, 30, 0.08);
+    --shadow-lift: 0 12px 32px rgba(40, 50, 30, 0.18);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f3f1e8;
+  --surface: #fffefa;
+  --surface-raised: #f6f4ea;
+  --surface-soft: #ebe7d9;
+  --popover: #fffefa;
+  --sidebar-bg: rgba(252, 250, 242, 0.95);
+  --topbar-bg: rgba(243, 241, 232, 0.86);
+  --sheen: rgba(255, 255, 255, 0.6);
+  --glow: rgba(125, 86, 0, 0.07);
+  --foreground: #14231d;
+  --muted: #55685f;
+  --muted-strong: #33453d;
+  --line: rgba(20, 45, 35, 0.12);
+  --line-strong: rgba(20, 45, 35, 0.24);
+  --tint-1: rgba(20, 45, 35, 0.035);
+  --tint-2: rgba(20, 45, 35, 0.06);
+  --accent: var(--accent-l);
+  --accent-ink: #ffffff;
+  --positive: #09683f;
+  --negative: #b3261e;
+  --warning: #8a5600;
+  --model: #1d5fb8;
+  --market: #7d5600;
+  --wave-am: #9c4a0a;
+  --wave-pm: #5448c8;
+  --wave-am-fill: rgba(156, 74, 10, 0.14);
+  --wave-pm-fill: rgba(84, 72, 200, 0.12);
+  --wx-wind: #066a5f;
+  --wx-gust: #5448c8;
+  --wx-temp: #8a5600;
+  --wx-rain: #1d5fb8;
+  --chart-1: #0a6fb0;
+  --chart-2: #a86a00;
+  --chart-3: #007a5a;
+  --chart-4: #b03a78;
+  --chart-5: #5448c8;
+  --chart-6: #b8501a;
+  --chart-7: #6e7400;
+  --chart-8: #5c6b66;
+  --shadow: 0 14px 40px rgba(40, 50, 30, 0.14);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 6px 22px rgba(40, 50, 30, 0.08);
+  --shadow-lift: 0 12px 32px rgba(40, 50, 30, 0.18);
+}

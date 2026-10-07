@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { DataRow, formatCell, numberValue, titleCase } from "./lib";
+import { AnimatedNumber, Delta, SkeletonPage, Sparkline } from "./ui";
 
 export function Panel({
   title,
@@ -38,20 +39,40 @@ export function Kpi({
   value,
   detail,
   tone = "neutral",
+  delta,
+  deltaSuffix = "",
+  spark,
 }: {
   label: string;
   value: string;
   detail?: string;
-  tone?: "positive" | "negative" | "neutral" | "accent";
+  tone?: "positive" | "negative" | "neutral" | "accent" | "model" | "market";
+  /** Optional signed change shown with a direction glyph. */
+  delta?: number;
+  deltaSuffix?: string;
+  /** Optional trend values drawn as a sparkline. */
+  spark?: number[];
 }) {
+  const sparkTone = tone === "neutral" ? "accent" : tone;
   return (
     <div className={`kpi kpi-${tone}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
-      {detail && <small>{detail}</small>}
+      <div className="kpi-row">
+        <strong><AnimatedNumber text={value} /></strong>
+        {spark && spark.length > 1 && <Sparkline values={spark} tone={sparkTone} label={`${label} trend`} />}
+      </div>
+      {(detail || delta !== undefined) && (
+        <div className="kpi-foot">
+          {delta !== undefined && <Delta value={delta} suffix={deltaSuffix} />}
+          {detail && <small>{detail}</small>}
+        </div>
+      )}
     </div>
   );
 }
+
+/** Alias for new views: the same tile, named for what it is. */
+export const KpiTile = Kpi;
 
 export function PageIntro({
   eyebrow,
@@ -86,12 +107,7 @@ export function EmptyState({ title, detail }: { title: string; detail: string })
 }
 
 export function LoadingState({ label = "Loading dashboard data" }: { label?: string }) {
-  return (
-    <div className="loading-state" aria-live="polite">
-      <span className="loading-dot" />
-      <span>{label}</span>
-    </div>
-  );
+  return <SkeletonPage label={label} />;
 }
 
 export function ErrorState({ message }: { message: string }) {

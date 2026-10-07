@@ -18,12 +18,15 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
+import { ThisWeekView, WhyPricedView } from "./ExplainViews";
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
 import { WeatherEffectsView } from "./WeatherEffectsView";
 import { useDashboardData } from "./data";
 import { displayDate, titleCase } from "./lib";
+import { FreshnessBadge } from "./ui";
+import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, type AccentKey, type ThemeMode } from "./ui-rules";
 import {
   DiagnosticsView,
   DistributionsView,
@@ -34,7 +37,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects";
+export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "this-week" | "why-priced";
 
 type Manifest = {
   generated_at: string;
@@ -50,6 +53,13 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
   {
     label: "Operate",
     items: [{ key: "run", label: "Run", description: "Start a golfprice job from your phone", icon: Play }],
+  },
+  {
+    label: "Week",
+    items: [
+      { key: "this-week", label: "This week", description: "Course, model vs market, who we favour and why", icon: CircleGauge },
+      { key: "why-priced", label: "Why priced", description: "Every player's price, shape and drivers", icon: SlidersHorizontal },
+    ],
   },
   {
     label: "Live",
@@ -90,14 +100,9 @@ const views: Record<ViewKey, React.ComponentType> = {
   diagnostics: DiagnosticsView,
   weather: WeatherView,
   "weather-effects": WeatherEffectsView,
+  "this-week": ThisWeekView,
+  "why-priced": WhyPricedView,
 };
-
-const accents = [
-  { name: "Turf", value: "#54d6c8" },
-  { name: "Sky", value: "#8ca7ff" },
-  { name: "Citrus", value: "#d3e86b" },
-  { name: "Rose", value: "#f27ea9" },
-];
 
 function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -127,17 +132,29 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
     if (typeof window === "undefined") return "comfortable";
     return localStorage.getItem("golf-dashboard-density") === "compact" ? "compact" : "comfortable";
   });
-  const [accent, setAccent] = useState(() => {
-    if (typeof window === "undefined") return accents[0].value;
-    return localStorage.getItem("golf-dashboard-accent") || accents[0].value;
+  const [accent, setAccent] = useState<AccentKey>(() => {
+    if (typeof window === "undefined") return ACCENTS[0].key;
+    const saved = localStorage.getItem(ACCENT_STORAGE_KEY);
+    return ACCENTS.find((option) => option.key === saved)?.key ?? ACCENTS[0].key;
+  });
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "auto";
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    return saved === "light" || saved === "dark" ? saved : "auto";
   });
 
   useEffect(() => {
-    document.documentElement.dataset.density = density;
-    document.documentElement.style.setProperty("--accent", accent);
+    const root = document.documentElement;
+    const option = ACCENTS.find((item) => item.key === accent) ?? ACCENTS[0];
+    root.dataset.density = density;
+    root.style.setProperty("--accent-d", option.d);
+    root.style.setProperty("--accent-l", option.l);
+    if (theme === "auto") delete root.dataset.theme;
+    else root.dataset.theme = theme;
     localStorage.setItem("golf-dashboard-density", density);
-    localStorage.setItem("golf-dashboard-accent", accent);
-  }, [accent, density]);
+    localStorage.setItem(ACCENT_STORAGE_KEY, accent);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [accent, density, theme]);
 
   const activeMeta = useMemo(() => navigation.flatMap((group) => group.items).find((item) => item.key === activeView), [activeView]);
 
@@ -189,6 +206,7 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
               <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}{manifest?.event_id ? ` · Event ${manifest.event_id}` : ""}</small></div>
             )}
             <div className="freshness"><strong>{displayDate(gpCurrent?.asOf || manifest?.generated_at)}</strong><small>{gpCurrent ? "Latest golfprice run" : "Data snapshot"}</small></div>
+            <FreshnessBadge at={gpCurrent?.asOf || manifest?.generated_at} label={gpCurrent ? "Last run" : "Data"} />
           </div>
         </header>
         <div className="content-frame"><ActiveView /></div>
@@ -200,7 +218,8 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
           <div className="settings-panel">
             <div className="settings-heading"><div><span className="eyebrow">Your workspace</span><h2>Customize</h2></div><button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close customization"><X size={19}/></button></div>
             <section><h3>Information density</h3><p>Choose how much data fits on screen. Your preference stays on this device.</p><div className="choice-grid"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensity("comfortable")}><span className="density-preview comfortable"><i/><i/><i/></span><strong>Comfortable</strong><small>More breathing room</small></button><button className={density === "compact" ? "active" : ""} onClick={() => setDensity("compact")}><span className="density-preview compact"><i/><i/><i/><i/></span><strong>Compact</strong><small>More rows at once</small></button></div></section>
-            <section><h3>Accent color</h3><p>Use color to make key model signals easier to spot.</p><div className="accent-picker">{accents.map((option) => <button type="button" className={accent === option.value ? "active" : ""} key={option.value} onClick={() => setAccent(option.value)}><i style={{ backgroundColor: option.value }}/><span>{option.name}</span></button>)}</div></section>
+            <section><h3>Theme</h3><p>Auto follows your phone or computer. Your choice stays on this device.</p><div className="theme-picker" role="group" aria-label="Theme">{(["auto", "dark", "light"] as const).map((mode) => <button type="button" className={theme === mode ? "active" : ""} aria-pressed={theme === mode} key={mode} onClick={() => setTheme(mode)}><span className={`theme-swatch ${mode}`}/><span>{mode === "auto" ? "Auto" : mode === "dark" ? "Dark" : "Light"}</span></button>)}</div></section>
+            <section><h3>Accent color</h3><p>Use color to make key model signals easier to spot.</p><div className="accent-picker">{ACCENTS.map((option) => <button type="button" className={accent === option.key ? "active" : ""} aria-pressed={accent === option.key} key={option.key} onClick={() => setAccent(option.key)}><i style={{ backgroundColor: option.d }}/><span>{option.name}</span></button>)}</div></section>
             <section className="settings-note"><CircleGauge size={18}/><div><strong>Tables remember what matters</strong><p>Every table has its own sortable columns, visibility controls, search, and CSV export.</p></div></section>
           </div>
         </div>

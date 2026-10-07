@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { JOB_ID_RE, JOB_TYPES, MAX_QUEUE, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue } from "../app/jobs-rules.ts";
+import { JOB_ID_RE, JOB_TYPES, MACHINES, MAX_QUEUE, machineStatus, waitingFor, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue } from "../app/jobs-rules.ts";
 
 const NOW = Date.parse("2026-10-05T14:00:00Z");
 
@@ -235,3 +235,64 @@ test("a corrupt queue is never overwritten", async () => {
   assert.equal(response.status, 500);
   assert.equal(bucket.store.get("jobs/queue.json").body, "{nope");
 });
+
+test("target_machine: allow-listed names only; auto/absent means untargeted", () => {
+  assert.deepEqual(MACHINES.map((m) => m.name), ["desktop-2ki41v6", "mckinley_home"]);
+  assert.equal(checkRequest({ type: "tuesday" }).target_machine, undefined);
+  assert.equal(checkRequest({ type: "tuesday", target_machine: "auto" }).target_machine, undefined);
+  assert.equal(checkRequest({ type: "tuesday", target_machine: null }).target_machine, undefined);
+  assert.equal(checkRequest({ type: "tuesday", target_machine: "mckinley_home" }).target_machine, "mckinley_home");
+  for (const bad of ["laptop", "evil", "", 3, ["mckinley_home"], "mckinley_home ", "MCKINLEY_HOME"]) {
+    assert.match(checkRequest({ type: "tuesday", target_machine: bad }).problems.join(), /target_machine must be one of/);
+  }
+  const built = buildJob({ type: "tuesday", target_machine: "desktop-2ki41v6" }, "o@example.com", true, NOW, "abc123");
+  assert.equal(built.job.target_machine, "desktop-2ki41v6");
+  assert.equal("target_machine" in buildJob({ type: "tuesday" }, "o@example.com", true, NOW, "abc123").job, false);
+});
+
+test("machineStatus: offline without a heartbeat or when stale; running and idle otherwise", () => {
+  const beat = (machine, ago, extra = {}) => ({ machine, at: new Date(NOW - ago).toISOString().replace(/\.\d{3}Z$/, "Z"), state: "idle", ...extra });
+  const [desk, lap] = MACHINES;
+  assert.equal(machineStatus(desk, [], NOW).status, "offline");
+  assert.equal(machineStatus(desk, undefined, NOW).status, "offline");
+  assert.equal(machineStatus(desk, [beat("desktop-2ki41v6", 60_000, { commit: "abc" })], NOW).status, "idle");
+  assert.equal(machineStatus(desk, [beat("desktop-2ki41v6", 60_000, { commit: "abc" })], NOW).commit, "abc");
+  assert.equal(machineStatus(desk, [beat("desktop-2ki41v6", 20 * 60_000)], NOW).status, "offline");
+  const running = machineStatus(desk, [beat("desktop-2ki41v6", 30_000, { state: "running", job_id: "j-x" })], NOW);
+  assert.deepEqual([running.status, running.jobId], ["running", "j-x"]);
+  assert.equal(machineStatus(lap, [beat("desktop-2ki41v6", 1000)], NOW).status, "offline", "another machine's heartbeat does not count");
+});
+
+test("waitingFor: only queued jobs addressed to a machine; says why", () => {
+  const beats = [{ machine: "desktop-2ki41v6", at: "2026-10-05T13:59:30Z", state: "idle" }];
+  assert.equal(waitingFor(job(), "queued", beats, NOW), null);
+  assert.match(waitingFor(job({ target_machine: "mckinley_home" }), "queued", beats, NOW), /waiting for Laptop .*offline/);
+  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", beats, NOW), /waiting for Desktop to pick it up/);
+  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", [{ ...beats[0], state: "running" }], NOW), /finish its current job/);
+  assert.equal(waitingFor(job({ target_machine: "mckinley_home" }), "running", beats, NOW), null);
+});
+
+test("a queued job addressed to an offline machine can be cancelled and is not blocked by the target", () => {
+  const j = job({ target_machine: "mckinley_home" });
+  assert.equal(cancelProblem(j, null), null);
+  assert.equal(effectiveState({ ...j, cancelled_at: "2026-10-05T13:30:00Z" }, null), "cancelled");
+});
+
+test("POST /api/jobs with target_machine: stored on the job, unknown machine refused, cancel works while it waits", async () => {
+  const worker = await loadWorker();
+  const bucket = fakeBucket();
+  const bad = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "tuesday", target_machine: "evil-box" } });
+  assert.equal(bad.status, 422);
+  assert.match((await bad.json()).problems.join(), /target_machine must be one of/);
+  assert.equal(bucket.store.size, 0);
+  const ok = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "tuesday", target_machine: "mckinley_home" } });
+  assert.equal(ok.status, 201);
+  const created = (await ok.json()).job;
+  assert.equal(created.target_machine, "mckinley_home");
+  assert.equal(JSON.parse(bucket.store.get("jobs/queue.json").body).jobs[0].target_machine, "mckinley_home");
+  const auto = await call(worker, bucket, "/api/jobs", { method: "POST", headers: signedHeaders(), body: { type: "wednesday", target_machine: "auto" } });
+  assert.equal("target_machine" in (await auto.json()).job, false);
+  const cancel = await call(worker, bucket, `/api/jobs/${created.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} });
+  assert.equal(cancel.status, 200);
+});
+

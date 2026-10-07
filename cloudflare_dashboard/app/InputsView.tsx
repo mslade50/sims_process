@@ -278,14 +278,14 @@ function PlayerDetail({ player, choices, onPick, onAdjust }: { player: Obj; choi
       <div className="chart-medium waterfall">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={steps} layout="vertical" margin={{ top: 6, right: 24, bottom: 6, left: 8 }}>
-            <CartesianGrid stroke="rgba(184,220,209,.08)" horizontal={false} />
-            <XAxis type="number" tick={{ fill: "#88a099", fontSize: 10 }} />
-            <YAxis type="category" dataKey="name" width={190} tick={{ fill: "#abc0ba", fontSize: 10 }} />
-            <ReferenceLine x={0} stroke="rgba(184,220,209,.3)" />
+            <CartesianGrid stroke="var(--line)" horizontal={false} />
+            <XAxis type="number" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+            <YAxis type="category" dataKey="name" width={190} tick={{ fill: "var(--muted-strong)", fontSize: 10 }} />
+            <ReferenceLine x={0} stroke="var(--line-strong)" />
             <Tooltip content={<ChartTip />} />
             <Bar dataKey="range" name="Component (start to end)" radius={3} isAnimationActive={false}>
               {steps.map((step, index) => (
-                <Cell key={step.name} fill={index === steps.length - 1 ? "#8ca7ff" : step.value >= 0 ? "#78dfac" : "#ff7b7f"} />
+                <Cell key={step.name} fill={index === steps.length - 1 ? "var(--model)" : step.value >= 0 ? "var(--positive)" : "var(--negative)"} />
               ))}
             </Bar>
           </BarChart>
@@ -415,13 +415,13 @@ function CourseTab({ doc }: { doc: Obj }) {
         <div className="chart-medium">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
-              <CartesianGrid stroke="rgba(184,220,209,.08)" vertical={false} />
-              <XAxis dataKey="hole" tick={{ fill: "#88a099", fontSize: 10 }} />
-              <YAxis yAxisId="l" tick={{ fill: "#88a099", fontSize: 10 }} label={{ value: "Expected vs par", angle: -90, fill: "#88a099", fontSize: 10, position: "insideLeft" }} />
-              <YAxis yAxisId="r" orientation="right" tick={{ fill: "#88a099", fontSize: 10 }} unit="%" />
+              <CartesianGrid stroke="var(--line)" vertical={false} />
+              <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+              <YAxis yAxisId="l" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Expected vs par", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+              <YAxis yAxisId="r" orientation="right" tick={{ fill: "var(--muted)", fontSize: 10 }} unit="%" />
               <Tooltip content={<ChartTip />} />
               <Legend />
-              <ReferenceLine yAxisId="l" y={0} stroke="rgba(184,220,209,.3)" />
+              <ReferenceLine yAxisId="l" y={0} stroke="var(--line-strong)" />
               <Bar yAxisId="l" dataKey="expected" name="Expected vs par" fill={palette[0]} radius={3} isAnimationActive={false} />
               <Line yAxisId="r" dataKey="birdie" name="Birdie or better %" stroke={palette[1]} dot={false} isAnimationActive={false} />
               <Line yAxisId="r" dataKey="bogey" name="Bogey or worse %" stroke={palette[3]} dot={false} isAnimationActive={false} />
@@ -480,9 +480,9 @@ function VarianceTab({ doc }: { doc: Obj }) {
           <div className="chart-medium">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 10, right: 16, bottom: 18, left: 0 }}>
-                <CartesianGrid stroke="rgba(184,220,209,.08)" />
-                <XAxis type="number" dataKey="mu" name="mu" tick={{ fill: "#88a099", fontSize: 10 }} label={{ value: "mu (SG per round)", fill: "#88a099", fontSize: 10, position: "insideBottom", offset: -8 }} />
-                <YAxis type="number" dataKey="sd" name="sd" domain={["auto", "auto"]} tick={{ fill: "#88a099", fontSize: 10 }} />
+                <CartesianGrid stroke="var(--line)" />
+                <XAxis type="number" dataKey="mu" name="mu" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "mu (SG per round)", fill: "var(--muted)", fontSize: 10, position: "insideBottom", offset: -8 }} />
+                <YAxis type="number" dataKey="sd" name="sd" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} />
                 <ZAxis range={[26, 26]} />
                 <Tooltip content={<ChartTip />} />
                 <Scatter data={points} fill={palette[0]} name="players" isAnimationActive={false} />
@@ -535,9 +535,9 @@ function WeatherTab({ doc }: { doc: Obj }) {
           <div className="chart-medium">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
-                <CartesianGrid stroke="rgba(184,220,209,.08)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: "#88a099", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#88a099", fontSize: 10 }} />
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} />
                 <Tooltip content={<ChartTip />} />
                 <Bar dataKey="wind" name="Mean wind (mph)" fill={palette[2]} radius={3} isAnimationActive={false} />
               </BarChart>

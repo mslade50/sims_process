@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import {
+  american, availableTags, biasDimensions, biasForDimension, biasSentence, binFinish, defaultCompetitors, explainKeyFor, filterWhy, finishBins, leaderboard, movers, nameMatches, orderEvents,
+  parseExplain, pct, signed, sortWhy, toParText, toggleCompetitor, topEdges, topK, waterfall,
+} from "../app/explain-rules.ts";
+
+const read = async (n) => JSON.parse(await readFile(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
+const week = parseExplain(await read("explain_week.json"));
+const live = parseExplain(await read("explain_live.json"));
+
+async function loadWorker() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
+  return (await import(workerUrl.href)).default;
+}
+
+test("documents parse; anything else is rejected", () => {
+  assert.ok(week && live);
+  assert.equal(week.kind, "week");
+  assert.equal(live.kind, "live");
+  assert.equal(week.players.length, 40);
+  assert.equal(parseExplain(null), null);
+  assert.equal(parseExplain({ schema: "other", players: [] }), null);
+  assert.equal(parseExplain({ schema: "golfprice.explain.v1", players: "x", event: {} }), null);
+  const bare = parseExplain({ schema: "golfprice.explain.v1", event: { name: "E" }, players: [{ id: 1, name: "A" }] });
+  assert.equal(bare.players[0].probs.win.model, null);
+  assert.deepEqual(bare.players[0].tags, []);
+  assert.equal(bare.players[0].finish, null);
+});
+
+test("number formatting never shows NaN and keeps signs", () => {
+  assert.equal(pct(null), "-");
+  assert.equal(pct(0.1234), "12.3%");
+  assert.equal(pct(0.0004), "0.04%");
+  assert.equal(signed(0.5), "+0.50");
+  assert.equal(signed(-0.5), "−0.50");
+  assert.equal(signed(undefined), "-");
+  assert.equal(american(0.1), "+900");
+  assert.equal(american(0.75), "−300");
+  assert.equal(american(null), "-");
+  assert.equal(toParText(0), "E");
+  assert.equal(toParText(-3), "−3");
+});
+
+test("finish bins cover the field once and aggregate mass", () => {
+  const bins = finishBins(120, 65);
+  assert.equal(bins[0].lo, 1);
+  for (let i = 1; i < bins.length; i++) assert.equal(bins[i].lo, bins[i - 1].hi + 1);
+  assert.equal(bins.at(-1).hi, 120);
+  const p = week.players.find((x) => x.finish);
+  const bars = binFinish(p.finish.pos, finishBins(p.finish.pos.length, 25), p.finish.p_miss_cut);
+  assert.ok(Math.abs(bars.cum.at(-1) - 1) < 0.01);
+  assert.ok(bars.cum.every((v, i, a) => i === 0 || v >= a[i - 1] - 1e-12));
+  assert.deepEqual(topK([0.5, 0.25, 0.25], [1, 2, 3]), [0.5, 0.75, 1]);
+  assert.ok(finishBins(40, null).length >= 6);
+});
+
+test("waterfall folds small items and closes on the field-relative mean", () => {
+  const p = week.players[0];
+  const w = waterfall(p, week.components_legend);
+  assert.ok(w.rows.length > 3);
+  const skill = Object.entries(p.components).filter(([k]) => ["skill", "course", "location", "override"].includes(week.components_legend[k].group)).reduce((s, [, v]) => s + v, 0);
+  assert.ok(Math.abs(skill - p.mu_rel) < 0.02);
+  assert.ok(Math.abs(w.total - Object.values(p.components).reduce((s, v) => s + v, 0)) < 1e-9);
+  const order = ["skill", "course", "location", "override", "live", "weather"];
+  const idx = w.rows.map((r) => order.indexOf(r.group));
+  assert.deepEqual(idx, [...idx].sort((a, b) => a - b));
+});
+
+test("why-priced filter, search and sort", () => {
+  const all = week.players;
+  assert.equal(filterWhy(all, { query: "", tags: [], market: "win", onlyEdge: "all" }).length, 40);
+  const up = filterWhy(all, { query: "", tags: [], market: "top_10", onlyEdge: "above" });
+  assert.ok(up.length > 0 && up.every((p) => p.probs.top_10.edge > 0));
+  const first = all[0].name.split(",")[0];
+  assert.ok(filterWhy(all, { query: first.slice(0, 4).toLowerCase(), tags: [], market: "win", onlyEdge: "all" }).some((p) => p.id === all[0].id));
+  const top5 = filterWhy(all, { query: "", tags: [], market: "win", onlyEdge: "all", top: 5 });
+  assert.equal(top5.length, 5);
+  assert.ok(top5.every((p) => (p.probs.win.market ?? 0) >= (all.slice().sort((a, b) => (b.probs.win.market ?? 0) - (a.probs.win.market ?? 0))[5].probs.win.market ?? 0)));
+  assert.equal(filterWhy(all, { query: "zzzz", tags: [], market: "win", onlyEdge: "all" }).length, 0);
+  const tags = availableTags(all);
+  assert.ok(tags.length > 3);
+  const t = tags[0];
+  assert.ok(filterWhy(all, { query: "", tags: [t], market: "win", onlyEdge: "all" }).every((p) => p.tags.includes(t) || p.wave === t));
+  const s = sortWhy(all, "edge_sg", "desc", "win");
+  for (let i = 1; i < s.length; i++) if (s[i].edge_sg !== null && s[i - 1].edge_sg !== null) assert.ok(s[i - 1].edge_sg >= s[i].edge_sg);
+  const n = sortWhy(all, "name", "asc", "win");
+  assert.ok(n[0].name.localeCompare(n[1].name) <= 0);
+  const nul = sortWhy([{ ...all[0], edge_sg: null }, ...all.slice(1, 4)], "edge_sg", "asc", "win");
+  assert.equal(nul.at(-1).edge_sg, null);
+  assert.ok(nameMatches("Åberg, Ludvig", "lud ab"));
+  assert.ok(nameMatches("O'Neill, Pat", "pat oneill"));
+});
+
+test("headline lists: top edges, bias rows and sentences", () => {
+  const e = topEdges(week, 5);
+  assert.ok(e.above.every((p) => p.edge_sg > 0) && e.below.every((p) => p.edge_sg < 0));
+  assert.ok(e.above.length <= 5);
+  const rows = biasForDimension(week, "all");
+  assert.ok(rows.length > 3);
+  assert.ok(biasDimensions(week).some((d) => d.value === "depth"));
+  assert.ok(biasForDimension(week, "depth").every((r) => r.dimension === "depth"));
+  assert.match(biasSentence(rows[0]), /strokes\/round (above|below) the market|in line/);
+});
+
+test("competitor overlay: same-odds neighbours preselected, capped, toggled", () => {
+  const p = week.players.find((x) => x.finish);
+  const c = defaultCompetitors(week, p.id);
+  assert.ok(c.length > 0 && c.length <= 3 && !c.includes(p.id));
+  assert.deepEqual(toggleCompetitor([1, 2], 2), [1]);
+  assert.deepEqual(toggleCompetitor([1, 2, 3, 4], 9), [1, 2, 3, 4]);
+  assert.deepEqual(toggleCompetitor([], 9), [9]);
+  assert.deepEqual(defaultCompetitors(week, -1), []);
+});
+
+test("in-play: leaderboard, movers and live fields", () => {
+  const lb = leaderboard(live, 10);
+  assert.ok(lb.length > 0);
+  for (let i = 1; i < lb.length; i++) assert.ok((lb[i - 1].live.pos_n ?? 999) <= (lb[i].live.pos_n ?? 999));
+  const p = live.players[0];
+  assert.ok(p.live && "b8_delta" in p.live && Array.isArray(p.live.rounds));
+  assert.ok(movers(live, 5).length <= 5);
+  assert.equal(live.players[0].probs.win.market, null); // a live run without odds: edges are absent, not zero
+  assert.equal(topEdges(live, 3).above.length, 0);
+});
+
+test("events are ordered newest week first and keyed to the explain object", () => {
+  const ev = orderEvents([
+    { event_uid: "pga:1:2026-09-24", date_start: "2026-09-24", tour: "pga" },
+    { event_uid: "euro:2:2026-10-01", date_start: "2026-10-01", tour: "euro" },
+    { event_uid: "pga:3:2026-10-01", date_start: "2026-10-01", tour: "pga" },
+  ]);
+  assert.equal(ev.at(-1).event_uid, "pga:1:2026-09-24");
+  assert.deepEqual(ev.slice(0, 2).map((e) => e.event_uid).sort(), ["euro:2:2026-10-01", "pga:3:2026-10-01"]);
+  assert.equal(explainKeyFor({ event_uid: "pga:554:2026-10-01" }), "golfprice/explain/pga_554_2026-10-01/latest.json");
+  assert.equal(explainKeyFor({ event_uid: "x", explain_key: "golfprice/explain/y/latest.json" }), "golfprice/explain/y/latest.json");
+});
+
+test("the routes server-render and the nav lists the new views", async () => {
+  const worker = await loadWorker();
+  for (const path of ["/this-week", "/why-priced"]) {
+    const response = await worker.fetch(new Request(`https://golf.example${path}`, { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("nf", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
+    assert.equal(response.status, 200, path);
+    const html = await response.text();
+    assert.match(html, /This week/);
+    assert.match(html, /Why priced/);
+  }
+});
