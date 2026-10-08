@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {PROFILE_AXES, completeRadar, parseCatalog, parseProfile, profileHref, profileKey, profileMatches, radarExtent, radarRadius, reconciliation, sameReference, savedSkill, matchesExplainCheckpoint, matchesInputCheckpoint, matchingInputRun, sortProfiles, selectWeeklyEvent} from "../app/player-profile-rules.ts";
+import {savedFieldSkill, benchmarkValue, checkpointBenchmarkValue, fieldBenchmark, relativeBenchmark, PROFILE_AXES, completeRadar, parseCatalog, parseProfile, profileHref, profileKey, profileMatches, radarExtent, radarRadius, reconciliation, sameReference, savedSkill, matchesExplainCheckpoint, matchesInputCheckpoint, matchingInputRun, sortProfiles, selectWeeklyEvent} from "../app/player-profile-rules.ts";
 const profile=(id,z=0)=>({schema_version:"player_profiles.v1",identity:{dg_id:id,name:`Test ${id}`},radar:PROFILE_AXES.map(key=>({key,z,reference:`global:${key}`})),references:Object.fromEntries(PROFILE_AXES.map(key=>[key,{id:`global:${key}`,as_of:"2026-10-08",mean:0,sd:1}]))});
 test("signed radar places population average on middle ring and negatives inside",()=>{assert.equal(radarRadius(-3,3),0);assert.equal(radarRadius(0,3),0.5);assert.equal(radarRadius(3,3),1);assert.equal(radarExtent([profile(1,4.2)]),5);});
 test("missing traits never become a complete polygon or zero",()=>{const p=profile(1);p.radar[2].z=null;assert.equal(completeRadar(p),false);assert.equal(completeRadar(profile(1)),true);p.radar[2].z=NaN;assert.equal(completeRadar(p),false);});
@@ -19,3 +19,39 @@ test("live inputs validate official round and UTC stamp naming rather than conte
 test("current input selection matches explain identity and never falls back to latest_key",()=>{const event={event_uid:expected.event_uid,explain_run:`week_${expected.run}`,latest_key:"wrong.json",runs:[{...expected,key:"right.json"}]};assert.equal(matchingInputRun(event).key,"right.json");assert.equal(matchingInputRun({...event,runs:[]}),null);assert.equal(matchingInputRun(event,{...expected,as_of:"2026-10-07T12:00:00Z"}),null);});
 test("catalog discovery prioritizes coverage recency then name without mutating input",()=>{const players=[{dg_id:1,name:"Retired",status:"unavailable",last_observation:"2026-10-08"},{dg_id:2,name:"Z recent",status:"complete",last_observation:"2026-10-08"},{dg_id:3,name:"A older",status:"complete",last_observation:"2026-10-07"},{dg_id:4,name:"A recent",status:"complete",last_observation:"2026-10-08"},{dg_id:5,name:"Partial",status:"partial",last_observation:"2026-10-09"}];assert.deepEqual(sortProfiles(players).map(p=>p.dg_id),[4,2,3,5,1]);assert.equal(players[0].dg_id,1);});
 test("weekly deep links select exact field membership while explicit events win",()=>{const events=[{event_uid:"euro",tour:"euro",date_start:"2026-10-08",player_ids:[3]},{event_uid:"pga",tour:"pga",date_start:"2026-10-08",player_ids:[1,2]}];assert.equal(selectWeeklyEvent(events,null,"1").event_uid,"pga");assert.equal(selectWeeklyEvent(events,null,"3").event_uid,"euro");assert.equal(selectWeeklyEvent(events,"euro","1").event_uid,"euro");assert.equal(selectWeeklyEvent(events,null,null).event_uid,"pga");assert.equal(selectWeeklyEvent(events.map(e=>({...e,player_ids:undefined})),null,"3",[{event_uid:"euro",player_ids:[3]}]).event_uid,"euro");assert.equal(selectWeeklyEvent(events.map(e=>({...e,player_ids:undefined})),null,"3").event_uid,"pga");});
+
+const benchmarkReference={id:"fixed-pga-2025",status:"available",available_after:"2026-01-01T00:00:00Z"};
+const rating=value=>({schema_version:"player_benchmark.v1",status:"available",value,reference_id:benchmarkReference.id,last_observation:"2026-10-04"});
+test("PGA benchmark accepts only supported matching published ratings; zero remains valid",()=>{
+  assert.equal(benchmarkValue(rating(0),benchmarkReference),0);
+  for(const patch of [{value:null},{value:NaN},{status:"insufficient_data"},{reference_id:"other"},{schema_version:"wrong"}])assert.equal(benchmarkValue({...rating(1),...patch},benchmarkReference),null);
+  assert.equal(benchmarkValue(rating(1),undefined),null);assert.equal(benchmarkValue(undefined,benchmarkReference),null);
+});
+test("secondary field rating uses every unique saved field member and withholds incomplete coverage",()=>{
+  const players=[{dg_id:1,pga_benchmark:rating(2)},{dg_id:2,pga_benchmark:rating(-1)}];
+  const field=fieldBenchmark([1,2,2],players,benchmarkReference);assert.deepEqual(field,{mean:.5,covered:2,total:2});assert.equal(relativeBenchmark(2,field),1.5);
+  assert.deepEqual(fieldBenchmark([1,2,3],players,benchmarkReference),{mean:null,covered:2,total:3});assert.equal(relativeBenchmark(2,{mean:null}),null);assert.equal(relativeBenchmark(null,field),null);
+  assert.deepEqual(fieldBenchmark([],players,benchmarkReference),{mean:null,covered:0,total:0});
+});
+test("archived checkpoints withhold later observations and reference anchors",()=>{
+  assert.equal(checkpointBenchmarkValue(rating(1),benchmarkReference,"2026-10-08T12:00:00Z"),1);
+  assert.equal(checkpointBenchmarkValue(rating(1),benchmarkReference,"2026-10-04T12:00:00Z"),null);
+  assert.equal(checkpointBenchmarkValue(rating(1),benchmarkReference,"2025-12-01T12:00:00Z"),null);
+  assert.equal(checkpointBenchmarkValue({...rating(1),last_observation:null},benchmarkReference,"2026-10-08T12:00:00Z"),null);
+  assert.equal(fieldBenchmark([1],[{dg_id:1,pga_benchmark:rating(1)}],benchmarkReference,"2026-10-04T12:00:00Z").mean,null);
+});
+
+test("profile headline is mounted and labels preserve descriptive vs saved-model meaning",async()=>{
+  const {readFile}=await import("node:fs/promises");const view=await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8");
+  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("Relative to PGA benchmark"));assert.ok(view.includes("not a simulation forecast"));assert.ok(view.includes("Saved event model skill decomposition"));assert.ok(view.includes("latest revised history"));
+  assert.equal(view.includes("Absolute model"),false);assert.equal(view.includes("Absolute pre-event"),false);assert.equal(view.includes("known before this checkpoint"),false);assert.equal(view.includes(String.fromCharCode(65533)),false);
+});
+
+test("saved field secondary centers a single estimator over the full active field",()=>{
+  const players=[{id:1,mu:1,live:{mu_live:3}},{id:2,mu:-1,live:{mu_live:1}},{id:3,mu:100,live:{mu_live:100},withdrawn:true}];
+  assert.deepEqual(savedFieldSkill({kind:"week",players},1),{value:1,covered:2,total:2});
+  assert.deepEqual(savedFieldSkill({kind:"live",players},1),{value:1,covered:2,total:2});
+  assert.equal(savedFieldSkill({kind:"week",players},3).value,null);
+  assert.equal(savedFieldSkill({kind:"live",players:[players[0],{...players[1],live:null}]},1).value,null);
+  assert.equal(savedFieldSkill(null,1).value,null);
+});

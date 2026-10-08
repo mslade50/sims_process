@@ -2,14 +2,16 @@
 export const PROFILE_AXES = ["sg_ott", "sg_app", "sg_arg", "sg_putt", "driving_acc", "driving_dist"] as const;
 export type ProfileAxis = typeof PROFILE_AXES[number];
 export type Photo = { url: string | null; source: string | null; source_name?:string; status?: string };
-export type ProfileEntry = { profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
+export type PgaBenchmark = {schema_version:string;status:string;value:number|null;observed_mean?:number|null;n_rounds:number;n_events:number;n_eff:number;effective_sample_size?:number;weight_on_data:number;last_observation:string|null;as_of:string;reference_id:string|null;unit:string;note?:string;method:{window_days:number;half_life_days:number;prior_rounds:number;min_rounds:number;min_events:number;min_n_eff:number}};
+export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown};
+export type ProfileEntry = {pga_benchmark?:PgaBenchmark; profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
 export const playerId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);
 export type Reference = { id: string; population: string; n_players: number; min_rounds: number; mean: number | null; sd: number | null; as_of: string; higher_is_better: boolean };
 export type Metric = { key: ProfileAxis; label: string; unit: string; value: number | null; estimate: number | null; z: number | null; n: number | null; n_eff: number | null; reference: string; shrinkage: { prior_rounds: number; weight_on_data: number } | null; last_observation: string | null; status: string };
 export type HistoricalTrait = {value?:number;raw_value?:number;unit?:string;percentile?:number|null;band?:string;interval_90?:number[]|null;shrinkage_weight?:number;reference_players?:number;label_status?:string;band_uncertain?:boolean};
 export type Archetype = {label?:string;description?:string;status?:string;reason?:string;caveat?:string;notes?:string[];sample?:{rounds?:number;events?:number;round_selection?:string};reliability?:{status?:string;evidence?:string;reason?:string;cut_maker?:unknown};volatility?:HistoricalTrait|null;relative_hot_round_upside?:HistoricalTrait|null;tail_balance?:HistoricalTrait|null};
-export type PlayerProfile = { schema_version: string; as_of: string; identity: ProfileEntry; coverage: {status: string}; photo?: Photo; radar: Metric[]; references: Record<string, Reference>; archetype?: Archetype | string | null; provenance?: unknown };
-export type ProfileCatalog = { schema_version: string; as_of: string; players: ProfileEntry[]; references: Record<string, Reference>; provenance?: unknown; catalog_key?: string };
+export type PlayerProfile = { schema_version: string; as_of: string; identity: ProfileEntry; coverage: {status: string}; photo?: Photo; radar: Metric[]; references: Record<string, Reference>; pga_benchmark?:PgaBenchmark; pga_benchmark_reference?:PgaBenchmarkReference; archetype?: Archetype | string | null; provenance?: unknown };
+export type ProfileCatalog = { schema_version: string; as_of: string; players: ProfileEntry[]; references: Record<string, Reference>; pga_benchmark_reference?:PgaBenchmarkReference; provenance?: unknown; catalog_key?: string };
 export const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 export const signedZ = (v: unknown, digits = 2): string => finite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}` : "—";
 export function profileKey(key: string): string {
@@ -89,4 +91,31 @@ export function matchesInputCheckpoint(raw:unknown, expected:SavedCheckpoint|nul
 export function matchingInputRun(event:{event_uid:string;explain_run?:string|null;runs?:Array<{kind:string;run:string;as_of?:string|null;key:string}>},selected?:{kind:string;run:string;as_of:string|null}):({key:string}&SavedCheckpoint)|null {
   const row=event.runs?.find(r=>selected ? r.kind===selected.kind && r.run===selected.run && sameTime(r.as_of,selected.as_of) : `${r.kind}_${r.run}`===event.explain_run);
   return row && row.as_of ? {...row,as_of:row.as_of,event_uid:event.event_uid} : null;
+}
+
+/** Only supported, explicitly referenced published ratings can enter a field mean. */
+export function benchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):number|null {
+  return rating?.schema_version === "player_benchmark.v1" && rating.status === "available" && reference?.status === "available" && rating.reference_id === reference.id && finite(rating.value) ? rating.value : null;
+}
+export function fieldBenchmark(ids:number[],players:ProfileEntry[],reference:PgaBenchmarkReference|undefined,checkpoint?:string|null):{mean:number|null;covered:number;total:number} {
+  const unique=[...new Set(ids)];const byId=new Map(players.filter(p=>p.dg_id!==null).map(p=>[p.dg_id,p]));
+  const values=unique.map(id=>checkpointBenchmarkValue(byId.get(id)?.pga_benchmark,reference,checkpoint)).filter((v):v is number=>v!==null);
+  // Full coverage is required: a partial-field average can systematically omit weaker players.
+  return {mean:unique.length>0 && values.length===unique.length ? values.reduce((a,b)=>a+b,0)/values.length : null,covered:values.length,total:unique.length};
+}
+export function relativeBenchmark(value:number|null,field:{mean:number|null}):number|null {return finite(value) && finite(field.mean) ? value-field.mean : null;}
+
+/** Current history cannot be displayed as known before its last observation or fixed reference. */
+export function checkpointBenchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined,checkpoint?:string|null):number|null {
+  const value=benchmarkValue(rating,reference);if(!checkpoint || value===null) return value;
+  const cutoff=Date.parse(checkpoint), last=Date.parse(rating?.last_observation ?? ""), anchor=Date.parse(reference?.available_after ?? "");
+  return Number.isFinite(cutoff) && Number.isFinite(last) && Number.isFinite(anchor) && last+86400000<cutoff && anchor<cutoff ? value : null;
+}
+
+/** One saved estimator for the entire active field; never substitute pre-event values into live gaps. */
+export function savedFieldSkill(doc:{kind:string;players:Array<{id:number;withdrawn?:boolean;mu:number|null;live?:{mu_live:number|null}|null}>}|null,id:number|null):{value:number|null;covered:number;total:number} {
+  const active=doc?.players.filter(p=>!p.withdrawn) ?? [];const selected=active.find(p=>p.id===id);
+  const metric=(p:typeof active[number])=>doc?.kind==="live" ? p.live?.mu_live : p.mu;
+  const values=active.map(metric).filter(finite);const value=selected ? metric(selected) : null;
+  return {value:values.length===active.length && values.length>0 && finite(value) ? value-values.reduce((a,b)=>a+b,0)/values.length : null,covered:values.length,total:active.length};
 }
