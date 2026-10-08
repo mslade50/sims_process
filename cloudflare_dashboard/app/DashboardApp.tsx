@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { ThisWeekView, WhyPricedView } from "./ExplainViews";
+import { DistributionView } from "./DistributionView";
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
@@ -29,7 +30,6 @@ import { FreshnessBadge } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, type AccentKey, type ThemeMode } from "./ui-rules";
 import {
   DiagnosticsView,
-  DistributionsView,
   HistoryView,
   PerformanceView,
   RoundScoresView,
@@ -92,7 +92,7 @@ const views: Record<ViewKey, React.ComponentType> = {
   run: RunView,
   inputs: InputsView,
   research: ResearchView,
-  distributions: DistributionsView,
+  distributions: DistributionView,
   "sg-distributions": SgDistributionsView,
   "round-scores": RoundScoresView,
   history: HistoryView,

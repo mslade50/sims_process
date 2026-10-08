@@ -70,7 +70,7 @@ function ExplainBody({ event, params, update, children }: { event: IndexEvent; p
   const { data, loading, error } = useDashboardData<unknown>(explainKeyFor(event));
   const doc = useMemo(() => parseExplain(data), [data]);
   if (loading) return <LoadingState label="Loading the explain document" />;
-  if (error || !doc) return <EmptyState title={`No explain document for ${event.name ?? event.event_uid} yet`} detail="It is published with every run (python -m golfprice.publish_dashboard). Older runs published before this view existed have none; the next run does." />;
+  if (error || !doc || (event.explain_run && `${doc.kind}_${doc.run}` !== event.explain_run)) return <EmptyState title={`No explain document for ${event.name ?? event.event_uid} yet`} detail="It is published with every run (python -m golfprice.publish_dashboard). Older runs published before this view existed have none; the next run does." />;
   const market = params.m ?? "win";
   const player = params.p ? doc.players.find((p) => p.id === params.p) ?? null : null;
   const competitors = params.vs.length || !player ? params.vs : defaultCompetitors(doc, player.id);
