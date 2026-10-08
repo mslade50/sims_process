@@ -6,11 +6,25 @@ export type ScoringPlayer = {
   id: number; name: string; mean: number; sd: number; p10: number; p50: number; p90: number;
   pmf: PmfRow[]; n_draws: number; components: ScoreComponent[]; data_depth: number | null; tee_time: string | null;
 };
+export type CourseProvenance = {
+  model_version: string | null;
+  layout: { status: string | null; source: string | null; year: number | null; current_event_confirmed: boolean | null };
+  general_fit: { start: string | null; end: string | null; cutoff: string | null; observations: number | null; method: string | null; skill_response_cutoff: string | null };
+  venue_history: { observations: number | null; editions: string[]; cutoff: string | null; year_min: number | null; year_max: number | null };
+  historical_weather: { reference: string | null; field_adjustment: string | null; status: string | null; method: string | null; note: string | null };
+  field_strength: { status: string | null; detail: string | null; method: string | null };
+};
+export type RoundUpdate = {
+  status: string | null; applied: boolean | null; target_round: number | null; source_rounds: number[];
+  adjustment_strokes: number | null; observations: number | null; reason: string | null; method: string | null;
+  observed_rounds: Array<{ round: number; field_actual: number | null; field_expected: number | null; weather_strokes: number | null; residual: number | null; players: number | null }>;
+};
 export type ScoringDoc = {
   schema: string; status: "available" | "unavailable"; round: number | null; run_id: string; probability_basis: string;
   method: string | null; n_draws: number;
   field: { mean: number | null; sd: number | null; p10: number | null; p50: number | null; p90: number | null; players: number; active_players_min: number | null; active_players_max: number | null; outcome_label: string; quantile_curve: Array<[number, number]> | null };
-  baseline: { course_score: number | null; common_weather: number | null; source: string | null; detail: string | null; median_hole_observations: number | null; round_par: number | null; arithmetic_residual: number | null };
+  baseline: { course_score: number | null; common_weather: number | null; source: string | null; detail: string | null; median_hole_observations: number | null; round_par: number | null; arithmetic_residual: number | null; course_provenance: CourseProvenance | null };
+  round_update: RoundUpdate | null;
   players: ScoringPlayer[];
   confidence: { mean_interval: unknown; status: string; reasons: string[]; monte_carlo_se: { field: number | null; basis: string } | null };
   drivers: Array<{ key: string; label: string; mean_score_shift: number }>;
@@ -42,7 +56,8 @@ export function parseScoring(raw: unknown): ScoringDoc | null {
     if (raw.players.length !== 0 || raw.round !== null || raw.method !== null || !summaryKeys.every((k) => field[k] === null)) return null;
     return { schema: SCORING_SCHEMA, status: "unavailable", round: null, run_id: raw.run_id, probability_basis: raw.probability_basis, method: null, n_draws: raw.n_draws,
       field: { mean: null, sd: null, p10: null, p50: null, p90: null, players: field.players as number, active_players_min: null, active_players_max: null, outcome_label: field.outcome_label, quantile_curve: null },
-      baseline: { course_score: baseline.course_score as number | null, common_weather: baseline.common_weather as number | null, source: text(baseline.source) ? baseline.source : null, detail: text(baseline.detail) ? baseline.detail : null, median_hole_observations: baseline.median_hole_observations as number | null, round_par: baseline.round_par as number | null, arithmetic_residual: baseline.arithmetic_residual as number | null },
+      baseline: { course_score: baseline.course_score as number | null, common_weather: baseline.common_weather as number | null, source: text(baseline.source) ? baseline.source : null, detail: text(baseline.detail) ? baseline.detail : null, median_hole_observations: baseline.median_hole_observations as number | null, round_par: baseline.round_par as number | null, arithmetic_residual: baseline.arithmetic_residual as number | null, course_provenance: parseCourseProvenance(baseline.course_provenance) },
+      round_update: parseRoundUpdate(raw.round_update),
       players: [], confidence: { mean_interval: confidence.mean_interval ?? null, status: confidence.status, reasons: confidence.reasons.filter(text), monte_carlo_se: monteCarlo }, drivers: [],
       source_notes: Array.isArray(raw.source_notes) ? raw.source_notes.filter(text) : [], weather: parseWeather(raw.weather) };
   }
@@ -69,7 +84,8 @@ export function parseScoring(raw: unknown): ScoringDoc | null {
   if (drivers.some((d) => d === null)) return null;
   return { schema: SCORING_SCHEMA, status: "available", round: raw.round, run_id: raw.run_id, probability_basis: raw.probability_basis, method: raw.method, n_draws: raw.n_draws,
     field: { mean: field.mean as number, sd: field.sd as number, p10: field.p10 as number, p50: field.p50 as number, p90: field.p90 as number, players: field.players as number, active_players_min: nullableNumber(field.active_players_min) ? field.active_players_min : null, active_players_max: nullableNumber(field.active_players_max) ? field.active_players_max : null, outcome_label: field.outcome_label, quantile_curve: quantileCurve },
-    baseline: { course_score: baseline.course_score as number | null, common_weather: baseline.common_weather as number | null, source: text(baseline.source) ? baseline.source : null, detail: text(baseline.detail) ? baseline.detail : null, median_hole_observations: baseline.median_hole_observations as number | null, round_par: baseline.round_par as number | null, arithmetic_residual: baseline.arithmetic_residual as number | null },
+    baseline: { course_score: baseline.course_score as number | null, common_weather: baseline.common_weather as number | null, source: text(baseline.source) ? baseline.source : null, detail: text(baseline.detail) ? baseline.detail : null, median_hole_observations: baseline.median_hole_observations as number | null, round_par: baseline.round_par as number | null, arithmetic_residual: baseline.arithmetic_residual as number | null, course_provenance: parseCourseProvenance(baseline.course_provenance) },
+      round_update: parseRoundUpdate(raw.round_update),
     players, confidence: { mean_interval: confidence.mean_interval ?? null, status: confidence.status, reasons: confidence.reasons.filter(text), monte_carlo_se: monteCarlo }, drivers: drivers as ScoringDoc["drivers"],
     source_notes: Array.isArray(raw.source_notes) ? raw.source_notes.filter(text) : [], weather: parseWeather(raw.weather) };
 }
@@ -117,4 +133,44 @@ export function expectationBridge(doc: ScoringDoc, player: ScoringPlayer | null 
 export function resolvedOverShare(p: { over: number; under: number; push: number }): number | null {
   const resolved = p.over + p.under;
   return finite(resolved) && resolved > 0 ? p.over / resolved : null;
+}
+
+// Additive metadata never makes an otherwise valid legacy score disappear.
+const stringValue = (v: unknown): string | null => text(v) ? v : finite(v) ? String(v) : null;
+const numberValue = (v: unknown): number | null => finite(v) ? v : null;
+const record = (v: unknown): Record<string, unknown> => obj(v) ? v : {};
+function parseCourseProvenance(raw: unknown): CourseProvenance | null {
+  if (!obj(raw)) return null;
+  const layout = record(raw.layout), fit = record(raw.general_fit), history = record(raw.venue_history), weather = record(raw.historical_weather), strength = record(raw.field_strength);
+  return {
+    model_version: stringValue(raw.model_version),
+    layout: { status: stringValue(layout.status), source: stringValue(layout.source), year: numberValue(layout.year), current_event_confirmed: typeof layout.current_event_confirmed === "boolean" ? layout.current_event_confirmed : null },
+    general_fit: { start: stringValue(fit.start), end: stringValue(fit.end), cutoff: stringValue(fit.cutoff), observations: numberValue(fit.observations), method: stringValue(fit.method), skill_response_cutoff: stringValue(fit.skill_response_cutoff) },
+    venue_history: { observations: numberValue(history.observations), editions: Array.isArray(history.editions) ? history.editions.flatMap((e) => stringValue(e) === null ? [] : [stringValue(e)!]) : [], cutoff: stringValue(history.cutoff), year_min: numberValue(history.year_min), year_max: numberValue(history.year_max) },
+    historical_weather: { reference: stringValue(weather.reference), field_adjustment: stringValue(weather.field_adjustment), status: stringValue(weather.status), method: stringValue(weather.method), note: stringValue(weather.note) },
+    field_strength: { status: stringValue(strength.status), detail: stringValue(strength.detail), method: stringValue(strength.method) },
+  };
+}
+function parseRoundUpdate(raw: unknown): RoundUpdate | null {
+  if (!obj(raw)) return null;
+  return { status: stringValue(raw.status), applied: typeof raw.applied === "boolean" ? raw.applied : null, target_round: numberValue(raw.target_round), source_rounds: Array.isArray(raw.source_rounds) ? raw.source_rounds.filter((r): r is number => finite(r) && Number.isInteger(r) && r >= 1 && r <= 4) : [], adjustment_strokes: numberValue(raw.adjustment_strokes), observations: numberValue(raw.observations), reason: stringValue(raw.reason), method: stringValue(raw.method),
+    observed_rounds: Array.isArray(raw.observed_rounds) ? raw.observed_rounds.flatMap((r) => obj(r) && finite(r.round) ? [{ round: r.round, field_actual: numberValue(r.field_actual), field_expected: numberValue(r.field_expected), weather_strokes: numberValue(r.weather_strokes), residual: numberValue(r.residual), players: numberValue(r.players) }] : []) : [] };
+}
+export type ScoringEvidenceRow = { label: string; value: string; detail: string };
+export function scoringEvidence(doc: ScoringDoc): { rows: ScoringEvidenceRow[]; warning: string | null; updateApplied: boolean } {
+  const p = doc.baseline.course_provenance, u = doc.round_update;
+  const applied = u?.status === "applied" && u.applied === true && u.target_round === doc.round && u.adjustment_strokes !== null;
+  const count = (n: number | null | undefined) => n == null ? "Count not reported" : `${n.toLocaleString()} observations`;
+  const joined = (parts: Array<string | null | undefined>) => parts.filter(Boolean).join(" · ");
+  const missing = "Not reported in this checkpoint";
+  const rows = [
+    { label: "Course layout", value: p?.layout.current_event_confirmed === true ? "Current event confirmed" : p?.layout.year != null ? `${p.layout.year} geometry · current setup unconfirmed` : missing, detail: joined([p?.layout.source, p?.layout.status]) || "Geometry identifies the layout; it does not establish the scoring-history period." },
+    { label: "General hole fit", value: p ? joined([p.general_fit.start, p.general_fit.end ? `through ${p.general_fit.end}` : null, p.general_fit.cutoff ? `cutoff ${p.general_fit.cutoff}` : null]) || missing : missing, detail: p ? joined([p.general_fit.method, count(p.general_fit.observations), p.general_fit.skill_response_cutoff ? `Skill response fit cutoff ${p.general_fit.skill_response_cutoff}` : "Skill response fit cutoff not reported"]) : "This checkpoint retains its original model fit. A later release does not change this stored score." },
+    { label: "Own-venue hole history", value: p ? count(p.venue_history.observations) : doc.baseline.median_hole_observations === 0 ? "Zero median hole observations" : missing, detail: p ? joined([p.venue_history.editions.length ? `Editions: ${p.venue_history.editions.join(", ")}` : "Editions not reported", p.venue_history.cutoff ? `cutoff ${p.venue_history.cutoff}` : "Cutoff not reported"]) : `Median observations per hole: ${doc.baseline.median_hole_observations ?? "not reported"}. General fit depth and venue history are different inputs.` },
+    { label: "Historical weather reference", value: p?.historical_weather.reference ?? missing, detail: joined([p?.historical_weather.field_adjustment, p?.historical_weather.method, p?.historical_weather.note]) || "Historical weather normalization and historical field adjustment were not reported." },
+    { label: "Current weather and player skill", value: doc.baseline.common_weather == null ? "Current weather adjustment not reported" : `${doc.baseline.common_weather >= 0 ? "+" : ""}${doc.baseline.common_weather.toFixed(3)} strokes common weather`, detail: joined([doc.weather.source, doc.weather.freshness, "Player skill is centered on this field; it does not move the field anchor.", p?.field_strength.detail ?? "Absolute field-strength calibration not established in this checkpoint.", `Absolute field-strength calibration status: ${p?.field_strength.status?.replaceAll("_", " ") ?? "not reported"}`, p?.field_strength.method]) },
+    { label: "Observed-round baseline update", value: applied ? `${u!.adjustment_strokes! >= 0 ? "+" : ""}${u!.adjustment_strokes!.toFixed(3)} strokes applied to round ${u!.target_round}` : u?.status === "staged_not_applied" ? "Staged, not applied" : u?.status === "not_applied" && u.applied !== true ? "Not applied" : "Application not verified", detail: joined([u?.reason ?? "No applied-update metadata was published for this checkpoint.", u?.source_rounds.length ? `Source rounds: ${u.source_rounds.join(", ")}` : null, u?.observations != null ? count(u.observations) : null]) },
+  ];
+  const warning = p?.venue_history.observations === 0 ? "No own-venue hole history supports this course anchor. Review the general fit and layout source before using the expectation." : doc.baseline.median_hole_observations === 0 ? "Median own-venue hole-history depth is zero. Check hole coverage and the general fit before using this course anchor." : p && p.layout.current_event_confirmed !== true ? "The current event layout is not confirmed. Check the geometry source before relying on the course anchor." : !p ? "This older checkpoint does not report the full course-fit provenance. Its stored expectation has not been recalculated with a later release." : doc.confidence.reasons[0] ?? null;
+  return { rows, warning, updateApplied: applied };
 }
