@@ -91,7 +91,11 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
     headers.set("content-type", requested.endsWith(".csv") ? "text/csv; charset=utf-8" : "application/json; charset=utf-8");
     headers.set("cache-control", /(^|\/)(manifest|index|latest)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
     headers.set("etag", object.httpEtag);
-    return new Response(request.method === "HEAD" ? null : object.body, { headers });
+    // R2 dossiers are already gzip encoded. Prevent Workers from applying
+    // the same content encoding a second time to their stored bytes.
+    const responseInit: ResponseInit & { encodeBody?: "manual" } = { headers };
+    if (headers.has("content-encoding")) responseInit.encodeBody = "manual";
+    return new Response(request.method === "HEAD" ? null : object.body, responseInit);
   }
 
   if (path !== "/api/overrides" && !path.startsWith("/api/overrides/")) return null;
