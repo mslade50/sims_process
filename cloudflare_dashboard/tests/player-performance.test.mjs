@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {roundSma,performanceSeries,visiblePerformance} from "../app/player-performance-rules.ts";
+import {nearestPerformanceIndex,roundSma,performanceSeries,visiblePerformance} from "../app/player-performance-rules.ts";
 test("SMA uses equal weights, expires old rounds exactly, and withholds partial windows",()=>{
  assert.deepEqual(roundSma([1,3,5,7,11],3),[null,null,3,5,23/3]);
  assert.deepEqual(roundSma([10,0,0,0],2),[null,5,0,0]);
@@ -10,9 +10,9 @@ test("SMA uses equal weights, expires old rounds exactly, and withholds partial 
  assert.throws(()=>roundSma([NaN],2));assert.throws(()=>roundSma([Infinity],2));
 });
 test("performance requires adjusted basis, exact dates, finite anchor; sorts rounds and removes duplicates",()=>{
- const event={id:"pga:1",round_data:[{round:2,date:"2026-01-02",sg_total:1,sg_basis:"source_adjusted"},{round:1,date:"2026-01-01",sg_total:0,sg_basis:"source_adjusted"},{round:3,date:"2026-01-03",sg_total:3,sg_basis:"source_adjusted"},{round:4,date:"bad",sg_total:9,sg_basis:"source_adjusted"}]};
+ const event={id:"pga:1",name:"Test Championship",course:"North Course",tour:"pga",round_data:[{round:2,date:"2026-01-02",sg_total:1,sg_basis:"source_adjusted"},{round:1,date:"2026-01-01",sg_total:0,sg_basis:"source_adjusted"},{round:3,date:"2026-01-03",sg_total:3,sg_basis:"source_adjusted"},{round:4,date:"bad",sg_total:9,sg_basis:"source_adjusted"}]};
  const unknown={id:"x",round_data:[{round:1,date:"2026-01-01",sg_total:100}]};
- const p=performanceSeries([event,unknown,event],-.1);assert.equal(p.length,2);assert.deepEqual(p.map(v=>v.value),[.1,1.1]);assert.equal(performanceSeries([event],null).length,0);assert.equal(performanceSeries([event],0,true).length,3);
+ const p=performanceSeries([event,unknown,event],-.1);assert.equal(p.length,2);assert.equal(p[0].eventName,"Test Championship");assert.equal(p[0].course,"North Course");assert.equal(p[0].tour,"pga");assert.deepEqual(p.map(v=>v.value),[.1,1.1]);assert.equal(performanceSeries([event],null).length,0);assert.equal(performanceSeries([event],0,true).length,3);
 });
 test("visible range preserves trailing SMA history and never reweights inactivity",()=>{
  const events=Array.from({length:60},(_,i)=>({id:`e${i}`,round_data:[{round:1,date:new Date(Date.UTC(2020,0,i+1)).toISOString(),sg_total:i,sg_basis:"source_adjusted"}]}));
@@ -26,4 +26,12 @@ test("SMA ignores calendar gaps and changes only when eligible observations arri
  assert.deepEqual(dense.map(p=>[p.sma20,p.sma50]),gapped.map(p=>[p.sma20,p.sma50]));
  assert.equal(gapped.at(-1).sma20,values.slice(-20).reduce((a,b)=>a+b,0)/20);
  assert.equal(gapped.at(-1).sma50,values.slice(-50).reduce((a,b)=>a+b,0)/50);
+});
+
+test("hover snaps to real observation dates across gaps, bounds and ties",()=>{
+ const p=[{time:100},{time:200},{time:1000}];
+ assert.equal(nearestPerformanceIndex([],200),-1);assert.equal(nearestPerformanceIndex(p,NaN),-1);
+ for(const [time,index] of [[0,0],[100,0],[150,0],[151,1],[200,1],[600,1],[601,2],[1000,2],[1200,2]])assert.equal(nearestPerformanceIndex(p,time),index);
+ assert.equal(nearestPerformanceIndex([{time:1}],999),0);
+ assert.equal(nearestPerformanceIndex([{time:1},{time:1},{time:2}],1),0);
 });
