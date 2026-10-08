@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-08 12:25:23 UTC",
+  "generated_at": "2026-10-08 12:39:43 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
@@ -40,18 +40,18 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-08 12:25:23 UTC"
+      "at": "2026-10-08 12:39:43 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 7
     },
-    "manifest_sha256": "ea383b5877a9a90495f2c8015379d2b9cc207c115266472142530716cdea810b"
+    "manifest_sha256": "746c7ca3ef3066b8e75636dae5ad448375125b8b159dd90c990024a91672bc92"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "317b5fda633f4a27e1eaa4dfc6c71a90bd7128d0f63d0f8770de84dbb263a945"
+      "sha256": "8e94c8e5dad215731829083d3f747057351e441de33879eba070acd852b361f6"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
@@ -227,5 +227,5 @@
       "field_player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a"
     }
   },
-  "manifest_sha256": "21e4c04752ffd52f4016fcb4305319e83c659eb339534a98f0190d23e1369d80"
+  "manifest_sha256": "8dc2fbd8adcb75ec3ebeba322def1070c86cd2d24258f212f79a66d58c81ecdb"
 }

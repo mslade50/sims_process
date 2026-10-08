@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-08 12:25:23 UTC",
+  "generated_at": "2026-10-08 12:39:43 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
@@ -40,18 +40,18 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-08 12:25:23 UTC"
+      "at": "2026-10-08 12:39:43 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 7
     },
-    "manifest_sha256": "ea383b5877a9a90495f2c8015379d2b9cc207c115266472142530716cdea810b"
+    "manifest_sha256": "746c7ca3ef3066b8e75636dae5ad448375125b8b159dd90c990024a91672bc92"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r2_meta.json",
-      "sha256": "60e3fea544b84849e6e11fb9bcec29e810baaaf3dc73bf965894b60e8ca1cece"
+      "sha256": "0f751e8ffd34b45539cf4889edb5d69bec622facf57856e410751fed72e1fca6"
     },
     "h2h_parquet": {
       "path": "round_h2h_r2.parquet",
@@ -59,5 +59,5 @@
     }
   },
   "extra": {},
-  "manifest_sha256": "9a9cbd3562da1151744dffdc538ae4b23348acb6b9606c14de54a95a4fcfe5d5"
+  "manifest_sha256": "1ade4be6edb78dbd7e18e881f6e4dfe6381406b795fa4aaf61cfa9569df55d3c"
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-10-08 12:25:23 UTC",
+  "generated_at": "2026-10-08 12:39:43 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
@@ -40,13 +40,13 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-08 12:25:23 UTC"
+      "at": "2026-10-08 12:39:43 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 7
     },
-    "manifest_sha256": "ea383b5877a9a90495f2c8015379d2b9cc207c115266472142530716cdea810b"
+    "manifest_sha256": "746c7ca3ef3066b8e75636dae5ad448375125b8b159dd90c990024a91672bc92"
   },
   "files": {
     "final_scores": {
@@ -55,7 +55,7 @@
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "7a627aa9edd5c7e483c8743d431d44b17f6965d42ac33cdb5496832fbd66cbc3"
+      "sha256": "9be8a5be50d001d15aa2d0af6577d37bde6398bd1d5e7fa9eefb81be5f20a9ca"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_baycurrent.csv",
@@ -74,5 +74,5 @@
     "num_players": 72,
     "num_sims": 150000
   },
-  "manifest_sha256": "dfeba3e180d715ebc3fe933b6523239fe89c5d8c83ab16faa2e6964dea4630e9"
+  "manifest_sha256": "09d1cc663cace2269379f56a86abfaa5de794e1fde971588b102dda3f90bc2fc"
 }
