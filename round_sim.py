@@ -2695,7 +2695,10 @@ def implied_to_american(prob):
 
 
 def _send_telegram(text):
-    """Send a Telegram message. Non-blocking — logs warning on failure."""
+    """Optional diagnostics; actionable execution alerts use their dedicated sender."""
+    if os.getenv("TELEGRAM_DIAGNOSTICS") != "1":
+        print("Telegram diagnostic retained in logs:", text)
+        return
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:

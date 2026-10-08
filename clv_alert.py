@@ -49,6 +49,9 @@ def implied_to_american(prob):
 
 
 def send_telegram(text):
+    if os.getenv("TELEGRAM_CLV_ENABLED") != "1":
+        print("CLV report retained in logs; routine Telegram summaries are disabled.")
+        return
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -61,7 +64,7 @@ def send_telegram(text):
             timeout=10,
         )
     except Exception as e:
-        print(f"  Warning: Telegram alert failed: {e}")
+        print(f"  Warning: Telegram alert failed: {type(e).__name__}")
 
 
 # ---------------------------------------------------------------------------
