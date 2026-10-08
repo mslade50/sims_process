@@ -62,15 +62,15 @@ export function freshnessTone(ageMs: number | null): FreshnessTone {
 
 /** User-selectable accents. d = fill/text on dark surfaces, l = fill/text on light surfaces (both validated for contrast in tests/theme.test.mjs). */
 export const ACCENTS = [
+  { key: "sky", name: "Sky", d: "#8db4ff", l: "#1d5fb8" },
   { key: "gold", name: "Gold", d: "#e6bf6a", l: "#7d5600" },
   { key: "fairway", name: "Fairway", d: "#5fd6a4", l: "#09683f" },
-  { key: "sky", name: "Sky", d: "#8db4ff", l: "#1d5fb8" },
   { key: "rose", name: "Rose", d: "#f58fb0", l: "#b0306a" },
 ] as const;
 export type AccentKey = (typeof ACCENTS)[number]["key"];
 export type ThemeMode = "auto" | "dark" | "light";
 export const THEME_STORAGE_KEY = "golf-dashboard-theme";
-export const ACCENT_STORAGE_KEY = "golf-dashboard-accent-v2";
+export const ACCENT_STORAGE_KEY = "golf-dashboard-accent-v3";
 
 /** Inline script run before first paint so a saved theme/accent never flashes the default. */
 export function themeBootScript(): string {

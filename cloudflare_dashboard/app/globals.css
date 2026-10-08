@@ -14,9 +14,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
-    var(--background);
+  background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -161,7 +159,7 @@ input[type="range"] { height: 38px; accent-color: var(--accent); }
 .segmented button:hover { color: var(--foreground); }
 .segmented button.active { color: var(--accent-ink); background: var(--accent); box-shadow: 0 4px 15px color-mix(in srgb, var(--accent) 18%, transparent); }
 
-.panel { min-width: 0; padding: 20px; background: linear-gradient(145deg, var(--tint-1), transparent 60%), var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.panel { min-width: 0; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
 .panel-heading { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
 .panel-heading h2 { margin: 4px 0 0; font-size: 16px; letter-spacing: -.02em; }
 .panel-actions { display: flex; align-items: center; gap: 10px; }
@@ -502,17 +500,14 @@ td.negative { color: var(--negative); }
 .wx-table td.negative { color: var(--negative); }
 
 /* =====================================================================
-   Design system v2 (2026-10-07): ink-fairway / sand-gold identity, alive.
+   Design system v2 (2026-10-07): cool navy / blue identity, clear neutral surfaces.
    Everything below overrides earlier rules; colors only from tokens.css.
    ===================================================================== */
 @view-transition { navigation: auto; }
 
 html { scroll-behavior: smooth; }
 body {
-  background:
-    radial-gradient(900px 420px at 82% -8%, var(--glow), transparent 70%),
-    radial-gradient(700px 400px at -6% 8%, color-mix(in srgb, var(--model) 5%, transparent), transparent 70%),
-    var(--background);
+  background: var(--background);
 }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
@@ -522,12 +517,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 ::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 
 /* type */
-.page-intro h1 { font-weight: 760; background: linear-gradient(120deg, var(--foreground) 55%, color-mix(in srgb, var(--accent) 70%, var(--foreground))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.page-intro h1 { font-weight: 760; color: var(--foreground); }
 .eyebrow { color: var(--accent); }
 .kpi strong, .matchup-card strong, .wx-wave strong, .mini-stat-grid strong { font-variant-numeric: tabular-nums; }
 
 /* shell */
-.brand-mark { background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 26%, var(--surface-raised)), var(--surface-raised)); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 18%, transparent); }
+.brand-mark { background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised)); box-shadow: none; }
 .brand-mark i { transform-origin: bottom; animation: bar-grow var(--dur-slow) var(--ease) backwards; }
 .brand-mark i:nth-child(2) { animation-delay: 90ms; }
 .brand-mark i:nth-child(3) { animation-delay: 180ms; }
@@ -535,7 +530,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .nav-group a { transition: color var(--dur-fast) ease, background var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-fast) var(--ease); }
 .nav-group a:hover { background: var(--tint-2); }
 .nav-group a:active { transform: scale(0.985); }
-.nav-group a.active { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, var(--surface)), color-mix(in srgb, var(--accent) 4%, var(--surface))); }
+.nav-group a.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 .nav-group a.active::before { animation: bar-grow-y var(--dur) var(--ease) backwards; }
 .nav-group a.active svg { color: var(--accent); }
 .nav-label { letter-spacing: .14em; }
@@ -548,15 +543,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .content-frame { animation: fade-in var(--dur) var(--ease) backwards; }
 
 /* panels + cards (panels never keep a transform, so popovers inside them stack correctly) */
-.panel { background: linear-gradient(160deg, var(--sheen), transparent 55%), var(--surface); box-shadow: var(--shadow-card); transition: border-color var(--dur) ease, box-shadow var(--dur) ease; animation: rise var(--dur-slow) var(--ease) backwards; }
+.panel { background: var(--surface); box-shadow: var(--shadow-card); transition: border-color var(--dur) ease, box-shadow var(--dur) ease; animation: rise var(--dur-slow) var(--ease) backwards; }
 .content-frame > .panel:nth-child(2), .content-frame > .stack-lg > :nth-child(2) { animation-delay: 60ms; }
 .content-frame > .panel:nth-child(3), .content-frame > .stack-lg > :nth-child(3) { animation-delay: 120ms; }
 .content-frame > .panel:nth-child(n+4), .content-frame > .stack-lg > :nth-child(n+4) { animation-delay: 170ms; }
 .panel-heading h2 { font-weight: 720; }
 .kpi, .run-card, .feature-card, .wx-wave, .run-job { transition: transform var(--dur) var(--ease), border-color var(--dur) ease, box-shadow var(--dur) ease, background var(--dur) ease; }
-.kpi { background: linear-gradient(160deg, var(--sheen), transparent 60%), var(--surface); box-shadow: var(--shadow-card); animation: rise var(--dur-slow) var(--ease) backwards; }
+.kpi { background: var(--surface); box-shadow: var(--shadow-card); animation: rise var(--dur-slow) var(--ease) backwards; }
 .kpi:nth-child(2) { animation-delay: 50ms; } .kpi:nth-child(3) { animation-delay: 100ms; } .kpi:nth-child(4) { animation-delay: 150ms; } .kpi:nth-child(n+5) { animation-delay: 200ms; }
-.kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, currentColor, transparent 70%); opacity: .55; }
+.kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: currentColor; opacity: .55; }
 .kpi-neutral { color: var(--muted-strong); }
 .kpi-model { color: var(--model); border-color: color-mix(in srgb, var(--model) 22%, transparent); }
 .kpi-market { color: var(--market); border-color: color-mix(in srgb, var(--market) 22%, transparent); }
@@ -644,9 +639,9 @@ tbody tr { transition: background var(--dur-fast) ease; }
 .theme-picker button { display: grid; justify-items: center; gap: 6px; padding: 10px 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; color: var(--muted-strong); font-size: 11px; cursor: pointer; }
 .theme-picker button.active { color: var(--foreground); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .theme-swatch { width: 34px; height: 22px; border-radius: 6px; border: 1px solid var(--line-strong); }
-.theme-swatch.auto { background: linear-gradient(115deg, #07110e 50%, #f3f1e8 50%); }
-.theme-swatch.dark { background: #07110e; }
-.theme-swatch.light { background: #f3f1e8; }
+.theme-swatch.auto { background: linear-gradient(115deg, var(--foreground) 50%, var(--background) 50%); }
+.theme-swatch.dark { background: var(--foreground); }
+.theme-swatch.light { background: var(--background); }
 
 /* keyframes */
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
