@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { ThisWeekView, WhyPricedView } from "./ExplainViews";
 import { DistributionView } from "./DistributionView";
+import { ScoringView } from "./ScoringView";
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
@@ -32,7 +33,6 @@ import {
   DiagnosticsView,
   HistoryView,
   PerformanceView,
-  RoundScoresView,
   SgDistributionsView,
   WeatherView,
 } from "./views";
@@ -64,7 +64,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
   {
     label: "Live",
     items: [
-      { key: "round-scores", label: "Round scores", description: "Score distributions", icon: CircleGauge },
+      { key: "round-scores", label: "Scoring expectation", description: "Expected score, drivers and uncertainty", icon: CircleGauge },
       { key: "weather", label: "Weather", description: "Forecast and impact", icon: CloudSun },
       { key: "weather-effects", label: "Weather effects", description: "Forecast, mean and variance by tee time", icon: CloudSun },
     ],
@@ -94,7 +94,7 @@ const views: Record<ViewKey, React.ComponentType> = {
   research: ResearchView,
   distributions: DistributionView,
   "sg-distributions": SgDistributionsView,
-  "round-scores": RoundScoresView,
+  "round-scores": ScoringView,
   history: HistoryView,
   performance: PerformanceView,
   diagnostics: DiagnosticsView,
