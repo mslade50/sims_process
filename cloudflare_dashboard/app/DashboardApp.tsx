@@ -16,11 +16,13 @@ import {
   Settings2,
   SlidersHorizontal,
   TrendingUp,
+  Users,
   X,
 } from "lucide-react";
 import { ThisWeekView, WhyPricedView } from "./ExplainViews";
 import { DistributionView } from "./DistributionView";
 import { ScoringView } from "./ScoringView";
+import { PlayersView, WeeklyPlayersView } from "./PlayerProfilesView";
 import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
@@ -37,7 +39,7 @@ import {
   WeatherView,
 } from "./views";
 
-export type ViewKey = "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "this-week" | "why-priced";
+export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "this-week" | "why-priced";
 
 type Manifest = {
   generated_at: string;
@@ -58,6 +60,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
     label: "Week",
     items: [
       { key: "this-week", label: "This week", description: "Course, model vs market, who we favour and why", icon: CircleGauge },
+      { key: "weekly-players", label: "Field profiles", description: "This week’s players and every skill component", icon: Users },
       { key: "why-priced", label: "Why priced", description: "Every player's price, shape and drivers", icon: SlidersHorizontal },
     ],
   },
@@ -72,6 +75,7 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
   {
     label: "Model",
     items: [
+      { key: "players", label: "Player directory", description: "Strengths, playing style and career coverage", icon: Users },
       { key: "inputs", label: "Model inputs", description: "Skill, course fit, variance, adjust", icon: SlidersHorizontal },
       { key: "distributions", label: "Finish distributions", description: "Rank probability curves", icon: ChartNoAxesCombined },
       { key: "sg-distributions", label: "SG distributions", description: "Category inputs", icon: Activity },
@@ -89,6 +93,8 @@ const navigation: Array<{ label: string; items: Array<{ key: ViewKey; label: str
 ];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  players: PlayersView,
+  "weekly-players": WeeklyPlayersView,
   run: RunView,
   inputs: InputsView,
   research: ResearchView,
