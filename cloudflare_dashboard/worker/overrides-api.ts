@@ -89,7 +89,7 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("content-type", requested.endsWith(".csv") ? "text/csv; charset=utf-8" : "application/json; charset=utf-8");
-    headers.set("cache-control", /(^|\/)(manifest|index|latest)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
+    headers.set("cache-control", /(^|\/)(manifest|index|latest|dossier-review)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
     headers.set("etag", object.httpEtag);
     // R2 dossiers are already gzip encoded. Prevent Workers from applying
     // the same content encoding a second time to their stored bytes.

@@ -21,5 +21,7 @@ test("compressed profile reads preserve exactly one gzip layer and manual Worker
     const plain={get:async()=>({body:'{"count":1}',httpEtag:'"catalog"',writeHttpMetadata(){}})};
     const normal=await handleOverridesApi(request,{DASHBOARD_DATA:plain});
     assert.equal(observed.at(-1).encodeBody,undefined);assert.deepEqual(await normal.json(),{count:1});
+    const review=await handleOverridesApi(new Request("https://golf.example/api/golfprice/player_profiles/dossier-review.json"),{DASHBOARD_DATA:plain});
+    assert.equal(review.headers.get("cache-control"),"no-cache");
   }finally{globalThis.Response=NativeResponse;}
 });

@@ -28,7 +28,7 @@ export function useDashboardData<T>(name: string): LoadState<T> {
       if (active) setState({ data: null, loading: true, error: null });
     });
     const readJson = async (url: string) => {
-      const response = await fetch(url, { headers: { accept: "application/json" } });
+      const response = await fetch(url, { headers: { accept: "application/json" }, cache: name === "golfprice/player_profiles/dossier-review.json" ? "no-cache" : "default" });
       if (!response.ok) throw new Error(`Data request failed (${response.status})`);
       return (await response.json()) as T;
     };
