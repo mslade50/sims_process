@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-08 07:18:00 UTC",
+  "generated_at": "2026-10-08 12:25:23 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:527:2026-10-08/R1_20261008T071800Z",
+      "run_id": "pga:527:2026-10-08/R1_20261008T122100Z",
       "model_version": "B8+v2.6 in-play",
       "after_round": 1,
-      "run_manifest_sha256": "3d1e994836f7021ed6d7ae9063415816ab60d0b865a944133e17f6b262f99173",
+      "run_manifest_sha256": "dbbe3a02aa997282b7d112927d400766db8a92ee404003e1246599e236066256",
       "base_run_as_of": "2026-10-07 22:05:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-10-08 07:18:00 UTC",
-      "root_generated_at": "2026-10-08 07:18:00 UTC"
+      "generated_at": "2026-10-08 12:21:00 UTC",
+      "root_generated_at": "2026-10-08 12:21:00 UTC"
     },
     "simulation": {
       "num_players": 72,
@@ -40,24 +40,24 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-08 07:18:00 UTC"
+      "at": "2026-10-08 12:25:23 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 7
     },
-    "manifest_sha256": "55823f2035821dc5b586abebf5a627b7bdd533307294ac99a301d28cbb07537e"
+    "manifest_sha256": "ea383b5877a9a90495f2c8015379d2b9cc207c115266472142530716cdea810b"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r2_meta.json",
-      "sha256": "f2415ea95948d4167f271c950af5696eafd4802bb81aec8f60deae16d5af2805"
+      "sha256": "60e3fea544b84849e6e11fb9bcec29e810baaaf3dc73bf965894b60e8ca1cece"
     },
     "h2h_parquet": {
       "path": "round_h2h_r2.parquet",
-      "sha256": "d3c672ac7a97a8c4c664f0f88ddcde8c9a724b57be3a0319fd54dafccde03c20"
+      "sha256": "d99015edd3c45eb3ccb9f69957d3ba84a6c7bf98967ae502357d86b942be610a"
     }
   },
   "extra": {},
-  "manifest_sha256": "befe4ed8cccf210879ce8b3db1dd9442ee51ccad9d2d2b5cad00678c0d3cddf6"
+  "manifest_sha256": "9a9cbd3562da1151744dffdc538ae4b23348acb6b9606c14de54a95a4fcfe5d5"
 }

@@ -1,74 +1,74 @@
 {
   "schema_version": "complete-live-package/v1",
-  "generation": "event-527-r2-55823f203582-28dbc66634bd",
-  "generated_at": "2026-10-08 07:18:00 UTC",
+  "generation": "event-527-r2-ea383b5877a9-dfeba3e180d7",
+  "generated_at": "2026-10-08 12:25:23 UTC",
   "event_id": "527",
   "tourney": "baycurrent",
   "round": 2,
-  "simulation_manifest_sha256": "55823f2035821dc5b586abebf5a627b7bdd533307294ac99a301d28cbb07537e",
-  "live_tournament_manifest_sha256": "28dbc66634bdf926ad9f34152525ea8560b7d1cd7c12ef5f45a05cc693027946",
+  "simulation_manifest_sha256": "ea383b5877a9a90495f2c8015379d2b9cc207c115266472142530716cdea810b",
+  "live_tournament_manifest_sha256": "dfeba3e180d715ebc3fe933b6523239fe89c5d8c83ab16faa2e6964dea4630e9",
   "release_assets": {
     "matchup_scores_live": {
-      "name": "matchup_scores_live.event-527-r2-55823f203582-28dbc66634bd.741792aa614dbba8.parquet",
-      "sha256": "741792aa614dbba8b272d74839ace9faf5cc4e9feaa362f80759a0c6cc1988b9",
-      "size": 15328868
+      "name": "matchup_scores_live.event-527-r2-ea383b5877a9-dfeba3e180d7.ac7178e4b484b43b.parquet",
+      "sha256": "ac7178e4b484b43b18c96c4190b191c287523c34a0d753061c30fdaa19416c1e",
+      "size": 15323033
     },
     "tournament_made_cut_full": {
-      "name": "tournament_made_cut_full.event-527-r2-55823f203582-28dbc66634bd.4db0f0c115d4fef2.parquet",
-      "sha256": "4db0f0c115d4fef2860dd22ea294e020deec0876c1d3009dc3afa202276868ba",
+      "name": "tournament_made_cut_full.event-527-r2-ea383b5877a9-dfeba3e180d7.60842eb33c412097.parquet",
+      "sha256": "60842eb33c4120972652a054947d0f95a300794f04ad1e4c0ebb14c5cee7d719",
       "size": 77684428
     },
     "tournament_samples_full": {
-      "name": "tournament_samples_full.event-527-r2-55823f203582-28dbc66634bd.8e50221fc0bbbed3.parquet",
-      "sha256": "8e50221fc0bbbed31ab1a49ba72f6959340f950cd8dcf13761f9cde2c5835450",
-      "size": 92744899
+      "name": "tournament_samples_full.event-527-r2-ea383b5877a9-dfeba3e180d7.a05521194ef66c97.parquet",
+      "sha256": "a05521194ef66c97a41cdb7e855577af3e94e497e007135766c75c52fd8194f2",
+      "size": 92709138
     }
   },
   "git_files": {
     "round_3ball_r2.parquet": {
-      "sha256": "903c38fce748bef4bc2aaa5c70055a5bdfa6e075756ff9324602c88718066a7d",
+      "sha256": "7f68fa3ec178b2736131704f73ad87a52f651bdb836c39a4bc0f4273eef7f1fb",
       "size": 5639
     },
     "round_3ball_r2_contract.json": {
-      "sha256": "078f71a2dd265dd4af381f7f708f2af8d7f2867082d3fc4a71af138924d8c080",
+      "sha256": "073c05f63205773d3b8e71f5c71b9c11b219befadb2835ab8a4ab1fa409a2135",
       "size": 5398
     },
     "round_3ball_r2_meta.json": {
-      "sha256": "f404c6315450ff5d4fd53cd922b2706430bab5340b8ad5235f127e486d362db3",
+      "sha256": "317b5fda633f4a27e1eaa4dfc6c71a90bd7128d0f63d0f8770de84dbb263a945",
       "size": 2098
     },
     "round_h2h_r2.parquet": {
-      "sha256": "d3c672ac7a97a8c4c664f0f88ddcde8c9a724b57be3a0319fd54dafccde03c20",
-      "size": 46716
+      "sha256": "d99015edd3c45eb3ccb9f69957d3ba84a6c7bf98967ae502357d86b942be610a",
+      "size": 47204
     },
     "round_h2h_r2_health.json": {
-      "sha256": "43f09cbc36b7dfedd865c3a3a9cba1e6fa0df414d5d2b81a1043bcd80d2afd4b",
+      "sha256": "0578544bc3ac5f015cb0d71b1ab708c6082a6d425c8700296f4be55ebeffd3b4",
       "size": 1929
     },
     "round_h2h_r2_meta.json": {
-      "sha256": "f2415ea95948d4167f271c950af5696eafd4802bb81aec8f60deae16d5af2805",
+      "sha256": "60e3fea544b84849e6e11fb9bcec29e810baaaf3dc73bf965894b60e8ca1cece",
       "size": 280
     },
     "round_samples.parquet": {
-      "sha256": "0c3e4b46635b5073689782612ce917c01cf88c81d138d8c9e31585d04a9ebadb",
-      "size": 1180566
+      "sha256": "fb57923d5e8f8074a54355becab081ae71fc85e26bbbf704c1dedaa10999c107",
+      "size": 1180534
     },
     "sim_fairs.json": {
-      "sha256": "4ea75c665fdfd91873b30766f306957dd01aa9c56dae0534fe7963b622be8976",
-      "size": 175294
+      "sha256": "da6a41612ff2ce3ea2f0c8ea5af580653bc5bf114195f431d233b85ee8df3a40",
+      "size": 175125
     },
     "tournament_live_baycurrent_health.json": {
-      "sha256": "eddc1bcbd38aed28c23a61067c06f0d7015afc3b1d9cf6dba8bc2424977f5a4e",
+      "sha256": "9f88b4062569fe9a93e9733b1ffced33d8a6ddb49c651bb074584f79e06ef7e7",
       "size": 2487
     },
     "tournament_made_cut.parquet": {
-      "sha256": "1659fac1708e20be7cbe875b9b97e2f1d9aed294a316577a453e2fba10769422",
+      "sha256": "e4c2996b316b306c2e738f71f10cc5a1200e3d0a91fad7c9393a00f8a7d1e220",
       "size": 10341000
     },
     "tournament_samples.parquet": {
-      "sha256": "5c041dccefafb4484f3002072f7436d0dc4a79e7e4430e1aae33914a2e635675",
-      "size": 12359347
+      "sha256": "36db4578fdba1f83dc892e26e170bb8d71fc28b24c351bcef6ff974f737638f0",
+      "size": 12354985
     }
   },
-  "manifest_sha256": "3ef4f7a8fa393b1439de90083c0faa0fe62a738fe209f8e7df352e510d19a810"
+  "manifest_sha256": "97f889a31094cc480883117c06796d6ff25e79c23f9167fbea6a14e4a6ac649c"
 }
