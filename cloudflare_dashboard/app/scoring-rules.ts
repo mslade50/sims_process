@@ -103,3 +103,18 @@ export function evBreakEvenShift(rows: PmfRow[], line: number, side: "over" | "u
   for (let s = -extent + step; s <= extent + 1e-9; s += step) { const value = target(s); if (Number.isFinite(value) && ((value <= 0 && prev >= 0) || (value >= 0 && prev <= 0))) { const fraction = prev === value ? 0 : prev / (prev - value); return prevShift + fraction * (s - prevShift); } prev = value; prevShift = s; }
   return null;
 }
+
+/** Field residual is a separate reconciliation term; player residual is already in its component list. */
+export function expectationBridge(doc: ScoringDoc, player: ScoringPlayer | null = null): { components: ScoreComponent[]; residual: number | null; total: number | null } {
+  const components = player ? player.components : doc.drivers.filter((d) => !["unexplained_residual", "engine_posterior_residual"].includes(d.key)).map((d) => ({ key: d.key, label: d.label, strokes: d.mean_score_shift, note: null }));
+  const residual = player ? null : doc.baseline.arithmetic_residual;
+  const { course_score: course, common_weather: weather } = doc.baseline;
+  const total = course == null || weather == null || (!player && residual == null) ? null : course + weather + components.reduce((sum, c) => sum + c.strokes, 0) + (residual ?? 0);
+  return { components, residual, total };
+}
+
+/** Two-way no-vig market shares are conditional on resolution, so exclude pushes on both sides. */
+export function resolvedOverShare(p: { over: number; under: number; push: number }): number | null {
+  const resolved = p.over + p.under;
+  return finite(resolved) && resolved > 0 ? p.over / resolved : null;
+}

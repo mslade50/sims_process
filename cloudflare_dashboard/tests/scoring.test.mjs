@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { betEv, breakEvenDecimal, curveRows, evBreakEvenShift, marketNoVig, overUnder, parseScoring, shiftedOverUnder } from "../app/scoring-rules.ts";
+import { betEv, breakEvenDecimal, curveRows, evBreakEvenShift, expectationBridge, marketNoVig, overUnder, parseScoring, resolvedOverShare, shiftedOverUnder } from "../app/scoring-rules.ts";
 
 test("integer lines preserve pushes and exclude them from profit and loss", () => {
   const p = overUnder([[69, 0.2], [70, 0.3], [71, 0.25], [72, 0.25]], 70);
@@ -59,4 +59,19 @@ test("parser fails closed on wrong schema, malformed PMFs, and materially unnorm
   assert.equal(parseScoring({ ...unavailable, field: { ...unavailable.field, mean: 72 } }), null);
   assert.equal(parseScoring({ ...good, players: [{ ...good.players[0], pmf: [[70, 1.2]] }] }), null);
   assert.equal(parseScoring({ ...good, players: [{ ...good.players[0], pmf: [[70, "likely"]] }] }), null);
+});
+
+test("score bridge reconciles field and player means without double-counting residuals or treating missing weather as zero", () => {
+  const doc = { baseline: { course_score: 71, common_weather: -0.5, arithmetic_residual: 0.1 }, drivers: [{ key: "skill", label: "Skill", mean_score_shift: 0 }, { key: "unexplained_residual", label: "Residual", mean_score_shift: 0.1 }] };
+  assert.equal(expectationBridge(doc).total, 70.6);
+  const player = { components: [{ key: "skill", label: "Skill", strokes: -1, note: null }, { key: "unexplained_residual", label: "Residual", strokes: 0.2, note: null }] };
+  assert.equal(expectationBridge(doc, player).total, 69.7);
+  assert.equal(expectationBridge({ ...doc, baseline: { ...doc.baseline, common_weather: null } }).total, null);
+});
+
+test("model-versus-market shares compare resolved outcomes at integer lines", () => {
+  const p = overUnder([[69, 0.2], [70, 0.3], [71, 0.5]], 70);
+  assert.ok(Math.abs(resolvedOverShare(p) - 5 / 7) < 1e-12);
+  assert.equal(resolvedOverShare({ over: 0, under: 0, push: 1 }), null);
+  assert.equal(resolvedOverShare(overUnder([[69, 0.2], [70, 0.3], [71, 0.5]], 70.5)), 0.5);
 });
