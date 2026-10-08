@@ -3,6 +3,9 @@ import type {PlayerProfile} from "./player-profile-rules";
 const finite=(v:unknown):v is number=>typeof v==="number"&&Number.isFinite(v);
 export type HistoryFilters=EventFilters & {rounds:number[];contention:"all"|"near"|"outside";event:string;course:string};
 export const HISTORY_DEFAULTS:HistoryFilters={season:"",tour:"",major:false,difficulty:"",strength:"",search:"",window:"recent2y",rounds:[1,2,3,4],contention:"all",event:"",course:""};
+// Keep the comparison period/population; remove the situational predicates.
+export function playerBaselineFilters(f:HistoryFilters):HistoryFilters{return {...f,rounds:[1,2,3,4],contention:"all",event:"",course:"",major:false,difficulty:"",strength:"",search:""};}
+export function hasSituationFilters(f:HistoryFilters){return f.rounds.length!==4||![1,2,3,4].every(r=>f.rounds.includes(r))||f.contention!=="all"||!!(f.event||f.course||f.major||f.difficulty||f.strength||f.search);}
 export type ContextRound=RoundRow & {course?:string;strokes_behind_leader_before?:number|null;in_contention?:boolean|null};
 export type ContextEvent=HistoryEvent & {courses?:string[];opening_difficulty?:number|null;opening_strength?:number|null};
 export type ShotReference={id?:string;as_of?:string;metrics?:Record<string,{mean?:number;sd?:number;n_players?:number;higher_is_better?:boolean;cohort_values?:number[]}>};

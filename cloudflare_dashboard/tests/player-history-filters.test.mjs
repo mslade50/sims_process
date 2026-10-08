@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HISTORY_DEFAULTS,adjustedValues,decodeReference,filteredShotMetrics,filteredSkillProfile,matchedPgaEvents,matchesRound,sliceHistory,summaryWithMean} from '../app/player-history-filters.ts';
+import {HISTORY_DEFAULTS,hasSituationFilters,playerBaselineFilters,adjustedValues,decodeReference,filteredShotMetrics,filteredSkillProfile,matchedPgaEvents,matchesRound,sliceHistory,summaryWithMean} from '../app/player-history-filters.ts';
 const round=(r,gap=null)=>({round:r,date:`2026-09-0${r}`,course:'North',sg_total:r,sg_basis:'source_adjusted',score:72-r,par:72,strokes_behind_leader_before:gap,sg_ott:r/10});
 const event=(id='pga:2026:1',patch={})=>({id,tour:'pga',year:2026,name:'Test',course:'North / South',courses:['North','South'],date:'2026-09-01',major:false,round_data:[round(1),round(2),round(3,2),round(4,3)],...patch});
 const f=(patch={})=>({...HISTORY_DEFAULTS,asOf:'2026-10-08T16:27:09Z',...patch});
@@ -46,4 +46,19 @@ test('SG shape is observed selected-round mean versus fixed trait reference; thi
 });
 test('mean and median use finite observations and differ with a tail, zero remains valid',()=>{
  const s=summaryWithMean([0,0,9,null,NaN]);assert.equal(s.n,3);assert.equal(s.mean,3);assert.equal(s.median,0);assert.equal(summaryWithMean([]).mean,null);
+});
+
+test('player baseline preserves period and population while removing situation predicates without mutating filters',()=>{
+ const active=f({window:'all',season:'2026',tour:'pga',rounds:[3],contention:'near',major:true,event:'pga:2026:1',course:'North',search:'Test',difficulty:'hard',strength:'strong'}),saved=structuredClone(active),base=playerBaselineFilters(active);
+ assert.equal(hasSituationFilters(active),true);assert.equal(hasSituationFilters(base),false);assert.equal(hasSituationFilters(f()),false);
+ assert.deepEqual(active,saved);assert.equal(base.window,'all');assert.equal(base.season,'2026');assert.equal(base.tour,'pga');assert.equal(base.asOf,active.asOf);
+ const es=[event(),event('pga:2026:2'),event('kft:2026:1',{tour:'kft'}),event('pga:2025:1',{year:2025})];
+ assert.equal(sliceHistory(es,base).length,2);assert.deepEqual(adjustedValues(sliceHistory(es,base),0),[1,2,3,4,1,2,3,4]);
+ assert.equal(hasSituationFilters(f({rounds:[]})),true);assert.equal(hasSituationFilters(f({rounds:[4,3,2,1]})),false);
+});
+test('baseline does not collapse when the situation is empty and shares the fixed SG and shot references',()=>{
+ const active=f({event:'unplayed',rounds:[4]}),es=[event()],selected=sliceHistory(es,active),baseline=sliceHistory(es,playerBaselineFilters(active));assert.deepEqual(selected,[]);assert.equal(adjustedValues(baseline,-.2).length,4);
+ const p={radar:[{key:'sg_ott'}]},ref={schema_version:'observed_category_reference.v1',axes:{sg_ott:{mean:.1,sd:.2}}};assert.equal(filteredSkillProfile(p,selected,ref).radar[0].z,null);assert.ok(Math.abs(filteredSkillProfile(p,baseline,ref).radar[0].z-.75)<1e-9);
+ const d={shots:{metrics:[{key:'test'}],round_data:[1,2,3,4].map(r=>({event_id:es[0].id,round:r,date:'2026-09-01',metrics:{test:{total:r*10,n_shots:10}}}))}},sr={metrics:{test:{mean:2,sd:1}}};
+ assert.equal(filteredShotMetrics(d,selected,sr).metrics[0].status,'unavailable');const m=filteredShotMetrics(d,baseline,sr).metrics[0];assert.equal(m.n_shots,40);assert.equal(m.value,2.5);assert.equal(m.reference_z,.5);
 });
