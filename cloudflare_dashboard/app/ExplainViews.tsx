@@ -340,7 +340,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
           <div>
             <span className="eyebrow">{doc.kind === "live" ? `After round ${doc.after_round}` : "Pre-tournament"}</span>
             <h2>{player.name}</h2>
-            <Link className="ex-link" href={`/players?player=${player.id}`}>Historical player profile <ChevronRight size={14} /></Link>
+            <a className="ex-link" href={`/players?player=${player.id}`}>Historical player profile <ChevronRight size={14} /></a>
             <Tags tags={player.tags} max={8} />
           </div>
           <button type="button" className="ex-close" onClick={onClose} aria-label="Close" ref={closeRef}><X size={20} /></button>

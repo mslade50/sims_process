@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
   Activity,
   Archive,
@@ -168,10 +167,11 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
         <div className="brand-row">
-          <Link className="brand" href="/performance" onClick={(event) => navigateWithReload(event, "/performance")} aria-label="Golf Model home">
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Native navigation avoids the deployed vinext client-router failure. */}
+          <a className="brand" href="/performance" onClick={(event) => navigateWithReload(event, "/performance")} aria-label="Golf Model home">
             <span className="brand-mark"><i /><i /><i /></span>
             {!collapsed && <span><strong>Golf Model</strong><small>Simulation intelligence</small></span>}
-          </Link>
+          </a>
           <button className="mobile-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
         <nav aria-label="Dashboard navigation">
@@ -181,10 +181,10 @@ export function DashboardApp({ initialView }: { initialView: ViewKey }) {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <Link className={activeView === item.key ? "active" : ""} href={`/${item.key}`} onClick={(event) => navigateWithReload(event, `/${item.key}`)} key={item.key} title={collapsed ? item.label : undefined}>
+                  <a className={activeView === item.key ? "active" : ""} href={`/${item.key}`} onClick={(event) => navigateWithReload(event, `/${item.key}`)} key={item.key} title={collapsed ? item.label : undefined}>
                     <Icon size={18} />
                     {!collapsed && <span><strong>{item.label}</strong><small>{item.description}</small></span>}
-                  </Link>
+                  </a>
                 );
               })}
             </div>
