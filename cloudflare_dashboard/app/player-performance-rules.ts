@@ -1,13 +1,13 @@
 import type {HistoryEvent} from "./player-deep-rules";
 const finite=(v:unknown):v is number=>typeof v==="number"&&Number.isFinite(v);
-export type PerformancePoint={date:string;time:number;round:number;event:string;value:number;ema20:number|null;ema50:number|null;n:number};
-/** Round-span EMA: seed with the first N observations, then alpha=2/(N+1). */
-export function roundEma(values:number[],span:number):(number|null)[]{
-  if(!Number.isInteger(span)||span<1)throw new Error("EMA span must be a positive integer");
-  let sum=0,current:number|null=null;
-  return values.map((value,i)=>{if(!finite(value))throw new Error("EMA needs finite observations");
-    if(i<span){sum+=value;if(i===span-1)current=sum/span;}else current=2/(span+1)*value+(1-2/(span+1))*current!;
-    return current;});
+export type PerformancePoint={date:string;time:number;round:number;event:string;value:number;sma20:number|null;sma50:number|null;n:number};
+/** Equal-weight trailing N eligible rounds; no value before a full window. */
+export function roundSma(values:number[],span:number):(number|null)[]{
+  if(!Number.isInteger(span)||span<1)throw new Error("SMA span must be a positive integer");
+  let sum=0;
+  return values.map((value,i)=>{if(!finite(value))throw new Error("SMA needs finite observations");
+    sum+=value;if(i>=span)sum-=values[i-span];
+    return i>=span-1?sum/span:null;});
 }
 export function performanceSeries(events:HistoryEvent[],anchor:number|null|undefined,all=false):PerformancePoint[]{
   if(!finite(anchor))return [];
@@ -17,8 +17,8 @@ export function performanceSeries(events:HistoryEvent[],anchor:number|null|undef
     if(!Number.isInteger(round)||round!<1||(!all&&round!>2)||r.sg_basis!=="source_adjusted"||!finite(r.sg_total)||!Number.isFinite(time)||seen.has(id))return [];
     seen.add(id);return [{date:r.date!,time,round:round!,event:e.id,value:r.sg_total-anchor}];
   })).sort((a,b)=>a.time-b.time||a.event.localeCompare(b.event)||a.round-b.round);
-  const fast=roundEma(rows.map(r=>r.value),20),slow=roundEma(rows.map(r=>r.value),50);
-  return rows.map((r,i)=>({...r,ema20:fast[i],ema50:slow[i],n:i+1}));
+  const fast=roundSma(rows.map(r=>r.value),20),slow=roundSma(rows.map(r=>r.value),50);
+  return rows.map((r,i)=>({...r,sma20:fast[i],sma50:slow[i],n:i+1}));
 }
 export function visiblePerformance(points:PerformancePoint[],asOf:string,window:"3y"|"all"){
   if(window==="all")return points;const d=new Date(asOf);if(!Number.isFinite(d.getTime()))return [];
