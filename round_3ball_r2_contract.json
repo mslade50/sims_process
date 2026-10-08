@@ -1,566 +1,195 @@
 {
   "schema_version": 1,
-  "gate_version": "round-bet-health/v1",
+  "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-03 08:37:39 UTC",
+  "generated_at": "2026-10-08 07:18:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
-    "gate_version": "round-bet-health/v1",
-    "kind": "round_simulation",
+    "gate_version": "golfprice.board_seal/1",
+    "kind": "golfprice_live_simulation",
+    "producer": {
+      "name": "golfprice",
+      "run_id": "pga:527:2026-10-08/R1_20261008T071800Z",
+      "model_version": "B8+v2.6 in-play",
+      "after_round": 1,
+      "run_manifest_sha256": "3d1e994836f7021ed6d7ae9063415816ab60d0b865a944133e17f6b262f99173",
+      "base_run_as_of": "2026-10-07 22:05:00 UTC"
+    },
     "event": {
-      "tourney": "utah",
-      "event_id": "554",
+      "event_id": "527",
+      "tourney": "baycurrent",
       "round": 2
     },
     "source": {
-      "generated_at": "2026-10-03 08:33:37 UTC",
-      "root_generated_at": "2026-10-03 08:33:37 UTC",
-      "expected_avg_authority": "sheet",
-      "prediction_artifact": {
-        "path": "model_predictions_r2.csv",
-        "exists": true,
-        "sha256": "4077711b87bf7f32b0c22cd74fa055673fd5fdf45fda6b3427c7b2dee0cf6e7a",
-        "modified_at": "2026-10-03 08:33:32 UTC"
-      },
-      "parent_manifest_sha256": null,
-      "derivation": {}
-    },
-    "scoring": {
-      "expected_avg": 69.6,
-      "configured_course_averages": {
-        "field": 69.6
-      },
-      "implied_field_mean": 69.60000000000001,
-      "empirical_field_mean": 69.60003042372881,
-      "centering_delta": 3.0423728802020378e-05,
-      "centering_tolerance": 0.12,
-      "player_expected_means": {
-        "akina, kihei": 69.99620012,
-        "an, seonghyeon": 72.47556234,
-        "bauchou, zach": 68.36855994,
-        "bezuidenhout, christiaan": 68.89227461,
-        "blair, zac": 69.02504606,
-        "blanchet, chandler": 69.65477582,
-        "bracken, boston": 70.99737566,
-        "brennan, michael": 68.10179184,
-        "campos, rafael": 70.10409601,
-        "chatfield, davis": 69.66070494,
-        "clanton, luke": 69.4462349,
-        "cole, eric": 68.76055276,
-        "coody, pierceson": 68.79729832,
-        "crowe, trace": 69.43349586,
-        "dahmen, joel": 68.9098606,
-        "davis, cameron": 70.41691871,
-        "dou, zecheng": 69.25960291,
-        "dumont de chassart, adrien": 69.81158168,
-        "duncan, tyler": 69.24314721,
-        "dunlap, nick": 70.533302,
-        "ewart, a.j.": 69.22127461,
-        "finau, tony": 69.61607244,
-        "fishburn, patrick": 69.29305697,
-        "fisk, steven": 68.68006025,
-        "ford, david": 68.99072482,
-        "garnett, brice": 69.88670837,
-        "ghim, doug": 68.17787305,
-        "glover, lucas": 69.69569258,
-        "gordon, will": 70.14651528,
-        "greyserman, max": 69.12708672,
-        "grillo, emiliano": 68.78109286,
-        "hall, harry": 68.6624101,
-        "hardy, nick": 69.97771419,
-        "higgo, garrick": 69.88057994,
-        "higgs, harry": 69.92904916,
-        "highsmith, joe": 69.84498196,
-        "hirata, kensei": 70.4305747,
-        "hodges, lee": 68.8880948,
-        "hoey, rico": 68.52321763,
-        "hoge, tom": 69.92568493,
-        "hojgaard, rasmus": 69.57561983,
-        "homa, max": 68.7649128,
-        "horschel, billy": 69.11156741,
-        "hossler, beau": 69.00751005,
-        "hubbard, mark": 69.7342504,
-        "hughes, mackenzie": 69.11952382,
-        "jaeger, stephan": 68.927069,
-        "james, ben": 67.95717019,
-        "johnson, zach j.": 73.41310281,
-        "kanaya, takumi": 69.221025,
-        "kang, jeffrey": 69.79263505,
-        "keefer, johnny": 68.54155231,
-        "kirk, chris": 68.99734382,
-        "kizzire, patton": 70.70793032,
-        "kohles, ben": 68.6511259,
-        "koivun, jackson": 67.73723724,
-        "lamprecht, christo": 70.94746727,
-        "lebioda, hank": 69.69008354,
-        "li, haotong": 68.81432326,
-        "lingmerth, david": 71.4314442,
-        "lipsky, david": 69.76627398,
-        "lower, justin": 69.51532854,
-        "lundell, carson": 71.89481978,
-        "malnati, peter": 70.84255662,
-        "martin, ben": 69.7570767,
-        "mauss, bowen": 72.34672955,
-        "mccarthy, denny": 69.20569043,
-        "mccarty, matt": 68.83161478,
-        "mcgreevy, max": 68.86920191,
-        "mcnealy, maverick": 68.43461827,
-        "meissner, mac": 68.76381581,
-        "moore, taylor": 69.10215555,
-        "mouw, william": 69.32621316,
-        "nyholm, pontus": 69.45404901,
-        "parry, john": 69.15442266,
-        "pavon, matthieu": 69.16412319,
-        "penge, marco": 68.71930829,
-        "peterson, paul": 69.71998286,
-        "phillips, chandler": 68.94463668,
-        "potgieter, aldrich": 69.768083,
-        "power, seamus": 69.26543164,
-        "putnam, andrew": 69.74627469,
-        "ramey, chad": 69.53342749,
-        "rasmussen, rhett": 72.56065872,
-        "riley, davis": 70.60045328,
-        "rodgers, patrick": 69.42570926,
-        "roy, kevin": 68.47866041,
-        "rozo, marcelo": 70.7284195,
-        "salinda, isaiah": 69.89130411,
-        "sargent, gordon": 69.57802006,
-        "schenk, adam": 70.85769309,
-        "shelley, tyson": 72.2519356,
-        "shipley, neal": 68.71353667,
-        "silverman, ben": 69.46551938,
-        "skinns, david": 70.13508464,
-        "smith, jordan": 68.37988287,
-        "smotherman, austin": 69.03025194,
-        "snyder, matt": 72.99825542,
-        "springer, hayden": 69.58662377,
-        "stanger, jimmy": 70.18333534,
-        "streelman, kevin": 69.61993471,
-        "suber, jackson": 68.42783733,
-        "svensson, adam": 69.74376099,
-        "svensson, jesper": 69.36998457,
-        "taylor, nick": 68.60466983,
-        "thompson, davis": 68.68412962,
-        "thompson, michael": 70.56526899,
-        "todd, brendon": 71.60104023,
-        "tosti, alejandro": 70.111679,
-        "van rooyen, erik": 69.46773427,
-        "vanderlaan, john": 69.24902499,
-        "ventura, kristoffer": 68.61496627,
-        "walker, danny": 69.81720586,
-        "wallace, matt": 68.42597215,
-        "wise, aaron": 70.449417,
-        "wu, dylan": 70.0118434,
-        "yellamaraju, sudarshan": 68.87559421,
-        "yu, kevin": 68.45901602
-      },
-      "player_expected_means_sha256": "36b9185ba0ee219c7c97656a0f7c2495dc227b236ee2562322e9daa8811ef565",
-      "player_centering_rmse": 0.008889783270253433,
-      "player_centering_max_error": 0.021514100000004532,
-      "player_centering_rmse_tolerance": 0.08,
-      "player_centering_max_tolerance": 0.16
+      "generated_at": "2026-10-08 07:18:00 UTC",
+      "root_generated_at": "2026-10-08 07:18:00 UTC"
     },
     "simulation": {
-      "num_players": 118,
-      "num_model_players": 118,
-      "num_sims": 100000,
-      "field_coverage": 1.0,
-      "missing_players": [],
-      "extra_players": [],
-      "player_set_sha256": "784b24433b2ad288af707f770bcf315534780aad8a9f0e47d6f3979ab8e64b3e",
-      "tape_sha256": "b96ca4377f2206a8e7c8bd16bda3d4fb5bd85871e64e2a4dbc5d01ded6bb100f",
-      "score_min": 58.0,
-      "score_max": 85.0,
-      "empirical_field_score_mean": 69.60003042372881,
-      "player_probability_mass_min": 1.0,
-      "player_probability_mass_max": 1.0
-    },
-    "model": {
-      "selected": "category_first",
-      "skew_calibrated": true,
-      "shot_dispersion_overlay": {
-        "status": "active",
-        "required_current_event": true,
-        "configured_for_active_event": true,
-        "used_by_selected_tape": true,
-        "config_path": "shot_dispersion_config.json",
-        "config_sha256": "a4681d294d095ee223ed8713efe582ded05f6b08f9bfb2c4625ce90c81ade162",
-        "config_sha256_crlf_legacy": "b0d516cac6109f70b766c1ce239c5464e991553ad6be4f160fd0414c861f264b",
-        "feature_file": "shot_dispersion_features.csv",
-        "feature_sha256": "891306e4ba4e18b603b2db4dde32eb4663c7862fa24a8b997e3b15b2a9cf13d0",
-        "distribution_file": "this_week_dists_v2.csv",
-        "distribution_sha256": "1cf34fe29278492c88a6a5dc36975749dcb0952dc0148152c6754dc5b87f88c5",
-        "text_hash_mode": "sha256_lf_normalized_v1",
-        "configured_feature_sha256": "891306e4ba4e18b603b2db4dde32eb4663c7862fa24a8b997e3b15b2a9cf13d0",
-        "configured_distribution_sha256": "1cf34fe29278492c88a6a5dc36975749dcb0952dc0148152c6754dc5b87f88c5",
-        "weights": {
-          "sg_app": 0.9,
-          "sg_arg": 0.8,
-          "sg_ott": 0.9,
-          "sg_putt": 0.95
-        }
-      }
-    },
-    "checks": {
-      "errors": [],
-      "passed": true
+      "num_players": 72,
+      "num_sims": 150000,
+      "player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a",
+      "seeds": [
+        20250929,
+        20250930,
+        20250931,
+        20250932,
+        20250933
+      ]
     },
     "approval": {
       "status": "approved",
-      "mode": "automatic_sheet",
-      "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-10-03 08:33:37 UTC"
+      "by": "golfprice.board_seal",
+      "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
+      "at": "2026-10-08 07:18:00 UTC"
     },
-    "manifest_sha256": "5ee7b9d1091d30674344a167120c8ed91e203c23b07aca19088ab7ee5694240d"
+    "checks": {
+      "passed": true,
+      "n_checks": 7
+    },
+    "manifest_sha256": "55823f2035821dc5b586abebf5a627b7bdd533307294ac99a301d28cbb07537e"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "5c201bfb08c31a11263f940b744b50da492827ce21f3ab1b856195bd02c4e5d7"
+      "sha256": "f404c6315450ff5d4fd53cd922b2706430bab5340b8ad5235f127e486d362db3"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
-      "sha256": "a83b96a8271acf38173c52911dee4fa40d9bf85a6158c2db3d1046ec6b64e9e4"
+      "sha256": "903c38fce748bef4bc2aaa5c70055a5bdfa6e075756ff9324602c88718066a7d"
     }
   },
   "extra": {
     "status": "groups",
-    "event_id": "554",
+    "event_id": "527",
     "round": 2,
-    "num_groups": 38,
+    "num_groups": 24,
     "tee_group_source": {
       "status": "groups",
       "groups": [
         [
-          "akina, kihei",
-          "ford, david",
-          "stanger, jimmy"
-        ],
-        [
-          "an, seonghyeon",
-          "nyholm, pontus",
-          "vanderlaan, john"
-        ],
-        [
           "bauchou, zach",
+          "ghim, doug",
+          "nagasaki, koshin"
+        ],
+        [
           "bezuidenhout, christiaan",
-          "van rooyen, erik"
+          "iwata, hiroshi",
+          "neergaard-petersen, rasmus"
         ],
         [
-          "blair, zac",
-          "gordon, will",
-          "mcgreevy, max"
-        ],
-        [
-          "blanchet, chandler",
-          "lamprecht, christo",
-          "lundell, carson"
-        ],
-        [
-          "bracken, boston",
-          "rozo, marcelo",
-          "springer, hayden"
+          "bradley, keegan",
+          "fowler, rickie",
+          "matsuyama, hideki"
         ],
         [
           "brennan, michael",
-          "james, ben",
-          "koivun, jackson"
+          "castillo, ricky",
+          "horschel, billy"
         ],
         [
-          "campos, rafael",
-          "mccarthy, denny",
-          "rodgers, patrick"
+          "bridgeman, jacob",
+          "morikawa, collin",
+          "schauffele, xander"
         ],
         [
-          "chatfield, davis",
-          "clanton, luke",
-          "shelley, tyson"
-        ],
-        [
-          "cole, eric",
-          "finau, tony",
-          "potgieter, aldrich"
+          "clark, wyndham",
+          "scott, adam",
+          "thomas, justin"
         ],
         [
           "coody, pierceson",
-          "grillo, emiliano",
-          "kanaya, takumi"
+          "hossler, beau",
+          "yonezawa, ren"
         ],
         [
-          "crowe, trace",
-          "fishburn, patrick",
-          "hirata, kensei"
+          "echavarria, nicolas",
+          "mcnealy, maverick",
+          "smalley, alex"
         ],
         [
-          "dahmen, joel",
-          "phillips, chandler",
-          "putnam, andrew"
-        ],
-        [
-          "davis, cameron",
-          "horschel, billy",
-          "kirk, chris"
-        ],
-        [
-          "dou, zecheng",
-          "johnson, zach j.",
-          "sargent, gordon"
-        ],
-        [
-          "dumont de chassart, adrien",
-          "peterson, paul",
-          "snyder, matt"
-        ],
-        [
-          "duncan, tyler",
-          "pavon, matthieu",
-          "silverman, ben"
-        ],
-        [
-          "dunlap, nick",
-          "hodges, lee",
-          "kohles, ben"
-        ],
-        [
-          "ewart, a.j.",
-          "rasmussen, rhett",
-          "ventura, kristoffer"
-        ],
-        [
-          "fisk, steven",
-          "highsmith, joe",
-          "mouw, william"
-        ],
-        [
-          "garnett, brice",
-          "smotherman, austin",
-          "svensson, adam"
-        ],
-        [
-          "glover, lucas",
-          "schenk, adam",
-          "streelman, kevin"
-        ],
-        [
-          "greyserman, max",
-          "hojgaard, rasmus",
-          "suber, jackson"
-        ],
-        [
-          "hall, harry",
-          "mccarty, matt",
-          "shipley, neal"
-        ],
-        [
-          "higgo, garrick",
-          "wise, aaron",
+          "finau, tony",
+          "gerard, ryan",
           "yu, kevin"
         ],
         [
-          "higgs, harry",
-          "lebioda, hank",
-          "moore, taylor"
-        ],
-        [
-          "hoey, rico",
-          "power, seamus",
-          "wallace, matt"
-        ],
-        [
-          "hoge, tom",
-          "meissner, mac",
-          "yellamaraju, sudarshan"
-        ],
-        [
+          "fisk, steven",
           "homa, max",
-          "mcnealy, maverick",
-          "taylor, nick"
+          "kitayama, kurt"
         ],
         [
-          "hossler, beau",
-          "lower, justin",
-          "ramey, chad"
+          "fujimoto, yoshinori",
+          "keefer, johnny",
+          "roy, kevin"
         ],
         [
-          "hubbard, mark",
-          "lipsky, david",
-          "skinns, david"
+          "greyserman, max",
+          "mccarthy, denny",
+          "nakajima, keita"
         ],
         [
-          "hughes, mackenzie",
-          "smith, jordan",
-          "todd, brendon"
-        ],
-        [
-          "jaeger, stephan",
-          "riley, davis",
+          "harman, brian",
+          "hoge, tom",
           "thompson, davis"
         ],
         [
-          "kang, jeffrey",
-          "li, haotong",
-          "thompson, michael"
+          "hisatsune, ryo",
+          "hosono, yusaku",
+          "moore, taylor"
         ],
         [
-          "keefer, johnny",
-          "kizzire, patton",
-          "wu, dylan"
+          "hodges, lee",
+          "lipsky, david",
+          "putnam, andrew"
         ],
         [
-          "lingmerth, david",
-          "penge, marco",
-          "salinda, isaiah"
+          "im, sungjae",
+          "lee, min woo",
+          "spieth, jordan"
         ],
         [
-          "martin, ben",
-          "roy, kevin",
-          "walker, danny"
+          "ishizaka, tomohiro",
+          "smith, jordan",
+          "theegala, sahith"
         ],
         [
-          "mauss, bowen",
-          "svensson, jesper",
-          "tosti, alejandro"
+          "iwasaki, aguri",
+          "phillips, chandler",
+          "rodgers, patrick"
+        ],
+        [
+          "jaeger, stephan",
+          "mccarty, matt",
+          "thorbjornsen, michael"
+        ],
+        [
+          "kanaya, takumi",
+          "suber, jackson",
+          "sunagawa, kosuke"
+        ],
+        [
+          "kim, michael",
+          "kohles, ben",
+          "mitchell, keith"
+        ],
+        [
+          "kozuma, jinichiro",
+          "parry, john",
+          "wallace, matt"
+        ],
+        [
+          "lee, sanghee",
+          "meissner, mac",
+          "ventura, kristoffer"
+        ],
+        [
+          "pendrith, taylor",
+          "potgieter, aldrich",
+          "taylor, nick"
         ]
       ],
-      "field_players": 120,
-      "tee_time_players": 118,
-      "tee_time_names": [
-        "akina, kihei",
-        "an, seonghyeon",
-        "bauchou, zach",
-        "bezuidenhout, christiaan",
-        "blair, zac",
-        "blanchet, chandler",
-        "bracken, boston",
-        "brennan, michael",
-        "campos, rafael",
-        "chatfield, davis",
-        "clanton, luke",
-        "cole, eric",
-        "coody, pierceson",
-        "crowe, trace",
-        "dahmen, joel",
-        "davis, cameron",
-        "dou, zecheng",
-        "dumont de chassart, adrien",
-        "duncan, tyler",
-        "dunlap, nick",
-        "ewart, a.j.",
-        "finau, tony",
-        "fishburn, patrick",
-        "fisk, steven",
-        "ford, david",
-        "garnett, brice",
-        "ghim, doug",
-        "glover, lucas",
-        "gordon, will",
-        "greyserman, max",
-        "grillo, emiliano",
-        "hall, harry",
-        "hardy, nick",
-        "higgo, garrick",
-        "higgs, harry",
-        "highsmith, joe",
-        "hirata, kensei",
-        "hodges, lee",
-        "hoey, rico",
-        "hoge, tom",
-        "hojgaard, rasmus",
-        "homa, max",
-        "horschel, billy",
-        "hossler, beau",
-        "hubbard, mark",
-        "hughes, mackenzie",
-        "jaeger, stephan",
-        "james, ben",
-        "johnson, zach j.",
-        "kanaya, takumi",
-        "kang, jeffrey",
-        "keefer, johnny",
-        "kirk, chris",
-        "kizzire, patton",
-        "kohles, ben",
-        "koivun, jackson",
-        "lamprecht, christo",
-        "lebioda, hank",
-        "li, haotong",
-        "lingmerth, david",
-        "lipsky, david",
-        "lower, justin",
-        "lundell, carson",
-        "malnati, peter",
-        "martin, ben",
-        "mauss, bowen",
-        "mccarthy, denny",
-        "mccarty, matt",
-        "mcgreevy, max",
-        "mcnealy, maverick",
-        "meissner, mac",
-        "moore, taylor",
-        "mouw, william",
-        "nyholm, pontus",
-        "parry, john",
-        "pavon, matthieu",
-        "penge, marco",
-        "peterson, paul",
-        "phillips, chandler",
-        "potgieter, aldrich",
-        "power, seamus",
-        "putnam, andrew",
-        "ramey, chad",
-        "rasmussen, rhett",
-        "riley, davis",
-        "rodgers, patrick",
-        "roy, kevin",
-        "rozo, marcelo",
-        "salinda, isaiah",
-        "sargent, gordon",
-        "schenk, adam",
-        "shelley, tyson",
-        "shipley, neal",
-        "silverman, ben",
-        "skinns, david",
-        "smith, jordan",
-        "smotherman, austin",
-        "snyder, matt",
-        "springer, hayden",
-        "stanger, jimmy",
-        "streelman, kevin",
-        "suber, jackson",
-        "svensson, adam",
-        "svensson, jesper",
-        "taylor, nick",
-        "thompson, davis",
-        "thompson, michael",
-        "todd, brendon",
-        "tosti, alejandro",
-        "van rooyen, erik",
-        "vanderlaan, john",
-        "ventura, kristoffer",
-        "walker, danny",
-        "wallace, matt",
-        "wise, aaron",
-        "wu, dylan",
-        "yellamaraju, sudarshan",
-        "yu, kevin"
-      ],
+      "field_players": 72,
+      "tee_time_players": 72,
       "group_sizes": [
-        2,
-        2,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
-        3,
         3,
         3,
         3,
@@ -586,141 +215,17 @@
         3,
         3
       ],
-      "field_names": [
-        "akina, kihei",
-        "an, seonghyeon",
-        "bauchou, zach",
-        "bezuidenhout, christiaan",
-        "blair, zac",
-        "blanchet, chandler",
-        "bracken, boston",
-        "brennan, michael",
-        "campos, rafael",
-        "chatfield, davis",
-        "clanton, luke",
-        "cole, eric",
-        "coody, pierceson",
-        "crowe, trace",
-        "dahmen, joel",
-        "davis, cameron",
-        "dou, zecheng",
-        "dumont de chassart, adrien",
-        "duncan, tyler",
-        "dunlap, nick",
-        "ewart, a.j.",
-        "finau, tony",
-        "fishburn, patrick",
-        "fisk, steven",
-        "ford, david",
-        "garnett, brice",
-        "ghim, doug",
-        "glover, lucas",
-        "gordon, will",
-        "greyserman, max",
-        "grillo, emiliano",
-        "hall, harry",
-        "hardy, nick",
-        "higgo, garrick",
-        "higgs, harry",
-        "highsmith, joe",
-        "hirata, kensei",
-        "hodges, lee",
-        "hoey, rico",
-        "hoge, tom",
-        "hojgaard, rasmus",
-        "homa, max",
-        "horschel, billy",
-        "hossler, beau",
-        "hubbard, mark",
-        "hughes, mackenzie",
-        "jaeger, stephan",
-        "james, ben",
-        "johnson, zach j.",
-        "kanaya, takumi",
-        "kang, jeffrey",
-        "keefer, johnny",
-        "kirk, chris",
-        "kizzire, patton",
-        "kohles, ben",
-        "koivun, jackson",
-        "lamprecht, christo",
-        "lebioda, hank",
-        "li, haotong",
-        "lingmerth, david",
-        "lipsky, david",
-        "lower, justin",
-        "lundell, carson",
-        "malnati, peter",
-        "martin, ben",
-        "mauss, bowen",
-        "mccarthy, denny",
-        "mccarty, matt",
-        "mcgreevy, max",
-        "mcnealy, maverick",
-        "meissner, mac",
-        "moore, taylor",
-        "mouw, william",
-        "neergaard-petersen, rasmus",
-        "nyholm, pontus",
-        "parry, john",
-        "pavon, matthieu",
-        "penge, marco",
-        "peterson, paul",
-        "phillips, chandler",
-        "potgieter, aldrich",
-        "power, seamus",
-        "putnam, andrew",
-        "ramey, chad",
-        "rasmussen, rhett",
-        "riley, davis",
-        "rodgers, patrick",
-        "roy, kevin",
-        "rozo, marcelo",
-        "salinda, isaiah",
-        "sargent, gordon",
-        "schenk, adam",
-        "shelley, tyson",
-        "shipley, neal",
-        "silverman, ben",
-        "skinns, david",
-        "smith, jordan",
-        "smotherman, austin",
-        "snyder, matt",
-        "springer, hayden",
-        "stanger, jimmy",
-        "streelman, kevin",
-        "suber, jackson",
-        "svensson, adam",
-        "svensson, jesper",
-        "taylor, nick",
-        "thompson, davis",
-        "thompson, michael",
-        "todd, brendon",
-        "tosti, alejandro",
-        "van rooyen, erik",
-        "vanderlaan, john",
-        "ventura, kristoffer",
-        "walker, danny",
-        "wallace, matt",
-        "whaley, vince",
-        "wise, aaron",
-        "wu, dylan",
-        "yellamaraju, sudarshan",
-        "yu, kevin"
-      ],
       "round": 2,
-      "event_id": "554",
-      "requested_event_id": "554",
-      "source_event_id": "554",
+      "requested_event_id": "527",
+      "source_event_id": "527",
       "event_identity_basis": "datagolf_event_id",
       "tour": "pga",
-      "fetched_at": "2026-10-03 08:37:28 UTC",
       "attempts": 1,
       "event_identity_verified": true,
       "simulation_field_overlap": 1.0,
       "simulation_tee_time_coverage": 1.0,
-      "field_player_set_sha256": "efea6f2df344be9c71099fc78fd80cc2ea670985358e606be1c19d7a8fde6b94"
+      "field_player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a"
     }
   },
-  "manifest_sha256": "981feaae6daba950c08194fd2f52f71d68b40165a00f5a6f902366b38456ef1e"
+  "manifest_sha256": "fa8b5d8088f14b8e856bae8be93caa88e1e8458ae38ec3eb88f0d0ec2a8ebe99"
 }
