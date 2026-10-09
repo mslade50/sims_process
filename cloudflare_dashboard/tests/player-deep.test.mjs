@@ -93,3 +93,10 @@ test('common-event comparisons are symmetric and exclude unadjusted overlap',()=
   assert.deepEqual(matched.a.map(e=>e.id),reverse.b.map(e=>e.id));
   assert.equal(commonEventSlices([event('a')],[event('b')]).n_common,0);
 });
+test('radar units format sensibly and standout strengths use plain labels, never raw keys',async()=>{
+  assert.equal(formatMetric(1.4796,'ratio'),'1.480');assert.equal(formatMetric(3092.9,'rpm'),'3,093');assert.equal(formatMetric(119.046,'mph'),'119.0');
+  const {standoutText}=await import('../app/player-fingerprint-rules.ts');
+  const text=standoutText([{key:'tee_sg'},{key:'tee_dispersion'}]);
+  assert.equal(text,'tee shot value · straightness');assert.ok(!/_/.test(text)&&!/\bsg\b/.test(text));
+  assert.equal(standoutText([{key:'unknown_key'}]),'unknown_key');
+});

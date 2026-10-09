@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {SHOT_COLUMNS,aggregateShots,buildRows,divergingBackground,finishRank,formatShot,shotReferenceOf,sortRows} from '../app/player-event-table-rules.ts';
-import {FINGERPRINT_GROUPS,AXIS_LABEL,AXIS_HELP,labelPlacement} from '../app/player-fingerprint-rules.ts';
+import {FINGERPRINT_GROUPS,DESCRIPTIVE_GROUPS,AXIS_LABEL,AXIS_HELP,labelPlacement,valueLabel,radarCoverageLine} from '../app/player-fingerprint-rules.ts';
 import {histogram} from '../app/player-deep-rules.ts';
 import {stepPath} from '../app/player-histogram-rules.ts';
 
@@ -53,4 +53,31 @@ test('histogram bins are adjacent: the step outline is one connected path across
   assert.equal(bins.length,32);assert.equal(bins.reduce((s,b)=>s+b.count,0),4);
   const d=stepPath(bins,x,y,-8,.5);
   assert.equal((d.match(/M/g)??[]).length,1);assert.equal((d.match(/L/g)??[]).length,64+1);assert.ok(d.endsWith('Z'));
+});
+test('hole-level and radar event columns: aggregated per selected rounds, radar is never shaded as good or bad',()=>{
+  const rows=[{event_id:'1',round:1,metrics:{app_gir:{total:12,n_shots:18},radar_ball_speed:{total:1700,n_shots:10},radar_smash:{total:7.4,n_shots:5}}},
+    {event_id:'1',round:2,metrics:{app_gir:{total:6,n_shots:18},radar_ball_speed:{total:1720,n_shots:10}}}];
+  const ref={app_gir:{mean:.6,sd:.1,higher:true},radar_ball_speed:{mean:170,sd:5,higher:true}};
+  const out=aggregateShots('1',[1,2],rows,ref);
+  assert.equal(out.app_gir.value,.5);assert.equal(out.app_gir.n,36);assert.ok(Math.abs(out.app_gir.z+1)<1e-9);
+  assert.equal(out.radar_ball_speed.value,171);assert.equal(out.radar_ball_speed.z,null);
+  assert.equal(out.radar_smash.value,7.4/5);// 5 shots meets the radar minimum
+  assert.equal(aggregateShots('1',[1],rows,ref).radar_smash.n,5);
+  assert.equal(aggregateShots('1',[2],rows,ref).radar_smash.value,null);
+  assert.equal(formatShot('mph',171.04),'171.0');assert.equal(formatShot('ratio',1.4796),'1.48');assert.equal(formatShot('rpm',2765.4),'2765');assert.equal(formatShot('deg',10.06),'10.1');
+  assert.ok(SHOT_COLUMNS.filter(c=>c.descriptive).every(c=>c.key.startsWith('radar_')));assert.ok(SHOT_COLUMNS.some(c=>c.key==='short_scramble'&&!c.descriptive));
+});
+test('fingerprint: radar group is descriptive, covers the measured ball-flight stats, and coverage text follows the selected rounds',()=>{
+  assert.ok(DESCRIPTIVE_GROUPS.has('Radar'));assert.ok(!DESCRIPTIVE_GROUPS.has('Driving'));
+  assert.deepEqual(FINGERPRINT_GROUPS.Radar.filter(k=>!k.startsWith('radar_')),[]);assert.ok(FINGERPRINT_GROUPS.Radar.length>=6);
+  assert.ok(FINGERPRINT_GROUPS.Driving.includes('tee_penalty'));assert.ok(FINGERPRINT_GROUPS.Approach.includes('app_gir'));
+  assert.ok(FINGERPRINT_GROUPS['Short game'].includes('short_scramble'));assert.ok(FINGERPRINT_GROUPS['Best & worst'].includes('score_three_putt_avoid'));
+  for(const k of ['tee_penalty','app_penalty','score_bogey_avoid','score_three_putt_avoid'])assert.ok(valueLabel(k)&&!/_/.test(valueLabel(k)),k);
+  assert.match(radarCoverageLine([{key:'tee_distance',n_shots:200},{key:'radar_ball_speed',n_shots:150,n_events:6}]),/150 tee shots of 200 par 4\/5 tee shots \(75%\), across 6 events\./);
+  assert.match(radarCoverageLine([{key:'tee_distance',n_shots:200},{key:'radar_ball_speed',n_shots:0}]),/No radar was recorded/);
+  assert.match(radarCoverageLine([]),/exists at some PGA events/);
+});
+test('hole-based measures say holes, shot-based say shots',async()=>{
+  const {sampleNoun}=await import('../app/player-fingerprint-rules.ts');
+  assert.equal(sampleNoun('app_gir'),'holes');assert.equal(sampleNoun('short_updown'),'holes');assert.equal(sampleNoun('tee_penalty'),'shots');assert.equal(sampleNoun('radar_spin'),'shots');
 });

@@ -8,21 +8,22 @@ const signed=(v:unknown)=>finite(v)?`${v>0?"+":""}${v.toFixed(2)}`:"—";
 const PAGE=20;
 /** Event-by-event results: conditionally formatted strokes gained by category plus shot stats where published. */
 export function PlayerEventTable({events,anchor,shotRows,shotRef}:{events:ContextEvent[];anchor:number|null|undefined;shotRows?:ShotRoundRow[];shotRef:ShotRef}){
-  const [sort,setSort]=useState<{key:SortKey;dir:"asc"|"desc"}>({key:"date",dir:"desc"}),[page,setPage]=useState(0),[open,setOpen]=useState<string[]>([]);
+  const [sort,setSort]=useState<{key:SortKey;dir:"asc"|"desc"}>({key:"date",dir:"desc"}),[page,setPage]=useState(0),[open,setOpen]=useState<string[]>([]),[radar,setRadar]=useState(false);
   const rows=useMemo(()=>sortRows(buildRows(events,anchor,shotRows,shotRef),sort.key,sort.dir),[events,anchor,shotRows,shotRef,sort]);
   const pages=Math.max(1,Math.ceil(rows.length/PAGE)),cur=Math.min(page,pages-1),visible=rows.slice(cur*PAGE,cur*PAGE+PAGE);
-  const hasFinish=rows.some(r=>r.finish),hasShots=SHOT_COLUMNS.some(c=>rows.some(r=>finite(r.shots[c.key].value)));
-  const span=3+(hasFinish?1:0)+SG_COLUMNS.length+(hasShots?SHOT_COLUMNS.length:0);
+  const hasFinish=rows.some(r=>r.finish),has=(c:typeof SHOT_COLUMNS[number])=>rows.some(r=>finite(r.shots[c.key].value));
+  const hasRadar=SHOT_COLUMNS.some(c=>c.descriptive&&has(c)),cols=SHOT_COLUMNS.filter(c=>has(c)&&(!c.descriptive||radar)),hasShots=cols.length>0||hasRadar;
+  const span=3+(hasFinish?1:0)+SG_COLUMNS.length+cols.length;
   const head=(key:SortKey,label:string,help?:string,cls?:string)=><th scope="col" className={cls} aria-sort={sort.key===key?(sort.dir==="asc"?"ascending":"descending"):"none"} title={help}><button type="button" onClick={()=>{setSort(s=>s.key===key?{key,dir:s.dir==="asc"?"desc":"asc"}:{key,dir:key==="name"||key==="finish"?"asc":"desc"});setPage(0);}}>{label}<i aria-hidden>{sort.key===key?(sort.dir==="asc"?"▲":"▼"):""}</i></button></th>;
   return <div className="pe-wrap"><p className="pd-muted pe-caption">Newest first. Strokes-gained cells are green when better than average and red when worse (0 = neutral); click a heading to sort and an event to see its rounds. Total is against the PGA average; the other categories are against that week&rsquo;s field.</p>
     <div className="pd-scroll pe-scroll"><table className="pd-table pe-table"><thead><tr>{head("date","Date")}{head("name","Event","Event, course and tour.","pe-event")}{hasFinish&&head("finish","Fin",GLOSS.finish)}{head("rounds","Rds","Number of rounds included by the filters.")}
-      {SG_COLUMNS.map(c=>head(c.key,c.label,c.help,"pe-sg"))}{hasShots&&SHOT_COLUMNS.map(c=>head(c.key,c.label,c.help,"pe-shot"))}</tr></thead>
+      {SG_COLUMNS.map(c=>head(c.key,c.label,c.help,"pe-sg"))}{cols.map(c=>head(c.key,c.label,c.help,c.descriptive?"pe-shot pe-radar":"pe-shot"))}</tr></thead>
       <tbody>{visible.map(r=><Fragment key={r.id}><tr><td className="pe-date">{dayText(r.date,"")}</td><th scope="row" className="pe-event"><button type="button" className="pd-expand" aria-expanded={open.includes(r.id)} onClick={()=>setOpen(s=>s.includes(r.id)?s.filter(v=>v!==r.id):[...s,r.id])}><span>{open.includes(r.id)?"−":"+"}</span>{r.name}</button><small>{r.tour.toUpperCase()}{r.major?" · Major":""}{r.course?` · ${r.course}`:""}</small></th>{hasFinish&&<td>{r.finish??""}</td>}<td>{r.rounds}</td>
         {SG_COLUMNS.map(c=>{const v=r.sg[c.key];return <td key={c.key} className="pe-sg" style={{background:divergingBackground(v,c.range)}}>{finite(v)?signed(v):""}</td>;})}
-        {hasShots&&SHOT_COLUMNS.map(c=>{const s=r.shots[c.key];return <td key={c.key} className="pe-shot" title={finite(s.value)?`${s.n} shots`:undefined} style={{background:divergingBackground(s.z,3,30)}}>{finite(s.value)?formatShot(c.unit,s.value):""}</td>;})}</tr>
+        {cols.map(c=>{const s=r.shots[c.key];return <td key={c.key} className={c.descriptive?"pe-shot pe-radar":"pe-shot"} title={finite(s.value)?`${s.n} ${c.key==="app_gir"||c.key==="score_birdie"?"holes":"shots"}`:undefined} style={c.descriptive?undefined:{background:divergingBackground(s.z,3,30)}}>{finite(s.value)?formatShot(c.unit,s.value):""}</td>;})}</tr>
         {open.includes(r.id)&&<tr className="pd-rounds"><td colSpan={span}><RoundDetail e={r.event as ContextEvent} anchor={anchor}/></td></tr>}</Fragment>)}</tbody></table></div>
     {!visible.length&&<p className="pd-empty">No events match these filters. Reset the filters or pick another round.</p>}
-    {hasShots&&<p className="pd-muted">Drive to putts columns come from published shot-level data for PGA events (last three years) and are shaded against PGA players; events without shot detail are blank. Samples under 8 shots are hidden.</p>}
+    {hasRadar&&<label className="pe-radar-toggle"><input type="checkbox" checked={radar} onChange={e=>setRadar(e.target.checked)}/> Show launch-monitor columns (club and ball speed, smash, launch, spin, apex)</label>}{hasShots&&<p className="pd-muted">Drive to putts, GIR, scrambling, birdie and penalty columns come from published shot-level data for PGA events (last three years) and are shaded against PGA players; events without shot detail are blank. Small samples are hidden. {radar&&"Launch-monitor columns describe ball flight, never skill, are not shaded, and are blank at events without radar."}</p>}
     <div className="pd-pagination"><button disabled={cur===0} onClick={()=>setPage(cur-1)}>← Previous</button><span>Page {cur+1} / {pages}</span><button disabled={cur>=pages-1} onClick={()=>setPage(cur+1)}>Next →</button></div></div>;
 }
 function RoundDetail({e,anchor}:{e:ContextEvent;anchor:number|null|undefined}){
