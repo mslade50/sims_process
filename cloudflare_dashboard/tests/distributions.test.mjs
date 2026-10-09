@@ -53,7 +53,7 @@ test("B7: the cut marker uses the priced make-cut probability, not the sliced ra
   assert.equal(markerLabel(65, 65), "Make cut (top 65 and ties)");
   assert.equal(markerLabel(10, 65), "Top 10");
   assert.equal(markerLabel(65, null), "Top 65");
-  assert.match(SETTLEMENT_RANK_LABEL, /settlement rank \(missed cuts ranked below the field\)/);
+  assert.match(SETTLEMENT_RANK_LABEL, /finish position.*missed cuts ranked below the field/);
 });
 
 test("W1: the cut reference is independent of the finish marker and uses p_make_cut", () => {
@@ -63,5 +63,6 @@ test("W1: the cut reference is independent of the finish marker and uses p_make_
   assert.equal(cutReference({ probs: {} }, 65), null);
   const src = readFileSync(new URL("../app/DistributionView.tsx", import.meta.url), "utf8");
   assert.match(src, /cutReference\(p, doc\.event\.cut_top_n\)/);
-  assert.match(src, /ReferenceLine x=\{doc\.event\.cut_top_n\}/);
+  assert.doesNotMatch(src, /ReferenceLine/, "finish chart is grouped bars with no reference lines; the cut shows as a legend line and a Missed cut bar");
+  assert.match(src, /Missed cut/);
 });

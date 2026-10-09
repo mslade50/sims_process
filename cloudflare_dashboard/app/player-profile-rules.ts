@@ -2,8 +2,8 @@
 export const PROFILE_AXES = ["sg_ott", "sg_app", "sg_arg", "sg_putt"] as const;
 export type ProfileAxis = typeof PROFILE_AXES[number];
 export type Photo = { url: string | null; source: string | null; source_name?:string; status?: string };
-export type PgaBenchmark = {schema_version:string;status:string;value:number|null;observed_mean?:number|null;raw_adjusted_sg_mean?:number|null;decomposition?:{tour_weights?:Array<{tour:string;n_rounds:number;weight_fraction:number}>;historical_mean_interval?:{lower:number;upper:number;level?:number;note?:string}};n_rounds:number;n_events:number;n_eff:number;effective_sample_size?:number;weight_on_data:number;last_observation:string|null;as_of:string;reference_id:string|null;unit:string;note?:string;method:{window_days:number;half_life_days:number;prior_rounds:number;min_rounds:number;min_events:number;min_n_eff:number}};
-export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown};
+export type PgaBenchmark = {schema_version:string;status:string;value:number|null;shrunk_value?:number|null;shrink_stale?:boolean|null;shrink_weight_on_data?:number|null;shrink_prior_tour?:string|null;observed_mean?:number|null;raw_adjusted_sg_mean?:number|null;decomposition?:{tour_weights?:Array<{tour:string;n_rounds:number;weight_fraction:number}>;historical_mean_interval?:{lower:number;upper:number;level?:number;note?:string}};n_rounds:number;n_events:number;n_eff:number;effective_sample_size?:number;weight_on_data:number;last_observation:string|null;as_of:string;reference_id:string|null;unit:string;note?:string;method:{window_days:number;half_life_days:number;prior_rounds:number;min_rounds:number;min_events:number;min_n_eff:number}};
+export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown;regular_tick?:{unshrunk?:number|null;shrunk?:number|null;as_of?:string}};
 export type ProfileEntry = {pga_benchmark?:PgaBenchmark; profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
 export const playerId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);
 export type Reference = { id: string; population: string; n_players: number; min_rounds: number; mean: number | null; sd: number | null; as_of: string; higher_is_better: boolean };
@@ -42,7 +42,12 @@ export function sortProfiles(players:ProfileEntry[]):ProfileEntry[] {
   const time=(p:ProfileEntry)=>p.last_observation && Number.isFinite(Date.parse(p.last_observation)) ? Date.parse(p.last_observation) : -Infinity;
   return [...players].sort((a,b)=>rank(a)-rank(b) || (time(a)===time(b)?0:time(b)-time(a)) || a.name.localeCompare(b.name) || playerId(a).localeCompare(playerId(b)));
 }
-export function shortProfileDate(value:string|undefined):string {return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"}) : "Unavailable";}
+/** Calendar dates ("2026-08-30") print as plain dates; full timestamps read in US Eastern time ("Oct 8, 12:10 PM ET"). */
+export function shortProfileDate(value:string|undefined):string {
+  if(!value || !Number.isFinite(Date.parse(value))) return "Unavailable";
+  if(/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});
+  return `${new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value))} ET`;
+}
 export function selectWeeklyEvent<T extends {event_uid:string;tour?:string;date_start?:string;player_ids?:number[]}>(events:T[],explicit:string|null,player:string|null,fields:Array<{event_uid:string;player_ids:number[]}> = []):T|undefined {
   const requested=events.find(e=>e.event_uid===explicit); if(requested) return requested;
   const recent=[...events].sort((a,b)=>(b.date_start ?? "").localeCompare(a.date_start ?? ""));
@@ -107,14 +112,24 @@ const offsetText=(v:number|null)=>v===null ? "unavailable" : `${v>0 ? "+" : ""}$
 /** One wording for the secondary card and the hero chip. */
 export function pgaSkillWords(s:PgaSkill):{sub:string;title:string} {
   return s.live
-    ? {sub:`Live skill + pre-event field offset (F02); field offset ${offsetText(s.offset)}`,title:`Live skill + pre-event field offset (F02). Pre-event value ${offsetText(s.preEvent)}. The active-field recompute is not yet published.`}
-    : {sub:`Saved model skill + this field's offset to the PGA scale (F02); field offset ${offsetText(s.offset)}`,title:`Saved model skill + this field's offset to the PGA scale (F02); field offset ${offsetText(s.offset)}.`};
+    ? {sub:`Live skill plus the pre-event field offset (${offsetText(s.offset)}, how this field compares with a normal PGA field)`,title:`Live skill plus the pre-event field offset. The pre-event value was ${offsetText(s.preEvent)}. The offset has not been recomputed for the players still active.`}
+    : {sub:`The model's saved skill plus this field's offset to the PGA scale (${offsetText(s.offset)}, how this field compares with a normal PGA field)`,title:`The model's saved skill plus this field's offset to the PGA scale (${offsetText(s.offset)}).`};
 }
 
-/** Only supported, explicitly referenced published ratings can enter a field mean. */
-export function benchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):number|null {
+/** The pre-shrinkage value, kept for the Method disclosure. Only supported, explicitly referenced published ratings count. */
+export function unshrunkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):number|null {
   return rating?.schema_version === "player_benchmark.v1" && rating.status === "available" && reference?.status === "available" && rating.reference_id === reference.id && finite(rating.value) ? rating.value : null;
 }
+/** The headline: the shrunk value when published, otherwise the unshrunk one (see isShrunk). */
+export function benchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):number|null {
+  const raw=unshrunkValue(rating,reference);
+  return raw!==null && finite(rating?.shrunk_value) ? rating.shrunk_value : raw;
+}
+/** True when the headline is the shrunk value; false means the publisher has not yet sent one (small "not yet shrunk" note). */
+export function isShrunk(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):boolean {
+  return unshrunkValue(rating,reference)!==null && finite(rating?.shrunk_value);
+}
+export const NOT_YET_SHRUNK = "Not yet shrunk: the published data has no shrunk value for this player, so this is the raw recent-form figure.";
 export function fieldBenchmark(ids:number[],players:ProfileEntry[],reference:PgaBenchmarkReference|undefined,checkpoint?:string|null):{mean:number|null;covered:number;total:number} {
   const unique=[...new Set(ids)];const byId=new Map(players.filter(p=>p.dg_id!==null).map(p=>[p.dg_id,p]));
   const values=unique.map(id=>checkpointBenchmarkValue(byId.get(id)?.pga_benchmark,reference,checkpoint)).filter((v):v is number=>v!==null);

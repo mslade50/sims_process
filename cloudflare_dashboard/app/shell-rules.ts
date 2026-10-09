@@ -58,8 +58,8 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   { label: "Model", items: [{ key: "inputs", href: "/inputs", label: "Model inputs", description: "Skill, course fit, variance, adjustments" }] },
-  { label: "Operate", items: [{ key: "run", href: "/run", label: "Run", description: "Start a golfprice job from your phone" }] },
-  { label: "Review", items: [{ key: "performance", href: "/performance", label: "Scorecard and P&L", description: "golfprice scorecard and bet results" }] },
+  { label: "Operate", items: [{ key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
+  { label: "Review", items: [{ key: "performance", href: "/performance", label: "Scorecard and P&L", description: "Model scorecard and bet results" }] },
   {
     label: "Archive",
     collapsed: true,
@@ -104,7 +104,7 @@ export function decideFallback(outcome: FetchOutcome): FallbackDecision {
   if (outcome.json === undefined) return { action: "fallback" };
   if (isWorkerError(outcome.json) || !outcome.ok) {
     const detail = isWorkerError(outcome.json) ? `: ${outcome.json.error}` : "";
-    return { action: "surface", message: `Data request failed (${outcome.status})${detail}` };
+    return { action: "surface", message: `This data could not be loaded (code ${outcome.status})${detail}` };
   }
   return { action: "use" };
 }

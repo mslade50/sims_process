@@ -44,7 +44,7 @@ test("live default columns add Live skill, B8 and Contention", () => {
 test("the picker can reach every hidden column: vs PGA avg, gap, components, CHL families, location, override, weather, reconciliation", () => {
   const players = [mkPlayer(1, "A, A", 0.4), mkPlayer(2, "B, B", -0.4)];
   const t = buildTable({ doc: doc("week", players), inputs, catalog, players, deps });
-  for (const col of [LABELS.vsPgaAvg.short, COL.gap, COL.top10, COL.base, COL.location, COL.override, COL.sum, COL.baseline, COL.residual, "Activity", "Skill level", "CHL Activity"]) {
+  for (const col of [LABELS.vsPgaAvg.short, COL.gap, COL.top10, COL.base, COL.location, COL.override, COL.sum, COL.baseline, COL.residual, "Activity", "Skill level", "Base skill: Activity"]) {
     assert.ok(t.ordered.includes(col), `picker has ${col}`);
     assert.ok(col in t.rows[0], `row carries ${col}`);
   }
@@ -58,7 +58,8 @@ test("This week comes from challenger.mu_tour and reads n/a when the inputs docu
   const withInputs = buildTable({ doc: doc("week", players), inputs, catalog, players, deps });
   assert.equal(withInputs.rows[0][LABELS.thisWeekPga.short], "+0.500");
   const without = buildTable({ doc: doc("week", players), inputs: null, catalog, players, deps });
-  assert.equal(without.rows[0][LABELS.thisWeekPga.short], "n/a");
+  assert.equal(without.rows[0][LABELS.thisWeekPga.short], undefined, "an all-empty column is dropped, not shown as n/a");
+  assert.ok(!without.ordered.includes(LABELS.thisWeekPga.short));
 });
 
 test("live rows carry live skill, B8 and contention", () => {
@@ -71,16 +72,16 @@ test("live rows carry live skill, B8 and contention", () => {
 });
 
 test("residual shows 4 dp, or a rounding note with no flag when |res| <= 1e-5", () => {
-  assert.equal(residualText(0.0000001, signedZ), "<1e-5 (rounding)");
-  assert.equal(residualText(-0.000009, signedZ), "<1e-5 (rounding)");
-  assert.equal(residualText(0.01234, signedZ), "FLAG +0.0123");
+  assert.equal(residualText(0.0000001, signedZ), "0 (rounding)");
+  assert.equal(residualText(-0.000009, signedZ), "0 (rounding)");
+  assert.equal(residualText(0.01234, signedZ), "Mismatch +0.0123");
   assert.equal(residualText(null, signedZ), "—");
   assert.equal(residualFlag(0.00001), false);
   assert.equal(residualFlag(-0.00002), true);
   const players = [mkPlayer(1, "A, A", 0.4), mkPlayer(2, "B, B", -0.4)];
   const t = buildTable({ doc: doc("week", players), inputs, catalog, players, deps });
-  assert.equal(t.rows[0][COL.residual], "FLAG +0.1000"); // mu 0.4 vs component sum 0.3
-  assert.equal(t.rows[1][COL.residual], "<1e-5 (rounding)"); // 1e-7 apart
+  assert.equal(t.rows[0][COL.residual], "Mismatch +0.1000"); // mu 0.4 vs component sum 0.3
+  assert.equal(t.rows[1][COL.residual], "0 (rounding)"); // 1e-7 apart
 });
 
 test("a thin benchmark shows the n<12 rounds badge, never Unavailable", () => {
@@ -105,7 +106,7 @@ test("vs PGA avg is gated on archived checkpoints (as-was): history newer than t
   const d = { ...doc("week", players), as_of: "2026-06-01T12:00:00Z" };
   const t = buildTable({ doc: d, inputs, catalog, players, deps });
   assert.equal(t.rows[0][LABELS.vsPgaAvg.short], "after this checkpoint");
-  assert.equal(t.rows[0][COL.gap], "n/a");
+  assert.equal(t.rows[0][COL.gap], undefined, "the gap column is dropped when no player has one");
 });
 
 test("model-minus-form gap is This week minus vs PGA avg when both exist", () => {
@@ -125,14 +126,14 @@ test("field method: offset, label, estimator, vintage, n_imputed (n/a when absen
   const m = fieldMethod(inputs, "week");
   assert.equal(m.offsetText, "+0.100");
   assert.equal(m.offsetLabel, "field offset");
-  assert.equal(m.vintage, "2026-10-05");
+  assert.equal(m.vintage, "Oct 5, 2026");
   assert.equal(m.imputed, "3");
-  assert.match(m.estimator, /F02 theta/);
+  assert.match(m.estimator, /strength ratings/);
   assert.equal(fieldMethod(inputs, "live").offsetLabel, "pre-event field offset");
   const bare = fieldMethod(parseInputs({ event: {}, players: [] }), "week");
   assert.equal(bare.imputed, "n/a");
   assert.equal(bare.offsetText, "n/a");
-  assert.match(ACCURACY_SENTENCE, /SD 0\.12.*up to 0\.4/);
+  assert.match(ACCURACY_SENTENCE, /0\.12.*up to 0\.4/);
 });
 
 test("expand card lists every column except Player, This week and Win", () => {
@@ -166,14 +167,16 @@ test("/weekly-players renders the table through DataTable with the Method senten
   assert.doesNotMatch(html, /class="pp-muted wk-note"/, "no standalone gap note above the table");
   assert.match(html, /<summary>Method<\/summary>/);
   assert.ok(html.indexOf(`<p>${esc}</p>`) > html.indexOf("<summary>Method</summary>") && html.indexOf(`<p>${esc}</p>`) < html.indexOf("data-table-wrap"), "sentence sits inside Method, before the table");
-  assert.ok(html.includes(`title="${esc}"`), "vs PGA avg picker entry carries the sentence as its tooltip");
+  assert.ok(html.includes(`. ${esc}"`), "vs PGA avg hover carries the sentence");
   assert.ok(html.includes(ZERO_SENTENCE.slice(0, 40)));
-  assert.match(html, /Pre-event field offset/);
-  assert.match(html, /Saved baseline reconciliation \(audit\)/);
-  assert.doesNotMatch(html, /<details[^>]*open[^>]*><summary>Saved baseline reconciliation/);
+  assert.match(html, /live checkpoints keep the offset from before the event/);
+  assert.match(html, /Audit: how the saved skill adds up/);
+  assert.doesNotMatch(html, /<details[^>]*open[^>]*><summary>Audit: how the saved skill adds up/);
   const thead = html.match(/<thead>(.*?)<\/thead>/)[1];
   const headers = [...thead.matchAll(/<th[^>]*><button[^>]*>(.*?)<\/button>/g)].map((m) => m[1].replace(/<[^>]+>/g, ""));
-  assert.deepEqual(headers, ["Player", "This week (PGA scale)", "vs field", "n (tour mix)", "Win", "Make cut", "Live skill", "B8 live shift", "Contention shift"], "live default columns, labels verbatim");
+  assert.deepEqual(headers, ["Player", "This week (PGA scale)", "vs field", "Rounds (tour mix)", "Win", "Live skill", "Live shift"], "live default columns for a no-cut event: make-cut and the empty leaderboard-position column are dropped"
+  );
+  assert.match(html, /This event has no cut, so make-cut odds are not shown/);
   assert.match(thead, /class="sticky-first"/);
   assert.match(thead, /class="mobile-hide"/);
   assert.equal([...thead.matchAll(/<th class="(?!mobile-hide)[^"]*"/g)].length, 3, "phone keeps Player, This week, Win");
@@ -182,7 +185,7 @@ test("/weekly-players renders the table through DataTable with the Method senten
 
 test("W1: reconciliation headers go through plainName, never raw keys", () => {
   const h = reconciliationHeaders(["act", "sit", "sklv", "xtour", "level_form"], doc("week", []).components_legend, plainName).map((x) => x.label);
-  assert.deepEqual(h.slice(0, 4), ["Activity", "Situation", "Skill level", "Cross-tour"]);
+  assert.deepEqual(h.slice(0, 4), ["Activity", "Layoff and age", "Skill level", "Other tours"]);
   assert.equal(h[4], "level form");
   assert.equal(h.includes("act") || h.includes("sit") || h.includes("sklv"), false);
 });

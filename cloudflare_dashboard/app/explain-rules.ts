@@ -62,6 +62,16 @@ export function nameMatches(name: string, query: string): boolean {
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
+function neutralLegend(raw: unknown): Record<string, LegendEntry> {
+  if (!isObject(raw)) return {};
+  const out: Record<string, LegendEntry> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const e = v as LegendEntry;
+    out[k] = isObject(v) ? { ...e, meaning: typeof e.meaning === "string" ? neutralPronouns(e.meaning) : "" } : e;
+  }
+  return out;
+}
+
 export function parseExplain(raw: unknown): ExplainDoc | null {
   if (!isObject(raw) || raw.schema !== EXPLAIN_SCHEMA || !Array.isArray(raw.players) || !isObject(raw.event)) return null;
   const d = raw as unknown as ExplainDoc;
@@ -74,17 +84,42 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
     }
     return { ...(p as object), probs: full, components: isObject(p.components) ? p.components : {}, attribution: isObject(p.attribution) ? p.attribution : {},
       tags: Array.isArray(p.tags) ? p.tags : [], neighbors: Array.isArray(p.neighbors) ? p.neighbors : [], scores: isObject(p.scores) ? p.scores : {},
-      finish: isObject(p.finish) && Array.isArray((p.finish as { pos?: unknown }).pos) ? p.finish : null, live: isObject(p.live) ? p.live : null, why: typeof p.why === "string" ? p.why : "",
-      why_edge: typeof p.why_edge === "string" ? p.why_edge : null } as unknown as ExPlayer;
+      finish: isObject(p.finish) && Array.isArray((p.finish as { pos?: unknown }).pos) ? p.finish : null, live: isObject(p.live) ? p.live : null, why: typeof p.why === "string" ? neutralPronouns(p.why) : "",
+      why_edge: typeof p.why_edge === "string" ? neutralPronouns(p.why_edge) : null } as unknown as ExPlayer;
   });
-  return { ...d, players, bias: Array.isArray(d.bias) ? d.bias : [], top_edges: Array.isArray(d.top_edges) ? d.top_edges : [], components_legend: isObject(d.components_legend) ? d.components_legend : {},
+  return { ...d, players, bias: Array.isArray(d.bias) ? d.bias : [], top_edges: Array.isArray(d.top_edges) ? d.top_edges : [], components_legend: neutralLegend(d.components_legend),
     finish: isObject(d.finish) ? d.finish : { method: "unavailable", reason: null }, course_card: (isObject(d.course_card) ? d.course_card : { holes: [], what_drives_scoring: [], by_par: {}, weather: {} }) as CourseCard,
     edge_model: isObject(d.edge_model) ? d.edge_model : { ridge_r2: null, strokes_per_logit: {}, note: "" }, since_last: isObject(d.since_last) ? d.since_last : null };
 }
 
 /* ------------------------------------------------------------------ index / event selection */
-export type IndexEvent = { event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null };
+export type DistributionRun = { key?: string | null; kind?: string | null; run?: string | null; as_of?: string | null; after_round?: number | null; validated?: boolean | null };
+export type IndexEvent = {
+  event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null;
+  distribution_runs?: DistributionRun[] | null;
+};
 export const explainKeyFor = (e: IndexEvent): string => e.explain_key || `golfprice/explain/${e.event_uid.replace(/:/g, "_")}/latest.json`;
+
+/** Which explanation documents exist for an event. Every run keeps its own document (distribution_runs), so the last pre-tournament run survives live updates. */
+export type ExplainChoices = { preKey: string | null; liveKey: string | null; liveRound: number | null; hasLive: boolean };
+export function explainChoices(e: IndexEvent): ExplainChoices {
+  const runs = (e.distribution_runs ?? []).filter((r): r is DistributionRun & { key: string } => !!r && typeof r.key === "string" && r.key.length > 0 && r.validated !== false);
+  const newest = (kind: string) => runs.filter((r) => r.kind === kind).sort((a, b) => String(a.as_of ?? "").localeCompare(String(b.as_of ?? ""))).at(-1) ?? null;
+  const pre = newest("week");
+  const live = newest("live");
+  const currentIsLive = (e.explain_run ?? "").startsWith("live_") || (!!e.explain_key && /\/live_[^/]*$/.test(e.explain_key));
+  const liveKey = currentIsLive ? explainKeyFor(e) : live?.key ?? null;
+  const fromRun = /live_R(\d+)_/.exec(e.explain_run ?? "")?.[1];
+  const liveRound = live?.after_round ?? (fromRun ? Number(fromRun) : null);
+  return { preKey: pre?.key ?? null, liveKey, liveRound, hasLive: currentIsLive || live !== null };
+}
+
+/** The published text was written in the masculine ("his mean skill"); players can be anyone, so read it as "their". */
+export function neutralPronouns(text: string): string {
+  return text
+    .replace(/\b(He|he) (has|is|was|plays|hasn't|isn't)\b/g, (_m, h: string, v: string) => `${h === "He" ? "They" : "they"} ${{ has: "have", is: "are", was: "were", plays: "play", "hasn't": "haven't", "isn't": "aren't" }[v]}`)
+    .replace(/\bHe\b/g, "They").replace(/\bhe\b/g, "they").replace(/\bHis\b/g, "Their").replace(/\bhis\b/g, "their").replace(/\bhim\b/g, "them");
+}
 
 /** Events of the newest week first (all sharing the newest start date), then older ones; events without an explain document are kept (the page says so). */
 export function orderEvents(events: IndexEvent[]): IndexEvent[] {

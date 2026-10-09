@@ -7,11 +7,14 @@ import type { ExplainDoc, ExPlayer } from "./explain-rules";
 import type { PgaBenchmark, PgaBenchmarkReference, ProfileCatalog } from "./player-profile-rules";
 import type { LABELS as LabelsType } from "./labels";
 
+
 type Obj = Record<string, unknown>;
 export type WeeklyRow = Record<string, unknown>;
 
 export type WeeklyDeps = {
   LABELS: typeof LabelsType;
+  /** The standing "form versus model" sentence (labels.ts GAP_METHOD_SENTENCE), used in column hover text. */
+  gapSentence?: string;
   plainName: (key: string, legend?: Record<string, { label?: string } | undefined>) => string;
   signedZ: (v: unknown, digits?: number) => string;
   pct: (p: number | null | undefined, digits?: number) => string;
@@ -25,30 +28,56 @@ const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 
 /** The one missing-value token; benchmark cells use the badge instead. */
 export const NA = "n/a";
-export const THIN_BADGE = "n<12 rounds";
+export const THIN_BADGE = "under 12 rounds";
 /** Per-event accuracy of the field offset (tour_scale.md: 308-event re-run against provider field strength). */
-export const ACCURACY_SENTENCE = "The field offset is accurate to about SD 0.12 per event; single events can be off by up to 0.4.";
-export const ESTIMATOR_NAME = "F02 theta (ridge-shrunk, 365-day half-life), mean over the field";
+export const ACCURACY_SENTENCE = "The field offset is typically within about 0.12 strokes of the true figure for an event; a single event can be off by up to 0.4.";
+export const ESTIMATOR_NAME = "Smoothed player strength ratings (365-day half-life), averaged over the field";
 
 /** Fixed column names (these are the table headers; DataTable title-cases keys). */
 export const COL = {
   player: "Player",
-  nTour: "n (tour mix)",
+  nTour: "Rounds (tour mix)",
   win: "Win",
   makeCut: "Make cut",
   top10: "Top 10",
   liveSkill: "Live skill",
-  b8: "B8 live shift",
-  contention: "Contention shift",
-  preEventSkill: "Pre-event skill (field-centred)",
-  gap: "Model minus form gap",
-  base: "CHL base",
-  location: "Location (saved)",
-  override: "Override (saved)",
-  sum: "Component sum",
-  baseline: "Baseline skill",
-  residual: "Residual",
+  b8: "Live shift",
+  contention: "Leaderboard-position shift",
+  preEventSkill: "Pre-event skill (vs field)",
+  gap: "This week minus form",
+  base: "Base skill",
+  location: "Course location",
+  override: "Owner override",
+  sum: "Sum of parts",
+  baseline: "Saved skill (all parts)",
+  residual: "Unexplained",
 } as const;
+
+/** One plain sentence per fixed column, shown on hover over the header and in the column picker. */
+export function columnTitles(deps: Pick<WeeklyDeps, "LABELS">, gapSentence: string): Record<string, string> {
+  const L = deps.LABELS;
+  return {
+    [COL.player]: "The golfer. Click a row for details and a link to the full profile.",
+    [L.thisWeekPga.short]: L.thisWeekPga.long,
+    [L.vsField.short]: L.vsField.long,
+    [L.vsPgaAvg.short]: `${L.vsPgaAvg.long}. ${gapSentence}`,
+    [COL.nTour]: "Rounds behind the player's PGA-average rating. A note appears when the player's main tour is not this event's tour, or PGA is under half of the weight.",
+    [COL.win]: "The model's chance of winning the event.",
+    [COL.makeCut]: "The model's chance of making the cut.",
+    [COL.top10]: "The model's chance of a top-10 finish.",
+    [COL.liveSkill]: "The model's skill estimate for the rest of the event, updated for scoring so far.",
+    [COL.b8]: "How much the player's scoring so far this week has moved the skill estimate up (+) or down (-).",
+    [COL.contention]: "Adjustment for where the player sits on the leaderboard: leaders and chasers play differently from players out of it.",
+    [COL.preEventSkill]: "The model's skill estimate before the event began, minus the field's average.",
+    [COL.gap]: `${L.thisWeekPga.short} minus ${L.vsPgaAvg.short}. ${gapSentence}`,
+    [COL.base]: "The model's skill estimate before course-location and owner adjustments.",
+    [COL.location]: "Adjustment for travel, home region and nationality at this event's location.",
+    [COL.override]: "A one-off change to the player's skill set by the owner on the private site.",
+    [COL.sum]: "Base skill plus every adjustment added up.",
+    [COL.baseline]: "The model's final saved skill for the event, before weather and any live updates.",
+    [COL.residual]: "How far the saved skill differs from the sum of its parts. It should be zero; anything shown is a flagged mismatch.",
+  };
+}
 
 export function nameOf(p: { name: string }): string {
   return p.name.includes(",") ? p.name.split(",").reverse().join(" ").trim() : p.name;
@@ -98,11 +127,18 @@ export function benchmarkCell(rating: PgaBenchmark | undefined, reference: PgaBe
 
 export const RESIDUAL_EPS = 1e-5;
 export const residualFlag = (res: number | null): boolean => fin(res) && Math.abs(res) > RESIDUAL_EPS;
-/** Four decimals, or a rounding note; flagged only when the residual is real. */
+/** Four decimals, or zero; flagged only when the residual is real. */
 export function residualText(res: number | null, signedZ: (v: unknown, digits?: number) => string): string {
   if (!fin(res)) return "—";
-  if (!residualFlag(res)) return "<1e-5 (rounding)";
-  return `FLAG ${signedZ(res, 4)}`;
+  if (!residualFlag(res)) return ROUNDING;
+  return `Mismatch ${signedZ(res, 4)}`;
+}
+const ROUNDING = "0 (rounding)";
+
+/** Calendar date ("2026-09-28") as "Sep 28, 2026"; no clock time, so no timezone. */
+function plainDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? NA : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 export type FieldMethod = { offsetText: string; offsetLabel: string; estimator: string; vintage: string; imputed: string; nField: string; fieldAverage: string };
@@ -116,16 +152,16 @@ export function fieldMethod(inputs: WeeklyInputs, kind: string): FieldMethod {
     offsetText: sign(offset),
     offsetLabel: kind === "live" ? "pre-event field offset" : "field offset",
     estimator: ESTIMATOR_NAME,
-    vintage: typeof s.vintage === "string" && s.vintage ? s.vintage.slice(0, 10) : NA,
+    vintage: typeof s.vintage === "string" && s.vintage ? plainDate(s.vintage.slice(0, 10)) : NA,
     imputed: fin(s.n_imputed) ? String(s.n_imputed) : NA,
     nField: fin(s.n_field) ? String(s.n_field) : NA,
     fieldAverage: sign(avg),
   };
 }
 
-/** The This-week column guide (a header tooltip is not available in DataTable, so the same text sits in the column guide). */
+/** The This-week column guide, also used as that column's hover text. */
 export function thisWeekGuide(m: FieldMethod, deps: Pick<WeeklyDeps, "LABELS">): string {
-  return `${deps.LABELS.thisWeekPga.long}. Field average ${m.fieldAverage}; ${m.offsetLabel} ${m.offsetText}; estimator ${m.estimator}; skills vintage ${m.vintage}.`;
+  return `${deps.LABELS.thisWeekPga.long}. This field averages ${m.fieldAverage}; its ${m.offsetLabel} is ${m.offsetText}.`;
 }
 
 /** Default and picker-only columns for a checkpoint kind. Defaults come first so DataTable's own ordering keeps them in front. */
@@ -152,7 +188,9 @@ export type BuildArgs = {
   players: ExPlayer[];
   deps: WeeklyDeps;
 };
-export type BuiltTable = { rows: WeeklyRow[]; defaults: string[]; ordered: string[] };
+export type BuiltTable = { rows: WeeklyRow[]; defaults: string[]; ordered: string[]; titles: Record<string, string>; notes: string[] };
+
+const isEmptyCell = (v: unknown): boolean => v == null || v === "" || v === "—" || v === NA || v === ROUNDING;
 
 export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): BuiltTable {
   const { LABELS: L, plainName, signedZ, savedFieldSkill, savedSkill } = deps;
@@ -167,9 +205,13 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
   const noCut = doc.event.cut_round === 0 || doc.event.cut_rule === "no cut";
   const taken = new Set<string>([...plan.defaults, ...plan.picker, COL.base, COL.location, COL.override, COL.sum, COL.baseline, COL.residual]);
   const componentLabel = new Map(keys.map((k) => [k, uniqueLabel(plainName(k, doc.components_legend), taken)]));
-  const familyLabel = new Map(familyKeys.map((k) => [k, uniqueLabel(`CHL ${plainName(k)}`, taken)]));
+  const familyLabel = new Map(familyKeys.map((k) => [k, uniqueLabel(`Base skill: ${plainName(k, doc.components_legend)}`, taken)]));
   // Until DataTable accepts a default-column prop it shows the first 9 columns: the three that follow the defaults are deliberately harmless (never "vs PGA avg").
   const ordered: string[] = [...plan.defaults, COL.top10, COL.base, COL.location, COL.override, L.vsPgaAvg.short, COL.gap, ...(live ? [COL.preEventSkill] : []), ...familyLabel.values(), COL.sum, COL.baseline, COL.residual, ...weatherRounds.map((r) => `Weather ${r}`), ...componentLabel.values()];
+  const titles = columnTitles(deps, deps.gapSentence ?? "");
+  for (const [k, label] of componentLabel) titles[label] = doc.components_legend?.[k]?.meaning ?? "A saved part of the model's skill estimate, in strokes per round against the field.";
+  for (const [k, label] of familyLabel) titles[label] = `Part of base skill: ${doc.components_legend?.[k]?.meaning ?? plainName(k, doc.components_legend)}. Parts are shown for reference and are not added a second time.`;
+  for (const r of weatherRounds) titles[`Weather ${r}`] = `Effect of the forecast weather on the model's skill estimate for round ${r}.`;
   const rows = players.map((p): WeeklyRow => {
     const input = byInput.get(p.id);
     const ch = obj(input?.challenger);
@@ -208,7 +250,17 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
     row.__row = { id: p.id };
     return row;
   });
-  return { rows, defaults: plan.defaults, ordered };
+  // No empty columns: a column that is blank, n/a or pure rounding for every player is dropped, and the reason is said once.
+  const notes: string[] = [];
+  const keep = (col: string) => rows.some((r) => !isEmptyCell(r[col]));
+  if (noCut) notes.push("This event has no cut, so make-cut odds are not shown.");
+  const gone = new Set<string>();
+  for (const col of ordered) {
+    if (col === COL.player) continue;
+    if (!keep(col) || (col === COL.makeCut && noCut)) gone.add(col);
+  }
+  const cleanRows = rows.map((r) => { const o: WeeklyRow = {}; for (const [k, v] of Object.entries(r)) if (!gone.has(k)) o[k] = v; return o; });
+  return { rows: cleanRows, defaults: plan.defaults.filter((c) => !gone.has(c)), ordered: ordered.filter((c) => !gone.has(c)), titles, notes };
 }
 
 /** Mobile priority (Player, This week, Win) as a stable list for the expand card and CSS hooks. */
@@ -217,7 +269,7 @@ export const MOBILE_COLUMNS = (deps: Pick<WeeklyDeps, "LABELS">): string[] => [C
 /** The expand card for a tapped row: every column except the three already visible on a phone. */
 export function expandEntries(row: WeeklyRow, deps: Pick<WeeklyDeps, "LABELS">): Array<[string, string]> {
   const skip = new Set(MOBILE_COLUMNS(deps));
-  return Object.entries(row).filter(([k, v]) => k !== "__row" && !skip.has(k) && typeof v !== "object").map(([k, v]) => [k, String(v)]);
+  return Object.entries(row).filter(([k, v]) => k !== "__row" && !skip.has(k) && typeof v !== "object" && !isEmptyCell(v)).map(([k, v]) => [k, String(v)]);
 }
 
 /** Plain-name headers for the closed reconciliation table's family columns (never the raw keys). */

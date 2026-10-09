@@ -58,14 +58,14 @@ test("job creation needs a verified identity; the server sets id, requester and 
 
 test("rate limit: one non-terminal job per type, unless older than 6 h", () => {
   const none = {};
-  assert.match(rateLimitProblem("tuesday", [job()], none, NOW), /already queued/);
+  assert.match(rateLimitProblem("tuesday", [job()], none, NOW), /already waiting/);
   assert.equal(rateLimitProblem("wednesday", [job()], none, NOW), null, "other types are unaffected");
   assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "running" } }, NOW), /already running/);
-  assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "claimed" } }, NOW), /already claimed/);
+  assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "claimed" } }, NOW), /already starting/);
   for (const state of ["done", "failed", "expired", "cancelled"]) assert.equal(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state } }, NOW), null, state);
   assert.equal(rateLimitProblem("tuesday", [job({ cancelled_at: "2026-10-05T13:30:00Z" })], none, NOW), null, "cancelled in the queue is terminal");
   assert.equal(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T07:59:00Z" })], none, NOW), null, "older than 6 h no longer blocks");
-  assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already queued/);
+  assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already waiting/);
   assert.equal(rateLimitProblem("tuesday", [], none, NOW), null);
 });
 
@@ -278,8 +278,8 @@ test("machineStatus: offline without a heartbeat or when stale; running and idle
 test("waitingFor: only queued jobs addressed to a machine; says why", () => {
   const beats = [{ machine: "desktop-2ki41v6", at: "2026-10-05T13:59:30Z", state: "idle" }];
   assert.equal(waitingFor(job(), "queued", beats, NOW), null);
-  assert.match(waitingFor(job({ target_machine: "mckinley_home" }), "queued", beats, NOW), /waiting for Desktop \(big\) .*offline/);
-  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", beats, NOW), /waiting for Desktop \(always-on\) to pick it up/);
+  assert.match(waitingFor(job({ target_machine: "mckinley_home" }), "queued", beats, NOW), /Waiting for Desktop \(big\).*offline/);
+  assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", beats, NOW), /Waiting for Desktop \(always-on\) to pick it up/);
   assert.match(waitingFor(job({ target_machine: "desktop-2ki41v6" }), "queued", [{ ...beats[0], state: "running" }], NOW), /finish its current job/);
   assert.equal(waitingFor(job({ target_machine: "mckinley_home" }), "running", beats, NOW), null);
 });

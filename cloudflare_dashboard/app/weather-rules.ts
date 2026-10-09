@@ -175,6 +175,39 @@ export function forecastAgeHours(issuedAt: string, now: number): number | null {
 
 export const COMPONENT_LABELS: Record<string, string> = { wind: "Wind", gust: "Gusts", temp: "Temperature", rain: "Rain", tod: "Time of day" };
 
+/** One sentence per effect column, for hover text. */
+export const COMPONENT_HINTS: Record<string, string> = {
+  wind: "Strokes added (or saved) by the average wind during this player's round.",
+  gust: "Strokes added (or saved) by gusts.",
+  temp: "Strokes added (or saved) by the temperature.",
+  rain: "Strokes added (or saved) by rain.",
+};
+
+/** Weather models by what people call them. Unknown names are shown as given, upper-cased. */
+const MODEL_NAMES: Record<string, string> = { gfs: "GFS (US)", ifs: "ECMWF (European)", icon: "ICON (German)", gem: "GEM (Canadian)", aifs: "ECMWF AI", ukmo: "UK Met Office", arpege: "Arpege (French)" };
+export const modelName = (model: string): string => MODEL_NAMES[model.toLowerCase()] ?? model.toUpperCase();
+
+/** How the course's wind sensitivity was estimated, in plain words. */
+export function windSourceText(source: string): string {
+  const s = source.toLowerCase();
+  if (!s) return "";
+  if (s.includes("own history")) return "Estimated from this course's own history";
+  if (s.includes("class")) return "Estimated from similar courses";
+  if (s.includes("default")) return "A default value (no course history yet)";
+  return source;
+}
+
+/** The moment inside a run name such as "live_R1_20261008T122100Z", as an ISO string; null when the name carries none. */
+export function runMoment(run: string | null | undefined): string | null {
+  const m = /(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z/.exec(run ?? "");
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z` : null;
+}
+
+const etWords = (iso: string | null | undefined): string => {
+  const ms = Date.parse(iso ?? "");
+  return Number.isFinite(ms) ? `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms)} ET` : "an unknown time";
+};
+
 /**
  * D6: the weather document's run against the price checkpoint (same guard shape as explain_run in ExplainViews).
  * Mismatch when the published weather run differs from the priced run, or when the loaded document is not the one the index points to.
@@ -186,8 +219,8 @@ export function weatherCheckpoint(event: WeatherCheckpointIndex, docAsOf: string
   const weatherRun = event.weather_run ?? null;
   const priceRun = event.explain_run ?? null;
   const weatherAsOf = event.weather_as_of ?? docAsOf ?? null;
-  if (!weatherRun || !priceRun) return { weatherRun, priceRun, weatherAsOf, state: "unknown", message: "The index does not say which run this weather belongs to, so it cannot be compared with the price checkpoint." };
-  if (weatherRun !== priceRun) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `Weather is from ${weatherRun}, but the latest price checkpoint is ${priceRun}. The weather effects shown may not be the ones in the current prices.` };
-  if (event.weather_as_of && docAsOf && !sameInstant(event.weather_as_of, docAsOf)) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `The loaded weather document is dated ${docAsOf}, but the index lists ${event.weather_as_of} for this run. Reload before trusting it.` };
+  if (!weatherRun || !priceRun) return { weatherRun, priceRun, weatherAsOf, state: "unknown", message: "The site cannot tell which run this weather belongs to, so it cannot check it against the current prices." };
+  if (weatherRun !== priceRun) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `This weather is from the run at ${etWords(runMoment(weatherRun) ?? weatherAsOf)}, but the latest prices are from the run at ${etWords(runMoment(priceRun))}. The weather effects shown may not be the ones in the current prices.` };
+  if (event.weather_as_of && docAsOf && !sameInstant(event.weather_as_of, docAsOf)) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `The loaded weather file is from ${etWords(docAsOf)}, but this run should have ${etWords(event.weather_as_of)}. Reload before trusting it.` };
   return { weatherRun, priceRun, weatherAsOf, state: "match", message: "Weather and prices come from the same run." };
 }

@@ -4,9 +4,10 @@
  * Charts for the explain views (This week, Why priced, player drawer). Colors only from design tokens (var(--...)); every chart has a text alternative
  * (aria-label / visible numbers) and never relies on color alone (sign glyphs, labels). Pure data shaping lives in explain-rules.ts.
  */
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { bucketProbs, finishBuckets } from "./distributions-rules";
 import {
-  binFinish, finishBins, pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Pctl, type TotalScore, type WaterfallRow,
+  pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Pctl, type TotalScore, type WaterfallRow,
 } from "./explain-rules";
 
 export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -15,54 +16,49 @@ export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3
 export type FinishSeries = { id: number; name: string; pos: number[]; missCut: number | null; color: string };
 
 export function FinishChart({ series, fieldSize, cutTopN, mode }: { series: FinishSeries[]; fieldSize: number; cutTopN: number | null; mode: "probability" | "cumulative" }) {
-  const bins = finishBins(fieldSize, cutTopN);
-  const bars = series.map((s) => binFinish(s.pos, bins, s.missCut));
-  const rows = bins.map((b, i) => {
-    const row: Record<string, number | string> = { label: b.label, w: b.hi - b.lo + 1 };
-    bars.forEach((fb, j) => {
-      row[`p${j}`] = +((fb.p[i] * 100) / (b.hi - b.lo + 1)).toFixed(3);          // % per finishing position, so bins of different widths are comparable
-      row[`t${j}`] = +(fb.p[i] * 100).toFixed(2);
-      row[`c${j}`] = +(fb.cum[i] * 100).toFixed(2);
-    });
+  const cumulative = mode === "cumulative";
+  const hasCut = !!cutTopN || series.some((s) => (s.missCut ?? 0) > 0);
+  const all = finishBuckets(fieldSize, hasCut);
+  const buckets = all.filter((b) => !(cumulative && b.missed));
+  const probs = series.map((s) => bucketProbs(s.pos, s.missCut, all).filter((_, i) => !(cumulative && all[i].missed)));
+  const rows = buckets.map((b, i) => {
+    const row: Record<string, number | string> = { label: b.label };
+    probs.forEach((pr, j) => { row[`p${j}`] = +(100 * (cumulative ? pr.slice(0, i + 1).reduce((a, v) => a + v, 0) : pr[i])).toFixed(2); });
     return row;
   });
-  const single = series.length === 1;
   return (
     <div>
-      <div className="ex-chart" role="img" aria-label={`Finish position ${mode === "cumulative" ? "cumulative probability" : "probability"} for ${series.map((s) => s.name).join(", ")}`}>
+      <div className="ex-chart" role="img" aria-label={`Chance of finishing ${cumulative ? "in each range or better" : "in each range"} for ${series.map((s) => s.name).join(", ")}`}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={rows} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
+          <BarChart data={rows} barCategoryGap="14%" barGap={2} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--line)" vertical={false} />
-            <XAxis dataKey="label" stroke="var(--muted)" interval="preserveStartEnd" tick={{ fontSize: 11 }} />
-            <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 11 }} />
-            <Tooltip content={<FinishTooltip series={series} mode={mode} />} />
-            {single && mode === "probability" && <Bar dataKey="p0" fill={series[0].color} fillOpacity={0.55} isAnimationActive={false} radius={[3, 3, 0, 0]} />}
-            {(!single || mode === "cumulative") && series.map((s, j) => (
-              <Line key={s.id} dataKey={mode === "cumulative" ? `c${j}` : `p${j}`} stroke={s.color} strokeWidth={j === 0 ? 3 : 2} dot={{ r: j === 0 ? 3 : 2 }} isAnimationActive={false} />
-            ))}
-          </ComposedChart>
+            <XAxis dataKey="label" stroke="var(--muted)" interval={0} tick={{ fontSize: 11 }} />
+            <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 11 }} domain={cumulative ? [0, 100] : [0, "auto"]} tickFormatter={(v: number) => String(Math.round(v))} />
+            <Tooltip cursor={{ fill: "var(--tint-1)" }} content={<FinishTooltip series={series} cumulative={cumulative} />} />
+            {series.map((s, j) => <Bar key={s.id} dataKey={`p${j}`} name={s.name} fill={s.color} fillOpacity={series.length === 1 ? 0.7 : 0.85} isAnimationActive={false} radius={[3, 3, 0, 0]} />)}
+          </BarChart>
         </ResponsiveContainer>
       </div>
-      <p className="ex-muted">{mode === "cumulative" ? "Chance of finishing in that position or better." : "Vertical axis: chance of finishing in each single position (bins wider than one position are averaged per position)."}</p>
+      <p className="ex-muted">{cumulative ? "Each bar is the chance of finishing in that range of finish positions or better (ties shared)." : "Each bar is the chance of finishing in that range of finish positions (ties shared); hover for the exact figure."}</p>
       <ul className="ex-legend">
         {series.map((s) => (
-          <li key={s.id}><i style={{ background: s.color }} aria-hidden="true" />{s.name}{s.missCut !== null && <small> · miss cut {pct(s.missCut, 0)}</small>}</li>
+          <li key={s.id}><i style={{ background: s.color }} aria-hidden="true" />{s.name}{s.missCut !== null && <small> · misses the cut {pct(s.missCut, 0)}</small>}</li>
         ))}
       </ul>
     </div>
   );
 }
 
-function FinishTooltip({ active, payload, label, series, mode }: { active?: boolean; payload?: Array<{ dataKey: string; value: number }>; label?: string; series: FinishSeries[]; mode: string }) {
+function FinishTooltip({ active, payload, label, series, cumulative }: { active?: boolean; payload?: Array<{ payload: Record<string, number> }>; label?: string; series: FinishSeries[]; cumulative: boolean }) {
   if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  const range = label === "Win" ? "Win" : label === "Missed cut" ? "Missed cut" : `Finish ${label}`;
   return (
     <div className="ex-tooltip">
-      <strong>Finish {label}{mode === "cumulative" ? " or better" : " (bin total)"}</strong>
+      <strong>{range}{cumulative && label !== "Win" ? " or better" : ""}</strong>
       {series.map((s, j) => {
-        const row = (payload[0] as unknown as { payload: Record<string, number> }).payload;
-        const v = mode === "cumulative" ? row[`c${j}`] : row[`t${j}`];
-        const c = row[`c${j}`];
-        return <span key={s.id}><i style={{ background: s.color }} aria-hidden="true" /> {s.name}: {v === undefined ? "-" : `${v.toFixed(1)}%`}{mode !== "cumulative" && c !== undefined ? ` (cum. ${c.toFixed(1)}%)` : ""}</span>;
+        const v = row[`p${j}`];
+        return <span key={s.id}><i style={{ background: s.color }} aria-hidden="true" /> {s.name}: {v === undefined ? "n/a" : `${v.toFixed(1)}%`}</span>;
       })}
     </div>
   );
@@ -96,7 +92,7 @@ export function ScoreFan({ items, rounds }: { items: Array<{ id: number; name: s
         const x = (v: number) => ((v - lo) / (hi - lo || 1)) * 100;
         return (
           <div className="ex-fan-block" key={k}>
-            <h4>{total ? "72-hole total vs par (made-cut draws)" : `Round ${k.slice(1)} vs par`}<small>{total ? " 5th-95th percentile, box 25th-75th" : " 10th-90th percentile"}</small></h4>
+            <h4>{total ? "72-hole total vs par (if the player makes the cut)" : `Round ${k.slice(1)} vs par`}<small>{total ? " · middle 90% of outcomes, box = middle half" : " · middle 80% of outcomes"}</small></h4>
             {items.map((it) => {
               const r = asRange(it.scores[k], total);
               if (!r) return null;

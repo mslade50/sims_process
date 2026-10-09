@@ -59,19 +59,19 @@ export type JobSpec = {
 };
 
 export const JOB_TYPES: JobSpec[] = [
-  { type: "monday_settle", group: "Monday", label: "Settle last week", does: "Pulls the finished event and settles last week's prices (forward-test monitoring), then a health check.", when: "Monday morning, once the event is final.", no_pull: true, supersede: false, after_round: false },
-  { type: "monday_week", group: "Monday", label: "Price the new week", does: "Prices the upcoming event, then signals, report, dashboard publish and health.", when: "Monday, after the settle job and once the field is known.", no_pull: true, supersede: true, after_round: false },
-  { type: "tuesday", group: "Tuesday", label: "Tuesday refresh", does: "Re-prices the week on Tuesday's data, then signals, report, publish and health.", when: "Tuesday, after the market has moved.", no_pull: true, supersede: true, after_round: false },
-  { type: "wednesday", group: "Wednesday", label: "Wednesday reprice", does: "Re-prices with the tee-time gate, then signals, report, publish and health.", when: "Wednesday, once tee times are out.", no_pull: true, supersede: true, after_round: false },
-  { type: "thursday", group: "Thursday", label: "Thursday morning price", does: "Final pre-tee pricing run, then signals, report, publish and health.", when: "Thursday morning before the first tee.", no_pull: true, supersede: true, after_round: false },
-  { type: "thursday_close", group: "Thursday", label: "Thursday close", does: "Pre-event live state (nothing in play yet), publish and health.", when: "Runs by itself 30 minutes before each event's own first tee (the input watch starts it); press it only to force a look.", no_pull: false, supersede: true, after_round: false },
-  { type: "after_round", group: "During event", label: "After a round", does: "Re-prices the live state after a finished round, then publishes and health. Leave the round on automatic to infer it.", when: "Runs by itself the moment the feed shows a round complete (the input watch starts it, per event); press it only to force a look.", no_pull: false, supersede: true, after_round: true },
-  { type: "daily_health", group: "Anytime", label: "Health check", does: "Checks expected runs, stale prices, blocking checks and stored files. Changes nothing else.", when: "Any time you want to know if all is well.", no_pull: false, supersede: false, after_round: false },
-  { type: "xtour", group: "Monday", label: "Refresh cross-tour base", does: "Rebuilds the cross-tour base from the newest foundation (paced DataGolf pull), then publishes it to R2 so every runner prices on the same base, then a health check. Prices nothing.", when: "Monday after the new foundation snapshot exists, if the Monday job did not refresh it.", no_pull: false, supersede: false, after_round: false },
-  { type: "xtour_publish", group: "Anytime", label: "Publish cross-tour base", does: "Publishes the local cross-tour base to R2 (idempotent; LATEST written last). Does not rebuild or price anything.", when: "If another machine reports it cannot see the newest base.", no_pull: false, supersede: false, after_round: false },
-  { type: "publish", group: "Anytime", label: "Publish model inputs", does: "Publishes the latest model inputs to this dashboard. Does not price anything.", when: "If the Model inputs page looks out of date.", no_pull: false, supersede: false, after_round: false },
-  { type: "odds_reprice", group: "Anytime", label: "Odds check (no re-simulation)", does: "Re-reads the latest odds, recomputes signals against the fairs of the last full run, publishes them here and alerts on a new or moved live signal. Takes seconds.", when: "Runs by itself every 30 minutes from Monday afternoon to the Thursday tee; press it for an immediate look.", no_pull: true, supersede: false, after_round: false },
-  { type: "watch", group: "Anytime", label: "Input watch", does: "Checks the field, tee times and forecast against the last full run; re-prices only if something that moves prices changed (rate limited), runs the pre-tee close per event and prices each completed round.", when: "Runs by itself every 15 minutes all week: re-prices on a withdrawal or tee-sheet news, closes each event 30 minutes before its own first tee, prices each round as soon as it is complete. Press it only to force a look now.", no_pull: true, supersede: false, after_round: false },
+  { type: "monday_settle", group: "Monday", label: "Settle last week", does: "Pulls the finished event, grades last week's prices and bets, then runs a health check.", when: "Monday morning, once the event is final.", no_pull: true, supersede: false, after_round: false },
+  { type: "monday_week", group: "Monday", label: "Price the new week", does: "Prices the upcoming event, then updates the edges, report and dashboard.", when: "Monday, after settling and once the field is known.", no_pull: true, supersede: true, after_round: false },
+  { type: "tuesday", group: "Tuesday", label: "Tuesday refresh", does: "Prices the week again on Tuesday's data, then updates the edges, report and dashboard.", when: "Tuesday, after the market has moved.", no_pull: true, supersede: true, after_round: false },
+  { type: "wednesday", group: "Wednesday", label: "Wednesday reprice", does: "Prices the week again once tee times are known, then updates the edges, report and dashboard.", when: "Wednesday, once tee times are out.", no_pull: true, supersede: true, after_round: false },
+  { type: "thursday", group: "Thursday", label: "Thursday morning price", does: "The final pricing run before the first tee, then updates the edges, report and dashboard.", when: "Thursday morning before the first tee.", no_pull: true, supersede: true, after_round: false },
+  { type: "thursday_close", group: "Thursday", label: "Thursday close", does: "Locks in the pre-tournament numbers and publishes them (nothing is in play yet).", when: "Starts by itself 30 minutes before each event's first tee; press it only to force it.", no_pull: false, supersede: true, after_round: false },
+  { type: "after_round", group: "During event", label: "After a round", does: "Prices the live state after a finished round, then publishes it. Leave the round on Automatic and it works out which round just finished.", when: "Starts by itself when a round finishes; press it only to force it.", no_pull: false, supersede: true, after_round: true },
+  { type: "daily_health", group: "Anytime", label: "Health check", does: "Checks that expected runs happened and nothing is stale or blocked. Changes nothing else.", when: "Any time you want to know if all is well.", no_pull: false, supersede: false, after_round: false },
+  { type: "xtour", group: "Monday", label: "Refresh the shared skill baseline", does: "Rebuilds the baseline that puts PGA and European players on one scale and shares it with every machine. Prices nothing.", when: "Monday after the new data snapshot exists, if the Monday job did not already do it.", no_pull: false, supersede: false, after_round: false },
+  { type: "xtour_publish", group: "Anytime", label: "Share the skill baseline", does: "Shares this machine's skill baseline with the other machines. Does not rebuild or price anything.", when: "If another machine says it cannot see the newest baseline.", no_pull: false, supersede: false, after_round: false },
+  { type: "publish", group: "Anytime", label: "Publish model inputs", does: "Sends the latest model inputs to this dashboard. Does not price anything.", when: "If the Model inputs page looks out of date.", no_pull: false, supersede: false, after_round: false },
+  { type: "odds_reprice", group: "Anytime", label: "Odds check (no re-simulation)", does: "Re-reads the latest odds and compares them with the model's prices from the last full run. Takes seconds, and alerts you if a bet appears or moves.", when: "Runs by itself every 30 minutes from Monday afternoon to the Thursday tee; press it for an immediate look.", no_pull: true, supersede: false, after_round: false },
+  { type: "watch", group: "Anytime", label: "Input watch", does: "Checks the field, tee times and forecast against the last full run, and prices again only if something that moves prices has changed.", when: "Runs by itself every 15 minutes all week; press it only to check right now.", no_pull: true, supersede: false, after_round: false },
 ];
 
 export const TERMINAL = ["done", "failed", "cancelled", "expired"] as const;
@@ -104,6 +104,18 @@ export type JobStatus = {
 };
 
 export const specFor = (type: unknown): JobSpec | undefined => JOB_TYPES.find((spec) => spec.type === type);
+
+/** Plain words for a job state. */
+const STATE_LABELS: Record<string, string> = { queued: "Waiting", claimed: "Starting", running: "Running", done: "Done", failed: "Failed", cancelled: "Cancelled", expired: "Expired" };
+export const stateLabel = (state: string): string => STATE_LABELS[state] ?? state;
+
+/** Who asked for a job: the automatic schedule, or the person's email. */
+export const requesterLabel = (by: string | undefined): string => (by === "cron" ? "the automatic schedule" : by || "someone");
+
+/** The options of a job as a short sentence ("after round 2, skipped the data pull"); empty when it ran with none. */
+export function paramsSentence(params: JobParams | undefined): string {
+  return [params?.after_round ? `after round ${params.after_round}` : "", params?.no_pull ? "skipped the data pull" : "", params?.supersede ? "re-ran even if nothing had changed" : ""].filter(Boolean).join(", ");
+}
 
 export function isoSeconds(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -179,11 +191,11 @@ export function effectiveState(job: JobRecord, status: JobStatus | null | undefi
 export function waitingFor(job: JobRecord, state: string, beats: MachineBeat[] | undefined, now: number): string | null {
   if (state !== "queued" || !job.target_machine) return null;
   const spec = MACHINES.find((m) => m.name === job.target_machine);
-  if (!spec) return `waiting for ${job.target_machine}`;
+  if (!spec) return `Waiting for ${job.target_machine}`;
   const m = machineStatus(spec, beats, now);
-  if (m.status === "offline") return `waiting for ${m.label} (${spec.name}), which is offline`;
-  if (m.status === "running") return `waiting for ${m.label} to finish its current job`;
-  return `waiting for ${m.label} to pick it up`;
+  if (m.status === "offline") return `Waiting for ${m.label}, which is offline`;
+  if (m.status === "running") return `Waiting for ${m.label} to finish its current job`;
+  return `Waiting for ${m.label} to pick it up`;
 }
 
 /** One job of a type at a time: a new request is refused while an earlier one of the same type is queued, claimed or running and under 6 h old. */
@@ -193,7 +205,7 @@ export function rateLimitProblem(type: string, jobs: JobRecord[], statuses: Reco
     const at = parseUtc(job.requested_at);
     if (at === null || now - at >= MAX_AGE_MS) continue;
     const state = effectiveState(job, statuses[job.id]);
-    if (!isTerminal(state)) return `a ${type} job (${job.id}) is already ${state}; wait for it to finish or cancel it`;
+    if (!isTerminal(state)) return `${specFor(type)?.label ?? "That job"} is already ${stateLabel(state).toLowerCase()}. Wait for it to finish, or cancel it.`;
   }
   return null;
 }

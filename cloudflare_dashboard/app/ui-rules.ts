@@ -43,6 +43,11 @@ export function parseTimestamp(value: unknown): number | null {
   return Number.isFinite(direct) ? direct : null;
 }
 
+/** "Oct 8, 12:10 PM ET" for a millisecond timestamp (kept local so this file stays free of imports; same format as lib.etTime). */
+export function etStamp(ms: number): string {
+  return `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms)} ET`;
+}
+
 export function relativeAge(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 45) return "just now";
@@ -114,7 +119,7 @@ export function summarizeWeek(index: { events?: IndexEventLite[] } | null | unde
     };
   });
   const withRun = events.filter((e) => e.asOfMs !== null).sort((a, b) => (a.asOfMs as number) - (b.asOfMs as number));
-  const tooltip = events.map((e) => `${e.name}: ${e.ageMs === null ? "no run yet" : `run ${relativeAge(e.ageMs)}`}${e.publishedAt ? `; published ${relativeAge(now - (parseTimestamp(e.publishedAt) as number))}` : ""}`).join("\n");
+  const tooltip = events.map((e) => `${e.name}: ${e.ageMs === null || e.asOfMs === null ? "no run yet" : `last run ${etStamp(e.asOfMs)} (${relativeAge(e.ageMs)})`}${e.publishedAt ? `; published ${etStamp(parseTimestamp(e.publishedAt) as number)}` : ""}`).join("\n");
   const published = events.filter((e) => e.publishedAt).sort((a, b) => (parseTimestamp(a.publishedAt) as number) - (parseTimestamp(b.publishedAt) as number));
   const held = events.filter((e) => e.heldBack);
   return {
@@ -123,7 +128,7 @@ export function summarizeWeek(index: { events?: IndexEventLite[] } | null | unde
     oldestAsOf: withRun[0]?.asOf ?? null,
     events, tooltip,
     publishedLine: published.length ? `Published ${relativeAge(now - (parseTimestamp(published[0].publishedAt) as number))}` : null,
-    heldBackNote: held.length ? `Newer run not published: ${held.map((e) => (events.length > 1 ? `${e.name}: ${e.heldBack}` : e.heldBack)).join("; ")}` : null,
+    heldBackNote: held.length ? `A newer run was not published: ${held.map((e) => (events.length > 1 ? `${e.name}: ${e.heldBack}` : e.heldBack)).join("; ")}` : null,
   };
 }
 

@@ -7,25 +7,26 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
 export const signed = (v: unknown, digits = 2): string => finite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}` : "n/a";
 
 /** B2 caveat rows 1 and 2: one line each, directly under the headline. */
-export const CAVEAT_REFERENCE_ONLY = "Reference only; prices use the event model";
+export const CAVEAT_REFERENCE_ONLY = "For reference only: prices come from the event model, not this number";
 export const CAVEAT_DESCRIPTIVE = "Descriptive, not a forecast";
 /** B2 row 8: the label carries the zero point. */
 export const ZERO_LABEL = "vs 2025 PGA avg round";
 /** B2 row 9: one clause beside the interval. */
-export const INTERVAL_CLAUSE = "excludes future-round variance and anchor uncertainty";
+export const INTERVAL_CLAUSE = "does not include future-round variability or uncertainty in the PGA average itself";
 /** B2 row 10 / A6. */
-export const CROSS_TOUR_BAND = "cross-tour band ±0.2";
-export const NO_CATEGORY_DATA = "n/a (no category data on this tour)";
-export const RADAR_LABEL = "within-field style, PGA+LIV data only";
-export const WEEKEND_ROUNDS_NOTE = "includes weekend rounds (selected by the cut)";
+export const CROSS_TOUR_BAND = "comparisons across tours are only good to about ±0.2";
+export const NO_CATEGORY_DATA = "No strokes-gained breakdown for this tour";
+export const RADAR_LABEL = "playing style, PGA and LIV rounds only";
+export const WEEKEND_ROUNDS_NOTE = "includes weekend rounds (only players who made the cut play them)";
 
-/** A catalog may carry one stored "typical PGA regular" tick (A3). Never computed client side. */
-export type RegularTick = {value?: number; unshrunk?: number; as_of?: string; label?: string};
+/** The catalog stores one "typical PGA regular" tick (A3), either at the top level or inside the PGA reference. Never computed client side. The shrunk form is used when published, to match the headline. */
+export type RegularTick = {value?: number; shrunk?: number | null; unshrunk?: number | null; as_of?: string; label?: string};
 export function regularTick(catalog: unknown): {value: number; asOf: string | null} | null {
-  const t = (catalog as {regular_tick?: RegularTick | number} | null | undefined)?.regular_tick;
+  const c = catalog as {regular_tick?: RegularTick | number; pga_benchmark_reference?: {regular_tick?: RegularTick | number}} | null | undefined;
+  const t = c?.regular_tick ?? c?.pga_benchmark_reference?.regular_tick;
   if (finite(t)) return {value: t, asOf: null};
   if (!t || typeof t !== "object") return null;
-  const value = finite(t.value) ? t.value : finite(t.unshrunk) ? t.unshrunk : null;
+  const value = finite(t.shrunk) ? t.shrunk : finite(t.value) ? t.value : finite(t.unshrunk) ? t.unshrunk : null;
   return value === null ? null : {value, asOf: typeof t.as_of === "string" ? t.as_of : null};
 }
 
@@ -46,7 +47,7 @@ export function tourMixBadge(weights: Array<{tour: string; weight_fraction: numb
   const pgaShare = w.filter(t => t.tour.toLowerCase() === "pga").reduce((s, t) => s + t.weight_fraction, 0);
   const differs = !!eventTour && primary.tour.toLowerCase() !== eventTour.toLowerCase();
   if (!differs && pgaShare >= 0.5) return null;
-  return `mostly ${primary.tour.toUpperCase()} rounds (${Math.round(primary.weight_fraction * 100)}%) · ${CROSS_TOUR_BAND}`;
+  return `mostly ${primary.tour.toUpperCase()} rounds (${Math.round(primary.weight_fraction * 100)}%); ${CROSS_TOUR_BAND}`;
 }
 
 /** Horizontal bar geometry on a symmetric domain; zero sits in the middle. Values clamp to the domain. */
@@ -73,7 +74,7 @@ type FilterLike = {window?: string; season: string; tour: string; major: boolean
 /** Summary bar text: "R1-R2 · last 2 years · no situational filter". */
 export function describeFilters(f: FilterLike): {text: string; situational: string[]; roundBadge: string | null} {
   const situational = [
-    f.contention !== "all" ? (f.contention === "near" ? "in contention (reconstructed)" : "outside contention (reconstructed)") : "",
+    f.contention !== "all" ? (f.contention === "near" ? "in contention (estimated from earlier rounds)" : "outside contention (estimated from earlier rounds)") : "",
     f.major ? "majors only" : "", f.difficulty ? `${f.difficulty} scoring` : "", f.strength ? `${f.strength} field` : "",
     f.event ? "one event" : "", f.course ? "one course" : "", f.search ? `search "${f.search}"` : "",
   ].filter(Boolean);
@@ -85,7 +86,7 @@ export function describeFilters(f: FilterLike): {text: string; situational: stri
 /** A7: live-checkpoint chips from the stored per-player live block. Null unless the transient latent exists. */
 export type LiveBlock = {tier?: number | null; mu_live?: number | null; week_latent_mean?: number | null; contention?: number | null} | null | undefined;
 /** A7: the stored week latent is centred over every entrant who played the completed rounds, not over the players still active. After a cut the active-field mean is above zero (survivors), so the chips are not centred on the field still playing. */
-export const LIVE_CENTRING_NOTE = "centred on all entrants, not the active field";
+export const LIVE_CENTRING_NOTE = "measured against everyone who started, not only players still in the field";
 export function liveChips(live: LiveBlock): {transient: number; priced: number | null; contentionIncluded: boolean} | null {
   if (!live || !finite(live.week_latent_mean)) return null;
   // Tier 0 is active; 1 (MDF), 2 (missed cut) and 3/4 (WD) play no further round, so "next round" chips would mislead.
@@ -117,18 +118,18 @@ export function sgBarRows(metrics: BarMetric[], minRounds = 3): {rows: BarRow[];
   });
   return {rows, available: rows.some(r => r.status === "ok")};
 }
-export const NO_CATEGORY_REFERENCE = "n/a (category reference unavailable)";
-export const NO_CATEGORY_ROUNDS = (minRounds: number) => `n/a (fewer than ${minRounds} category rounds in this window)`;
+export const NO_CATEGORY_REFERENCE = "No PGA comparison averages";
+export const NO_CATEGORY_ROUNDS = (minRounds: number) => `Fewer than ${minRounds} rounds with a strokes-gained breakdown in this window`;
 /** Name the real cause of an empty bar block: tour coverage first, then a missing reference, then too few rounds. */
 export function noCategoryReason(tours: string[] | undefined, ctx?: {hasReference?: boolean; deepLoaded?: boolean; minRounds?: number}): string {
   const list = (tours ?? []).map(t => t.toLowerCase());
   const covered = list.some(t => t === "pga" || t === "liv");
-  if (list.length > 0 && !covered) return `${NO_CATEGORY_DATA}: category strokes gained are published for PGA and LIV rounds only; this player's rounds are ${list.map(t => t.toUpperCase()).join(", ")}`;
-  if (!ctx) return list.length ? `${NO_CATEGORY_DATA}: category strokes gained are published for PGA and LIV rounds only; this player's rounds are ${list.map(t => t.toUpperCase()).join(", ")}` : NO_CATEGORY_DATA;
-  if (ctx.deepLoaded === false) return "n/a (deep history has not loaded)";
-  if (ctx.hasReference === false) return `${NO_CATEGORY_REFERENCE}: the fixed PGA category reference was not published, so category rounds cannot be scored`;
+  if (list.length > 0 && !covered) return `${NO_CATEGORY_DATA}: the breakdown is only published for PGA and LIV rounds, and this player's rounds are ${list.map(t => t.toUpperCase()).join(", ")}`;
+  if (!ctx) return list.length ? `${NO_CATEGORY_DATA}: the breakdown is only published for PGA and LIV rounds, and this player's rounds are ${list.map(t => t.toUpperCase()).join(", ")}` : NO_CATEGORY_DATA;
+  if (ctx.deepLoaded === false) return "The round-by-round history has not loaded";
+  if (ctx.hasReference === false) return `${NO_CATEGORY_REFERENCE}: the PGA comparison averages were not published, so these rounds cannot be scored`;
   return NO_CATEGORY_ROUNDS(ctx.minRounds ?? 3);
 }
 
 /** B5: next-action wording for the /players error and absent states. */
-export const CATALOG_UNAVAILABLE_HINT = "The catalog request failed or returned nothing. Try again; if it persists, the profile publish may not have run (check the Run page).";
+export const CATALOG_UNAVAILABLE_HINT = "The player list did not load. Try again; if it keeps failing, the profiles may not have been published yet (check the Run page).";

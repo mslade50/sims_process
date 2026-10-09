@@ -51,7 +51,7 @@ test("an unknown route is a visible not-found notice with the nav, not a redirec
 
 test("a redirect route renders a moved notice with a link (the browser then replaces the location)", async () => {
   const html = await (await render("/weather")).text();
-  assert.match(html, /Now at \/weather-effects/);
+  assert.match(html, /Go to the new page/);
   assert.match(html, /href="\/weather-effects"/);
 });
 
@@ -103,8 +103,8 @@ test("header freshness is the OLDEST event's newest run, not the newest run of a
   assert.equal(week.sub, "Baycurrent · Madrid");
   assert.equal(week.oldestAsOf, iso(32), "Espana (32 h) is older than Baycurrent's newest (22 h); the old code reported 22 h");
   assert.deepEqual(week.events.map((e) => Math.round((e.ageMs ?? 0) / HOUR)), [22, 32]);
-  assert.match(week.tooltip, /Baycurrent Classic: run 22 h ago/);
-  assert.match(week.tooltip, /Open de Espana: run 32 h ago/);
+  assert.match(week.tooltip, /Baycurrent Classic: last run Oct 8, 10:00 AM ET \(22 h ago\)/);
+  assert.match(week.tooltip, /Open de Espana: last run Oct 8, 12:00 AM ET \(32 h ago\)/);
   assert.ok(!week.tooltip.includes("Old week"), "only the newest date_start week");
 });
 
@@ -129,7 +129,7 @@ test("published_at and held_back render only when index.json carries them", () =
     ],
   }, NOW);
   assert.equal(withFields.publishedLine, "Published 6 h ago", "oldest publish");
-  assert.match(withFields.heldBackNote, /^Newer run not published: A: Round 2 pricing failed check c7/);
+  assert.match(withFields.heldBackNote, /^A newer run was not published: A: Round 2 pricing failed check c7/);
   assert.equal(heldBackText(["x", "y"]), "x; y");
   assert.equal(heldBackText(false), null);
   assert.equal(heldBackText({}), "a newer run was held back");
@@ -160,8 +160,8 @@ test("packaged fallback is used only when there is no Worker (network failure or
 });
 
 test("a structured Worker error is surfaced, never masked by the packaged copy", () => {
-  assert.deepEqual(decideFallback({ kind: "response", ok: false, status: 404, json: { ok: false, error: "not published yet" } }), { action: "surface", message: "Data request failed (404): not published yet" });
-  assert.deepEqual(decideFallback({ kind: "response", ok: false, status: 503, json: { ok: false, error: "dashboard bucket is not bound" } }), { action: "surface", message: "Data request failed (503): dashboard bucket is not bound" });
+  assert.deepEqual(decideFallback({ kind: "response", ok: false, status: 404, json: { ok: false, error: "not published yet" } }), { action: "surface", message: "This data could not be loaded (code 404): not published yet" });
+  assert.deepEqual(decideFallback({ kind: "response", ok: false, status: 503, json: { ok: false, error: "dashboard bucket is not bound" } }), { action: "surface", message: "This data could not be loaded (code 503): dashboard bucket is not bound" });
   assert.equal(decideFallback({ kind: "response", ok: false, status: 500, json: { nothing: true } }).action, "surface", "non-ok JSON without an error string is still real");
   assert.equal(decideFallback({ kind: "response", ok: false, status: 400, json: { error: "Invalid data path" } }).action, "surface");
 });

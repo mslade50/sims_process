@@ -70,7 +70,7 @@ test("round-set badge only off the R1-R2 default; summary text describes the act
   assert.equal(all.text, "R1-R4 · last 2 years · no situational filter");
   assert.equal(all.roundBadge, WEEKEND_ROUNDS_NOTE);
   const sit = describeFilters({ ...base, contention: "near", rounds: [3, 4], major: true, window: "all" });
-  assert.match(sit.text, /^R3-R4 · all published history · in contention \(reconstructed\), majors only$/);
+  assert.match(sit.text, /^R3-R4 · all published history · in contention \(estimated from earlier rounds\), majors only$/);
   assert.equal(sit.situational.length, 2);
 });
 
@@ -122,7 +122,7 @@ test("hero renders the headline value, caveat rows 1 and 2, the zero sentence, s
   assert.match(html, /vs 2025 PGA avg round/);
   assert.ok(html.includes(CAVEAT_REFERENCE_ONLY));
   assert.ok(html.includes(CAVEAT_DESCRIPTIVE));
-  assert.match(html, /Zero is the average 2025 PGA Tour R1-R2 round/);
+  assert.match(html, /Zero is the average round on the 2025 PGA Tour \(opening two rounds/);
   assert.match(html, /n=158 rounds/);
   assert.equal(html.includes("regular-tick"), false);
   assert.equal(html.includes("typical regular"), false);
@@ -150,7 +150,7 @@ test("hero badges: amber thin-sample, n<12 unsupported, and tour mix only when i
 test("as-was gate: an archived checkpoint before the last observation withholds the number; a later one shows it", () => {
   const early = hero({ checkpoint: "2026-08-01T00:00:00Z" });
   assert.match(early, /Withheld/);
-  assert.match(early, /latest revised history, not as-was/);
+  assert.match(early, /Withheld for this old checkpoint: the profile is rebuilt from the latest data/);
   assert.equal(early.includes("+0.73 <small"), false);
   const late = hero({ checkpoint: "2026-10-08T12:00:00Z" });
   assert.match(late, /\+0\.73 <small/);
@@ -159,7 +159,7 @@ test("as-was gate: an archived checkpoint before the last observation withholds 
 
 test("trend teaser: skeleton while the deep batch loads, honest note when it is missing", () => {
   assert.match(hero({ deepLoading: true }), /data-testid="trend-skeleton"/);
-  assert.match(hero({ deepError: "Data request failed (404)" }), /data-testid="trend-unavailable"[\s\S]*Deep history unavailable/);
+  assert.match(hero({ deepError: "Data request failed (404)" }), /data-testid="trend-unavailable"[\s\S]*Round-by-round history did not load/);
   assert.equal(hero().includes('data-testid="trend-teaser"'), false);
 });
 
@@ -183,9 +183,9 @@ test("week chips: vs field, win and top 10 from the saved doc; live checkpoints 
   assert.match(html, /win/);
   assert.match(html, /top 10/);
   assert.match(html, /data-testid="live-chips"/);
-  assert.match(html, /this week, transient/);
+  assert.match(html, /this week, scoring so far/);
   assert.match(html, /priced strength, next round/);
-  assert.match(html, /centred on all entrants, not the active field/);
+  assert.match(html, /measured against everyone who started, not only players still in the field/);
   const week = hero({ entry, profile, weekly: { ...weekly, savedDoc: { ...live, kind: "week" } } });
   assert.equal(week.includes("live-chips"), false);
 });
@@ -195,7 +195,7 @@ test("hero without a saved field gives a next action instead of a dead end", () 
   assert.match(html, /data-testid="week-absent"/);
   assert.match(html, /Show the full field/);
   const absent = hero({ weekly: { ...weekly, savedDoc: { ...live, players: [] } } });
-  assert.match(absent, /Not active in this saved field/);
+  assert.match(absent, /Not in this week&#x27;s field/);
 });
 
 // ---- SG bars -----------------------------------------------------------------------------------------------------------------
@@ -210,11 +210,11 @@ test("SG bars: n/a state is explicit and names the tours (no category data)", ()
 });
 test("SG bars: n/a names the real cause (PGA-covered player: reference, deep history, or too few rounds)", () => {
   const pga = bars({ tours: ["pga"], deep: deepWithRounds(1), categoryReference: undefined });
-  assert.match(pga, /category reference unavailable/);
+  assert.match(pga, /PGA comparison averages were not published/);
   assert.equal(pga.includes("this player&#x27;s rounds are") || pga.includes("published for PGA and LIV rounds only"), false);
-  assert.match(bars({ tours: ["pga"] }), /deep history has not loaded/);
+  assert.match(bars({ tours: ["pga"] }), /round-by-round history has not loaded/);
   const thin = bars({ tours: ["pga"], deep: { ...deepWithRounds(24), history: { events: [] } } });
-  assert.match(thin, /fewer than 3 category rounds/);
+  assert.match(thin, /Fewer than 3 rounds with a strokes-gained breakdown/);
 });
 test("SG bars: skeleton while loading; bars with Z and rounds when category data exists; no window toggle", () => {
   assert.match(bars({ loading: true }), /data-testid="sg-skeleton"/);
@@ -224,7 +224,7 @@ test("SG bars: skeleton while loading; bars with Z and rounds when category data
   assert.match(html, /Putting/);
   assert.match(html, /ph-sg-fill/);
   assert.equal(/<select|toggle/i.test(html), false);
-  assert.match(html, /R1-R2/);
+  assert.match(html, /Rounds 1 and 2 over the last 2 years/);
 });
 
 test("W1: layout guards - hero identity keeps a minimum column; legacy header row wraps on phones", async () => {
@@ -244,12 +244,12 @@ test("week chip shows saved model skill on the PGA scale (mu_tour) with its labe
   const week = hero({ entry, profile, weekly: { ...base, savedDoc: { ...live, kind: "week" }, pgaSkill: { value: 0.851, offset: 0.1002, live: false, preEvent: 0.851 } } });
   assert.match(week, /data-testid="pga-chip"/);
   assert.match(week, /<b>\+0\.85<\/b><small>This week \(PGA scale\)<\/small>/);
-  assert.match(week, /Saved model skill \+ this field&#x27;s offset to the PGA scale \(F02\); field offset \+0\.100/);
-  assert.match(week, /remaining gap is form versus model/);
+  assert.match(week, /saved skill plus this field&#x27;s offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)/);
+  assert.match(week, /remaining gap is recent form versus the model&#x27;s view/);
   assert.match(week, /win/); assert.match(week, /top 10/);
   const lv = hero({ entry, profile, weekly: { ...base, savedDoc: live, pgaSkill: { value: 0.7, offset: 0.1002, live: true, preEvent: 0.851 } } });
-  assert.match(lv, /This week \(PGA scale\), live skill \+ pre-event field offset/);
-  assert.match(lv, /Pre-event value \+0\.851/);
+  assert.match(lv, /This week \(PGA scale\), live[\s\S]*Live skill plus the pre-event field offset/);
+  assert.match(lv, /The pre-event value was \+0\.851/);
   const fb = hero({ entry, profile, weekly: { ...base, savedDoc: { ...live, kind: "week" } } });
   assert.equal(fb.includes("pga-chip"), false);
   assert.match(fb, /vs field/);

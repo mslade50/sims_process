@@ -28,12 +28,12 @@ export function SearchablePlayerPicker({ players, excludedIds, disabled, onSelec
   return <div className="pp-player-picker" ref={wrapper} onBlur={event => {
     if(!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
   }}>
-    <label htmlFor={`${id}-input`}>Compare historical profiles</label>
+    <label htmlFor={`${id}-input`}>Compare with other players</label>
     <div className="pp-player-picker-input"><Search size={16} aria-hidden="true"/>
       <input id={`${id}-input`} role="combobox" aria-autocomplete="list" aria-expanded={expanded}
         aria-controls={expanded ? `${id}-list` : undefined} aria-activedescendant={expanded && current >= 0 ? `${id}-option-${current}` : undefined}
         aria-describedby={`${id}-hint`} autoComplete="off" disabled={disabled} value={query}
-        placeholder={disabled ? "Two comparisons selected" : "Search name, tour or player ID…"}
+        placeholder={disabled ? "Two comparisons selected" : "Search by player name…"}
         onFocus={()=>setOpen(true)} onClick={()=>setOpen(true)}
         onChange={event=>{setQuery(event.target.value);setOpen(true);setActive(0);setLimit(80);}}
         onKeyDown={event=>{
@@ -47,16 +47,16 @@ export function SearchablePlayerPicker({ players, excludedIds, disabled, onSelec
           if(event.key === "Enter" && expanded){event.preventDefault();if(visible[current])choose(visible[current]);}
         }}/>
     </div>
-    <span id={`${id}-hint`} className="sr-only">Add up to two players. Search the entire catalog. Use up and down arrows, then Enter to select. Escape closes results.</span>
+    <span id={`${id}-hint`} className="sr-only">Add up to two players. Search by name. Use the up and down arrows, then Enter to select. Escape closes the list.</span>
     {expanded && <div className="pp-player-options">
-      <div id={`${id}-list`} role="listbox" aria-label="Historical profiles" ref={list}>
+      <div id={`${id}-list`} role="listbox" aria-label="Players" ref={list}>
         {visible.map((p,index)=><div key={playerId(p)} id={`${id}-option-${index}`} role="option" tabIndex={-1} aria-selected={index===current} onKeyDown={event=>{if(event.key==="Enter" || event.key===" "){event.preventDefault();choose(p);}}}
           onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(p)}>
-          <strong>{p.name}</strong><small>{(p.tours ?? []).join(" · ").toUpperCase() || "Tour unavailable"} · ID {playerId(p)} · {p.status}</small>
+          <strong>{p.name}</strong>{(p.tours ?? []).length>0 && <small>{(p.tours ?? []).join(" · ").toUpperCase()}</small>}
         </div>)}
-        {!matches.length && <p className="pp-player-empty">No profiles match “{query}”. Try a name or player ID.</p>}
+        {!matches.length && <p className="pp-player-empty">No players match “{query}”. Try a different spelling.</p>}
       </div>
-      <div className="pp-player-options-footer"><span role="status">{visible.length} of {matches.length} matches</span>
+      <div className="pp-player-options-footer"><span role="status">Showing {visible.length} of {matches.length}</span>
         {matches.length>visible.length && <button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>setLimit(limit+80)}>Show more</button>}
       </div>
     </div>}

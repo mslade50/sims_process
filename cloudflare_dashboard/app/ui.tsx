@@ -5,6 +5,7 @@
  * motion respects prefers-reduced-motion (CSS media query plus useReducedMotion for JS-driven animation).
  */
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { etTime } from "./lib";
 import { catalogFreshnessTone, countUpText, freshnessTone, parseTimestamp, relativeAge, type FreshnessTone } from "./ui-rules";
 
 export type Tone = "positive" | "negative" | "warning" | "model" | "market" | "am" | "pm" | "accent" | "neutral";
@@ -141,7 +142,7 @@ export function FreshnessBadge({ at, label = "Last run", scale = "run", title }:
   const tone = scale === "catalog" ? catalogFreshnessTone(age) : freshnessTone(age);
   const text = age === null ? FRESH_LABEL.unknown : `${label} ${relativeAge(age)}${scale === "catalog" && tone === "aging" ? " · stale" : ""}`;
   return (
-    <span className={`freshness-badge fresh-${tone}`} title={title ?? (parsed === null ? undefined : new Date(parsed).toLocaleString())}>
+    <span className={`freshness-badge fresh-${tone}`} title={title ?? (parsed === null ? undefined : `${label}: ${etTime(new Date(parsed).toISOString())}`)}>
       <LiveDot tone={tone === "aging" ? "warning" : tone === "stale" || tone === "unknown" ? "negative" : "positive"} pulse={tone === "live" || tone === "fresh"} />
       <span>{text}</span>
     </span>

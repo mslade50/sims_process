@@ -48,3 +48,9 @@ details.run-collapsed .run-grid { padding: 0 16px 16px; }
   .event-context .freshness-badge { padding: 4px 8px; font-size: 10px; gap: 6px; }
   .header-search-results { position: fixed; left: 12px; right: 12px; top: 64px; }
 }
+
+/* Collapsed "Technical details" blocks: ids, versions and logs live here, never in the main reading flow. */
+details.tech-details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 12px; }
+details.tech-details > summary { cursor: pointer; color: var(--muted); font-weight: 650; }
+details.tech-details ul { margin: 6px 0 0; padding-left: 18px; }
+.next-step-note { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }

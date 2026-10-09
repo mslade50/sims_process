@@ -43,7 +43,7 @@ test("archived checkpoints withhold later observations and reference anchors",()
 
 test("profile headline is mounted and labels preserve descriptive vs saved-model meaning",async()=>{
   const {readFile}=await import("node:fs/promises");const view=(await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8"))+(await readFile(new URL("../app/WeeklyPlayersView.tsx",import.meta.url),"utf8"));
-  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("Relative to PGA benchmark"));assert.ok(view.includes("not a simulation forecast"));assert.ok(view.includes("Saved event model skill decomposition"));assert.ok(view.includes("latest revised history"));
+  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("recent form vs the 2025 PGA average"));assert.ok(view.includes("not a price forecast"));assert.ok(view.includes("does not feed the simulations"));assert.ok(view.includes("rebuilt from the latest data"));
   assert.equal(view.includes("Absolute model"),false);assert.equal(view.includes("Absolute pre-event"),false);assert.equal(view.includes("known before this checkpoint"),false);assert.equal(view.includes(String.fromCharCode(65533)),false);
 });
 
@@ -75,18 +75,18 @@ test("savedPgaSkill: week reads challenger.mu_tour; live is mu_live + pre-event 
   assert.equal(savedPgaSkill(muTourInputs,17639),null,"null mu_tour -> fallback");
   assert.equal(savedPgaSkill({...muTourInputs,kind:"live"},17639),null,"no live block -> fallback");
   assert.equal(savedPgaSkill(muTourInputs,99),null);assert.equal(savedPgaSkill(null,14139),null);assert.equal(savedPgaSkill(muTourInputs,null),null);
-  assert.match(pgaSkillWords(savedPgaSkill(muTourInputs,14139)).sub,/^Saved model skill \+ this field's offset to the PGA scale \(F02\); field offset \+0\.100$/);
-  const lw=pgaSkillWords(live);assert.match(lw.sub,/^Live skill \+ pre-event field offset/);assert.match(lw.title,/Pre-event value \+0\.851/);
+  assert.match(pgaSkillWords(savedPgaSkill(muTourInputs,14139)).sub,/^The model's saved skill plus this field's offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)$/);
+  const lw=pgaSkillWords(live);assert.match(lw.sub,/^Live skill plus the pre-event field offset/);assert.match(lw.title,/The pre-event value was \+0\.851/);
 });
 test("BenchmarkCard secondary card: mu_tour headline with label and offset, vs field kept small; live variant; fallback unchanged",()=>{
   const savedDoc={kind:"week",as_of:"2026-10-07T22:05:00Z",event:{},players:[{id:14139,mu:0.7488},{id:2,mu:-0.7488}]};
   const card=(over)=>renderCard("PlayerProfilesView.tsx","BenchmarkCard",{props:{rating:undefined,reference:undefined,fieldLabel:"Fixture Open",savedDoc,playerId:14139,...over}});
   const pre=card({pgaSkill:savedPgaSkill(muTourInputs,14139)});
   assert.match(pre,/This week \(PGA scale\)/);assert.match(pre,/\+0\.851/);
-  assert.match(pre,/Saved model skill \+ this field&#x27;s offset to the PGA scale \(F02\); field offset \+0\.100/);
+  assert.match(pre,/The model&#x27;s saved skill plus this field&#x27;s offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)/);
   assert.match(pre,/vs field: \+0\.749/);assert.doesNotMatch(pre,/Relative to this field/);
   const lv=card({pgaSkill:savedPgaSkill({...muTourInputs,kind:"live"},14139),savedDoc:{...savedDoc,kind:"live",players:[{id:14139,mu:0.7488,live:{mu_live:0.6}},{id:2,mu:0,live:{mu_live:-0.6}}]}});
-  assert.match(lv,/live skill \+ pre-event field offset/);assert.match(lv,/\+0\.700/);assert.match(lv,/Pre-event value \+0\.851/);
+  assert.match(lv,/Live skill plus the pre-event field offset/);assert.match(lv,/\+0\.700/);assert.match(lv,/The pre-event value was \+0\.851/);
   const fb=card({pgaSkill:null});
-  assert.match(fb,/Relative to this field/);assert.match(fb,/\+0\.749/);assert.doesNotMatch(fb,/This week \(PGA scale\)/);
+  assert.match(fb,/vs field · saved model/);assert.match(fb,/\+0\.749/);assert.doesNotMatch(fb,/This week \(PGA scale\)/);
 });

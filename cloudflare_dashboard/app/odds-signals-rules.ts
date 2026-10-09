@@ -62,4 +62,23 @@ export function oddsStale(generatedAt: string, now: number): boolean {
   return !Number.isFinite(at) || now - at > ODDS_STALE_MS;
 }
 
+const MARKET_NAMES: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut", miss_cut: "Miss cut", frl: "First-round leader" };
+/** "top_20" as "Top 20". */
+export const marketName = (family: string): string => MARKET_NAMES[family] ?? (family ? family.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase()) : "");
+
+/** "Helligkilde, Marcus" as "Marcus Helligkilde". */
+export const firstLast = (name: string): string => {
+  const parts = name.split(",").map((p) => p.trim());
+  return parts.length === 2 && parts[0] && parts[1] ? `${parts[1]} ${parts[0]}` : name;
+};
+
+/** "skybet" as "Skybet". */
+export const bookName = (book: string): string => (book ? book.replace(/^./, (c) => c.toUpperCase()) : "");
+
+/** Bet status in plain words: "live" bets are real, the rest are tracked on paper. */
+export const statusName = (status: string): string => (status === "live" ? "Live bet" : status === "shadow" ? "Paper only" : status ? status.replace(/^./, (c) => c.toUpperCase()) : "");
+
+/** The alert outcome in a sentence. */
+export const alertText = (alert: { sent: boolean; note: string }): string => (alert.sent ? "An alert was sent." : !alert.note || alert.note === "nothing to alert" ? "No alert was needed." : `No alert sent (${alert.note}).`);
+
 export const pct = (value: number, digits = 1) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;

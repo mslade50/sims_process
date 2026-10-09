@@ -138,3 +138,9 @@
   .ex-table td, .ex-table th { padding: 10px 9px; }
   .ex-chips button, .ex-compare-actions button { min-height: 40px; }
 }
+
+/* Why priced: pre-tournament / live switch and notices */
+.ex-viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 14px; }
+.ex-viewbar .segmented { margin-bottom: 0; }
+.ex-notice { margin: 0 0 14px; }
+.ex-banner-time { margin: 0; }

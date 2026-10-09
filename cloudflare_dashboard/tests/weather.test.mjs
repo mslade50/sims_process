@@ -115,7 +115,7 @@ test("D6: weather run is compared with the price checkpoint; a different run or 
   assert.equal(same.weatherRun, "live_R1_X");
   const old = weatherCheckpoint({ weather_run: "week_Y", explain_run: "live_R1_X", weather_as_of: "2026-10-07T00:00:00Z" }, "2026-10-07T00:00:00Z");
   assert.equal(old.state, "mismatch");
-  assert.match(old.message, /week_Y.*live_R1_X/);
+  assert.match(old.message, /may not be the ones in the current prices/);
   const stale = weatherCheckpoint({ weather_run: "live_R1_X", explain_run: "live_R1_X", weather_as_of: "2026-10-08T12:21:00Z" }, "2026-10-08T06:00:00Z");
   assert.equal(stale.state, "mismatch");
   assert.equal(weatherCheckpoint({ explain_run: "live_R1_X" }, "2026-10-08T06:00:00Z").state, "unknown");
@@ -126,11 +126,10 @@ test("D6: the weather page renders the run beside the price checkpoint and an al
   const mk = (weather_run) => ({ events: [{ event_uid: "e1", name: "Event", tour: "pga", weather_key: "golfprice/weather/e1/latest.json", weather_run, weather_as_of: fixture.as_of, explain_run: "week_B" }] });
   const render = (weather_run) => renderView("WeatherEffectsView.tsx", "WeatherEffectsView", { data: { "golfprice/index.json": mk(weather_run), "golfprice/weather/e1/latest.json": fixture }, pathname: "/weather-effects" });
   const bad = render("week_A");
-  assert.match(bad, /Weather run: week_A/);
-  assert.match(bad, /Price checkpoint: week_B/);
+  assert.match(bad, /Weather and prices are out of step/);
   assert.match(bad, /role="alert"/);
-  assert.match(bad, /Mismatch\./);
+  assert.match(bad, /role="alert"/);
   const ok = render("week_B");
   assert.match(ok, /data-state="match"/);
-  assert.doesNotMatch(ok, /Mismatch\./);
+  assert.doesNotMatch(ok, /out of step/);
 });

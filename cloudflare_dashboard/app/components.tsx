@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
-import { DataRow, formatCell, numberValue, titleCase } from "./lib";
+import { DataRow, etTime, formatCell, numberValue, titleCase } from "./lib";
 import { AnimatedNumber, Delta, SkeletonPage, Sparkline } from "./ui";
 
 export function Panel({
@@ -42,6 +42,7 @@ export function Kpi({
   delta,
   deltaSuffix = "",
   spark,
+  hint,
 }: {
   label: string;
   value: string;
@@ -52,11 +53,13 @@ export function Kpi({
   deltaSuffix?: string;
   /** Optional trend values drawn as a sparkline. */
   spark?: number[];
+  /** Optional hover definition of the label in one plain sentence. */
+  hint?: string;
 }) {
   const sparkTone = tone === "neutral" ? "accent" : tone;
   return (
     <div className={`kpi kpi-${tone}`}>
-      <span>{label}</span>
+      <span title={hint}>{label}</span>
       <div className="kpi-row">
         <strong><AnimatedNumber text={value} /></strong>
         {spark && spark.length > 1 && <Sparkline values={spark} tone={sparkTone} label={`${label} trend`} />}
@@ -190,8 +193,81 @@ export function PlayerPicker({
   );
 }
 
+const ISO_TIME = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d/;
+
+/** A stored timestamp string (ISO, with or without a zone) as Eastern time; anything else is returned unchanged. */
+export function humanTimestamp(text: string): string {
+  if (!ISO_TIME.test(text)) return text;
+  const zoned = /(Z|[+-]\d\d:?\d\d)$/.test(text) ? text : `${text}Z`;
+  return etTime(zoned.replace(" ", "T"), text);
+}
+
+/**
+ * Any value as readable text: timestamps in Eastern time, yes/no, lists joined, nested objects as "Label: value; Label: value".
+ * Never JSON and never "[object Object]". Use it wherever a value of unknown shape must be shown to a person.
+ */
+export function humanValue(value: unknown, depth = 0): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return formatCell(value);
+  if (typeof value === "string") return humanTimestamp(value);
+  if (depth >= 3) return "…";
+  if (Array.isArray(value)) {
+    const shown = value.slice(0, 8).map((item) => humanValue(item, depth + 1));
+    return shown.join(", ") + (value.length > 8 ? ` and ${value.length - 8} more` : "");
+  }
+  if (typeof value === "object") {
+    const parts = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== null && item !== undefined && item !== "")
+      .map(([key, item]) => `${titleCase(key)}: ${humanValue(item, depth + 1)}`);
+    return parts.length ? parts.join("; ") : "—";
+  }
+  return String(value);
+}
+
+/** True for a value that carries nothing to show (so a column made only of these is hidden). */
+const isBlank = (value: unknown): boolean => {
+  if (value === null || value === undefined || value === "") return true;
+  if (typeof value === "number") return Number.isNaN(value);
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "string") return ["—", "-", "n/a", "not available", "unknown", "nan"].includes(value.trim().toLowerCase());
+  return false;
+};
+
+/** Plain names and one-sentence definitions for column keys that reach tables as raw field names. A table can still override either per column. */
+const COLUMN_NAMES: Record<string, string> = {
+  player_name: "Player", bet_on: "Bet on", opponent: "Against", bookmaker: "Sportsbook", bet_type: "Bet type", event_name: "Event",
+  edge: "Kelly edge %", raw_edge: "Raw edge %", dec_odds: "Decimal odds", pred_on: "Skill estimate", sample_on: "Sample size",
+  units_wagered: "Units risked", units_won: "Units won", roi: "ROI %", wagered: "Units risked", archetype: "Player type", archetype_against: "Opponent type",
+  miss: "Miss", miss_centered: "Miss vs field", max_abs_miss: "Biggest miss", ott: "Off the tee", app: "Approach", arg: "Around the green", putt: "Putting",
+  predicted_sg: "Predicted SG", actual_sg: "Actual SG", pred: "Prediction", my_pred_regressed: "Prediction (adjusted)", error_raw: "Error", error_regressed: "Error (adjusted)",
+  regress_helped: "Adjustment helped", mkt_adj: "Market adjustment", mu_adj: "Skill adjustment", n_eff: "Effective sample", std: "Spread", skew: "Skew",
+  excess_kurtosis: "Tail weight", p1_weather_adv: "Player 1 weather edge", p2_weather_adv: "Player 2 weather edge", differential: "Difference",
+};
+const COLUMN_HINTS: Record<string, string> = {
+  edge: "Kelly edge: how much the model likes the bet, as a percent of bankroll under the staking rule.",
+  raw_edge: "The model's win chance minus the sportsbook's implied chance, in percentage points.",
+  dec_odds: "The payout for a 1 unit stake, including the stake (2.50 pays 1.50 profit).",
+  pred_on: "The model's skill estimate for the player bet on, in strokes gained per round.",
+  sample_on: "How many rounds of data sit behind that skill estimate.",
+  units_wagered: "Amount risked, in betting units.", units_won: "Profit (or loss) in betting units.", roi: "Profit divided by the amount risked.",
+  archetype: "A label for the style of player (for example, a long hitter or a strong putter).", archetype_against: "The style of the opponent in a matchup.",
+  miss: "Actual strokes gained minus the model's prediction. Above zero means the player beat the model.",
+  miss_centered: "The miss after removing the average miss for the whole field that week.",
+  max_abs_miss: "The largest miss across the four shot types, ignoring the sign.",
+  predicted_sg: "Strokes gained per round the model expected.", actual_sg: "Strokes gained per round the player really produced.",
+  my_pred_regressed: "The model's prediction after pulling it toward the market.", error_raw: "Actual minus the original prediction.",
+  error_regressed: "Actual minus the adjusted prediction.", regress_helped: "Whether pulling toward the market made the prediction closer.",
+  mkt_adj: "How far the market pulled the prediction.", mu_adj: "How far the skill adjustment moved the prediction.",
+  n_eff: "Effective number of rounds behind the estimate, after giving recent rounds more weight.",
+  std: "How much the player's rounds swing around their average.", skew: "Whether big misses lean good (positive) or bad (negative).",
+  excess_kurtosis: "How heavy the tails are: higher means more extreme rounds.",
+  differential: "Gap between the two players' weather edges; positive favors player 1.",
+  ott: "Off the tee.", app: "Approach shots.", arg: "Around the green.", putt: "Putting.",
+};
+
 function csvValue(value: unknown): string {
-  const text = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? "");
+  const text = typeof value === "object" && value !== null ? humanValue(value) : String(value ?? "");
   return `"${text.replaceAll('"', '""')}"`;
 }
 
@@ -233,8 +309,9 @@ export function DataTable({
   mobileColumns?: string[];
 }) {
   const allColumns = useMemo(() => {
+    // A column that is empty (or only a placeholder) for every row says nothing, so it is not offered at all.
     const found = [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((column) =>
-      rows.some((row) => typeof row[column] !== "object" || row[column] === null),
+      rows.some((row) => !isBlank(row[column]) && (typeof row[column] !== "object" || Array.isArray(row[column]))),
     );
     return [...preferredColumns.filter((column) => found.includes(column)), ...found.filter((column) => !preferredColumns.includes(column))];
   }, [preferredColumns, rows]);
@@ -245,7 +322,8 @@ export function DataTable({
     const chosen = defaultColumns ? allColumns.filter((column) => defaultColumns.includes(column)) : [];
     return chosen.length ? chosen : allColumns.slice(0, Math.min(9, allColumns.length));
   });
-  const headText = (column: string) => headerLabels?.[column] ?? (verbatim ? column : titleCase(column));
+  const headText = (column: string) => headerLabels?.[column] ?? (verbatim ? column : COLUMN_NAMES[column] ?? titleCase(column));
+  const headHint = (column: string) => headerTitles?.[column] ?? COLUMN_HINTS[column];
   const cellClass = (column: string, index: number, tone = "") =>
     [tone, stickyFirst && index === 0 ? "sticky-first" : "", mobileColumns && !mobileColumns.includes(column) ? "mobile-hide" : ""].filter(Boolean).join(" ");
 
@@ -323,7 +401,7 @@ export function DataTable({
               {allColumns.map((column) => {
                 const checked = activeColumns.includes(column);
                 return (
-                  <label key={column} title={headerTitles?.[column]}>
+                  <label key={column} title={headHint(column)}>
                     <input
                       type="checkbox"
                       checked={checked}
@@ -351,7 +429,7 @@ export function DataTable({
             <tr>
               {activeColumns.map((column, index) => (
                 <th key={column} className={cellClass(column, index)}>
-                  <button type="button" title={headerTitles?.[column]} onClick={() => toggleSort(column)}>
+                  <button type="button" title={headHint(column)} onClick={() => toggleSort(column)}>
                     {headText(column)}
                     {sort?.column === column && <span>{sort.direction === "asc" ? " ↑" : " ↓"}</span>}
                   </button>
@@ -377,7 +455,7 @@ export function DataTable({
                         : ""
                     : "";
                   const custom = renderCell?.(column, value, row);
-                  const text = custom !== undefined ? custom : verbatim && typeof value === "string" && value !== "" ? value : formatCell(value, column);
+                  const text = custom !== undefined ? custom : typeof value === "object" && value !== null ? humanValue(value) : typeof value === "string" && ISO_TIME.test(value) ? humanTimestamp(value) : verbatim && typeof value === "string" && value !== "" ? value : formatCell(value, column);
                   return <td className={cellClass(column, index, tone)} key={column}>{text}</td>;
                 })}
               </tr>

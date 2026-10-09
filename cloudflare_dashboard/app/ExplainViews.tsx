@@ -2,7 +2,7 @@
 
 /**
  * "This week" event page and "Why priced" table + the player drawer (finish shape, score distribution, why-this-price waterfall, competitor overlay).
- * Data: golfprice/explain/<event>/latest.json (golfprice/explain_export.py; week runs before the event, live runs after each round).
+ * Data: one explain document per run, listed in the index (golfprice/explain_export.py; week runs before the event, live runs after each round). Why priced shows the last pre-tournament run unless the owner flips to live.
  * Design-system tokens/components only (tokens.css, ui.tsx); logic in explain-rules.ts.
  */
 import Link from "next/link";
@@ -11,23 +11,26 @@ import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-re
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { BiasChart, FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, Waterfall, type FinishSeries } from "./ExplainCharts";
 import {
-  MARKETS, MARKET_LABEL, MAX_OVERLAY, american, availableTags, biasDimensions, biasForDimension, biasSentence, defaultCompetitors, edgeBadge, explainKeyFor, favourites, filterWhy,
+  MARKETS, MARKET_LABEL, MAX_OVERLAY, american, availableTags, biasDimensions, biasForDimension, biasSentence, defaultCompetitors, edgeBadge, explainChoices, explainKeyFor, favourites, filterWhy,
   leaderboard, movers, nameMatches, orderEvents, parseExplain, pct, signed, sortWhy, toParText, toggleCompetitor, topEdges, topK, waterfall,
   type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
-import { Badge, Delta, FreshnessBadge } from "./ui";
+import { etTime } from "./lib";
+import { Badge, Delta } from "./ui";
 import "./explain.css";
 
 /* ------------------------------------------------------------------ URL state (?e=<event>&p=<player>&vs=a,b,c&m=<market>) */
-type Params = { e: string | null; p: number | null; vs: number[]; m: Market | null };
+type View = "pre" | "live";
+type Params = { e: string | null; p: number | null; vs: number[]; m: Market | null; v: View | null };
 function readParams(): Params {
-  if (typeof window === "undefined") return { e: null, p: null, vs: [], m: null };
+  if (typeof window === "undefined") return { e: null, p: null, vs: [], m: null, v: null };
   const q = new URLSearchParams(window.location.search);
   const p = Number(q.get("p"));
   const m = q.get("m") as Market | null;
-  return { e: q.get("e"), p: Number.isFinite(p) && p > 0 ? p : null, vs: (q.get("vs") ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0), m: m && (MARKETS as readonly string[]).includes(m) ? m : null };
+  const v = q.get("v");
+  return { e: q.get("e"), p: Number.isFinite(p) && p > 0 ? p : null, vs: (q.get("vs") ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0), m: m && (MARKETS as readonly string[]).includes(m) ? m : null, v: v === "pre" || v === "live" ? v : null };
 }
 function writeParams(next: Params) {
   if (typeof window === "undefined") return;
@@ -36,6 +39,7 @@ function writeParams(next: Params) {
   if (next.p) q.set("p", String(next.p));
   if (next.vs.length) q.set("vs", next.vs.join(","));
   if (next.m && next.m !== "win") q.set("m", next.m);
+  if (next.v) q.set("v", next.v);
   const s = q.toString();
   window.history.replaceState(null, "", `${window.location.pathname}${s ? `?${s}` : ""}`);
 }
@@ -43,7 +47,7 @@ function writeParams(next: Params) {
 /* ------------------------------------------------------------------ shell: event picker, loading, empty states */
 type Shell = { doc: ExplainDoc; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
 
-function ExplainShell({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: (s: Shell) => React.ReactNode }) {
+function ExplainShell({ eyebrow, title, description, preEventFirst = false, children }: { eyebrow: string; title: string; description: string; preEventFirst?: boolean; children: (s: Shell) => React.ReactNode }) {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
@@ -62,22 +66,36 @@ function ExplainShell({ eyebrow, title, description, children }: { eyebrow: stri
           <SegmentedControl label="Event" value={current.event_uid} options={events.slice(0, 4).map((e) => ({ value: e.event_uid, label: `${(e.tour ?? "").toUpperCase()} ${e.name ?? e.event_uid}`.trim() }))}
             onChange={(v) => update({ e: v, p: null, vs: [] })} />
         ) : undefined} />
-      <ExplainBody key={current.event_uid} event={current} params={params} update={update}>{children}</ExplainBody>
+      <ExplainBody key={current.event_uid} event={current} params={params} update={update} preEventFirst={preEventFirst}>{children}</ExplainBody>
     </>
   );
 }
 
-function ExplainBody({ event, params, update, children }: { event: IndexEvent; params: Params; update: (p: Partial<Params>) => void; children: (s: Shell) => React.ReactNode }) {
-  const { data, loading, error } = useDashboardData<unknown>(explainKeyFor(event));
+function ExplainBody({ event, params, update, preEventFirst, children }: { event: IndexEvent; params: Params; update: (p: Partial<Params>) => void; preEventFirst: boolean; children: (s: Shell) => React.ReactNode }) {
+  const choices = useMemo(() => explainChoices(event), [event]);
+  // Pages that offer the choice start on the pre-tournament explanation and only show the toggle when a live one exists.
+  const offerToggle = preEventFirst && choices.hasLive && !!choices.preKey && !!choices.liveKey;
+  const view: View = offerToggle ? params.v ?? "pre" : "live";
+  const key = !preEventFirst || !choices.hasLive ? explainKeyFor(event) : view === "pre" && choices.preKey ? choices.preKey : choices.liveKey ?? explainKeyFor(event);
+  const { data, loading, error } = useDashboardData<unknown>(key);
   const doc = useMemo(() => parseExplain(data), [data]);
-  if (loading) return <LoadingState label="Loading the explain document" />;
-  if (error || !doc || (event.explain_run && `${doc.kind}_${doc.run}` !== event.explain_run)) return <EmptyState title={`No explain document for ${event.name ?? event.event_uid} yet`} detail="It is published with every run (python -m golfprice.publish_dashboard). Older runs published before this view existed have none; the next run does." />;
+  if (loading) return <LoadingState label="Loading the pricing explanation" />;
+  const stale = !preEventFirst && event.explain_run && doc && `${doc.kind}_${doc.run}` !== event.explain_run;
+  if (error || !doc || stale) return <EmptyState title={`No pricing explanation for ${event.name ?? event.event_uid} yet`} detail="One is published with every pricing run. Runs from before this page existed have none; the next run will." />;
   const market = params.m ?? "win";
   const player = params.p ? doc.players.find((p) => p.id === params.p) ?? null : null;
   const competitors = params.vs.length || !player ? params.vs : defaultCompetitors(doc, player.id);
   return (
     <>
       <RunBanner doc={doc} />
+      {offerToggle && (
+        <div className="ex-viewbar">
+          <SegmentedControl label="Which pricing to explain" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
+            options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live (after round ${choices.liveRound})` : "Live" }]} />
+          <span className="ex-muted">{view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}</span>
+        </div>
+      )}
+      {preEventFirst && choices.hasLive && !choices.preKey && <p className="ex-muted ex-notice">The pre-tournament explanation was not kept for this event, so this shows the live pricing.</p>}
       {children({ doc, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
       {player && <PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
         setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} />}
@@ -91,10 +109,10 @@ function RunBanner({ doc }: { doc: ExplainDoc }) {
     <div className="ex-banner">
       <Badge tone={live ? "positive" : "model"} pulse={live}>{live ? `In play · after round ${doc.after_round}` : "Pre-tournament prices"}</Badge>
       <span className="ex-banner-name">{doc.event.name}{doc.event.course ? ` · ${doc.event.course}` : ""}</span>
-      <FreshnessBadge at={doc.as_of} label="Run" />
-      {doc.model.weather_layer && <Badge tone="neutral">weather {doc.model.weather_layer}</Badge>}
-      {doc.model.overrides_applied.length > 0 && <Badge tone="warning">{doc.model.overrides_applied.length} owner override{doc.model.overrides_applied.length > 1 ? "s" : ""}</Badge>}
-      <Badge tone={doc.finish.method === "unavailable" ? "warning" : "neutral"}>shape: {doc.finish.method.replace("_", " ")}</Badge>
+      {doc.as_of && <span className="ex-muted ex-banner-time" title="When these prices were produced (US Eastern time)">Priced {etTime(doc.as_of)}</span>}
+      {doc.model.weather_layer && <Badge tone="neutral">weather included</Badge>}
+      {doc.model.overrides_applied.length > 0 && <Badge tone="warning">{doc.model.overrides_applied.length} manual adjustment{doc.model.overrides_applied.length > 1 ? "s" : ""}</Badge>}
+      {doc.finish.method === "unavailable" && <Badge tone="warning">finish odds not available</Badge>}
     </div>
   );
 }
@@ -242,15 +260,24 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
 /* ------------------------------------------------------------------ Why priced */
 export function WhyPricedView() {
   return (
-    <ExplainShell eyebrow="Pricing" title="Why priced" description="Every player's model price against the market, sortable and filterable by player type, with the strokes that explain it.">
+    <ExplainShell eyebrow="Pricing" title="Why priced" preEventFirst description="Every player's model price against the market, sortable and filterable by player type, with the strokes that explain it.">
       {(s) => <WhyPriced {...s} />}
     </ExplainShell>
   );
 }
 
 const SORT_LABEL: Array<{ key: SortKey; label: string }> = [
-  { key: "edge_sg", label: "Edge (strokes)" }, { key: "rel", label: "Edge (%)" }, { key: "model", label: "Model" }, { key: "market", label: "Market" }, { key: "mu", label: "Mean" }, { key: "name", label: "Name" },
+  { key: "edge_sg", label: "Gap in strokes" }, { key: "rel", label: "Gap in %" }, { key: "model", label: "Our price" }, { key: "market", label: "Market" }, { key: "mu", label: "Expected skill" }, { key: "name", label: "Name" },
 ];
+const COLUMN_HELP = {
+  pos: "Current place on the leaderboard (MC = missed the cut, WD = withdrew).",
+  model: "Our chance for this market, from the simulations.",
+  market: "The chance implied by sportsbook odds, with the bookmaker margin removed.",
+  rel: "How far our chance is from the market's, as a share of the market's. Plus means we are higher than the market.",
+  edge_sg: "The same gap expressed as strokes per round of skill: how much better (+) or worse (-) we rate them than the market does.",
+  mu: "Our estimate of their skill: strokes per round better (+) or worse (-) than the average player in this field.",
+  sd: "How much their round scores typically bounce around, in strokes. Higher means a streakier, less predictable player.",
+} as const;
 
 function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   const [query, setQuery] = useState("");
@@ -261,8 +288,12 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   const live = doc.kind === "live";
   const tagOptions = useMemo(() => availableTags(doc.players), [doc.players]);
   const rows = useMemo(() => sortWhy(filterWhy(doc.players, { query, tags, market, onlyEdge: only, top: top === "all" ? null : Number(top) }), sort.key, sort.dir, market), [doc.players, query, tags, market, only, top, sort]);
-  const th = (key: SortKey, label: string) => (
-    <th aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+  const hasMarket = rows.some((p) => p.probs[market].market !== null);
+  const hasModel = rows.some((p) => p.probs[market].model !== null);
+  const hasGap = rows.some((p) => p.edge_sg !== null);
+  const hasSd = rows.some((p) => p.sd !== null && p.sd !== undefined);
+  const th = (key: SortKey, label: string, help?: string) => (
+    <th aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} title={help}>
       <button type="button" onClick={() => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }))}>
         {label}{sort.key === key && (sort.dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
       </button>
@@ -282,7 +313,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
       </div>
       <div className="table-scroll">
         <table className="ex-table ex-why-table">
-          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos")}{th("model", "Model")}{th("market", "Market")}{th("rel", "Edge")}{th("edge_sg", "Δ strokes")}{th("mu", "Mean")}{th("sd", "SD")}<th>Why</th></tr></thead>
+          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos", COLUMN_HELP.pos)}{hasModel && th("model", "Our price", COLUMN_HELP.model)}{hasMarket && th("market", "Market", COLUMN_HELP.market)}{hasMarket && th("rel", "Gap", COLUMN_HELP.rel)}{hasGap && hasMarket && th("edge_sg", "Gap (strokes)", COLUMN_HELP.edge_sg)}{th("mu", "Expected skill", COLUMN_HELP.mu)}{hasSd && th("sd", "Spread", COLUMN_HELP.sd)}<th title="The biggest reasons our price differs from the market.">Why</th></tr></thead>
           <tbody>
             {rows.map((p) => {
               const e = p.probs[market];
@@ -291,10 +322,10 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
                 <tr key={p.id} className="clickable-row" onClick={() => openPlayer(p.id)}>
                   <th scope="row" className="ex-sticky"><button type="button" className="ex-linkbtn" onClick={(ev) => { ev.stopPropagation(); openPlayer(p.id); }}>{p.name}</button><Tags tags={p.tags} max={3} /></th>
                   {live && <td>{p.live?.tier === 0 ? p.live?.pos ?? "-" : p.live?.tier === 2 ? "MC" : "WD"}</td>}
-                  <td>{pct(e.model)}</td><td>{pct(e.market)}</td>
-                  <td className={b.tone === "positive" ? "pos" : b.tone === "negative" ? "neg" : ""}>{b.text}</td>
-                  <td className={(p.edge_sg ?? 0) > 0 ? "pos" : (p.edge_sg ?? 0) < 0 ? "neg" : ""}>{signed(p.edge_sg)}</td>
-                  <td>{signed(p.mu_rel)}</td><td>{p.sd?.toFixed(2) ?? "-"}</td>
+                  {hasModel && <td>{pct(e.model)}</td>}{hasMarket && <td>{pct(e.market)}</td>}
+                  {hasMarket && <td className={b.tone === "positive" ? "pos" : b.tone === "negative" ? "neg" : ""}>{b.text}</td>}
+                  {hasGap && hasMarket && <td className={(p.edge_sg ?? 0) > 0 ? "pos" : (p.edge_sg ?? 0) < 0 ? "neg" : ""}>{signed(p.edge_sg)}</td>}
+                  <td>{signed(p.mu_rel)}</td>{hasSd && <td>{p.sd?.toFixed(2) ?? "-"}</td>}
                   <td className="ex-why">{p.why_edge ?? p.why}</td>
                 </tr>
               );
@@ -303,7 +334,11 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
         </table>
       </div>
       {rows.length === 0 && <EmptyState title="No players match" detail="Clear a filter or the search." />}
-      <details className="ex-glossary-wrap"><summary>What the components mean</summary><LegendGroups legend={doc.components_legend} /></details>
+      {!hasMarket && rows.length > 0 && <p className="ex-muted">No sportsbook prices are posted for {MARKET_LABEL[market].toLowerCase()}, so only our own numbers are shown.</p>}
+      <details className="ex-glossary-wrap"><summary>What the pieces of a price mean</summary><LegendGroups legend={doc.components_legend} /></details>
+      <details className="ex-glossary-wrap"><summary>Technical details</summary>
+        <p className="ex-muted">{doc.kind === "live" ? `Live pricing after round ${doc.after_round}` : "Pre-tournament pricing"}, {doc.model.n_sims ? `${doc.model.n_sims.toLocaleString()} simulated tournaments, ` : ""}finish odds {doc.finish.method === "exact_tapes" ? "taken straight from the simulations" : doc.finish.method === "unavailable" ? "not available" : "rebuilt by replaying the hole-by-hole model"}. Priced {etTime(doc.as_of)}.</p>
+      </details>
     </Panel>
   );
 }
@@ -339,7 +374,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
       <aside className="ex-drawer">
         <header>
           <div>
-            <span className="eyebrow">{doc.kind === "live" ? `After round ${doc.after_round}` : "Pre-tournament"}</span>
+            <span className="eyebrow">{doc.kind === "live" ? `Live, after round ${doc.after_round}` : "Pre-tournament"}</span>
             <h2>{player.name}</h2>
             <a className="ex-link" href={`/players?player=${player.id}`}>Profile and vs PGA avg <ChevronRight size={14} /></a>
             <Tags tags={player.tags} max={8} />
@@ -349,15 +384,15 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <div className="ex-drawer-kpis">
           <Kpi label={`${MARKET_LABEL[market]} model`} value={pct(player.probs[market].model)} detail={`market ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label={`Skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} sg`} detail={`SD ${player.sd?.toFixed(2) ?? "-"} / round`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
+          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} sg`} detail={`SD ${player.sd?.toFixed(2) ?? "-"} / round`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
           {f && <Kpi label="Median finish" value={String(f.median)} detail={`10th-90th: ${f.p10}-${f.p90}`} tone="accent" />}
-          {f && <Kpi label="Top 10 (shape)" value={pct(t[2])} detail={`win ${pct(t[0])} · miss cut ${pct(f.p_miss_cut, 0)}`} tone="neutral" />}
+          {f && <Kpi label="Top 10 (from finish odds)" value={pct(t[2])} detail={`win ${pct(t[0])} · miss cut ${pct(f.p_miss_cut, 0)}`} tone="neutral" />}
         </div>
         {player.why_edge && <p className="ex-callout">{player.why_edge}</p>}
 
         <section>
           <h3 className="ex-h3">Why this price</h3>
-          <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. They add up to his mean skill{doc.kind === "live" ? "; in-play and weather rows adjust the next round(s)" : ""}.</p>
+          <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. They add up to their expected skill{doc.kind === "live" ? "; in-play and weather rows adjust the next round(s)" : ""}.</p>
           <Waterfall {...wf} />
           {Object.keys(player.attribution).length > 0 && (
             <p className="ex-muted">Gap to market (strokes/round, {signed(player.edge_sg)}) attributed to: {Object.entries(player.attribution).map(([k, v]) => `${doc.components_legend[k]?.label ?? k} ${signed(v)}`).join(", ")}.</p>
@@ -372,7 +407,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
         <section>
           <div className="ex-sec-head"><h3 className="ex-h3">Finish shape</h3>
             <SegmentedControl label="Chart type" value={mode} onChange={setMode} options={[{ value: "probability", label: "Position" }, { value: "cumulative", label: "Cumulative" }]} /></div>
-          {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">No finish distribution in this run ({doc.finish.reason ?? "tapes not available"}).</p> : (
+          {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">Finish odds are not available for this run.</p> : (
             <>
               <FinishChart series={series} fieldSize={doc.players.filter((p) => !p.withdrawn).length} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
               <div className="ex-compare">
@@ -389,13 +424,13 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
                 {hits.length > 0 && <ul className="ex-hits">{hits.map((p) => <li key={p.id}><button type="button" onClick={() => { setCompetitors(toggleCompetitor(competitors, p.id)); setQ(""); }}>{p.name}<small>{pct(p.probs.win.model)} win</small></button></li>)}</ul>}
               </div>
               <div className="table-scroll"><table className="ex-table ex-compare-table">
-                <thead><tr><th>Player</th><th>Mean</th><th>Win</th><th>Top 10</th><th>Median</th><th>Miss cut</th></tr></thead>
+                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 10</th><th title="The finish position that half of the simulations beat and half did not.">Median finish</th><th>Miss cut</th></tr></thead>
                 <tbody>{withShape.map((p, i) => (
                   <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }} aria-hidden="true" />
                     {p.id === player.id ? p.name : <button type="button" className="ex-linkbtn" onClick={() => onSelect(p.id)}>{p.name}</button>}</th>
                     <td>{signed(p.mu_rel)}</td><td>{pct(p.probs.win.model)}</td><td>{pct(p.probs.top_10.model)}</td><td>{p.finish!.median}</td><td>{pct(p.finish!.p_miss_cut, 0)}</td></tr>
                 ))}</tbody></table></div>
-              <p className="ex-muted">Shape from {doc.finish.method === "exact_tapes" ? "the simulation's own draws" : `a replay of the hole engine (${doc.finish.n_draws?.toLocaleString()} draws)`}; mean absolute difference to the priced top-20: {doc.finish.calibration?.top_20 ? pct(doc.finish.calibration.top_20.mean_abs, 2) : "-"}.</p>
+              <p className="ex-muted">Finish odds come from {doc.finish.method === "exact_tapes" ? "the simulations themselves" : `${doc.finish.n_draws?.toLocaleString() ?? "many"} replayed tournaments`}{doc.finish.calibration?.top_20 ? `; on average they sit within ${pct(doc.finish.calibration.top_20.mean_abs, 1)} of the posted top-20 chances` : ""}.</p>
             </>
           )}
         </section>
@@ -410,12 +445,12 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
             <h3 className="ex-h3">In play</h3>
             <div className="ex-live-grid">
               <span>Position <b>{live.pos ?? "-"}</b></span><span>To par <b>{toParText(live.to_par)}</b></span>
-              <span>Mean pre-event → now <b>{signed(live.mu_pre)} → {signed(live.mu_live)}</b></span>
-              <span>Since last run <b>{signed(live.d_mu_since_last)}</b> (B8 {signed(live.d_b8_since_last)}, contention {signed(live.d_contention_since_last)})</span>
+              <span>Skill before the event → now <b>{signed(live.mu_pre)} → {signed(live.mu_live)}</b></span>
+              <span>Since last run <b>{signed(live.d_mu_since_last)}</b> (in-event form {signed(live.d_b8_since_last)}, title chase {signed(live.d_contention_since_last)})</span>
             </div>
-            {live.rounds.length > 0 && <div className="table-scroll"><table className="ex-table"><thead><tr><th>Round</th><th>Score</th><th>SG total</th><th>OTT</th><th>APP</th><th>ARG</th><th>PUTT</th></tr></thead>
+            {live.rounds.length > 0 && <div className="table-scroll"><table className="ex-table"><thead><tr><th>Round</th><th>Score</th><th title="Strokes gained in total versus the field.">Total</th><th title="Strokes gained off the tee.">Driving</th><th title="Strokes gained on approach shots.">Approach</th><th title="Strokes gained around the green.">Short game</th><th title="Strokes gained putting.">Putting</th></tr></thead>
               <tbody>{live.rounds.map((r) => <tr key={r.round}><th scope="row">R{r.round}</th><td>{r.score ?? "-"}</td><td>{signed(r.sg_total)}</td><td>{signed(r.sg_ott)}</td><td>{signed(r.sg_app)}</td><td>{signed(r.sg_arg)}</td><td>{signed(r.sg_putt)}</td></tr>)}</tbody></table></div>}
-            <div className="table-scroll"><table className="ex-table"><thead><tr><th>Market</th><th>Pre-event</th><th>Now</th><th>Since last run</th></tr></thead>
+            <div className="table-scroll"><table className="ex-table"><thead><tr><th>Market</th><th>Before the event</th><th>Now</th><th title="Change since the previous pricing run, in percentage points.">Since last run</th></tr></thead>
               <tbody>{MARKETS.map((m) => <tr key={m}><th scope="row">{MARKET_LABEL[m]}</th><td>{pct(live.pre_event[m])}</td><td>{pct(player.probs[m].model)}</td><td><Delta value={(live.since_last[m] ?? 0) * 100} digits={1} suffix="pp" /></td></tr>)}</tbody></table></div>
           </section>
         )}

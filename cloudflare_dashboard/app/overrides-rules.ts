@@ -67,7 +67,7 @@ export function specFor(scope: unknown, field: unknown): FieldSpec | undefined {
 
 /** Problems with one record, independent of event and time (empty list = well formed and inside the hard bounds). Port of check_one(). */
 export function checkOverride(o: unknown, rounds = 4): string[] {
-  if (typeof o !== "object" || o === null || Array.isArray(o)) return ["record is not an object"];
+  if (typeof o !== "object" || o === null || Array.isArray(o)) return ["the override is not in a readable form"];
   const r = o as Record<string, unknown>;
   const bad: string[] = [];
   for (const key of ["id", "created_at", "author", "event", "scope", "field", "value", "reason", "expires_at"]) {
@@ -78,24 +78,24 @@ export function checkOverride(o: unknown, rounds = 4): string[] {
   const extra = Object.keys(r).filter((key) => !RECORD_KEYS.has(key)).sort();
   if (extra.length) bad.push(`unknown keys ${JSON.stringify(extra)}`);
   if (typeof r.id !== "string" || r.id.length > 80) bad.push("id must be a string of at most 80 characters");
-  if (typeof r.reason !== "string" || r.reason.trim().length < MIN_REASON_CHARS) bad.push(`reason must be at least ${MIN_REASON_CHARS} characters`);
-  if (typeof r.event !== "string" || !/^[A-Za-z0-9:_.-]{1,60}$/.test(r.event)) bad.push("event must be an event_uid, an event id, a prefix such as pga:554, or all");
+  if (typeof r.reason !== "string" || r.reason.trim().length < MIN_REASON_CHARS) bad.push(`the reason must be at least ${MIN_REASON_CHARS} characters long`);
+  if (typeof r.event !== "string" || !/^[A-Za-z0-9:_.-]{1,60}$/.test(r.event)) bad.push("choose an event (or all events)");
   const spec = specFor(r.scope, r.field);
   if (!spec) {
-    return [...bad, `field ${String(r.scope)}/${String(r.field)} is not allowed (allowed: ${ALLOWED.map((s) => `${s.scope}/${s.field}`).join(", ")})`];
+    return [...bad, `${String(r.scope)} / ${String(r.field)} is not allowed as an override`];
   }
   const created = parseUtc(r.created_at);
   const expires = parseUtc(r.expires_at);
-  if (created === null) bad.push("timestamp: created_at must be an ISO-8601 UTC string");
-  if (expires === null) bad.push("timestamp: expires_at must be an ISO-8601 UTC string");
+  if (created === null) bad.push("the start time is not a valid date and time (created_at)");
+  if (expires === null) bad.push("the expiry time is not a valid date and time (expires_at)");
   if (created !== null && expires !== null) {
     if (expires <= created) bad.push("expires_at must be after created_at");
     else if (expires - created > MAX_LIFETIME_DAYS * 86_400_000) bad.push(`expires_at is more than ${MAX_LIFETIME_DAYS} days after created_at`);
   }
   const v = r.value;
   if (spec.kind === "number") {
-    if (typeof v !== "number" || !Number.isFinite(v)) bad.push("value must be a finite number");
-    else if (v < spec.lo || v > spec.hi) bad.push(`value ${v} outside the hard bounds [${spec.lo}, ${spec.hi}] (${spec.unit})`);
+    if (typeof v !== "number" || !Number.isFinite(v)) bad.push("the value must be a number");
+    else if (v < spec.lo || v > spec.hi) bad.push(`the value ${v} is outside the hard bounds of ${spec.lo} to ${spec.hi} (${spec.unit})`);
   } else if (spec.kind === "bool") {
     if (v !== true) bad.push("value must be true (an override that does nothing is deleted, not stored)");
   } else {

@@ -157,20 +157,74 @@ function parseRoundUpdate(raw: unknown): RoundUpdate | null {
     observed_rounds: Array.isArray(raw.observed_rounds) ? raw.observed_rounds.flatMap((r) => obj(r) && finite(r.round) ? [{ round: r.round, field_actual: numberValue(r.field_actual), field_expected: numberValue(r.field_expected), weather_strokes: numberValue(r.weather_strokes), residual: numberValue(r.residual), players: numberValue(r.players) }] : []) : [] };
 }
 export type ScoringEvidenceRow = { label: string; value: string; detail: string };
-export function scoringEvidence(doc: ScoringDoc): { rows: ScoringEvidenceRow[]; warning: string | null; updateApplied: boolean } {
+export type EvidenceContext = { courseName?: string | null; eventYear?: number | null; forecastTime?: string | null };
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-07" (or "2026-10-08 (strictly earlier events)") to "Oct 7, 2026"; anything else is returned unchanged. A calendar date has no time zone, so it is never run through Date. */
+export function plainDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return m ? `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${Number(m[3])}, ${m[1]}` : value;
+}
+/** 1581678 -> "1.58M", 3204 -> "3,204". */
+export function compactCount(n: number): string { return n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n.toLocaleString("en-US"); }
+/** "V_EU_campo_madrid_villa" -> "Campo Madrid Villa". Only a fallback for when the event has no course name. */
+export function venueNameFromSource(source: string | null | undefined): string | null {
+  const m = source ? /\b(V_[A-Za-z]{2,3}_[A-Za-z0-9_]+)/.exec(source) : null;
+  if (!m) return null;
+  const words = m[1].replace(/^V_[A-Za-z]{2,3}_/, "").split("_").filter(Boolean);
+  return words.length ? words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : null;
+}
+const yearSpan = (a: number | string | null | undefined, b: number | string | null | undefined): string | null => {
+  const x = a == null || a === "" ? null : String(a), y = b == null || b === "" ? null : String(b);
+  return x && y ? (x === y ? x : `${x}–${y}`) : x ?? y;
+};
+
+/** Short, plain-English bullets describing where the course number comes from. Each row's `detail` is a hover definition. */
+export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { rows: ScoringEvidenceRow[]; warning: string | null; updateApplied: boolean } {
   const p = doc.baseline.course_provenance, u = doc.round_update;
   const applied = u?.status === "applied" && u.applied === true && u.target_round === doc.round && u.adjustment_strokes !== null;
-  const count = (n: number | null | undefined) => n == null ? "Count not reported" : `${n.toLocaleString()} observations`;
-  const joined = (parts: Array<string | null | undefined>) => parts.filter(Boolean).join(" · ");
-  const missing = "Not reported in this checkpoint";
-  const rows = [
-    { label: "Course layout", value: p?.layout.current_event_confirmed === true ? "Current event confirmed" : p?.layout.year != null ? `${p.layout.year} geometry · current setup unconfirmed` : missing, detail: joined([p?.layout.source, p?.layout.status]) || "Geometry identifies the layout; it does not establish the scoring-history period." },
-    { label: "General hole fit", value: p ? joined([p.general_fit.start, p.general_fit.end ? `through ${p.general_fit.end}` : null, p.general_fit.cutoff ? `cutoff ${p.general_fit.cutoff}` : null]) || missing : missing, detail: p ? joined([p.general_fit.method, count(p.general_fit.observations), p.general_fit.skill_response_cutoff ? `Skill response fit cutoff ${p.general_fit.skill_response_cutoff}` : "Skill response fit cutoff not reported"]) : "This checkpoint retains its original model fit. A later release does not change this stored score." },
-    { label: "Own-venue hole history", value: p ? count(p.venue_history.observations) : doc.baseline.median_hole_observations === 0 ? "Zero median hole observations" : missing, detail: p ? joined([p.venue_history.editions.length ? `Editions: ${p.venue_history.editions.join(", ")}` : "Editions not reported", p.venue_history.cutoff ? `cutoff ${p.venue_history.cutoff}` : "Cutoff not reported"]) : `Median observations per hole: ${doc.baseline.median_hole_observations ?? "not reported"}. General fit depth and venue history are different inputs.` },
-    { label: "Historical weather reference", value: p?.historical_weather.reference ?? missing, detail: joined([p?.historical_weather.field_adjustment, p?.historical_weather.method, p?.historical_weather.note]) || "Historical weather normalization and historical field adjustment were not reported." },
-    { label: "Current weather and player skill", value: doc.baseline.common_weather == null ? "Current weather adjustment not reported" : `${doc.baseline.common_weather >= 0 ? "+" : ""}${doc.baseline.common_weather.toFixed(3)} strokes common weather`, detail: joined([doc.weather.source, doc.weather.freshness, "Player skill is centered on this field; it does not move the field anchor.", p?.field_strength.detail ?? "Absolute field-strength calibration not established in this checkpoint.", `Absolute field-strength calibration status: ${p?.field_strength.status?.replaceAll("_", " ") ?? "not reported"}`, p?.field_strength.method]) },
-    { label: "Observed-round baseline update", value: applied ? `${u!.adjustment_strokes! >= 0 ? "+" : ""}${u!.adjustment_strokes!.toFixed(3)} strokes applied to round ${u!.target_round}` : u?.status === "staged_not_applied" ? "Staged, not applied" : u?.status === "not_applied" && u.applied !== true ? "Not applied" : "Application not verified", detail: joined([u?.reason ?? "No applied-update metadata was published for this checkpoint.", u?.source_rounds.length ? `Source rounds: ${u.source_rounds.join(", ")}` : null, u?.observations != null ? count(u.observations) : null]) },
-  ];
-  const warning = p?.venue_history.observations === 0 ? "No own-venue hole history supports this course anchor. Review the general fit and layout source before using the expectation." : doc.baseline.median_hole_observations === 0 ? "Median own-venue hole-history depth is zero. Check hole coverage and the general fit before using this course anchor." : p && p.layout.current_event_confirmed !== true ? "The current event layout is not confirmed. Check the geometry source before relying on the course anchor." : !p ? "This older checkpoint does not report the full course-fit provenance. Its stored expectation has not been recalculated with a later release." : doc.confidence.reasons[0] ?? null;
+  const rows: ScoringEvidenceRow[] = [];
+  const venue = ctx.courseName ?? venueNameFromSource(doc.baseline.source) ?? "This course";
+
+  // Course and which hole layout the model used.
+  let layoutText: string;
+  if (p?.layout.current_event_confirmed === true) layoutText = "using this year's confirmed hole layout";
+  else if (p?.layout.year != null) layoutText = `using ${ctx.eventYear != null && p.layout.year === ctx.eventYear - 1 ? "last year's" : `the ${p.layout.year}`} hole layout (this year's setup not confirmed)`;
+  else layoutText = "hole layout not recorded for this older checkpoint";
+  rows.push({ label: "Course", value: `${venue}, ${layoutText}.`, detail: "Which course and which version of its 18 holes the model scored. Hole lengths and pars come from this layout." });
+
+  // Hole difficulty: own-venue history vs tour-wide model.
+  const fit = p?.general_fit, hist = p?.venue_history;
+  const fitBits = fit ? [fit.observations != null ? `${compactCount(fit.observations)} holes` : null, yearSpan(fit.start, fit.end)].filter(Boolean).join(", ") : "";
+  const tourModel = `a tour-wide ${fit?.method && /par\s*[×x]\s*yardage/i.test(fit.method) ? "par/yardage " : ""}model${fitBits ? ` (${fitBits})` : ""}`;
+  const venueObs = hist?.observations ?? (p ? null : doc.baseline.median_hole_observations);
+  if (venueObs === 0) rows.push({ label: "Hole difficulty", value: `No past hole data at this venue, so hole difficulty comes from ${tourModel}.`, detail: "With no earlier rounds recorded on this course, each hole's expected score is estimated from similar par and yardage holes across the tour." });
+  else if (venueObs != null && venueObs > 0) {
+    const span = hist && yearSpan(hist.year_min, hist.year_max);
+    rows.push({ label: "Hole difficulty", value: hist?.observations != null ? `Uses ${venueObs.toLocaleString("en-US")} past holes played here${span ? ` (${span})` : ""}, together with ${tourModel}.` : `Uses about ${venueObs.toLocaleString("en-US")} past plays per hole here, together with ${tourModel}.`, detail: "How hard each hole plays comes from the scores players actually made on this course, anchored by a tour-wide model of par and yardage." });
+  } else rows.push({ label: "Hole difficulty", value: p ? `Hole difficulty comes from ${tourModel}; how much past data exists at this venue was not reported.` : "This older checkpoint does not record how much past hole data supported the course number.", detail: "Past rounds at this venue make the course number more reliable." });
+
+  // Weather.
+  const w = doc.baseline.common_weather;
+  const time = ctx.forecastTime ? ` (forecast as of ${ctx.forecastTime})` : "";
+  if (w == null) rows.push({ label: "Weather", value: "No weather adjustment was recorded for this round.", detail: "The shift in scoring the model expects from the forecast conditions, for every player alike." });
+  else rows.push({ label: "Weather", value: Math.abs(w) < 0.005 ? `Conditions are forecast to play about normal${time}.` : `Conditions are forecast to play ${Math.abs(w).toFixed(2)} strokes ${w < 0 ? "easier" : "harder"} than normal${time}.`, detail: "How much the forecast wind, rain and temperature move the whole field's average score compared with a typical round at this venue." });
+
+  // Completed rounds and whether they changed the course number.
+  const done = u?.observed_rounds.filter((r) => r.field_actual != null) ?? [];
+  if (done.length) rows.push({ label: "Completed rounds", value: `${done.map((r) => `Round ${r.round} field average ${r.field_actual!.toFixed(2)}${r.players != null ? ` (${r.players} players)` : ""}`).join("; ")}.`, detail: "The actual average score of the players who have finished that round." });
+  if (u) {
+    const t = u.target_round;
+    const text = applied ? `Completed rounds moved the round ${t} course number by ${u.adjustment_strokes! >= 0 ? "+" : ""}${u.adjustment_strokes!.toFixed(2)} strokes.`
+      : u.status === "staged_not_applied" ? `These results have not changed the round ${t ?? "next"} course number yet. Scores alone cannot tell a hard course from bad weather, so the adjustment waits on a validated method.`
+      : `These results were not used to adjust the round ${t ?? "next"} course number.`;
+    rows.push({ label: "Effect on next round", value: text, detail: "Whether what happened in earlier rounds was fed back into the course number for the next round." });
+  }
+
+  const warning = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0 ? "There is no past hole data for this venue, so the course number leans on a tour-wide model and the earlier layout. Treat it as less certain than at a course with history."
+    : p && p.layout.current_event_confirmed !== true ? "This year's hole layout is not confirmed, so the course number uses an earlier layout. Check it before relying on the number."
+    : !p ? "This older checkpoint does not record where its course number came from. The stored expectation has not been recalculated with a later release."
+    : doc.confidence.reasons[0] ?? null;
   return { rows, warning, updateApplied: applied };
 }

@@ -6,7 +6,30 @@
 export const SCORECARD_KEY = "golfprice/scorecard/latest.json";
 export const SCORECARD_STALE_DAYS = 8;
 export const MARKETS = ["win", "top_5", "top_10", "top_20", "make_cut"] as const;
-export const MARKET_LABELS: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut" };
+export const MARKET_LABELS: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut", miss_cut: "Miss cut" };
+
+/** The one line shown while the forward record is empty (owner, October 2026). */
+export const FORWARD_RESTART_NOTE = "Forward test restarts with the Oct 12 event.";
+
+/** Tours by their plain names. */
+export const TOUR_LABELS: Record<string, string> = { pga: "PGA Tour", euro: "DP World Tour", liv: "LIV Golf", kft: "Korn Ferry Tour" };
+export const tourLabel = (tour: string): string => TOUR_LABELS[String(tour).toLowerCase()] ?? String(tour).toUpperCase();
+
+/** "2026-10-01" as "Oct 1" without any time-zone shift (a date, not a moment). Anything else comes back unchanged. */
+export function dayLabel(value: string | null | undefined): string {
+  const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(value ?? "");
+  if (!m) return value ?? "";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
+/** Models worth showing: the one in production and the old champion it replaced. The trial variants are retired and stay out of the tables. */
+export const SHOWN_ROLES = ["production", "retired_champion"];
+export const shownArms = (arms: ScorecardArm[]): ScorecardArm[] => {
+  const chosen = arms.filter((arm) => arm.role !== undefined && SHOWN_ROLES.includes(arm.role));
+  return chosen.length ? chosen : arms.filter((arm) => arm.arm === "challenger" || arm.arm === "champion");
+};
+/** Plain model names: the rows say what the model is, not which internal arm it is. */
+export const armName = (arm: ScorecardArm): string => (arm.role === "production" || arm.arm === "challenger" ? "Current model" : arm.role === "retired_champion" || arm.arm === "champion" ? "Old model (retired)" : arm.label);
 
 export type Interval = { n: number; mean: number | null; lo: number | null; hi: number | null };
 export type ScorecardArm = {
@@ -19,6 +42,8 @@ export type ScorecardArm = {
   logloss_vs_close?: Record<string, number>;
   logloss_vs_champion_mean: number | null;
   logloss_vs_close_mean: number | null;
+  markets_better_vs_close?: number | null;
+  markets_scored_vs_close?: number | null;
 };
 export type BetSummary = { n: number; settled: number; pnl_units: number | null; roi: number | null };
 export type ScorecardEvent = {

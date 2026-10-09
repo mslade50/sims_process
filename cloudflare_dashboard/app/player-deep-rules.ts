@@ -1,3 +1,4 @@
+import {etTime} from "./lib.ts";
 export const finite=(v:unknown):v is number=>typeof v==="number" && Number.isFinite(v);
 export type ShotMetric={key:string;label:string;value:number|null;unit:string;n_shots?:number;n_rounds?:number;n_events?:number;last_date?:string;status?:string;definition?:string;reference_z?:number|null;reference_percentile?:number|null;reference_n_players?:number;reference_id?:string;reference_as_of?:string;higher_is_better?:boolean};
 export type RoundRow={round?:number;round_num?:number;date?:string;score?:number|null;par?:number|null;sg_total?:number|null;sg_total_field?:number|null;sg_ott?:number|null;sg_app?:number|null;sg_arg?:number|null;sg_putt?:number|null;field_strength?:number|null;difficulty?:number|null;wind?:number|null;temp?:number|null;sg_basis?:string};
@@ -18,7 +19,7 @@ export function roundValues(events:HistoryEvent[],all=false):number[]{return eve
 export function histogram(values:number[],low=-8,high=8,step=1){const counts=Array.from({length:Math.ceil((high-low)/step)},(_,i)=>({x:low+i*step,count:0,share:0}));for(const v of values){const i=Math.max(0,Math.min(counts.length-1,Math.floor((v-low)/step)));counts[i].count++;}for(const b of counts)b.share=values.length?b.count/values.length:0;return counts;}
 export function humanCheckpoint(stamp:string|null|undefined,kind?:string):string{if(!stamp || !Number.isFinite(Date.parse(stamp)))return "Saved time unavailable";return `${kind==="live" ? "Live update" : "Pre-event model"} · ${new Date(stamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZone:"America/New_York"})} ET`;}
 export const DEFAULT_FILTERS:EventFilters={season:"",tour:"",major:false,difficulty:"",strength:"",search:"",window:"recent2y"};
-export const EVENT_METRICS=[{key:"sg_total",label:"Adjusted total SG",unit:"SG/round"},{key:"sg_total_field",label:"Field-relative total SG",unit:"SG/round"},{key:"sg_ott",label:"Off the tee",unit:"field SG/round"},{key:"sg_app",label:"Approach",unit:"field SG/round"},{key:"sg_arg",label:"Around green",unit:"field SG/round"},{key:"sg_putt",label:"Putting",unit:"field SG/round"},{key:"score_to_par",label:"Score vs par",unit:"strokes/round"}] as const;
+export const EVENT_METRICS=[{key:"sg_total",label:"Total strokes gained",unit:"SG/round",help:"Strokes gained per round against a fixed PGA average, adjusted for the strength of each field."},{key:"sg_total_field",label:"Total vs the field",unit:"field SG/round",help:"Strokes gained per round compared with the other players in that week's field."},{key:"sg_ott",label:"Off the tee",unit:"field SG/round",help:"Strokes gained per round on tee shots, compared with that week's field."},{key:"sg_app",label:"Approach",unit:"field SG/round",help:"Strokes gained per round on approach shots, compared with that week's field."},{key:"sg_arg",label:"Around green",unit:"field SG/round",help:"Strokes gained per round on chips, pitches and bunker shots, compared with that week's field."},{key:"sg_putt",label:"Putting",unit:"field SG/round",help:"Strokes gained per round on the greens, compared with that week's field."},{key:"score_to_par",label:"Score vs par",unit:"strokes/round",help:"Average strokes over or under par per round."}] as const;
 export type EventMetric=typeof EVENT_METRICS[number]["key"];
 export function eventMetricValue(event:HistoryEvent,metric:EventMetric):number|null{if(metric==="sg_total"&&event.sg_basis!=="source_adjusted")return null;return finite(event[metric])?event[metric]:null;}
 export function sortEvents(events:HistoryEvent[],metric:EventMetric|"date",direction:"asc"|"desc"):HistoryEvent[]{return [...events].sort((a,b)=>{if(metric==="date")return (direction==="desc" ? -1:1)*a.date.localeCompare(b.date);const av=eventMetricValue(a,metric),bv=eventMetricValue(b,metric);if(!finite(av))return finite(bv)?1:0;if(!finite(bv))return -1;return (direction==="desc" ? -1:1)*(av-bv)||b.date.localeCompare(a.date);});}
@@ -31,3 +32,24 @@ export function evidenceSlice(events:HistoryEvent[],all=false){const es=events.f
 export function centeredValues(values:number[],center:boolean){const median=quantile(values,.5);return center&&median!==null?values.map(v=>v-median):values;}
 export function exploratoryStandouts(metrics:ShotMetric[],keys:string[]){return metrics.filter(m=>keys.includes(m.key)&&m.status==="available"&&(m.n_shots??0)>=100&&(m.n_rounds??0)>=10&&finite(m.reference_z)&&m.reference_z>.3).sort((a,b)=>b.reference_z!-a.reference_z!).slice(0,2);}
 export function commonEventSlices(a:HistoryEvent[],b:HistoryEvent[],all=false){const aid=new Set(a.filter(e=>roundValues([e],all).length).map(e=>e.id)),bid=new Set(b.filter(e=>roundValues([e],all).length).map(e=>e.id));const common=new Set([...aid].filter(id=>bid.has(id)));return {a:a.filter(e=>common.has(e.id)),b:b.filter(e=>common.has(e.id)),n_common:common.size};}
+
+/** Plain-English unit text for the table sub-labels. */
+export function unitText(unit:string):string{return unit==="SG/round"?"strokes gained per round":unit==="field SG/round"?"strokes gained per round vs field":unit==="strokes/round"?"strokes per round":unit==="strokes/shot"?"strokes gained per shot":unit==="fraction"?"rate":unit;}
+/** Hover definitions for jargon labels used across the player deep dive. */
+export const GLOSS={
+  sd:"How many standard deviations above (+) or below (−) the PGA average this is. About 1 is clearly good and 2 is elite; 0 is average.",
+  sgOtt:"Strokes gained off the tee: how many shots per round the player gains or loses on tee shots compared with the benchmark.",
+  sgApp:"Strokes gained on approach shots into the green, per round.",
+  sgArg:"Strokes gained around the green (chips, pitches, bunker shots), per round.",
+  sgPutt:"Strokes gained putting, per round.",
+  adjTotal:"Total strokes gained per round on a fixed PGA scale, adjusted for the strength of the field that week.",
+  percentile:"Where this player ranks among PGA players with enough shots. 90th means better than 90% of them.",
+  startGap:"How many shots behind the leader the player was before starting the round.",
+  finish:"Final finishing position for the whole event, not just the selected rounds.",
+} as const;
+/** Calendar dates (event and round days) read as plain dates; real timestamps read in US Eastern time. */
+export function dayText(v:string|null|undefined,fallback="Not available"):string{
+  if(!v)return fallback;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=new Date(`${v}T00:00:00Z`);return Number.isNaN(d.getTime())?fallback:d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});}
+  return etTime(v,fallback);
+}

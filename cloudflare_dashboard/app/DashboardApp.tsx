@@ -91,8 +91,8 @@ function Moved({ to }: { to: string }) {
   return (
     <div>
       <PageIntro eyebrow="Moved" title="This page moved" description="The older page was replaced by a newer one." />
-      <EmptyState title={`Now at ${to}`} detail="You are being taken there. If nothing happens, use the link in the navigation." />
-      <p><a className="ex-link" href={to}>Go to {to}</a></p>
+      <EmptyState title="Taking you to the new page" detail="If nothing happens, use the link below or the navigation." />
+      <p><a className="ex-link" href={to}>Go to the new page</a></p>
     </div>
   );
 }
@@ -233,21 +233,21 @@ export function DashboardApp({ initialView }: { initialView: string }) {
               </>
             ) : week ? (
               <>
-                <div><strong>{week.title}</strong><small>{week.sub || "golfprice"}</small></div>
+                <div><strong>{week.title}</strong>{week.sub && <small>{week.sub}</small>}</div>
                 {week.publishedLine && <span className="published-line">{week.publishedLine}</span>}
                 {week.heldBackNote && <p className="held-note" role="status">{week.heldBackNote}</p>}
-                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest run" : "Last run"} title={week.tooltip} />
+                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest run" : "Last run"} title={week.tooltip || "When the model last priced this week"} />
               </>
             ) : (
               <>
-                <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}{manifest?.event_id ? ` · Event ${manifest.event_id}` : ""}</small></div>
+                <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}</small></div>
                 <FreshnessBadge at={manifest?.generated_at} label="Data" />
               </>
             )}
           </div>
         </header>
         <div className="content-frame">
-          {badEvent && <p className="link-notice" role="status">The event in this link (<code>{eventParam}</code>) is not in the published index, so the default event is shown instead.</p>}
+          {badEvent && <p className="link-notice" role="status">The event in this link is not in the published list, so the default event is shown instead.</p>}
           {route.kind === "notfound" ? <NotFound requested={route.requested} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ActiveView /> : null}
         </div>
       </main>

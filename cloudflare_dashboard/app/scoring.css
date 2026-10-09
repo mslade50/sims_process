@@ -19,3 +19,8 @@
 .score-baseline>div>*{min-width:0;overflow-wrap:anywhere}
 .score-baseline>div b{text-align:right}
 .score-baseline>small{min-width:0;overflow-wrap:anywhere}
+
+/* Plain-language "where the course number comes from" list and the technical-details list. */
+.score-story{list-style:none;margin:0;padding:0;display:grid;gap:0}.score-story li{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 16px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.5}.score-story li:last-child{border-bottom:0}.score-story b{color:var(--muted-strong);font-size:12px}.score-story span{color:var(--foreground);overflow-wrap:anywhere}
+.score-tech-list{display:grid;gap:0;margin:0 0 10px}.score-tech-list>div{display:grid;grid-template-columns:190px minmax(0,1fr);gap:4px 16px;padding:8px 0;border-bottom:1px solid var(--line)}.score-tech-list dt{color:var(--muted);font-weight:700}.score-tech-list dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:650px){.score-story li,.score-tech-list>div{grid-template-columns:1fr}}

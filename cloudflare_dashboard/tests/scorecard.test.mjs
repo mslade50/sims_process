@@ -48,9 +48,9 @@ test("the scorecard is a section inside the Performance view, not a new tab", as
   assert.match(views, /<GolfpriceScorecardSection \/>/);
   assert.doesNotMatch(app, /scorecard/i);
   const section = await readFile(new URL("../app/ScorecardSection.tsx", import.meta.url), "utf8");
-  assert.match(section, /No scorecard published yet/);
+  assert.match(section, /No scorecard yet/);
   // Site audit C2: "model scorecard" / "challenger" wording retired.
-  assert.match(section, /golfprice \(production\) scorecard/);
+  assert.match(section, /Model scorecard/);
   assert.doesNotMatch(section, /Challenger versus|challenger did better/);
   assert.doesNotMatch(section, /publishes golfprice\/scorecard/, "no storage key in the empty state");
 });
@@ -64,7 +64,7 @@ test("forward clock paused: shown only when the forward record counts exactly ze
   assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: { ...card.forward, events_counted: "0" } })), false);
   assert.equal(forwardClockPaused(null), false);
   const paused = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: card } });
-  assert.match(paused, /Forward clock paused: parity record pending owner/);
+  assert.match(paused, /Forward test restarts with the Oct 12 event/);
   const counting = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: { ...card, forward: { ...card.forward, events_counted: 2 } } } });
-  assert.doesNotMatch(counting, /Forward clock paused/);
+  assert.doesNotMatch(counting, /Forward test restarts/);
 });
