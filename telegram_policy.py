@@ -33,17 +33,17 @@ def main():
     with tempfile.TemporaryDirectory(prefix="golf-alert-") as tmp:
         path = Path(tmp) / "state.json"
         def r2(verb):
-            return subprocess.run([shutil.which("npx") or "npx", "--yes", "wrangler@4", "r2", "object", verb, key, "--remote", "--file=" + str(path)], capture_output=True, text=True, timeout=90)
+            return subprocess.run([shutil.which("npx") or "npx", "--yes", "wrangler@4", "r2", "object", verb, key, "--remote", "--file=" + str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
         result = r2("get")
-        if result.returncode and not any(s in (result.stdout + result.stderr).lower() for s in ("404", "does not exist", "not found")):
+        if result.returncode and not any(s in ((result.stdout or "") + (result.stderr or "")).lower() for s in ("404", "does not exist", "not found")):
             print("Notification state unavailable; inspect workflow logs")
             return
-        previous = json.loads(path.read_text()) if path.exists() else {}
+        previous = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         now = time.time()
         if not should_alert(previous, now):
             print("Unchanged/recent workflow failure: Telegram suppressed")
             return
-        path.write_text(json.dumps({**previous, "reserved_at": now}))
+        path.write_text(json.dumps({**previous, "reserved_at": now}), encoding="utf-8")
         if r2("put").returncode:
             print("Notification reservation unavailable; inspect workflow logs")
             return
@@ -55,7 +55,7 @@ def main():
         except Exception as ex:
             print("Telegram transport failed:", type(ex).__name__)
             return
-        path.write_text(json.dumps({"sent_at": now}))
+        path.write_text(json.dumps({"sent_at": now}), encoding="utf-8")
         if r2("put").returncode:
             print("Notification state write failed; inspect Actions logs")
 

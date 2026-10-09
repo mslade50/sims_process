@@ -517,6 +517,28 @@ def _format_array(values) -> str:
     return ",".join(f"{float(value):g}" for value in values)
 
 
+def _external_fairs_owner() -> str | None:
+    """golfprice cutover guard (mirrors publish_sim_fairs._external_owner).
+
+    Returns the owner name when SIM_FAIRS_EXTERNAL.json marks another publisher as the
+    owner of round fairs / the odds board, else None. SIM_FAIRS_FORCE_PRODUCTION=1
+    overrides (manual rollback). The workflow checks out main, so the local marker file
+    is authoritative; origin/main is consulted as a fallback."""
+    if (os.environ.get("SIM_FAIRS_FORCE_PRODUCTION") or "").strip().lower() in ("1", "true", "yes"):
+        return None
+    marker = ROOT / "SIM_FAIRS_EXTERNAL.json"
+    if marker.exists():
+        try:
+            return str(json.loads(marker.read_text(encoding="utf-8")).get("owner") or "external")
+        except ValueError:
+            return "external"
+    try:
+        from publish_sim_fairs import _external_owner
+        return _external_owner()
+    except Exception:
+        return None
+
+
 def _run(cmd, label):
     print(f"\n  Running {label}: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=ROOT)
@@ -872,15 +894,28 @@ def run_pipeline(args) -> int:
             "live_stats_engine.py --automation",
         )
         _verify_predictions(target_round)
-        sim_started_at = datetime.now(timezone.utc).timestamp()
-        _run_complete_live_round_sim()
-        _verify_outputs(target_round, tourney, started_at=sim_started_at)
-        if provisional_mode:
+        fairs_owner = _external_fairs_owner()
+        if fairs_owner:
+            # golfprice owns the odds-board fairs: the Sheet round pointer, weather and
+            # live skill/prediction refresh above still ran; round_sim.py (round fairs,
+            # round_*_meta.json, report email, publish) is skipped cleanly.
+            print(
+                f"\n  round_sim.py skipped: round fairs owned by {fairs_owner} "
+                "(owned by golfprice; SIM_FAIRS_EXTERNAL.json). "
+                "Set SIM_FAIRS_FORCE_PRODUCTION=1 to override."
+            )
+        else:
+            sim_started_at = datetime.now(timezone.utc).timestamp()
+            _run_complete_live_round_sim()
+            _verify_outputs(target_round, tourney, started_at=sim_started_at)
+        if provisional_mode and not fairs_owner:
             receipts = json.loads(provisional_path.with_suffix(".email.json").read_text(encoding="utf-8"))
             if not any("R3 Round Sim" in item["subject"] for item in receipts):
                 raise PipelineFailure("Provisional R3 report has no SMTP acceptance receipt")
         completion_message = (
-            f"R{target_round} predictions, simulation, and fairs completed"
+            f"R{target_round} predictions completed; round sim/fairs owned by {fairs_owner}"
+            if fairs_owner
+            else f"R{target_round} predictions, simulation, and fairs completed"
         )
         if pin_high_warning:
             completion_message += f"; optional pin-high disabled: {pin_high_warning}"
