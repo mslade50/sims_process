@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HISTORY_DEFAULTS,hasSituationFilters,playerBaselineFilters,adjustedValues,decodeReference,filteredShotMetrics,filteredSkillProfile,matchedPgaEvents,matchesRound,sliceHistory,summaryWithMean} from '../app/player-history-filters.ts';
+import {HISTORY_DEFAULTS,NEXT_HISTORY_DEFAULTS,hasSituationFilters,playerBaselineFilters,adjustedValues,decodeReference,filteredShotMetrics,filteredSkillProfile,matchedPgaEvents,matchesRound,sliceHistory,summaryWithMean} from '../app/player-history-filters.ts';
 const round=(r,gap=null)=>({round:r,date:`2026-09-0${r}`,course:'North',sg_total:r,sg_basis:'source_adjusted',score:72-r,par:72,strokes_behind_leader_before:gap,sg_ott:r/10});
 const event=(id='pga:2026:1',patch={})=>({id,tour:'pga',year:2026,name:'Test',course:'North / South',courses:['North','South'],date:'2026-09-01',major:false,round_data:[round(1),round(2),round(3,2),round(4,3)],...patch});
 const f=(patch={})=>({...HISTORY_DEFAULTS,asOf:'2026-10-08T16:27:09Z',...patch});
@@ -61,4 +61,16 @@ test('baseline does not collapse when the situation is empty and shares the fixe
  const p={radar:[{key:'sg_ott'}]},ref={schema_version:'observed_category_reference.v1',axes:{sg_ott:{mean:.1,sd:.2}}};assert.equal(filteredSkillProfile(p,selected,ref).radar[0].z,null);assert.ok(Math.abs(filteredSkillProfile(p,baseline,ref).radar[0].z-.75)<1e-9);
  const d={shots:{metrics:[{key:'test'}],round_data:[1,2,3,4].map(r=>({event_id:es[0].id,round:r,date:'2026-09-01',metrics:{test:{total:r*10,n_shots:10}}}))}},sr={metrics:{test:{mean:2,sd:1}}};
  assert.equal(filteredShotMetrics(d,selected,sr).metrics[0].status,'unavailable');const m=filteredShotMetrics(d,baseline,sr).metrics[0];assert.equal(m.n_shots,40);assert.equal(m.value,2.5);assert.equal(m.reference_z,.5);
+});
+
+test('A4: the ?layout=next default is R1-R2 and is not a situational filter; the old default is untouched',()=>{
+ assert.deepEqual(HISTORY_DEFAULTS.rounds,[1,2,3,4]);assert.equal(HISTORY_DEFAULTS.defaultRounds,undefined);
+ assert.deepEqual(NEXT_HISTORY_DEFAULTS.rounds,[1,2]);
+ assert.equal(hasSituationFilters(HISTORY_DEFAULTS),false);
+ assert.equal(hasSituationFilters(NEXT_HISTORY_DEFAULTS),false,'R1-R2 is the next layout baseline, so no overlay by default');
+ assert.equal(hasSituationFilters({...NEXT_HISTORY_DEFAULTS,rounds:[1,2,3,4]}),true,'adding the weekend is a deliberate slice against the R1-R2 baseline');
+ assert.equal(hasSituationFilters({...NEXT_HISTORY_DEFAULTS,rounds:[1]}),true);
+ assert.equal(hasSituationFilters({...HISTORY_DEFAULTS,rounds:[1,2]}),true,'old layout: R1-R2 still counts as situational');
+ assert.deepEqual(playerBaselineFilters({...NEXT_HISTORY_DEFAULTS,rounds:[3,4],major:true}).rounds,[1,2]);
+ assert.deepEqual(playerBaselineFilters({...HISTORY_DEFAULTS,rounds:[3,4]}).rounds,[1,2,3,4]);
 });

@@ -8,7 +8,7 @@ import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
 import {
-  CAVEAT_DESCRIPTIVE, CAVEAT_REFERENCE_ONLY, INTERVAL_CLAUSE, ZERO_LABEL, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
+  CAVEAT_DESCRIPTIVE, CAVEAT_REFERENCE_ONLY, INTERVAL_CLAUSE, LIVE_CENTRING_NOTE, ZERO_LABEL, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
 } from "./player-hero-rules";
 import "./player-hero.css";
 
@@ -131,8 +131,9 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
               </div>
               {live && (
                 <div className="ph-chips" data-testid="live-chips">
-                  <span className="ph-chip" title="Transient within-week latent (not skill); already netted out of the live B8 shift"><b>{signed(live.transient, 3)}</b><small>this week, transient</small></span>
-                  {live.priced !== null && <span className="ph-chip" title={`Live model skill + week latent${live.contentionIncluded ? " + contention" : " (no contention shift published)"}`}><b>{signed(live.priced, 3)}</b><small>priced strength, next round</small></span>}
+                  <span className="ph-chip" title={`Transient within-week latent (not skill); already netted out of the live B8 shift. Centred on all entrants, not the active field.`}><b>{signed(live.transient, 3)}</b><small>this week, transient</small></span>
+                  {live.priced !== null && <span className="ph-chip" title={`Live model skill + week latent${live.contentionIncluded ? " + contention" : " (no contention shift published)"}. Week latent is centred on all entrants, not the active field.`}><b>{signed(live.priced, 3)}</b><small>priced strength, next round</small></span>}
+                  <small className="ph-chip-note">{LIVE_CENTRING_NOTE}</small>
                 </div>
               )}
               <p className="ph-muted">{LABELS.vsField.short} is saved model skill minus the active-field mean; a different estimator from the headline.</p>

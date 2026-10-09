@@ -14,7 +14,7 @@ import { ShotDetailsShape, ProfileDeepDive } from "./PlayerDeepDive";
 import { parseDeep, humanCheckpoint } from "./player-deep-rules";
 import { PlayerHistoryFilters } from "./PlayerHistoryFilters";
 import { FilteredPlayerShapes } from "./FilteredPlayerShapes";
-import { HISTORY_DEFAULTS, type HistoryFilters, type ShotReference, type ObservedCategoryReference, type ContextEvent } from "./player-history-filters";
+import { HISTORY_DEFAULTS, NEXT_HISTORY_DEFAULTS, type HistoryFilters, type ShotReference, type ObservedCategoryReference, type ContextEvent } from "./player-history-filters";
 import { PlayerHero } from "./PlayerHero";
 import { PlayerSgBars } from "./PlayerSgBars";
 import { PlayerMethod } from "./PlayerMethod";
@@ -78,7 +78,7 @@ function ProfileBenchmark({profile,catalog,selectedEvent,update}:{profile:Player
 }
 
 function ProfilePanel({entry, catalog, compareIds, selectedEvent, update, next}: {entry:ProfileEntry;catalog:ProfileCatalog;compareIds:string[];selectedEvent:string|null;update:(p:Record<string,string|null>)=>void;next:boolean}) {
-  const [historyFilters,setHistoryFilters]=useState<HistoryFilters>({...HISTORY_DEFAULTS});
+  const [historyFilters,setHistoryFilters]=useState<HistoryFilters>(next?{...NEXT_HISTORY_DEFAULTS}:{...HISTORY_DEFAULTS});
   const main=useDashboardData<unknown>(profileKey(entry.profile_key));
   const first=catalog.players.find(p=>playerId(p)===compareIds[0]); const second=catalog.players.find(p=>playerId(p)===compareIds[1]);
   const a=useDashboardData<unknown>(profileKey(first?.profile_key ?? entry.profile_key)); const b=useDashboardData<unknown>(profileKey(second?.profile_key ?? entry.profile_key));

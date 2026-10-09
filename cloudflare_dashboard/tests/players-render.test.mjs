@@ -58,8 +58,9 @@ test("/players?layout=next renders hero, SG bars (n/a state), filter summary bar
   assert.match(html, /Descriptive, not a forecast/);
   assert.match(html, /data-testid="sg-bars"|data-testid="sg-na"/);
   assert.match(html, /data-testid="filter-bar"/);
-  assert.match(html, /R1-R4 · last 2 years · no situational filter/);
-  assert.match(html, /includes weekend rounds \(selected by the cut\)/);
+  assert.match(html, /R1-R2 · last 2 years · no situational filter/, "A4: next layout opens on R1-R2");
+  assert.doesNotMatch(html, /includes weekend rounds \(selected by the cut\)/, "A4: weekend badge only when R3/R4 are on");
+  assert.doesNotMatch(html, /Player baseline · dashed slate/, "R1-R2 default is not a situational filter");
   assert.match(html, /The player&#x27;s shape/);
   for (const summary of ["Shot detail", "Playing style", String.raw`within-field style, PGA\+LIV data only`, "Method and caveats"]) assert.match(html, new RegExp(String.raw`<summary>[\s\S]{0,40}` + summary));
   assert.equal((html.match(/data-testid="player-method"/g) ?? []).length, 1);

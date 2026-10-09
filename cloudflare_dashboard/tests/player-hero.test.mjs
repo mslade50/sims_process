@@ -185,6 +185,7 @@ test("week chips: vs field, win and top 10 from the saved doc; live checkpoints 
   assert.match(html, /data-testid="live-chips"/);
   assert.match(html, /this week, transient/);
   assert.match(html, /priced strength, next round/);
+  assert.match(html, /centred on all entrants, not the active field/);
   const week = hero({ entry, profile, weekly: { ...weekly, savedDoc: { ...live, kind: "week" } } });
   assert.equal(week.includes("live-chips"), false);
 });

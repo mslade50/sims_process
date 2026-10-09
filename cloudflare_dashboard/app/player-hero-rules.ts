@@ -84,6 +84,8 @@ export function describeFilters(f: FilterLike): {text: string; situational: stri
 
 /** A7: live-checkpoint chips from the stored per-player live block. Null unless the transient latent exists. */
 export type LiveBlock = {tier?: number | null; mu_live?: number | null; week_latent_mean?: number | null; contention?: number | null} | null | undefined;
+/** A7: the stored week latent is centred over every entrant who played the completed rounds, not over the players still active. After a cut the active-field mean is above zero (survivors), so the chips are not centred on the field still playing. */
+export const LIVE_CENTRING_NOTE = "centred on all entrants, not the active field";
 export function liveChips(live: LiveBlock): {transient: number; priced: number | null; contentionIncluded: boolean} | null {
   if (!live || !finite(live.week_latent_mean)) return null;
   // Tier 0 is active; 1 (MDF), 2 (missed cut) and 3/4 (WD) play no further round, so "next round" chips would mislead.

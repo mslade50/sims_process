@@ -161,8 +161,12 @@ test("/weekly-players renders the table through DataTable with the Method senten
   const html = renderView("WeeklyPlayersView.tsx", "WeeklyPlayersView", { data, search: "?e=pga%3A527%3A2026-10-08", pathname: "/weekly-players" });
   assert.match(html, /data-table-wrap/, "rendered through DataTable");
   assert.match(html, /Download Weekly players CSV/);
-  assert.ok(html.includes(GAP_METHOD_SENTENCE.replaceAll("'", "&#x27;")), "gap method sentence present");
+  const esc = GAP_METHOD_SENTENCE.replaceAll("'", "&#x27;");
+  assert.ok(html.includes(`<p>${esc}</p>`), "gap method sentence present (in the Method disclosure)");
+  assert.doesNotMatch(html, /class="pp-muted wk-note"/, "no standalone gap note above the table");
   assert.match(html, /<summary>Method<\/summary>/);
+  assert.ok(html.indexOf(`<p>${esc}</p>`) > html.indexOf("<summary>Method</summary>") && html.indexOf(`<p>${esc}</p>`) < html.indexOf("data-table-wrap"), "sentence sits inside Method, before the table");
+  assert.ok(html.includes(`title="${esc}"`), "vs PGA avg picker entry carries the sentence as its tooltip");
   assert.ok(html.includes(ZERO_SENTENCE.slice(0, 40)));
   assert.match(html, /Pre-event field offset/);
   assert.match(html, /Saved baseline reconciliation \(audit\)/);

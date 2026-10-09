@@ -204,6 +204,7 @@ export function DataTable({
   activeRow,
   defaultColumns,
   headerLabels,
+  headerTitles,
   verbatim = false,
   stickyFirst = false,
   renderCell,
@@ -220,6 +221,8 @@ export function DataTable({
   defaultColumns?: string[];
   /** Optional display label per column key (header and picker). */
   headerLabels?: Record<string, string>;
+  /** Optional hover text (title attribute) per column, on the header and in the column picker. */
+  headerTitles?: Record<string, string>;
   /** Render header, picker and text cells exactly as given (no title-casing), for tables whose columns and badges are already labels. */
   verbatim?: boolean;
   /** Keep the first column visible while scrolling sideways. */
@@ -320,7 +323,7 @@ export function DataTable({
               {allColumns.map((column) => {
                 const checked = activeColumns.includes(column);
                 return (
-                  <label key={column}>
+                  <label key={column} title={headerTitles?.[column]}>
                     <input
                       type="checkbox"
                       checked={checked}
@@ -348,7 +351,7 @@ export function DataTable({
             <tr>
               {activeColumns.map((column, index) => (
                 <th key={column} className={cellClass(column, index)}>
-                  <button type="button" onClick={() => toggleSort(column)}>
+                  <button type="button" title={headerTitles?.[column]} onClick={() => toggleSort(column)}>
                     {headText(column)}
                     {sort?.column === column && <span>{sort.direction === "asc" ? " ↑" : " ↓"}</span>}
                   </button>

@@ -40,20 +40,21 @@ function WeeklyTable({doc,inputs,inputsPending,catalog,players}:{doc:ExplainDoc;
   const built=useMemo(()=>buildTable({doc,inputs,catalog,players,deps:DEPS}),[doc,inputs,catalog,players]);
   const [open,setOpen]=useState<number|null>(null);
   const method=fieldMethod(inputs,doc.kind);const picked=built.rows.find(r=>(r.__row as {id:number}).id===open) ?? null;
+  const headerTitles={[LABELS.vsPgaAvg.short]:GAP_METHOD_SENTENCE,[COL.gap]:GAP_METHOD_SENTENCE};
   const mobile=[COL.player,LABELS.thisWeekPga.short,COL.win];
   return <div className="wk-table">
-    <p className="pp-muted wk-note">{GAP_METHOD_SENTENCE}</p>
     <details className="pp-details wk-method"><summary>Method</summary>
       <p>{ZERO_SENTENCE}</p>
+      <p>{GAP_METHOD_SENTENCE}</p>
       <dl className="wk-method-list"><dt>{doc.kind==="live" ? "Pre-event field offset" : "Field offset"}</dt><dd>{method.offsetText} SG/round (field average {method.fieldAverage}{doc.kind==="live" ? "; live checkpoints keep the pre-event offset, not a recompute for the active field" : ""})</dd><dt>Estimator</dt><dd>{method.estimator}</dd><dt>Skills vintage</dt><dd>{method.vintage}</dd><dt>Debutants imputed</dt><dd>{method.imputed}{method.nField!=="n/a" ? ` of ${method.nField} players` : ""}</dd><dt>Accuracy</dt><dd>{ACCURACY_SENTENCE}</dd></dl>
       <p>{thisWeekGuide(method,DEPS)}</p>
     </details>
     {inputsPending && <p className="pp-muted" role="status">Loading the saved model inputs for the {LABELS.thisWeekPga.short} column.</p>}
     {!inputs && !inputsPending && <p className="pp-muted" role="status">{LABELS.thisWeekPga.short} is n/a: no matching saved model-inputs document is published for this checkpoint.</p>}
-    <DataTable rows={built.rows} preferredColumns={built.ordered} label="Weekly players" pageSize={40} onRowClick={row=>setOpen((row.__row as {id:number}).id)} activeRow={picked} defaultColumns={built.defaults} mobileColumns={mobile} verbatim stickyFirst/>
+    <DataTable rows={built.rows} preferredColumns={built.ordered} label="Weekly players" pageSize={40} onRowClick={row=>setOpen((row.__row as {id:number}).id)} activeRow={picked} defaultColumns={built.defaults} headerTitles={headerTitles} mobileColumns={mobile} verbatim stickyFirst/>
     {picked && <aside className="wk-expand" aria-label={`Details for ${String(picked[COL.player])}`}><header><strong>{String(picked[COL.player])}</strong><a className="pp-link" href={profileHref((picked.__row as {id:number}).id)}>Profile</a><button type="button" onClick={()=>setOpen(null)}>Close</button></header><dl>{expandEntries(picked,DEPS).map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl></aside>}
     <details className="pp-details"><summary>Column guide</summary>
-      <p><b>{LABELS.thisWeekPga.short}:</b> {LABELS.thisWeekPga.long}.</p><p><b>{LABELS.vsField.short}:</b> {LABELS.vsField.long}.</p><p><b>{LABELS.vsPgaAvg.short} (column picker):</b> {LABELS.vsPgaAvg.long}. Shows the n&lt;12 rounds badge when the player has too little history, and is blank when the history is newer than this checkpoint.</p><p><b>Model minus form gap (column picker):</b> This week minus vs PGA avg; read it with the Method sentence above.</p><p><b>n (tour mix):</b> Rounds behind the PGA-average rating; a badge shows only when the primary tour is not the event tour or under half the weight is PGA.</p><p>Missing cells read n/a. Saved components, CHL families, location, override and weather by round are in the column picker. Components are field-relative SG per round and do not sum to the model skill columns.</p>
+      <p><b>{LABELS.thisWeekPga.short}:</b> {LABELS.thisWeekPga.long}.</p><p><b>{LABELS.vsField.short}:</b> {LABELS.vsField.long}.</p><p><b>{LABELS.vsPgaAvg.short} (column picker):</b> {LABELS.vsPgaAvg.long}. Shows the n&lt;12 rounds badge when the player has too little history, and is blank when the history is newer than this checkpoint.</p><p><b>Model minus form gap (column picker):</b> This week minus vs PGA avg; read it with the sentence in Method above (also the hover text on this column in the picker).</p><p><b>n (tour mix):</b> Rounds behind the PGA-average rating; a badge shows only when the primary tour is not the event tour or under half the weight is PGA.</p><p>Missing cells read n/a. Saved components, CHL families, location, override and weather by round are in the column picker. Components are field-relative SG per round and do not sum to the model skill columns.</p>
     </details>
   </div>;
 }
