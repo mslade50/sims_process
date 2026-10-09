@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { EmptyState, Kpi, Panel } from "./components";
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
-import { FORWARD_RESTART_NOTE, MARKETS, MARKET_LABELS, SCORECARD_KEY, armName, dayLabel, deltaTone, fmt, forwardClockPaused, intervalText, isStale, latestWeekEvents, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
+import { forwardRestartNote, MARKETS, MARKET_LABELS, SCORECARD_KEY, armName, dayLabel, deltaTone, fmt, forwardClockPaused, intervalText, isStale, latestWeekEvents, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
 
 const SKILL_HINT = "How far off the model's skill estimates were in rounds 1 and 2, in strokes per round. Lower is better.";
 const MARKET_HINT = "Prediction error against the market's closing prices for this market. Negative means the model was closer to what happened than the market was; positive means the market was closer.";
@@ -101,7 +101,7 @@ export function GolfpriceScorecardSection() {
         <div className="scorecard-body">
           {isStale(card.generated_at, now) && <p className="inputs-note accent">This scorecard was last updated {etTime(card.generated_at)}, more than 8 days ago. A newer settle has not published yet.</p>}
           {paused ? (
-            <p className="inputs-note accent" role="status" data-testid="forward-clock-paused">{FORWARD_RESTART_NOTE}</p>
+            <p className="inputs-note accent" role="status" data-testid="forward-clock-paused">{forwardRestartNote(card.forward?.clock_start_event_uid)}</p>
           ) : (
             <div className="kpi-grid">
               <Kpi label="Events counted" value={`${card.forward.events_counted} of ${card.forward.futility_check_at}`} detail={`First checkpoint; full test is ${card.forward.horizon_events} events`} tone="accent" hint="PGA events graded since the forward test started. At the checkpoint we decide whether the model is worth continuing with." />

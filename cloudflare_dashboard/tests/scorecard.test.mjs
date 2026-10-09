@@ -63,8 +63,8 @@ test("forward clock paused: shown only when the forward record counts exactly ze
   assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: withoutCount })), false, "absent field shows nothing");
   assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: { ...card.forward, events_counted: "0" } })), false);
   assert.equal(forwardClockPaused(null), false);
-  const paused = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: card } });
-  assert.match(paused, /Forward test restarts with the Oct 12 event/);
+  const paused = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: { ...card, forward: { ...card.forward, clock_start_event_uid: "pga:528:2026-10-22" } } } });
+  assert.match(paused, /Forward test restarts with the PGA Tour event on Oct 22/);
   const counting = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: { ...card, forward: { ...card.forward, events_counted: 2 } } } });
   assert.doesNotMatch(counting, /Forward test restarts/);
 });

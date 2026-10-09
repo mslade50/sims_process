@@ -9,7 +9,13 @@ export const MARKETS = ["win", "top_5", "top_10", "top_20", "make_cut"] as const
 export const MARKET_LABELS: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut", miss_cut: "Miss cut" };
 
 /** The one line shown while the forward record is empty (owner, October 2026). */
-export const FORWARD_RESTART_NOTE = "Forward test restarts with the Oct 12 event.";
+export const FORWARD_RESTART_NOTE = "Forward test restarts with the next event priced on the current model.";
+
+/** The restart line from the published clock start ("pga:528:2026-10-22" -> "Forward test restarts with the PGA Tour event on Oct 22."); the generic note when absent. */
+export function forwardRestartNote(uid: string | null | undefined): string {
+  const m = /^([a-z]+):[^:]+:(\d{4}-\d\d-\d\d)$/i.exec(uid ?? "");
+  return m ? `Forward test restarts with the ${tourLabel(m[1])} event on ${dayLabel(m[2])}.` : FORWARD_RESTART_NOTE;
+}
 
 /** Tours by their plain names. */
 export const TOUR_LABELS: Record<string, string> = { pga: "PGA Tour", euro: "DP World Tour", liv: "LIV Golf", kft: "Korn Ferry Tour" };
