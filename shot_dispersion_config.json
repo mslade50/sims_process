@@ -1,16 +1,16 @@
 {
-  "cutoff": "2026-10-01",
+  "cutoff": "2026-10-08",
   "distribution_file": "this_week_dists_v2.csv",
-  "distribution_sha256": "1cf34fe29278492c88a6a5dc36975749dcb0952dc0148152c6754dc5b87f88c5",
+  "distribution_sha256": "5494d7ef71e5697681a87c781f2c8b6017152cb312d4b3c83dc580da85105878",
   "enabled": true,
-  "event_id": 554,
+  "event_id": 527,
   "event_ids": [
-    554
+    527
   ],
-  "event_start": "2026-10-01",
-  "expected_field_size": 120,
+  "event_start": "2026-10-08",
+  "expected_field_size": 72,
   "feature_file": "shot_dispersion_features.csv",
-  "feature_sha256": "891306e4ba4e18b603b2db4dde32eb4663c7862fa24a8b997e3b15b2a9cf13d0",
+  "feature_sha256": "c94cbcf32d7e5a7bea650e0db2e1d72bf0c33d3924e6b1178d63964ac2df6959",
   "hash_mode": "sha256_lf_normalized_v1",
   "methodology": {
     "feature_definition": "ema_pooled_within_round_shot_variance_times_expected_category_shots",
@@ -22,48 +22,45 @@
   "notes": "Required weekly production shot-dispersion overlay, frozen before R1 and reused for tournament plus round simulations. Disable only via an explicit tracked config rollback.",
   "provenance": {
     "builder_version": "weekly_shot_dispersion_v1",
-    "dg_results_tip": "2026-09-20",
+    "dg_results_tip": "2026-10-04",
     "field_category_expected_shot_count_priors": {
-      "app": 19.427085736581326,
-      "arg": 7.277777538736338,
-      "ott": 13.967443167629689,
-      "putt": 29.07356325653548
+      "app": 19.175087992759927,
+      "arg": 7.14474223091534,
+      "ott": 14.012038765781824,
+      "putt": 28.835895705926127
     },
     "field_category_pooled_variance_priors": {
-      "app": 0.13965307241673455,
-      "arg": 0.15452417846996785,
-      "ott": 0.0501746537960109,
-      "putt": 0.09795608996725504
+      "app": 0.1413220584235937,
+      "arg": 0.15170364613627543,
+      "ott": 0.051289449850477356,
+      "putt": 0.09603909474334615
     },
-    "field_roster_sha256": "f793924b1cb0fb18c3033bc32c776baa271cacff9a25ec7b73a1b024a917b59d",
-    "history_coverage_rate": 0.95,
+    "field_roster_sha256": "bc1550df54882a2780161ee88ca5c5bc93db317a4fdd0fff00fa7f921ae04986",
+    "history_coverage_rate": 0.9166666666666666,
     "history_fallback_cells": 24,
     "history_fallback_players": 6,
-    "kept_event_round_models": 1069,
-    "latest_selected_event_key": "pga:R2026557",
-    "latest_selected_model_created_at": "2026-09-20T20:30:17.254Z",
-    "max_prior_event_start": "2026-09-17",
-    "max_prior_round_date": "2026-09-20",
+    "kept_event_round_models": 1073,
+    "latest_selected_event_key": "pga:R2026554",
+    "latest_selected_model_created_at": "2026-10-05T17:40:41.343Z",
+    "max_prior_event_start": "2026-10-01",
+    "max_prior_round_date": "2026-10-04",
     "model_selection": "newest_created_at_then_model_id_per_event_round",
     "model_version_like": "%v4_lies2026%",
-    "selected_round_category_rows": 109102,
-    "selected_rows_missing_event_date": 3041,
-    "selected_valid_shots": 1909950,
-    "shot_database_bytes": 17550880768,
-    "shot_database_mtime_utc": "2026-09-29T03:30:02.332748+00:00",
+    "selected_round_category_rows": 77632,
+    "selected_rows_missing_event_date": 1842,
+    "selected_valid_shots": 1353242,
+    "shot_database_bytes": 17883471872,
+    "shot_database_mtime_utc": "2026-10-05T17:40:44.983825+00:00",
     "shot_database_name": "imgarena_shots_lean.sqlite3"
   },
   "required_current_event": true,
   "schema_version": 1,
   "tour": "pga",
-  "tourney": "utah",
+  "tourney": "baycurrent",
   "weights": {
     "sg_app": 0.9,
     "sg_arg": 0.8,
     "sg_ott": 0.9,
     "sg_putt": 0.95
-  },
-  "manual_variance_multipliers": {
-    "james, ben": 0.875
   }
 }

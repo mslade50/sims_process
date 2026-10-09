@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 
 REQUIRED_R1_COLUMNS = ("player_name", "my_pred", "wind_adj1", "dew_adj1")
@@ -59,6 +60,8 @@ def validate_r1_prediction_frame(frame, *, active_players=None):
         raise ValueError(f"artifact contains duplicate player(s): {', '.join(duplicates)}")
 
     incomplete = frame[list(REQUIRED_R1_COLUMNS)].isna().any(axis=1)
+    for column in REQUIRED_R1_COLUMNS[1:]:
+        incomplete |= ~np.isfinite(pd.to_numeric(frame[column], errors="coerce"))
     if incomplete.any():
         players = sorted(names[incomplete].tolist())
         raise ValueError(
@@ -131,20 +134,20 @@ def load_matching_r1_predictions(
     active_players,
     expected_event_ids,
     expected_tourney,
+    late_player_builder=None,
 ):
     """Load the first complete local/published snapshot covering the live field."""
     failures = []
+    recoverable = []
     for candidate in (Path(path) for path in candidates):
         if not candidate.is_file():
             failures.append(f"{candidate}: not found")
             continue
         try:
             frame = pd.read_csv(candidate)
-            details = validate_r1_prediction_frame(
-                frame,
-                active_players=active_players,
-            )
+            validate_r1_prediction_frame(frame)
             manifest_path = manifest_path_for(candidate)
+            manifest = None
             if manifest_path.is_file():
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 validate_r1_prediction_manifest(
@@ -153,9 +156,27 @@ def load_matching_r1_predictions(
                     expected_event_ids=expected_event_ids,
                     expected_tourney=expected_tourney,
                 )
+            missing = sorted(canonical_player_set(active_players) - canonical_player_set(frame["player_name"]))
+            if missing and late_player_builder is not None and manifest is not None:
+                # Prefer an already-complete snapshot before extending a locked one.
+                recoverable.append((frame, candidate, manifest, missing))
+                continue
+            details = validate_r1_prediction_frame(frame, active_players=active_players)
             return frame, candidate, details
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             failures.append(f"{candidate}: {exc}")
+
+    for frame, candidate, manifest, missing in recoverable:
+        if len(missing) > max(2, len(frame) // 20):
+            failures.append(f"{candidate}: too many late players for a locked-field repair: {missing}")
+            continue
+        additions = late_player_builder(missing, frame.copy(), manifest)
+        if canonical_player_set(additions["player_name"]) != set(missing):
+            raise ValueError("Late-player builder must return exactly the missing active players")
+        extended = pd.concat([frame, additions], ignore_index=True)
+        details = validate_r1_prediction_frame(extended, active_players=active_players)
+        details["late_players"] = missing
+        return extended, candidate, details
 
     raise ValueError(
         "No complete R1 prediction snapshot covers the active field. "

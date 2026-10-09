@@ -543,3 +543,23 @@ class WeatherForecastTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExternalFairsOwnerTests(unittest.TestCase):
+    def test_marker_gates_and_force_overrides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "SIM_FAIRS_EXTERNAL.json").write_text('{"owner": "golfprice"}', encoding="utf-8")
+            with patch.object(automation, "ROOT", root), patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("SIM_FAIRS_FORCE_PRODUCTION", None)
+                self.assertEqual(automation._external_fairs_owner(), "golfprice")
+                os.environ["SIM_FAIRS_FORCE_PRODUCTION"] = "1"
+                self.assertIsNone(automation._external_fairs_owner())
+
+    def test_no_marker_means_production_owns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(automation, "ROOT", Path(tmp)), \
+                 patch.dict(os.environ, {}, clear=False), \
+                 patch("publish_sim_fairs._external_owner", return_value=None):
+                os.environ.pop("SIM_FAIRS_FORCE_PRODUCTION", None)
+                self.assertIsNone(automation._external_fairs_owner())

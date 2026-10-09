@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import math
 
 
 FEEDBACK_WEIGHTS = {1: 0.5, 2: 0.6, 3: 0.7}
@@ -18,12 +19,14 @@ def single_published_forecast(value):
         forecast = float(value)
     except (TypeError, ValueError):
         return None
-    return forecast if forecast > 50 else None
+    return forecast if math.isfinite(forecast) and forecast > 50 else None
 
 
 def forecast_feedback(misses: Iterable[float]) -> tuple[float, float]:
     """Return ``(feedback, weight)`` from published forecast misses."""
     values = [float(value) for value in misses]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Forecast misses must be finite")
     if not values:
         return 0.0, 0.0
     weight = FEEDBACK_WEIGHTS.get(len(values), 0.7)
@@ -40,11 +43,10 @@ def round_scoring_result(
     dew_impact,
 ):
     """Calculate forecast accuracy plus the realized-weather diagnostic."""
+    diagnostics = [base_score, field_adjustment, wind_impact, dew_impact]
     structural_baseline = (
-        float(base_score)
-        + float(field_adjustment)
-        + float(wind_impact)
-        + float(dew_impact)
+        sum(float(value) for value in diagnostics)
+        if all(value is not None for value in diagnostics) else None
     )
     published = single_published_forecast(published_forecast)
     actual = None if actual_score is None else float(actual_score)
@@ -58,6 +60,7 @@ def round_scoring_result(
         ),
         "structural_baseline": structural_baseline,
         "structural_residual": (
-            actual - structural_baseline if actual is not None else None
+            actual - structural_baseline
+            if actual is not None and structural_baseline is not None else None
         ),
     }

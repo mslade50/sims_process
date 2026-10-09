@@ -23,12 +23,96 @@ NO Rust kernel, NO xlsxwriter, NO sim cache.
 Usage:
     python reprice.py              # price + dedup + store + Telegram
     python reprice.py --dry-run    # price + print summary, no store/Telegram
+    python reprice.py --check-ready # preflight only; absent/expired sims skip
 """
 
 import argparse
 import json
 import os
 import sys
+from datetime import timedelta, timezone
+from pathlib import Path
+
+
+def reprice_not_ready_reason(root, *, tourney, event_id, sim_round, now=None):
+    """Skip unpublished/expired sims; keep current-bundle damage fatal.
+
+    This is only a readiness check. Ready tapes still pass the complete health
+    gate (including byte hashes) before pricing and every betting side effect.
+    """
+    from sim_health_gate import (
+        DEFAULT_MAX_AGE_HOURS, SimulationHealthError, parse_utc, utc_now,
+    )
+
+    root = Path(root)
+    meta_path = root / f"round_h2h_r{sim_round}_meta.json"
+    health_path = root / f"round_h2h_r{sim_round}_health.json"
+    tape_path = root / f"round_h2h_r{sim_round}.parquet"
+    expected = (str(tourney).strip().lower(), str(event_id), str(sim_round))
+
+    def read_object(path):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise SimulationHealthError(f"Invalid repricing metadata: {path.name}")
+        return payload
+
+    def identity(payload):
+        values = tuple(payload.get(key) for key in ("tourney", "event_id", "round"))
+        if any(value is None or not str(value).strip() for value in values):
+            raise SimulationHealthError("Repricing metadata has incomplete event identity")
+        return (str(values[0]).strip().lower(), str(values[1]), str(values[2]))
+
+    if not meta_path.is_file():
+        if health_path.is_file():
+            health = read_object(health_path)
+            event = (health.get("simulation_manifest") or {}).get("event") or {}
+            if identity(event) == expected:
+                raise SimulationHealthError("Current round-H2H metadata is missing")
+        return f"R{sim_round} {tourney} simulation is not published yet"
+
+    meta = read_object(meta_path)
+    if identity(meta) != expected:
+        return f"No published R{sim_round} {tourney} simulation for event {event_id}"
+    missing = [path.name for path in (tape_path, health_path)
+               if not path.is_file() or path.stat().st_size == 0]
+    if missing:
+        raise SimulationHealthError(
+            "Current round-H2H bundle is incomplete: " + ", ".join(missing)
+        )
+    health = read_object(health_path)
+    manifest = health.get("simulation_manifest") or {}
+    if identity(manifest.get("event") or {}) != expected:
+        raise SimulationHealthError("Current round-H2H bundle has conflicting event identity")
+
+    source = manifest.get("source") or {}
+    now = now or utc_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    ages = []
+    for label, raw in (
+        ("simulation", source.get("generated_at")),
+        ("root tape", source.get("root_generated_at") or source.get("generated_at")),
+    ):
+        generated = parse_utc(raw)
+        if generated is None:
+            raise SimulationHealthError(f"Current {label} timestamp is missing or invalid")
+        age = now.astimezone(timezone.utc) - generated
+        if age < -timedelta(minutes=5):
+            raise SimulationHealthError(f"Current {label} timestamp is in the future")
+        ages.append((label, age))
+    for label, age in ages:
+        if age > timedelta(hours=DEFAULT_MAX_AGE_HOURS):
+            return (f"R{sim_round} {tourney} {label} is expired "
+                    f"({age.total_seconds() / 3600:.1f}h > {DEFAULT_MAX_AGE_HOURS:g}h); "
+                    "waiting for a fresh sim")
+    return None
+
+
+def _write_readiness_output(ready):
+    output = os.getenv("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write(f"ready={'true' if ready else 'false'}\n")
 
 
 class MatchupCoverageError(RuntimeError):
@@ -147,17 +231,12 @@ def main():
     ap = argparse.ArgumentParser(description="Cache-free round-matchup repricer")
     ap.add_argument("--dry-run", action="store_true",
                     help="Price + print summary; skip dedup/store/Telegram")
+    ap.add_argument("--check-ready", action="store_true",
+                    help="Check for a current, fresh sim; do not fetch odds or price")
     args = ap.parse_args()
 
     root = _setup_env()
-    import pandas as pd
-    import reprice_core as rc
     from sheet_config import load_config
-
-    try:
-        from sim_inputs import name_replacements as NAME_REPL
-    except Exception:
-        NAME_REPL = {}
 
     cfg = load_config()
     tourney = cfg["tourney"]
@@ -169,31 +248,32 @@ def main():
     print(f"  REPRICE (cache-free) — {tourney} R{sim_round}")
     print(f"{'='*60}")
 
+    reason = reprice_not_ready_reason(
+        root, tourney=tourney, event_id=event_id, sim_round=sim_round
+    )
+    _write_readiness_output(reason is None)
+    if reason is not None:
+        print(f"  [skip] {reason}")
+        return 0
+    if args.check_ready:
+        print("  Current simulation is available for repricing.")
+        return 0
+
+    import pandas as pd
+    import reprice_core as rc
+    try:
+        from sim_inputs import name_replacements as NAME_REPL
+    except Exception:
+        NAME_REPL = {}
+
     # ── 1. Load the committed round-H2H fair table ───────────────────────
     pq = os.path.join(root, f"round_h2h_r{sim_round}.parquet")
     mj = os.path.join(root, f"round_h2h_r{sim_round}_meta.json")
     hj = os.path.join(root, f"round_h2h_r{sim_round}_health.json")
-    if not os.path.exists(pq) or not os.path.exists(mj) or not os.path.exists(hj):
-        msg = (f"Reprice: no round-H2H fairs for R{sim_round} {tourney}. "
-               f"The exact tape/meta health bundle is incomplete; run the sim first.")
-        print(f"  {msg}")
-        if not args.dry_run:
-            rc.send_telegram(msg)
-        return 1
-
     with open(mj) as f:
         meta = json.load(f)
     with open(hj) as f:
         health = json.load(f)
-    if str(meta.get("round")) != str(sim_round) or meta.get("tourney") != tourney:
-        msg = (f"Reprice: round-H2H artifact is R{meta.get('round')} "
-               f"{meta.get('tourney')}, expected R{sim_round} {tourney}. "
-               f"Run the sim first.")
-        print(f"  {msg}")
-        if not args.dry_run:
-            rc.send_telegram(msg)
-        return 1
-
     h2h_df = pd.read_parquet(pq)
     from sim_health_gate import (
         collect_overlay_provenance,

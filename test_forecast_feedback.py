@@ -34,6 +34,20 @@ class ForecastFeedbackTests(unittest.TestCase):
         self.assertEqual(weight, 0.6)
         self.assertEqual(feedback, 0.207)
 
+    def test_missing_weather_does_not_prevent_forecast_accuracy(self):
+        result = round_scoring_result(
+            published_forecast=69.3, actual_score=68, base_score=68.5,
+            field_adjustment=.2, wind_impact=None, dew_impact=None,
+        )
+        self.assertAlmostEqual(result["forecast_miss"], -1.3)
+        self.assertIsNone(result["structural_baseline"])
+        self.assertIsNone(result["structural_residual"])
+
+    def test_nonfinite_forecasts_and_misses_are_not_feedback(self):
+        self.assertIsNone(single_published_forecast(float("inf")))
+        with self.assertRaises(ValueError):
+            forecast_feedback([float("nan")])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,31 @@ def test_required_email_rejects_missing_configuration(round_module, monkeypatch)
         )
 
 
+def test_late_replacement_retains_frozen_roster_overlay(round_module, monkeypatch, tmp_path):
+    cats = round_module.CAT_ORDER
+    def rows(player):
+        return [{"player_name":player,"category_clean":cat,"mean":0.,"std":1.,
+                 "skew":0.,"n_eff":50.} for cat in cats]
+    pd.DataFrame(rows("locked")+rows("withdrawn")).to_csv(tmp_path/"weekly.csv",index=False)
+    pd.DataFrame(rows("Replacement")).to_csv(tmp_path/"sg_dist_player.csv",index=False)
+    pd.DataFrame([{"player_name":"replacement","fallback_source":"historical_sg_ema20",
+        "fallback_event_id":999,"fallback_tourney":"guard_test","fallback_cutoff":"2026-10-01"}]).to_csv(
+            tmp_path/"r1_live_model.csv",index=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(round_module,"DISTS_FILE_V2",str(tmp_path/"weekly.csv"))
+    monkeypatch.setattr(round_module,"load_corr_matrix",lambda cats:np.eye(4))
+    calls=[]
+    def overlay(stds, players, cats, **kwargs):
+        calls.append(players)
+        result=stds.copy();result.loc[players,cats]*=2
+        return result
+    monkeypatch.setattr(round_module,"apply_shot_dispersion_overlay",overlay)
+    params,_,_=round_module._load_catfirst_dists(["locked","replacement"],allow_player_subset=True)
+    assert calls==[["locked","withdrawn"]]
+    np.testing.assert_array_equal(params[0][1],np.full(4,2.))
+    np.testing.assert_array_equal(params[1][1],np.ones(4))
+
+
 def test_required_email_returns_receipt_after_smtp_acceptance(round_module, monkeypatch):
     sent = []
 

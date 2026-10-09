@@ -83,6 +83,51 @@ def fetch_pga_events_this_week(api_key, *, now=None):
             raise RuntimeError(f'Could not verify the {year} PGA schedule') from None
     return events
 
+def fetch_scoring_round(event_id, year, round_num, course_id, api_key):
+    """Bind official live scores to the requested season/event/physical course.
+
+    Field-updates may already describe the next tournament on Monday. The
+    season schedule still identifies the completed event; the live endpoint's
+    event, course and stat_round must all agree before its results are used.
+    """
+    def read(endpoint, params):
+        try:
+            response = requests.get(f"{DATAGOLF_BASE}/{endpoint}", params={
+                **params, "file_format": "json", "key": api_key}, timeout=30)
+            if response.status_code != 200:
+                raise RuntimeError(f"DataGolf scoring HTTP {response.status_code}")
+            return response.json()
+        except (requests.RequestException, ValueError):
+            raise RuntimeError("DataGolf scoring request failed") from None
+
+    schedule = read("get-schedule", {"tour": "pga", "season": year, "upcoming_only": "no"})
+    if str(schedule.get("season")) != str(year) or schedule.get("tour") != "pga":
+        raise ValueError("Scoring schedule has the wrong season/tour")
+    events = [r for r in schedule.get("schedule", []) if str(r.get("event_id")) == str(event_id)]
+    if len(events) != 1 or str(events[0].get("course_key")) != str(course_id):
+        raise ValueError("Scoring schedule has the wrong event/course identity")
+    event = events[0]
+    payload = read("preds/live-tournament-stats", {
+        "stats": "sg_total,score", "round": round_num, "display": "value"})
+    if (payload.get("event_name") != event["event_name"]
+            or payload.get("course_name") != event["course"]
+            or str(payload.get("stat_round")) != str(round_num)):
+        raise ValueError("Stale-event or wrong-round scoring results")
+    updated = datetime.strptime(payload.get("last_updated", ""), "%Y-%m-%d %H:%M:%S UTC")
+    start = datetime.fromisoformat(event["start_date"])
+    if start.year != int(year) or not 0 <= (updated.date() - start.date()).days <= 14:
+        raise ValueError("Stale-season scoring results")
+    frame = pd.DataFrame(payload.get("live_stats", []))
+    if not frame.empty:
+        from sim_inputs import name_replacements
+        frame["player_name"] = frame["player_name"].str.lower().str.strip().replace(name_replacements)
+    frame.attrs.update(event_id=str(event_id), year=int(year), round_num=int(round_num),
+                       course_id=int(course_id), event_name=event["event_name"],
+                       course_name=event["course"], start_date=event["start_date"],
+                       latitude=event.get("latitude"), longitude=event.get("longitude"))
+    return frame
+
+
 def fetch_live_stats(round_num, api_key, include_score=False):
     """
     Fetch live tournament stats from DataGolf.
@@ -98,6 +143,10 @@ def fetch_live_stats(round_num, api_key, include_score=False):
     Returns:
         DataFrame with live stats + metadata columns, or None on failure.
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and int(round_num) == 2:
+        return pd.DataFrame(provisional["stats"])
     stats = ALL_STATS + (["score"] if include_score else [])
     params = {
         "stats": ",".join(stats),
@@ -380,6 +429,10 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
     Returns:
         DataFrame with player_name + requested columns, or None on failure.
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and teetime_col == "r3_teetime":
+        return pd.DataFrame(provisional["field"])
     params = {"tour": "pga", "file_format": "json", "key": api_key}
     resp = requests.get(f"{DATAGOLF_BASE}/field-updates", params=params)
 
@@ -405,12 +458,15 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
                 return pd.Series({teetime_col: None, "course": None})
             for entry in teetimes:
                 if entry.get("round_num") == round_num:
-                    return pd.Series({teetime_col: entry.get("teetime"), "course": entry.get("course_code")})
+                    return pd.Series({teetime_col: entry.get("teetime"), "course": entry.get("course_code"),
+                                      "starting_tee": entry.get("starting_tee", entry.get("start_tee", 1))})
             return pd.Series({teetime_col: None, "course": None})
 
         parsed = df["teetimes"].apply(_extract_teetime)
         df[teetime_col] = parsed[teetime_col]
         df["course"] = parsed["course"]
+        if "starting_tee" in parsed:
+            df["starting_tee"] = parsed["starting_tee"]
 
     # Build list of columns to keep
     keep = ["player_name"]
@@ -418,6 +474,8 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
         keep.append(teetime_col)
     if include_course and "course" in df.columns:
         keep.append("course")
+    if "starting_tee" in df.columns:
+        keep.append("starting_tee")
 
     df = df[[c for c in keep if c in df.columns]].copy()
     from sim_inputs import name_replacements
@@ -433,6 +491,12 @@ def fetch_field_updates(api_key, teetime_col="r1_teetime", include_course=False,
         df[teetime_col] = default_teetime
         print(f"  WARNING: {teetime_col} unavailable — defaulting to {default_teetime}")
 
+    df.attrs.update(
+        event_id=data.get("event_id"), event_name=data.get("event_name"),
+        course_ids=sorted({int(tee["course_num"]) for player in data["field"]
+                           for tee in player.get("teetimes", [])
+                           if tee.get("course_num") is not None}),
+    )
     return df
 
 

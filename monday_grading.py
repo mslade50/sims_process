@@ -312,6 +312,14 @@ def main():
         #   auto-detects the same event). Multi-event weeks pass --event-id so
         #   we grade the event we bet on, not whichever DataGolf lists first.
         # ------------------------------------------------------------------
+        # Optional golfprice scorecard block for the results email that grade_bets.py sends. Fail-safe: any error, a
+        # missing object or a scorecard older than 8 days means no block and one log line; grading is never affected.
+        try:
+            import golfprice_email_block
+            golfprice_email_block.prepare_env()
+        except Exception as exc:
+            print(f"  golfprice email block: skipped: {type(exc).__name__}")
+
         for event_id, event_name, n in to_grade:
             print(f"\n  Found {n} ungraded bets for {event_name}.")
             cmd = [python, "grade_bets.py"]

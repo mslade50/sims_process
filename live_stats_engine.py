@@ -51,12 +51,9 @@ from score_centering import (
     expected_field_score,
     validate_field_relative_predictions,
 )
-from forecast_feedback import (
-    forecast_feedback,
-    round_scoring_result,
-    single_published_forecast,
-)
+from forecast_feedback import single_published_forecast
 from r1_prediction_artifact import load_matching_r1_predictions
+from late_field_replacements import replacement_ema20
 from live_sim_exclusions import filter_live_sim_players
 
 load_dotenv()
@@ -328,7 +325,18 @@ def load_and_merge(round_num):
     if df is None:
         raise RuntimeError(f"Failed to fetch live stats for round {round_num}")
     df = filter_live_sim_players(df)
+    # Withdrawals do not need prediction coverage or replacement estimates.
+    df = df[~df["position"].astype(str).str.contains("WD|DQ", na=False)].copy()
     df = _merge_img_round_summary(df, round_num)
+    # Retain the observations and explicitly separate assumed final strokes.
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and round_num == 2:
+        observed = pd.DataFrame(provisional["stats"]).set_index("player_name")
+        df["original_r2_score"] = df.player_name.map(observed["round"])
+        df["actual_holes_completed"] = df.player_name.map(observed["thru"])
+        df["assumed_r2_strokes"] = course_par + df["original_r2_score"]
+        df["provisional_assumptions"] = provisional["label"]
 
     field = fetch_field_updates(API_KEY, teetime_col=teetime_col, include_course=include_course)
     if field is not None:
@@ -377,6 +385,35 @@ def _merge_r1(df):
     R1 merge: load model_predictions_r1.csv (created pre-event).
     Source: live_stats.py lines 148-162
     """
+    def build_late_players(missing, locked, manifest):
+        from sim_inputs import feed_name_aliases
+
+        cutoff = pd.to_datetime(df["r1_teetime"], errors="coerce").min()
+        if pd.isna(cutoff):
+            raise ValueError("Cannot determine the R1 date for late-player history cutoff")
+        wind_factor = compute_wind_factor(event_ids, wind_override, baseline_wind, course_id)
+        # Recover the original dew centering offset from the locked snapshot.
+        # Do not re-center or otherwise alter any existing player's prediction.
+        if "dew_r1" not in locked:
+            raise ValueError("Locked R1 snapshot lacks raw dew values for late-player weather")
+        dew_center = (locked["dew_r1"] * dew_calculation - locked["dew_adj1"]).median()
+        rows = []
+        for player in missing:
+            row = replacement_ema20(player, cutoff, aliases={**name_replacements, **feed_name_aliases})
+            tt = df.loc[df["player_name"].eq(player), "r1_teetime"].iloc[0]
+            row.update({
+                "player_name": player,
+                "wind_adj1": calculate_average_wind(tt, WIND_ARRAYS[1]) * wind_factor,
+                "dew_adj1": calculate_average_wind(tt, DEW_ARRAYS[1]) * dew_calculation - dew_center,
+                "fallback_event_id": manifest["event_id"],
+                "fallback_tourney": manifest["tourney"],
+            })
+            print(f"  [late-field] {player}: EMA20={row['my_pred']:+.4f}, "
+                  f"{row['fallback_history_rounds']} prior rounds, last={row['fallback_last_round']}; "
+                  "locked players unchanged")
+            rows.append(row)
+        return pd.DataFrame(rows)
+
     preds, prediction_path, field_details = load_matching_r1_predictions(
         (
             "model_predictions_r1.csv",
@@ -385,6 +422,7 @@ def _merge_r1(df):
         active_players=df["player_name"],
         expected_event_ids=event_ids,
         expected_tourney=tourney,
+        late_player_builder=build_late_players,
     )
     print(f"  [skill] Using complete R1 prediction snapshot: {prediction_path}")
     if field_details["extra_players"]:
@@ -397,6 +435,7 @@ def _merge_r1(df):
 
     merge_cols = ["player_name", "wind_adj1", "dew_adj1", "pred"]
     merge_cols = [c for c in merge_cols if c in preds.columns]
+    merge_cols += [c for c in preds.columns if c.startswith("fallback_")]
     df = df.merge(preds[merge_cols], on="player_name", how="left")
 
     # Datetime conversion for spline
@@ -1114,6 +1153,11 @@ def create_next_round_predictions(round_num):
         keep_cols.append("std_dev")
 
     preds = live_model[[c for c in keep_cols if c in live_model.columns]].copy()
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    if provisional and next_round == 3:
+        preds["provisional_assumptions"] = provisional["label"]
+        preds["provisional_input_sha256"] = provisional["sha256"]
 
     # Standardize skill column name: my_pred for R1, my_pred{N} for R2+
     pred_name = "my_pred" if next_round == 1 else f"my_pred{next_round}"
@@ -1938,6 +1982,11 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
         msg["Subject"] = f"R{round_num} Skill Update — {event_name.replace('_', ' ').title()}"
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(EMAIL_TO)
+        from provisional_round import email_notice
+        notice = email_notice()
+        if notice:
+            msg.replace_header("Subject", "PROVISIONAL — " + msg["Subject"])
+            html = notice + html
 
         # HTML body (+ temporary pin-high verification block on the R1 email)
         if round_num == 1:
@@ -2204,193 +2253,20 @@ def _write_param_to_sheet(ws, all_data, param_name, value):
 
 
 def write_actuals_to_sheet(round_num):
-    """
-    Write forecast accuracy and realized-weather diagnostics for a completed
-    round to the config tab.
-
-    Steps:
-      1. Read current dew array for this round (= forecast dew before refresh)
-      2. Refresh all dew forecasts (overwrites sheet)
-      3. Read refreshed dew array (= realized dew)
-      4. Read realized_wind, dewpoint_base, wind_override, dew_calculation from config
-      5. Read base_score and field_adj from pre-tourney breakdown (cols V-W)
-      6. Read the durable published pre-round forecast
-      7. Fetch actual scoring avg and compute actual - published forecast
-      8. Retain the realized-weather structural baseline as a diagnostic only
-      9. Write row to sheet
-    """
+    """Record completed official scores independently of weather diagnostics."""
     from sheets_storage import get_spreadsheet
     from sheet_config import load_config
+    from scoring_feedback import record_actuals, realized_diagnostics
 
-    try:
-        spreadsheet = get_spreadsheet()
-        ws = spreadsheet.worksheet("round_config")
-    except Exception as e:
-        print(f"  [actuals] Could not connect to sheet: {e}")
-        return
-
-    # 1. Read forecast dew (before refresh)
-    forecast_dew_arr = _read_dew_array_from_sheet(ws, round_num)
-    forecast_dew = sum(forecast_dew_arr) / len(forecast_dew_arr) if forecast_dew_arr else 0.0
-    print(f"  [actuals] R{round_num} forecast dew (pre-refresh): {forecast_dew:.1f}F")
-
-    # 2. Refresh dew forecasts
-    try:
-        refresh_dew_forecasts()
-    except Exception as e:
-        print(f"  [actuals] Dew refresh failed: {e}")
-
-    # 3. Re-read sheet for realized dew (post-refresh)
-    # Need to re-fetch worksheet data after the refresh wrote to it
-    try:
-        ws = spreadsheet.worksheet("round_config")
-    except Exception:
-        pass
-    realized_dew_arr = _read_dew_array_from_sheet(ws, round_num)
-    realized_dew = sum(realized_dew_arr) / len(realized_dew_arr) if realized_dew_arr else 0.0
-    print(f"  [actuals] R{round_num} realized dew (post-refresh): {realized_dew:.1f}F")
-
-    # 4. Read config values and sheet grid (need grid for both param write-back and base_score read)
+    spreadsheet = get_spreadsheet()
     config = load_config()
-    realized_wind = config.get(f"realized_wind_r{round_num}")
-    dewpoint_base = config.get("dewpoint_base", 0.0) or 0.0
-    # wind_override == 0 means "use the computed blend" — the raw value is NOT
-    # the factor. The correct factor keeps the realized-weather structural
-    # diagnostic interpretable even though forecast feedback no longer uses it.
-    from api_utils import compute_wind_factor
-    wind_factor = compute_wind_factor(
-        event_ids, config.get("wind_override", 0.0) or 0.0, baseline_wind,
-        config.get("course_id", course_id),
+    config["course_par"] = course_par
+    return record_actuals(
+        spreadsheet, config, round_num,
+        weather_loader=lambda metadata: realized_diagnostics(
+            config, round_num, metadata, spreadsheet
+        ),
     )
-    dew_calc = config.get("dew_calculation", 0.0) or 0.0
-
-    all_data = ws.get_all_values()
-
-    # 4b. Auto-fetch realized wind from Open-Meteo archive if not in sheet
-    if realized_wind is None:
-        print(f"  [actuals] No realized_wind_r{round_num} in sheet — auto-fetching from Open-Meteo")
-        try:
-            from sim_inputs import course_id as _cid
-            coords_csv = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
-            coords_df = pd.read_csv(coords_csv)
-            coords_row = coords_df[coords_df["course_id"] == _cid]
-            if coords_row.empty:
-                print(f"  [actuals] Course {_cid} not in course_coordinates.csv — skipping")
-                return
-            lat = float(coords_row["lat"].iloc[0])
-            lon = float(coords_row["lon"].iloc[0])
-            from datetime import timedelta
-            round_dates = get_round_dates()
-            round_date = round_dates[round_num - 1]
-            # If round dates are in the future (Monday backfill), use previous week
-            if round_date.date() > datetime.now().date():
-                round_date = round_date - timedelta(days=7)
-                print(f"  [actuals] Using previous week date: {round_date.strftime('%Y-%m-%d')}")
-            date_str = round_date.strftime("%Y-%m-%d")
-            realized_wind = fetch_realized_wind(lat, lon, date_str)
-            if realized_wind is None:
-                print(f"  [actuals] Could not fetch realized wind — skipping actuals row")
-                return
-            # Write back to sheet so it persists
-            param_name = f"realized_wind_r{round_num}"
-            _write_param_to_sheet(ws, all_data, param_name, realized_wind)
-        except Exception as e:
-            print(f"  [actuals] Auto-fetch realized wind failed: {e}")
-            return
-
-    # 5. Read base_score and field_adj from pre-tourney breakdown (cols V-W of the round's row)
-    # Row = 2 + round_num (R1=row3, R2=row4, etc.), Col V=22, W=23
-    row_idx = 2 + round_num - 1  # 0-indexed
-    base_score = 0.0
-    field_adj = 0.0
-    try:
-        base_score = float(all_data[row_idx][21])  # col V (0-indexed = 21)
-        field_adj = float(all_data[row_idx][22])   # col W (0-indexed = 22)
-    except (ValueError, IndexError, TypeError):
-        print(f"  [actuals] Could not read base_score/field_adj from pre-tourney breakdown")
-
-    # 6. Compute the realized-weather structural baseline. This remains useful
-    # for diagnosis, but is not the forecast whose calibration we update.
-    wind_impact = realized_wind * wind_factor
-    dew_impact = (realized_dew - dewpoint_base) * dew_calc if dewpoint_base else 0.0
-
-    # Updating a later round does not overwrite prior expected_score_rN values,
-    # so this is the durable forecast actually published before the round.
-    # Reject multi-course lists because they need player-weighted aggregation.
-    published_forecast = single_published_forecast(
-        config.get(f"expected_score_r{round_num}")
-    )
-    if published_forecast is None:
-        print(
-            f"  [actuals] No single published R{round_num} forecast is available; "
-            "forecast feedback will be blank"
-        )
-
-    # Fetch actual scoring average from DataGolf.
-    # The live-tournament-stats endpoint has no absolute "score" field; the
-    # per-round score-to-par is in "round" (stat_round). Convert to strokes with
-    # course_par, matching the df["round"] + course_par pattern used elsewhere.
-    actual_score = None
-    try:
-        live_df = fetch_live_stats(round_num, API_KEY)
-        if live_df is not None and "round" in live_df.columns:
-            to_par = pd.to_numeric(live_df["round"], errors="coerce").dropna()
-            if not to_par.empty:
-                actual_score = float(to_par.mean() + course_par)
-    except Exception as e:
-        print(f"  [actuals] Could not fetch live scores: {e}")
-
-    scoring = round_scoring_result(
-        published_forecast=published_forecast,
-        actual_score=actual_score,
-        base_score=base_score,
-        field_adjustment=field_adj,
-        wind_impact=wind_impact,
-        dew_impact=dew_impact,
-    )
-    forecast_miss = scoring["forecast_miss"]
-    structural_baseline = scoring["structural_baseline"]
-    structural_residual = scoring["structural_residual"]
-
-    print(f"  [actuals] R{round_num}: wind={realized_wind:.1f}, "
-          f"published={published_forecast if published_forecast is not None else 'N/A'}, "
-          f"actual={actual_score if actual_score is not None else 'N/A'}, "
-          f"miss={forecast_miss if forecast_miss is not None else 'N/A'}")
-    print(
-        f"  [actuals] diagnostic only: realized-weather structural baseline="
-        f"{structural_baseline:.3f}, residual="
-        f"{structural_residual if structural_residual is not None else 'N/A'}"
-    )
-
-    # 7. Write to sheet. AC remains the feedback input column, but now holds
-    # forecast miss. AD/AE preserve the former structural diagnostic explicitly.
-    import gspread
-    COL_U = 21
-    write_row = 10 + round_num  # R1=11, R2=12, etc.
-
-    headers = [
-        "Round", "Realized Wind", "Forecast Dew", "Realized Dew",
-        "Wind Impact", "Dew Impact", "Published Forecast", "Actual",
-        "Forecast Miss", "Structural Wx Baseline", "Structural Residual",
-    ]
-    cells = [
-        gspread.Cell(row=10, col=COL_U + offset, value=header)
-        for offset, header in enumerate(headers)
-    ] + [
-        gspread.Cell(row=write_row, col=COL_U, value=f"R{round_num}"),
-        gspread.Cell(row=write_row, col=COL_U + 1, value=round(realized_wind, 1)),
-        gspread.Cell(row=write_row, col=COL_U + 2, value=round(forecast_dew, 1)),
-        gspread.Cell(row=write_row, col=COL_U + 3, value=round(realized_dew, 1)),
-        gspread.Cell(row=write_row, col=COL_U + 4, value=round(wind_impact, 3)),
-        gspread.Cell(row=write_row, col=COL_U + 5, value=round(dew_impact, 3)),
-        gspread.Cell(row=write_row, col=COL_U + 6, value=round(published_forecast, 1) if published_forecast is not None else ""),
-        gspread.Cell(row=write_row, col=COL_U + 7, value=round(actual_score, 2) if actual_score is not None else ""),
-        gspread.Cell(row=write_row, col=COL_U + 8, value=round(forecast_miss, 2) if forecast_miss is not None else ""),
-        gspread.Cell(row=write_row, col=COL_U + 9, value=round(structural_baseline, 2)),
-        gspread.Cell(row=write_row, col=COL_U + 10, value=round(structural_residual, 2) if structural_residual is not None else ""),
-    ]
-    ws.update_cells(cells, value_input_option="USER_ENTERED")
-    print(f"  [actuals] Wrote R{round_num} actuals to row {write_row}")
 
 
 def _apply_sheet_overrides(config):
@@ -2534,16 +2410,28 @@ def main():
         ),
     )
 
+    parser.add_argument("--historical-rebuild", action="store_true",
+                        help="Rebuild history using per-round Sheet weather/baselines")
     args = parser.parse_args()
+    if args.historical_rebuild and (not args.dry_run or not args.no_sheet_writes
+                                   or args.cli or args.round not in (1, 2, 3)):
+        parser.error("--historical-rebuild requires --round 1-3, Sheet mode, --dry-run and --no-sheet-writes")
 
     # ── Google Sheet mode (default) ──────────────────────────────────────
     if not args.cli:
         try:
             from sheet_config import load_config
             config = load_config()
+            if args.round is not None:
+                config = {**config, "round_num": args.round}
+            if args.historical_rebuild:
+                from official_round_history import historical_config
+                config = historical_config(config)
             _apply_sheet_overrides(config)
             round_num = config["round_num"]
         except Exception as e:
+            if args.historical_rebuild:
+                raise
             print(f"\n[warn] Could not read Google Sheet: {e}")
             print("   Falling back to CLI args. Use --cli flag to suppress this.\n")
             if args.round is None:
@@ -2566,7 +2454,8 @@ def main():
     # Step 1b: Write actuals for the completed round. The nightly backup is a
     # read-only model refresh; its workflow passes --no-sheet-writes so a retry
     # cannot mutate the human-controlled weekly config.
-    if args.no_sheet_writes:
+    from provisional_round import current_inputs
+    if args.no_sheet_writes or current_inputs():
         print("\n  [no-sheet-writes] Skipping round actuals write")
     else:
         try:
@@ -2582,7 +2471,7 @@ def main():
         except Exception as e:
             print(f"\n[warn] Weather update could not complete: {e}")
             print(f"   Skill update is saved. Run again once R{round_num + 1} tee times are available.")
-            if args.automation:
+            if args.automation or args.historical_rebuild:
                 raise
     else:
         print("\n  R4 complete — no next round. Skill update saved for records.")
@@ -3182,40 +3071,27 @@ def update_expected_scores(completed_round, sync_primary=False):
     delta_adj = 0.0
     actual_grid = []
     try:
+        from scoring_feedback import ingest_feedback
         from sheets_storage import get_spreadsheet as _get_ss
 
         if spreadsheet is None:
             spreadsheet = _get_ss()
+        feedback_config = {
+            "event_id": raw_params.get("event_id", event_ids[0]),
+            "course_id": raw_params.get("course_id", course_id),
+            "tourney": raw_params.get("tourney", tourney),
+        }
+        feedback_receipt = ingest_feedback(
+            spreadsheet, feedback_config, completed_round
+        )
+        if feedback_receipt["status"] == "applied":
+            delta_adj = feedback_receipt["correction"]
+        print(f"  Forecast feedback: {feedback_receipt['status']}; "
+              f"correction={delta_adj:+.3f}; "
+              f"receipt={feedback_receipt['receipt_id'][:12]}")
         actual_grid = spreadsheet.worksheet("round_config").get("U10:AE14")
-        header = actual_grid[0] if actual_grid else []
-        if len(header) < 9 or str(header[8]).strip().lower() != "forecast miss":
-            raise RuntimeError(
-                "round actuals use the legacy structural Delta column; "
-                "backfill Published Forecast / Forecast Miss before updating"
-            )
-        actual_rows = actual_grid[1:]
-        deltas = []
-        for rnd in range(1, completed_round + 1):
-            row = actual_rows[rnd - 1] if len(actual_rows) >= rnd else []
-            try:
-                d = float(row[8])
-            except (IndexError, TypeError, ValueError):
-                print(f"  WARNING: no usable R{rnd} forecast miss; skipping it")
-                continue
-            if abs(d) > 5:
-                print(f"  WARNING: ignoring implausible R{rnd} forecast miss {d:+.2f}")
-                continue
-            deltas.append(d)
-        if deltas:
-            # Weight by usable misses, not rounds elapsed; one usable forecast
-            # should not receive a later round's higher evidence weight.
-            delta_adj, weight = forecast_feedback(deltas)
-            print(f"  Forecast feedback: misses {['%+.2f' % d for d in deltas]} "
-                  f"-> {weight:.0%} x mean = {delta_adj:+.3f}")
-        else:
-            print("  Forecast feedback: no completed-round misses yet")
     except Exception as exc:
-        print(f"  WARNING: forecast feedback skipped ({exc})")
+        print(f"  Forecast feedback: failed ({type(exc).__name__}); correction=0.000")
 
     # 5. Compute for future rounds
     future_rounds = range(completed_round + 1, 5)
@@ -3314,6 +3190,21 @@ def update_expected_scores(completed_round, sync_primary=False):
         authoritative_write_succeeded = True
         for param_name, value in updates.items():
             print(f"  Wrote {param_name} = {value}")
+
+        # Freeze the dated, active-field publication before any later rebuild.
+        # Future-round placeholder estimates are not published forecasts.
+        try:
+            from scoring_feedback import capture_forecast
+            if active_context and target_round in adjusted:
+                publication = pd.read_csv(active_context["path"])
+                capture_forecast(
+                    spreadsheet,
+                    {**raw_params, "event_id": event_ids[0],
+                     "course_id": course_id, "tourney": tourney},
+                    target_round, adjusted[target_round], publication,
+                )
+        except Exception as exc:
+            print(f"  Forecast receipt: failed ({type(exc).__name__})")
 
         print(f"  Expected scores updated in Sheet.")
     except Exception as e:

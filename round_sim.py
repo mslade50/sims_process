@@ -187,7 +187,11 @@ def require_pricing_pipeline_healthy(
             for book in required_matchup_books
             if int(counts.get(book, 0) or 0) < floor
         }
-        if missing:
+        from provisional_round import current_inputs
+        provisional = current_inputs()
+        if missing and provisional:
+            print("  PROVISIONAL: missing matchup coverage: " + str(missing))
+        if missing and not provisional:
             detail = ", ".join(
                 f"{book}={count}/{floor}" for book, count in missing.items()
             )
@@ -334,8 +338,31 @@ def _load_catfirst_dists(player_names, *, allow_player_subset=False):
             f"Required category-first distributions not found: {DISTS_FILE_V2}"
         )
 
+    from late_field_replacements import (
+        extend_category_distributions, validated_late_players,
+        replacement_category_distributions,
+    )
+
+    frozen = pd.read_csv(DISTS_FILE_V2)
+    late_players = validated_late_players(_event_id, tourney) if allow_player_subset else set()
+    missing = set(player_names) - set(frozen["player_name"])
+    if missing and late_players:
+        catalog = pd.read_csv("sg_dist_player.csv")
+        catalog["player_name"] = (
+            catalog["player_name"].astype(str).str.strip().str.lower().replace(name_replacements)
+        )
+        for player in sorted(missing & set(late_players) - set(catalog["player_name"])):
+            catalog = pd.concat([catalog, replacement_category_distributions(
+                player, late_players[player], CAT_ORDER, frozen,
+            )], ignore_index=True)
+        dists, frozen_players, added_players = extend_category_distributions(
+            frozen, catalog, player_names, CAT_ORDER,
+            late_players, replacements=name_replacements,
+        )
+    else:
+        dists, frozen_players, added_players = frozen, [], []
     dists, active_players = require_complete_category_distributions(
-        pd.read_csv(DISTS_FILE_V2),
+        dists,
         player_names,
         CAT_ORDER,
         name_replacements=name_replacements,
@@ -351,13 +378,17 @@ def _load_catfirst_dists(player_names, *, allow_player_subset=False):
     # applied before course multipliers and does not change category means.
     std_w = apply_shot_dispersion_overlay(
         std_w,
-        active_players,
+        frozen_players if added_players else active_players,
         CAT_ORDER,
         tourney=tourney,
         event_id=_event_id,
         dists_path=DISTS_FILE_V2,
-        allow_active_subset=allow_player_subset,
+        allow_active_subset=allow_player_subset and not added_players,
     )
+    if added_players:
+        print("[late-field] Pre-event SG category distributions for "
+              + ", ".join(added_players)
+              + "; frozen roster overlay retained, no shot overlay for replacements")
     active_stds = std_w.loc[active_players, CAT_ORDER].to_numpy(dtype=float)
     if not np.isfinite(active_stds).all() or np.any(active_stds <= 0.0):
         raise ValueError(
@@ -654,6 +685,9 @@ def load_known_rounds(completed_round, course_map, default_par):
         made_cut: np.array[bool] (True if player made cut)
         course_x: dict {player: course_code}
     """
+    from provisional_round import current_inputs
+    provisional = current_inputs()
+    from official_round_history import completed_strokes
     result = {
         "player_names": [],
         "strokes": {},
@@ -693,6 +727,8 @@ def load_known_rounds(completed_round, course_map, default_par):
                 continue
 
         df = pd.read_csv(live_file)
+        if 'assumed_r2_strokes' in df and not provisional:
+            raise SimulationHealthError("Provisional R2 artifact requires an explicit provisional run or official rebuild")
         df['player_name'] = df['player_name'].str.lower().str.strip().replace(name_replacements)
 
         if all_players is None:
@@ -735,8 +771,15 @@ def load_known_rounds(completed_round, course_map, default_par):
             player_par = course_map.get(player_course, {}).get("par", default_par) if player_course else default_par
 
             # Get strokes
+            official_strokes = completed_strokes(row, player_par)
             sg_col = f"sg_total_r{rnd}" if f"sg_total_r{rnd}" in df.columns else "sg_total"
-            if sg_col in df.columns and pd.notna(row.get(sg_col)):
+            if provisional and rnd == 1 and pd.notna(row.get('round')):
+                strokes_arr[i] = player_par + row['round']
+            elif 'assumed_r2_strokes' in df.columns and rnd == 2:
+                strokes_arr[i] = row['assumed_r2_strokes']
+            elif official_strokes is not None:
+                strokes_arr[i] = official_strokes
+            elif sg_col in df.columns and pd.notna(row.get(sg_col)):
                 strokes_arr[i] = player_par - row[sg_col]
             elif 'total' in df.columns:
                 strokes_arr[i] = row['total']
@@ -1656,8 +1699,12 @@ def _kalshi_taker_fee(price):
 def _kalshi_outright_player(title):
     """Extract a player from legacy and current Kalshi outright titles."""
     import re
+    from kalshi_winner import winner_title_parts
 
     value = str(title or "").strip()
+    player, _ = winner_title_parts(value)
+    if player:
+        return player
     match = re.match(
         r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", value, re.I
     )
@@ -1687,8 +1734,12 @@ def _kalshi_outright_player(title):
 def _kalshi_outright_tournament(market):
     """Resolve tournament identity from title or Kalshi resolution metadata."""
     import re
+    from kalshi_winner import winner_title_parts
 
     title = str((market or {}).get("title") or "").strip()
+    _, winner_event = winner_title_parts(title)
+    if winner_event:
+        return winner_event
     # Prefer an explicit event suffix. A generic ``in the`` search incorrectly
     # treats "finish in the top 5 at the TOUR Championship" as an event named
     # "top 5 at the TOUR Championship".
@@ -1991,7 +2042,11 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
         if (ask - bid) > 0.10:
             continue
 
-        player_raw = _kalshi_outright_player(title)
+        if mtype == "winner":
+            from kalshi_winner import winner_player
+            player_raw = winner_player(mkt)
+        else:
+            player_raw = _kalshi_outright_player(title)
         if not player_raw:
             continue
         player = norm(player_raw)
@@ -3145,6 +3200,8 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
 
     Returns (combined_df, sharp_df).
     """
+    if df.empty:
+        return df.copy(), df.copy()
     from reprice_core import actionable_matchup_mask
     quarantined = ~actionable_matchup_mask(df)
     if quarantined.any():
@@ -3781,6 +3838,12 @@ def export_results(combined, sharp, score_card, sim_round,
 
     with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
         workbook = writer.book
+        from provisional_round import current_inputs
+        provisional = current_inputs()
+        if provisional:
+            pd.DataFrame([{"assumptions": provisional["label"],
+                           "input_sha256": provisional["sha256"]}]).to_excel(
+                writer, sheet_name="PROVISIONAL", index=False)
 
         # --- Matchups: Combined ---
         if not combined.empty:
@@ -4728,6 +4791,11 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"R{sim_round} Round Sim — {tourney.replace('_', ' ').title()}"
+        from provisional_round import email_notice
+        notice = email_notice()
+        if notice:
+            msg.replace_header("Subject", "PROVISIONAL — " + msg["Subject"])
+            html = notice + html
         msg["From"] = EMAIL_FROM
         msg["To"] = ", ".join(recipients)
 
@@ -4811,7 +4879,11 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, password)
-            server.sendmail(EMAIL_FROM, recipients, msg.as_string())
+            refused = server.sendmail(EMAIL_FROM, recipients, msg.as_string())
+            if refused:
+                raise EmailDeliveryError("Mail transport refused report recipients")
+        from provisional_round import record_email_delivery
+        record_email_delivery(msg["Subject"], len(recipients))
 
         print("  Round sim email sent")
         return True
@@ -5661,6 +5733,20 @@ def main():
                 health_manifest=active_health_manifest,
             )
             approved_cache_saved = True
+
+            if not args.dry_run and not args.no_store:
+                try:
+                    from scoring_feedback import capture_forecast
+                    from sheets_storage import get_spreadsheet
+                    capture_forecast(
+                        get_spreadsheet(), _cfg, sim_round, expected_avg,
+                        model_preds,
+                        published_at=active_health_manifest["source"]["generated_at"],
+                        source={"kind": "approved_simulation",
+                                "manifest_sha256": active_health_manifest["manifest_sha256"]},
+                    )
+                except Exception as exc:
+                    print(f"  Forecast receipt: failed ({type(exc).__name__})")
 
         if args.sim_only:
             if approved_cache_saved:

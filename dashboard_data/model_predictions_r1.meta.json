@@ -1,11 +1,14 @@
 {
   "schema_version": 1,
-  "event_id": "557",
-  "tourney": "biltmore",
-  "sim_run_at": "2026-09-16 19:18:32 UTC",
-  "prediction_count": 132,
-  "active_field_count": 132,
-  "prediction_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
-  "active_field_sha256": "806335dafe0c553b59dfc787bc68217e5c26a97e0e22829789abd72194aaf67d",
-  "withdrawn_or_extra_players": []
+  "event_id": "527",
+  "tourney": "baycurrent",
+  "sim_run_at": "2026-10-06 19:54:40 UTC",
+  "prediction_count": 72,
+  "active_field_count": 70,
+  "prediction_field_sha256": "f2ac0bacbb50e380909eb791abfc356f767ab460b9f9efd58e4f80951f532cf5",
+  "active_field_sha256": "27068c5e531159e3bf301bde6c7370d74e6f7502eeb9ed84a25680b335c0faca",
+  "withdrawn_or_extra_players": [
+    "iwasaki, aguri",
+    "nagasaki, koshin"
+  ]
 }

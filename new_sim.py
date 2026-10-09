@@ -3687,8 +3687,12 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
     if not all_markets:
         return pd.DataFrame()
 
-    # Detect current tournament (most common title prefix)
-    def _detect_tourney(title):
+    # Resolve explicit tournament evidence for each market.
+    def _detect_tourney(market):
+        from kalshi_winner import winner_tournament
+        if str(market.get("ticker") or "").split("-", 1)[0] in {"KXPGATOUR", "KXPGAWIN"}:
+            return winner_tournament(market)
+        title = market.get("title", "")
         m = _re.search(r"(?:at|in|win) the (.+?)\?", title)
         if m:
             return m.group(1).strip()
@@ -3697,24 +3701,19 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
             return m.group(1).strip()
         return ""
 
-    # Match Kalshi tournament names against the configured `tourney` from sim_inputs.
-    # Generic stopwords removed so "cadillac" doesn't match "PGA Championship" via
-    # the shared "championship" token. If every word is generic (e.g. tourney=
-    # "pga_championship"), require ALL words to appear in the title.
-    _GENERIC = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
-                "open", "classic", "invitational", "cup", "pga", "tour"}
-    _all_target_words = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
-    _distinct_target_words = _all_target_words - _GENERIC
+    # Match the whole configured slug, as the live pricer does. A shared
+    # sponsor token must not join American Express to American Century.
+    _configured = "".join(_re.findall(r"[a-z0-9]+", str(tourney or "").lower()))
+    if not _configured:
+        print("  WARNING: no configured Kalshi tournament; skipping outrights")
+        return pd.DataFrame()
 
     def _matches_target(detected_title):
-        t = detected_title.lower()
-        if _distinct_target_words:
-            return any(w in t for w in _distinct_target_words)
-        return all(w in t for w in _all_target_words)
+        return _configured in "".join(_re.findall(r"[a-z0-9]+", detected_title.lower()))
 
     tourn_counts = Counter()
     for m in all_markets:
-        t = _detect_tourney(m.get("title", ""))
+        t = _detect_tourney(m)
         if t:
             tourn_counts[t] += 1
     if tourn_counts:
@@ -3722,19 +3721,22 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         if matched:
             matched_lower = {t.lower() for t in matched}
             all_markets = [m for m in all_markets
-                           if _detect_tourney(m.get("title", "")).lower() in matched_lower
-                           or _detect_tourney(m.get("title", "")) == ""]
+                           if _detect_tourney(m).lower() in matched_lower]
             label = ", ".join(matched)
             print(f"  Tournament: {label} ({len(all_markets)} markets, matched on tourney='{tourney}')")
         else:
-            current_tourney = tourn_counts.most_common(1)[0][0]
-            all_markets = [m for m in all_markets
-                           if _detect_tourney(m.get("title", "")) in (current_tourney, "")]
-            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; falling back to most-common: {current_tourney}")
-            print(f"  Tournament: {current_tourney} ({len(all_markets)} markets)")
+            print(f"  WARNING: no Kalshi tournament matches '{tourney}'; skipping outrights")
+            return pd.DataFrame()
+    else:
+        print("  WARNING: no resolvable Kalshi tournament; skipping outrights")
+        return pd.DataFrame()
 
     # ── Extract player name from title ────────────────────────────────
     def _extract_player(title):
+        from kalshi_winner import winner_title_parts
+        player, _ = winner_title_parts(title)
+        if player:
+            return player
         m = _re.match(r".*:\s*Will (.+?) (?:finish|make|miss|lead|win)", title)
         if m:
             return m.group(1).strip()
@@ -3878,7 +3880,11 @@ def price_kalshi_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
         open_interest = int(float(mkt.get("open_interest_fp", 0) or 0))
 
         # Match player to sim
-        player_raw = _extract_player(title)
+        if mtype == "winner":
+            from kalshi_winner import winner_player
+            player_raw = winner_player(mkt)
+        else:
+            player_raw = _extract_player(title)
         if not player_raw:
             continue
         player = norm(player_raw)

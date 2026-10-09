@@ -70,4 +70,3 @@ jobs:
         CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
         python telegram_policy.py --key legacy-monday-grading --message "FAILED monday-grading: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-

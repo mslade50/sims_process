@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "gate_version": "golfprice.board_seal/1",
+  "kind": "live_tournament_tape",
+  "generated_at": "2026-10-08 12:39:43 UTC",
+  "simulation_manifest": {
+    "schema_version": 1,
+    "gate_version": "golfprice.board_seal/1",
+    "kind": "golfprice_live_simulation",
+    "producer": {
+      "name": "golfprice",
+      "run_id": "pga:527:2026-10-08/R1_20261008T122100Z",
+      "model_version": "B8+v2.6 in-play",
+      "after_round": 1,
+      "run_manifest_sha256": "dbbe3a02aa997282b7d112927d400766db8a92ee404003e1246599e236066256",
+      "base_run_as_of": "2026-10-07 22:05:00 UTC"
+    },
+    "event": {
+      "event_id": "527",
+      "tourney": "baycurrent",
+      "round": 2
+    },
+    "source": {
+      "generated_at": "2026-10-08 12:21:00 UTC",
+      "root_generated_at": "2026-10-08 12:21:00 UTC"
+    },
+    "simulation": {
+      "num_players": 72,
+      "num_sims": 150000,
+      "player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a",
+      "seeds": [
+        20250929,
+        20250930,
+        20250931,
+        20250932,
+        20250933
+      ]
+    },
+    "approval": {
+      "status": "approved",
+      "by": "golfprice.board_seal",
+      "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
+      "at": "2026-10-08 12:39:43 UTC"
+    },
+    "checks": {
+      "passed": true,
+      "n_checks": 7
+    },
+    "manifest_sha256": "746c7ca3ef3066b8e75636dae5ad448375125b8b159dd90c990024a91672bc92"
+  },
+  "files": {
+    "final_scores": {
+      "path": "final_scores_live_baycurrent.npy",
+      "sha256": "86d60b2fd70f80db8d575892a8ac690db302d0a4f33c1491277c95c5b2b8ecbd"
+    },
+    "finish_probs": {
+      "path": "simulated_probs_live.csv",
+      "sha256": "9be8a5be50d001d15aa2d0af6577d37bde6398bd1d5e7fa9eefb81be5f20a9ca"
+    },
+    "finish_probs_event": {
+      "path": "top_finish_probs_live_baycurrent.csv",
+      "sha256": "236b5441b4750c3073d527864132db59416af31808323aa8382ec1e99d37a0c8"
+    },
+    "made_cut": {
+      "path": "made_cut_live_baycurrent.npy",
+      "sha256": "232af63ff7cab4f9e336ff9c664f0aeaa33c67c51ac384f9662e1400c0ccd6f2"
+    },
+    "player_names": {
+      "path": "player_names_live_baycurrent.json",
+      "sha256": "583f38d2e4497189bcccdf1ff4a19d7dd0b8b8d58da294a5ed4187f84babada4"
+    }
+  },
+  "extra": {
+    "num_players": 72,
+    "num_sims": 150000
+  },
+  "manifest_sha256": "09d1cc663cace2269379f56a86abfaa5de794e1fde971588b102dda3f90bc2fc"
+}

@@ -43,3 +43,13 @@ def test_single_event_legacy_untagged_rows_remain_usable():
     guarded = guard_scraped_data(data, 'round_matchups', round=2, event_ids={'557'})
     assert len(guarded['match_list']) == 10
     assert evaluate_odds_readiness(data, 557).counts == {'betcris': 5, 'betonline': 5}
+
+
+def test_ewart_book_spelling_joins_the_datagolf_simulation_name():
+    from odds_loader import _parse_datagolf_json
+
+    parsed = _parse_datagolf_json({"match_list": [{
+        "p1_player_name": "Ewart, AJ", "p2_player_name": "Roy, Kevin",
+        "ties": "void", "odds": {"pinnacle": {"p1": "-110", "p2": "-110"}},
+    }]})
+    assert parsed.iloc[0]["Player 1"] == "ewart, a.j."
