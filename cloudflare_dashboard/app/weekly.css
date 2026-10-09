@@ -1,0 +1,17 @@
+.wk-table{display:grid;gap:14px;min-width:0}
+.wk-note{margin:0;max-width:78ch}
+.wk-method summary{cursor:pointer}
+.wk-method-list{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px;margin:8px 0}
+.wk-method-list dt{color:var(--muted)}
+.wk-method-list dd{margin:0;color:var(--foreground)}
+.wk-expand{border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-raised);padding:14px 16px}
+.wk-expand header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.wk-expand header button{margin-left:auto;border:1px solid var(--line-strong);border-radius:9px;background:var(--surface);color:var(--foreground);padding:6px 12px;cursor:pointer}
+.wk-expand dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 16px;margin:0;font-size:12px}
+.wk-expand dt{color:var(--muted)}
+.wk-expand dd{margin:2px 0 0;font-variant-numeric:tabular-nums}
+.wk-audit>summary{cursor:pointer;color:var(--muted-strong)}
+@media(max-width:700px){
+  .wk-table .data-table-wrap td,.wk-table .data-table-wrap th{padding:8px}
+  .wk-expand dl{grid-template-columns:repeat(2,minmax(0,1fr))}
+}

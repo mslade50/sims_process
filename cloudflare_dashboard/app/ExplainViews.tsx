@@ -16,6 +16,7 @@ import {
   type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
+import { LABELS } from "./labels";
 import { Badge, Delta, FreshnessBadge } from "./ui";
 import "./explain.css";
 
@@ -340,7 +341,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
           <div>
             <span className="eyebrow">{doc.kind === "live" ? `After round ${doc.after_round}` : "Pre-tournament"}</span>
             <h2>{player.name}</h2>
-            <a className="ex-link" href={`/players?player=${player.id}`}>Historical player profile <ChevronRight size={14} /></a>
+            <a className="ex-link" href={`/players?player=${player.id}`}>Profile and vs PGA avg <ChevronRight size={14} /></a>
             <Tags tags={player.tags} max={8} />
           </div>
           <button type="button" className="ex-close" onClick={onClose} aria-label="Close" ref={closeRef}><X size={20} /></button>
@@ -348,7 +349,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <div className="ex-drawer-kpis">
           <Kpi label={`${MARKET_LABEL[market]} model`} value={pct(player.probs[market].model)} detail={`market ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label="Mean vs field" value={`${signed(player.mu_rel)} sg`} detail={`SD ${player.sd?.toFixed(2) ?? "-"} / round`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
+          <Kpi label={`Skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} sg`} detail={`SD ${player.sd?.toFixed(2) ?? "-"} / round`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
           {f && <Kpi label="Median finish" value={String(f.median)} detail={`10th-90th: ${f.p10}-${f.p90}`} tone="accent" />}
           {f && <Kpi label="Top 10 (shape)" value={pct(t[2])} detail={`win ${pct(t[0])} · miss cut ${pct(f.p_miss_cut, 0)}`} tone="neutral" />}
         </div>
@@ -356,7 +357,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <section>
           <h3 className="ex-h3">Why this price</h3>
-          <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field. They add up to his mean skill{doc.kind === "live" ? "; in-play and weather rows adjust the next round(s)" : ""}.</p>
+          <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. They add up to his mean skill{doc.kind === "live" ? "; in-play and weather rows adjust the next round(s)" : ""}.</p>
           <Waterfall {...wf} />
           {Object.keys(player.attribution).length > 0 && (
             <p className="ex-muted">Gap to market (strokes/round, {signed(player.edge_sg)}) attributed to: {Object.entries(player.attribution).map(([k, v]) => `${doc.components_legend[k]?.label ?? k} ${signed(v)}`).join(", ")}.</p>

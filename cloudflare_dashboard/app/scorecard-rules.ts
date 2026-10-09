@@ -63,6 +63,12 @@ export function parseScorecard(value: unknown): Scorecard | null {
   return value as unknown as Scorecard;
 }
 
+/** True only when the scorecard states a forward record of exactly zero counted events (the forward clock is not accumulating). An absent or non-numeric count shows nothing. */
+export function forwardClockPaused(card: Scorecard | null): boolean {
+  const counted = (card?.forward as { events_counted?: unknown } | undefined)?.events_counted;
+  return typeof counted === "number" && counted === 0;
+}
+
 export function ageDays(generatedAt: string, now: number): number | null {
   const ms = Date.parse(generatedAt);
   return Number.isFinite(ms) ? (now - ms) / 86_400_000 : null;

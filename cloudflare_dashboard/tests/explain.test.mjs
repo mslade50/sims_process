@@ -148,3 +148,24 @@ test("the routes server-render and the nav lists the new views", async () => {
     assert.match(html, /Why priced/);
   }
 });
+
+test("real v6 live explain document (D7b fixture): parsers return non-null with scoring, head_to_heads, probability_basis and week_latent_mean", async () => {
+  const { parseScoring } = await import("../app/scoring-rules.ts");
+  const raw = await read("explain_live_v6.json");
+  const doc = parseExplain(raw);
+  assert.ok(doc, "parseExplain accepts the real v6 document");
+  assert.equal(doc.kind, "live");
+  assert.equal(String(doc.version), "6");
+  assert.equal(doc.probability_basis, "model");
+  assert.equal(doc.head_to_heads.method, "joint_simulation");
+  assert.deepEqual(doc.head_to_heads.columns, ["a", "b", "p_a", "p_tie"]);
+  assert.ok(doc.head_to_heads.rows.length > 0 && doc.head_to_heads.rows.every((r) => r.length === 4));
+  assert.ok(doc.players.length > 50);
+  const latent = doc.players.map((p) => p.live?.week_latent_mean);
+  assert.ok(latent.every((v) => typeof v === "number" && Number.isFinite(v)), "every player carries live.week_latent_mean");
+  const scoring = parseScoring(raw.scoring);
+  assert.ok(scoring, "parseScoring accepts the embedded scoring block");
+  assert.equal(scoring.status, "available");
+  assert.equal(scoring.probability_basis, "model");
+  assert.ok(scoring.players.length > 0);
+});

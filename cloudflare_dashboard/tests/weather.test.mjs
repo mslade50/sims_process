@@ -108,3 +108,29 @@ test("the Worker serves golfprice/weather/<event>/latest.json read-only with no-
   const write = await worker.fetch(new Request(`https://golf.example/api/${key}`, { method: "PUT", body: "{}" }), env, ctx);
   assert.equal(write.status, 405);
 });
+import { weatherCheckpoint } from "../app/weather-rules.ts";
+test("D6: weather run is compared with the price checkpoint; a different run or a stale document warns", () => {
+  const same = weatherCheckpoint({ weather_run: "live_R1_X", explain_run: "live_R1_X", weather_as_of: "2026-10-08T12:21:00+00:00" }, "2026-10-08T12:21:00Z");
+  assert.equal(same.state, "match");
+  assert.equal(same.weatherRun, "live_R1_X");
+  const old = weatherCheckpoint({ weather_run: "week_Y", explain_run: "live_R1_X", weather_as_of: "2026-10-07T00:00:00Z" }, "2026-10-07T00:00:00Z");
+  assert.equal(old.state, "mismatch");
+  assert.match(old.message, /week_Y.*live_R1_X/);
+  const stale = weatherCheckpoint({ weather_run: "live_R1_X", explain_run: "live_R1_X", weather_as_of: "2026-10-08T12:21:00Z" }, "2026-10-08T06:00:00Z");
+  assert.equal(stale.state, "mismatch");
+  assert.equal(weatherCheckpoint({ explain_run: "live_R1_X" }, "2026-10-08T06:00:00Z").state, "unknown");
+  assert.equal(weatherCheckpoint({}, null).weatherAsOf, null);
+});
+test("D6: the weather page renders the run beside the price checkpoint and an alert on mismatch", async () => {
+  const { renderView } = await import("./helpers/render-harness.mjs");
+  const mk = (weather_run) => ({ events: [{ event_uid: "e1", name: "Event", tour: "pga", weather_key: "golfprice/weather/e1/latest.json", weather_run, weather_as_of: fixture.as_of, explain_run: "week_B" }] });
+  const render = (weather_run) => renderView("WeatherEffectsView.tsx", "WeatherEffectsView", { data: { "golfprice/index.json": mk(weather_run), "golfprice/weather/e1/latest.json": fixture }, pathname: "/weather-effects" });
+  const bad = render("week_A");
+  assert.match(bad, /Weather run: week_A/);
+  assert.match(bad, /Price checkpoint: week_B/);
+  assert.match(bad, /role="alert"/);
+  assert.match(bad, /Mismatch\./);
+  const ok = render("week_B");
+  assert.match(ok, /data-state="match"/);
+  assert.doesNotMatch(ok, /Mismatch\./);
+});

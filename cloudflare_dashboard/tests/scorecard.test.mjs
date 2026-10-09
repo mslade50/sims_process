@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { deltaTone, intervalText, isStale, latestWeekEvents, parseScorecard, signedFmt } from "../app/scorecard-rules.ts";
+import { renderView } from "./helpers/render-harness.mjs";
+import { SCORECARD_KEY, deltaTone, forwardClockPaused, intervalText, isStale, latestWeekEvents, parseScorecard, signedFmt } from "../app/scorecard-rules.ts";
 
 const card = {
   schema: "golfprice.scorecard.v1",
@@ -48,5 +49,22 @@ test("the scorecard is a section inside the Performance view, not a new tab", as
   assert.doesNotMatch(app, /scorecard/i);
   const section = await readFile(new URL("../app/ScorecardSection.tsx", import.meta.url), "utf8");
   assert.match(section, /No scorecard published yet/);
-  assert.match(section, /golfprice model scorecard/);
+  // Site audit C2: "model scorecard" / "challenger" wording retired.
+  assert.match(section, /golfprice \(production\) scorecard/);
+  assert.doesNotMatch(section, /Challenger versus|challenger did better/);
+  assert.doesNotMatch(section, /publishes golfprice\/scorecard/, "no storage key in the empty state");
+});
+
+test("forward clock paused: shown only when the forward record counts exactly zero events", () => {
+  assert.equal(forwardClockPaused(parseScorecard(card)), true);
+  assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: { ...card.forward, events_counted: 3 } })), false);
+  const withoutCount = { ...card.forward };
+  delete withoutCount.events_counted;
+  assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: withoutCount })), false, "absent field shows nothing");
+  assert.equal(forwardClockPaused(parseScorecard({ ...card, forward: { ...card.forward, events_counted: "0" } })), false);
+  assert.equal(forwardClockPaused(null), false);
+  const paused = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: card } });
+  assert.match(paused, /Forward clock paused: parity record pending owner/);
+  const counting = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: { ...card, forward: { ...card.forward, events_counted: 2 } } } });
+  assert.doesNotMatch(counting, /Forward clock paused/);
 });

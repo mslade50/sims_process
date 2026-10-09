@@ -56,3 +56,6 @@ yarn-error.log*
 /public/file.svg
 /public/globe.svg
 /public/window.svg
+
+# Untracked hand-copied golfprice snapshot used only by the no-Worker local preview (RESEARCH_LOCAL_PREVIEW=1); the production build excludes it (vite.config.ts)
+/public/golfprice/

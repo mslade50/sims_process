@@ -22,6 +22,7 @@ import {
   buildJob,
   cancelProblem,
   effectiveState,
+  listWindow,
   isoSeconds,
   parseUtc,
   rateLimitProblem,
@@ -35,7 +36,6 @@ export interface JobsEnv extends AccessEnv {
 }
 
 const MAX_BODY_BYTES = 2048;
-const LIST_LIMIT = 50;
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 
 function json(body: unknown, status = 200): Response {
@@ -115,10 +115,9 @@ export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.n
   try {
     if (path === "/api/jobs" && request.method === "GET") {
       const { jobs } = await readQueue(bucket);
-      const recent = jobs.slice(-LIST_LIMIT).reverse();
-      const listing = await bucket.list({ prefix: STATUS_PREFIX, limit: 1000 });
-      const present = new Set(listing.objects.map((o) => o.key));
-      const statuses = await Promise.all(recent.map(async (job) => (present.has(`${STATUS_PREFIX}${job.id}.json`) ? await readStatus(bucket, job.id) : null)));
+      // Direct get of exactly the listed jobs' status keys (readStatus returns null on 404): a bucket listing is capped at 1000 keys, oldest first.
+      const recent = listWindow(jobs, now);
+      const statuses = await Promise.all(recent.map((job) => readStatus(bucket, job.id)));
       const heartbeatList = await bucket.list({ prefix: HEARTBEAT_PREFIX, limit: 100 });
       const heartbeats = (await Promise.all(heartbeatList.objects.map(async (o) => (await readJson(bucket, o.key).catch(() => null))?.value))).filter(
         (value) => value && typeof value === "object",

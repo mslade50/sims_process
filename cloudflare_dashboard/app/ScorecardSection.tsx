@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { EmptyState, Kpi, Panel } from "./components";
 import { useDashboardData } from "./data";
-import { MARKETS, MARKET_LABELS, SCORECARD_KEY, deltaTone, fmt, intervalText, isStale, latestWeekEvents, parseScorecard, signedFmt, type ScorecardEvent } from "./scorecard-rules";
+import { MARKETS, MARKET_LABELS, SCORECARD_KEY, deltaTone, fmt, forwardClockPaused, intervalText, isStale, latestWeekEvents, parseScorecard, signedFmt, type ScorecardEvent } from "./scorecard-rules";
 
 function betsLine(event: ScorecardEvent): string {
   const parts = (["live", "shadow", "placed"] as const)
@@ -22,7 +22,7 @@ function EventTable({ event }: { event: ScorecardEvent }) {
         <table aria-label={`Model scorecard for ${event.name}`}>
           <thead>
             <tr>
-              <th><span className="th-text">Arm</span></th>
+              <th><span className="th-text">Model version</span></th>
               <th><span className="th-text">Skill error R1+R2</span></th>
               <th><span className="th-text">vs production</span></th>
               {MARKETS.map((market) => <th key={market}><span className="th-text">{MARKET_LABELS[market]} vs prod</span></th>)}
@@ -50,7 +50,7 @@ function EventTable({ event }: { event: ScorecardEvent }) {
   );
 }
 
-/** golfprice model scorecard inside the Performance view: latest week by arm, the forward record and plain-English headlines (golfprice/scorecard/latest.json). */
+/** golfprice (production) scorecard inside the Scorecard and P&L view: latest week by model version, the forward record and plain-English headlines (golfprice/scorecard/latest.json). */
 export function GolfpriceScorecardSection() {
   const { data, loading } = useDashboardData<unknown>(SCORECARD_KEY);
   const [now] = useState(() => Date.now());
@@ -58,19 +58,20 @@ export function GolfpriceScorecardSection() {
   const events = card ? latestWeekEvents(card) : [];
 
   return (
-    <Panel title="golfprice model scorecard" eyebrow="Challenger versus the production model" className="scorecard-panel">
+    <Panel title="golfprice (production) scorecard" eyebrow="golfprice versus the previous production model" className="scorecard-panel">
       {loading ? (
         <p className="inputs-muted">Loading the weekly scorecard…</p>
       ) : !card ? (
-        <EmptyState title="No scorecard published yet" detail="It appears after the first Monday settle publishes golfprice/scorecard/latest.json. Negative deltas mean the challenger did better." />
+        <EmptyState title="No scorecard published yet" detail="It appears after the first Monday settle publishes the weekly scorecard. Negative deltas mean golfprice did better." />
       ) : (
         <div className="scorecard-body">
           {isStale(card.generated_at, now) && <p className="inputs-note accent">This scorecard was generated {card.generated_at.slice(0, 10)}, more than 8 days ago; a newer settle has not published.</p>}
+          {forwardClockPaused(card) && <p className="inputs-note accent" role="status" data-testid="forward-clock-paused">Forward clock paused: parity record pending owner. No event is counting toward the forward record until it is appended.</p>}
           <ul className="inputs-note scorecard-headlines">{card.headlines.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="kpi-grid">
             <Kpi label="Events counted" value={`${card.forward.events_counted} of ${card.forward.futility_check_at}`} detail={`Futility check; horizon ${card.forward.horizon_events} events`} tone="accent" />
-            <Kpi label="Skill error vs production" value={intervalText(card.forward.by_arm.challenger?.rmse_vs_champion)} detail="Strokes, forward record, negative is better" />
-            <Kpi label="Finish log-loss vs production" value={intervalText(card.forward.by_arm.challenger?.logloss_vs_champion_mean, 4)} detail="Average over markets, negative is better" />
+            <Kpi label="Skill error vs previous model" value={intervalText(card.forward.by_arm.challenger?.rmse_vs_champion)} detail="Strokes, forward record, negative is better" />
+            <Kpi label="Finish log-loss vs previous model" value={intervalText(card.forward.by_arm.challenger?.logloss_vs_champion_mean, 4)} detail="Average over markets, negative is better" />
             <Kpi label="Live bets" value={`${signedFmt(card.forward.bets.live?.pnl_units ?? 0, 2)}u`} detail={`Shadow ${signedFmt(card.forward.bets.shadow?.pnl_units ?? 0, 2)}u`} />
           </div>
           {events.length === 0 ? <EmptyState title="No settled event yet" detail="The latest week table fills in once a settle has run." /> : events.map((event) => <EventTable key={event.event_uid} event={event} />)}

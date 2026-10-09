@@ -20,10 +20,28 @@ export function matchup(doc: DistributionDoc | null, a: number, b: number): { p:
   if (!row || !Number.isFinite(row[2]) || row[2] < 0 || row[2] > 1) return null;
   return { p: row[0] === a ? row[2] : 1 - row[2], tie: row[3] };
 }
-export function marker(player: ExPlayer, k: number): number | null {
+/** The finish arrays (finish.pos) are settlement rank: players who miss the cut are ranked below the field. */
+export const SETTLEMENT_RANK_LABEL = "settlement rank (missed cuts ranked below the field)";
+/** Marker label: the cut line is "Make cut" (the priced make-cut probability), not an ordinary top-N. */
+export function markerLabel(k: number, cutTopN: number | null | undefined): string {
+  return cutTopN && k === cutTopN ? `Make cut (top ${k} and ties)` : `Top ${k}`;
+}
+/** Marker probability. The cut line uses the priced p_make_cut (ties at the cut make it, so top-N slicing would understate it); top 1/5/10/20 use their model prices. */
+export function marker(player: ExPlayer, k: number, cutTopN?: number | null): number | null {
+  if (cutTopN && k === cutTopN && !([1, 5, 10, 20].includes(k))) {
+    const made = player.probs.make_cut?.model;
+    if (typeof made === "number" && Number.isFinite(made)) return made;
+  }
   const market = ({ 1: "win", 5: "top_5", 10: "top_10", 20: "top_20" } as Record<number, Market>)[k];
   if (market) return player.probs[market].model;
   return player.finish?.pos?.length ? player.finish.pos.slice(0, k).reduce((a, b) => a + b, 0) : null;
+}
+/** Fixed cut reference (independent of the user's finish marker): the cut position and each player's priced make-cut probability. Null when the event has no cut or no price. */
+export function cutReference(player: ExPlayer, cutTopN: number | null | undefined): { x: number; label: string; prob: number } | null {
+  if (!cutTopN || cutTopN < 1) return null;
+  const made = player.probs.make_cut?.model;
+  if (typeof made !== "number" || !Number.isFinite(made)) return null;
+  return { x: cutTopN, label: markerLabel(cutTopN, cutTopN), prob: made };
 }
 export function curveRows(players: ExPlayer[], previous: ExPlayer[], cumulative: boolean): Record<string, number>[] {
   const size = Math.max(0, ...players.map((p) => p.finish?.pos.length ?? 0), ...previous.map((p) => p.finish?.pos.length ?? 0));

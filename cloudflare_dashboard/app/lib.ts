@@ -91,3 +91,33 @@ export function diagnosticEventCount(rows: DataRow[]): number {
 export function sum(values: number[]): number {
   return values.filter(Number.isFinite).reduce((total, value) => total + value, 0);
 }
+
+/* ------------------------------------------------------------------ shared helpers for later consolidation (site audit F1)
+ * These are the target definitions. The ~10 local copies of `finite` and the divergent `pct` functions elsewhere are NOT replaced yet:
+ * moving imports can break the ScoringView test harness, and the two existing `pct`s disagree on sign. */
+
+/** True for a finite number (not NaN, not Infinity, not a numeric string). */
+export const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+/**
+ * Probability or share as a percentage, UNSIGNED (0.1234 -> "12.3%"; below 0.1% two decimals; null/NaN -> "—"). Same convention as
+ * explain-rules.pct and ScoringView.pct. odds-signals-rules.pct is the odd one out: it always prefixes "+" for non-negative values, which is
+ * right for an edge or change but wrong for a probability; use `signedPct` where a sign is wanted.
+ */
+export function pct(value: number | null | undefined, digits = 1): string {
+  if (!finite(value)) return "—";
+  return Math.abs(value) < 0.001 && value !== 0 ? `${(value * 100).toFixed(2)}%` : `${(value * 100).toFixed(digits)}%`;
+}
+
+/** Percentage with an explicit sign for gains/changes (+1.2%, -0.4%, 0.0% unsigned at exactly zero). */
+export function signedPct(value: number | null | undefined, digits = 1): string {
+  if (!finite(value)) return "—";
+  return `${value > 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`;
+}
+
+/** Date only ("Oct 8"), in the viewer's locale and zone; "—" for anything unparseable. Use displayDate for date plus time. */
+export function shortDate(value: unknown): string {
+  const date = new Date(String(value ?? ""));
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
+}

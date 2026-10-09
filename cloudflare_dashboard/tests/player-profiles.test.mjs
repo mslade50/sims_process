@@ -42,7 +42,7 @@ test("archived checkpoints withhold later observations and reference anchors",()
 });
 
 test("profile headline is mounted and labels preserve descriptive vs saved-model meaning",async()=>{
-  const {readFile}=await import("node:fs/promises");const view=await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8");
+  const {readFile}=await import("node:fs/promises");const view=(await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8"))+(await readFile(new URL("../app/WeeklyPlayersView.tsx",import.meta.url),"utf8"));
   assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("Relative to PGA benchmark"));assert.ok(view.includes("not a simulation forecast"));assert.ok(view.includes("Saved event model skill decomposition"));assert.ok(view.includes("latest revised history"));
   assert.equal(view.includes("Absolute model"),false);assert.equal(view.includes("Absolute pre-event"),false);assert.equal(view.includes("known before this checkpoint"),false);assert.equal(view.includes(String.fromCharCode(65533)),false);
 });
@@ -54,4 +54,11 @@ test("saved field secondary centers a single estimator over the full active fiel
   assert.equal(savedFieldSkill({kind:"week",players},3).value,null);
   assert.equal(savedFieldSkill({kind:"live",players:[players[0],{...players[1],live:null}]},1).value,null);
   assert.equal(savedFieldSkill(null,1).value,null);
+});
+
+test("layout=next is flag-gated: hero, SG bars and the single Method disclosure are mounted, and the default markers remain until wave 2",async()=>{
+  const {readFile}=await import("node:fs/promises");const view=await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8");
+  for(const needle of ['params.get("layout")==="next"',"<PlayerHero","<PlayerSgBars","<PlayerMethod","<FilterBar","<ProfileDeepDive","<FilteredPlayerShapes","<SearchablePlayerPicker","<PlayerHistoryFilters"])assert.ok(view.includes(needle),needle);
+  assert.equal((view.match(/<PlayerMethod/g)??[]).length,1);
+  assert.ok(view.includes("<ProfileBenchmark profile={p}"));
 });

@@ -18,7 +18,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
+import { DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import { GolfpriceScorecardSection } from "./ScorecardSection";
 import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, palette, safeMean, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
@@ -312,7 +312,7 @@ export function HistoryView() {
   if (manifest.error || !manifest.data) return <ErrorState message={manifest.error ?? "Historical data is unavailable."} />;
   return (
     <>
-      <PageIntro eyebrow="Model archive" title="Historical distributions" description="Reopen the exact pre-event or live distribution from prior tournaments without loading the weekly pipeline." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: `${titleCase(event.event_name)} · ${event.event_id}` }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
+      <LegacyNotice /><PageIntro eyebrow="Model archive" title="Historical distributions" description="Reopen the exact pre-event or live distribution from prior tournaments without loading the weekly pipeline." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: `${titleCase(event.event_name)} · ${event.event_id}` }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
       {history.loading && <LoadingState label="Loading archived distribution" />}
       {history.error && <ErrorState message={history.error} />}
       {history.data?.rows && <DistributionExplorer rows={history.data.rows} title={titleCase(selectedEvent?.event_name)} subtitle={`${activeMode === "live" ? "Live" : "Pre-event"} archived finish probabilities`} />}
@@ -575,7 +575,7 @@ export function PerformanceView() {
 
   return (
     <>
-      <PageIntro eyebrow="Bet review" title="Performance" description="Historical results with the original analysis universe, inclusion rules, advanced filters, and P&L breakdowns restored." />
+      <PageIntro eyebrow="Review" title="Scorecard and P&L" description="The golfprice forward-test scorecard, then bet results with inclusion rules, filters and P&L breakdowns." />
       <GolfpriceScorecardSection />
       <Panel title="Filters & inclusion rules" eyebrow={`${activeFilterCount} active filter${activeFilterCount === 1 ? "" : "s"}`} actions={<button type="button" className="icon-button" onClick={resetFilters}>Reset filters</button>} className="performance-filter-panel">
         <div className="inclusion-rules" aria-label="Default bet inclusion rules">
@@ -670,7 +670,7 @@ export function DiagnosticsView() {
 
   return (
     <>
-      <PageIntro eyebrow="Model QA" title="Diagnostics" description="Full-field R1-R2 level calibration, round-weighted archetype tilt, recurring player patterns, and market-regression checks. Total is the clean overall level check; category actuals include DataGolf's field-strength allocation." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: `${titleCase(label)} · ${value}` }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
+      <LegacyNotice /><PageIntro eyebrow="Model QA" title="Diagnostics" description="Full-field R1-R2 level calibration, round-weighted archetype tilt, recurring player patterns, and market-regression checks. Total is the clean overall level check; category actuals include DataGolf's field-strength allocation." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: `${titleCase(label)} · ${value}` }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
       <div className="kpi-grid">{bias.map((row) => <Kpi key={row.category} label={`${row.category} level bias`} value={`${row.miss >= 0 ? "+" : ""}${row.miss.toFixed(3)}`} detail={`${row.sample.toLocaleString()} rounds`} tone={Math.abs(row.miss) < 0.05 ? "positive" : Math.abs(row.miss) > 0.15 ? "negative" : "neutral"}/>)}</div>
       <div className="two-column">
         <Panel title="R1-R2 SG level bias" eyebrow="Actual minus predicted · full field, weighted by played rounds"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>

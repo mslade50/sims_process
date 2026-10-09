@@ -6,11 +6,11 @@ import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, Responsiv
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import {
-  COMPONENT_LABELS, filterPlayers, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour,
+  COMPONENT_LABELS, filterPlayers, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour, weatherCheckpoint,
   type HourlyPoint, type PlayerRow, type SortKey, type Wave, type WeatherDoc,
 } from "./weather-rules";
 
-type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null };
+type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_run?: string | null; weather_as_of?: string | null; explain_run?: string | null };
 type PublishIndex = { events?: IndexEvent[] };
 
 const WIND = "var(--wx-wind)";
@@ -276,6 +276,16 @@ function PlayerRows({ p, rounds, open, onToggle }: { p: PlayerRow; rounds: numbe
 }
 
 /* ------------------------------------------------------------------ one event */
+export function CheckpointBanner({ event, docAsOf }: { event: IndexEvent; docAsOf: string }) {
+  const c = weatherCheckpoint(event, docAsOf);
+  return (
+    <div className={`inputs-note${c.state === "match" ? "" : " accent"}`} role={c.state === "mismatch" ? "alert" : "status"} data-state={c.state}>
+      <strong>Weather run: {c.weatherRun ?? "unknown"}{c.weatherAsOf ? ` (as of ${c.weatherAsOf})` : ""} · Price checkpoint: {c.priceRun ?? "unknown"}</strong>
+      <span> {c.state === "mismatch" ? "Mismatch. " : ""}{c.message}</span>
+    </div>
+  );
+}
+
 export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
   const [roundPick, setRound] = useState<number | null>(null);
   const round = roundPick !== null && doc.rounds.includes(roundPick) ? roundPick : doc.rounds[0] ?? 1;
@@ -361,5 +371,5 @@ export function WeatherEffectsView() {
       </div>
     );
   }
-  return <div>{intro}<WeatherBody key={event.event_uid} doc={doc} now={now} /></div>;
+  return <div>{intro}<CheckpointBanner event={event} docAsOf={doc.as_of} /><WeatherBody key={event.event_uid} doc={doc} now={now} /></div>;
 }

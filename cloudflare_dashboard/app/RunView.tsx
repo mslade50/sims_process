@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
+import { suggestedGroup } from "./shell-rules";
 import { GROUPS, JOB_TYPES, MACHINES, isTerminal, machineLabel, machineStatus, parseUtc, specFor, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
@@ -163,6 +164,7 @@ export function RunView() {
   const visibleJobs = (data?.jobs ?? []).filter((job) => showChecks || !isAutoCheck(job));
   const hiddenChecks = (data?.jobs ?? []).length - visibleJobs.length;
 
+  const suggested = suggestedGroup(now);
   const busyTypes = new Set((data?.jobs ?? []).filter((job) => !isTerminal(job.state) && now - (parseUtc(job.requested_at) ?? 0) < 6 * 3_600_000).map((job) => job.type));
 
   return (
@@ -171,7 +173,7 @@ export function RunView() {
 
       <Panel eyebrow="Run on" title="Machine">
         {!data ? (
-          error ? <p className="inputs-muted">Unknown until the page can load.</p> : <LoadingState label="Loading machines" />
+          error ? <p className="inputs-muted">Machine: unavailable</p> : <LoadingState label="Loading machines" />
         ) : (
           <>
             {machines.every((m) => m.status === "offline") && (
@@ -216,10 +218,11 @@ export function RunView() {
         </div>
       )}
 
-      {GROUPS.map((group) => (
-        <Panel key={group} eyebrow="Start a job" title={group}>
+      {[suggested, ...GROUPS.filter((group) => group !== suggested)].map((group) => {
+        const specs = JOB_TYPES.filter((spec) => spec.group === group);
+        const grid = (
           <div className="run-grid">
-            {JOB_TYPES.filter((spec) => spec.group === group).map((spec) => (
+            {specs.map((spec) => (
               <button type="button" key={spec.type} className="run-card" onClick={() => setPending(spec)} disabled={busyTypes.has(spec.type)}>
                 <strong>{spec.label}</strong>
                 <span>{spec.does}</span>
@@ -227,8 +230,14 @@ export function RunView() {
               </button>
             ))}
           </div>
-        </Panel>
-      ))}
+        );
+        // Today's weekday group is open and highlighted; the rest are collapsed (site audit C4).
+        return group === suggested ? (
+          <Panel key={group} eyebrow="Suggested now" title={group} className="run-suggested">{grid}</Panel>
+        ) : (
+          <details key={group} className="run-collapsed"><summary>{group}<small>{specs.length} job{specs.length === 1 ? "" : "s"}</small></summary>{grid}</details>
+        );
+      })}
 
       <OddsSignalsPanel />
 

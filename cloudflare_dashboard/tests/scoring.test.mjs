@@ -91,23 +91,25 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
   const filename = fileURLToPath(new URL("../app/ScoringView.tsx", import.meta.url));
   const source = readFileSync(filename, "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const module = new Module(filename);
-  module.filename = filename;
+  const compiledModule = new Module(filename);
+  compiledModule.filename = filename;
   let state = 0;
-  module.require = (id) => {
+  compiledModule.require = (id) => {
     if (id === "./data") return { useDashboardData: () => ({ data: payload, loading, error }) };
     if (id === "./scoring-rules") return scoringRules;
     if (id === "./explain-rules" || id === "./distributions-rules" || id.endsWith(".css")) return {};
     if (id === "react") return { ...React, useState: (initial) => { const slot = state++; return [slot === 2 && player ? false : typeof initial === "function" ? initial() : initial, () => {}]; } };
+    /* eslint-disable react/prop-types -- test-only stand-in components */
     if (id === "./components") return {
       Panel: ({ title, eyebrow, children }) => React.createElement("section", null, React.createElement("h3", null, title), React.createElement("small", null, eyebrow), children),
       EmptyState: ({ title, detail }) => React.createElement("div", { role: "status" }, title, " ", detail),
       LoadingState: ({ label }) => React.createElement("div", { role: "status" }, label),
     };
+    /* eslint-enable react/prop-types */
     return require(id);
   };
-  module._compile(compiled, filename);
-  return renderToStaticMarkup(React.createElement(module.exports.Snapshot, { runKey: "fixture.json", expectedRun, latest: false }));
+  compiledModule._compile(compiled, filename);
+  return renderToStaticMarkup(React.createElement(compiledModule.exports.Snapshot, { runKey: "fixture.json", expectedRun, latest: false }));
 }
 function scoringFixture() {
   return {

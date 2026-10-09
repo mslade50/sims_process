@@ -1,6 +1,6 @@
-import { DashboardApp, type ViewKey } from "../DashboardApp";
+import { DashboardApp } from "../DashboardApp";
 
 export default async function DashboardView({ params }: { params: Promise<{ view: string }> }) {
   const { view } = await params;
-  return <DashboardApp initialView={view as ViewKey} />;
+  return <DashboardApp initialView={view} />;
 }

@@ -33,8 +33,8 @@ function decodeJson(part: string): Record<string, unknown> | null {
 
 let certCache: { team: string; at: number; keys: Array<JsonWebKey & { kid?: string }> } | null = null;
 
-async function signingKeys(team: string, fetcher: typeof fetch): Promise<Array<JsonWebKey & { kid?: string }>> {
-  if (certCache && certCache.team === team && Date.now() - certCache.at < 3_600_000) return certCache.keys;
+async function signingKeys(team: string, fetcher: typeof fetch, forceRefresh = false): Promise<Array<JsonWebKey & { kid?: string }>> {
+  if (!forceRefresh && certCache && certCache.team === team && Date.now() - certCache.at < 3_600_000) return certCache.keys;
   const response = await fetcher(`https://${team}/cdn-cgi/access/certs`);
   if (!response.ok) throw new Error(`certs ${response.status}`);
   const body = (await response.json()) as { keys?: Array<JsonWebKey & { kid?: string }> };
@@ -63,7 +63,9 @@ export async function accessIdentity(request: Request, env: AccessEnv, now = Dat
     if (header.alg !== "RS256") return null;
     const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     if (!aud.includes(env.ACCESS_AUD) || payload.iss !== `https://${team}`) return null;
-    const jwk = (await signingKeys(team, fetcher)).find((key) => key.kid === header.kid);
+    let jwk = (await signingKeys(team, fetcher)).find((key) => key.kid === header.kid);
+    // Access rotates signing keys: one refetch when the cached certs lack this kid, then give up.
+    if (!jwk) jwk = (await signingKeys(team, fetcher, true)).find((key) => key.kid === header.kid);
     if (!jwk) return null;
     const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));

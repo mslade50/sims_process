@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { ACCENTS, countUpText, freshnessTone, parseNumericText, parseTimestamp, relativeAge, themeBootScript } from "../app/ui-rules.ts";
+import { ACCENTS, catalogFreshnessTone, countUpText, freshnessTone, parseNumericText, parseTimestamp, relativeAge, themeBootScript } from "../app/ui-rules.ts";
 
 const css = await readFile(new URL("../app/tokens.css", import.meta.url), "utf8");
 const globals = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
@@ -110,4 +110,9 @@ test("theme boot script restores saved accent and theme before paint", () => {
   assert.match(script, /golf-dashboard-theme/);
   for (const accent of ACCENTS) assert.ok(script.includes(accent.d) && script.includes(accent.l));
   assert.doesNotThrow(() => new Function(script));
+});
+
+test("catalog freshness: fresh through 7 days, amber beyond, unknown without a date", () => {
+  const day = 86_400_000;
+  assert.deepEqual([null, 1000, 6.9 * day, 7 * day, 7.1 * day, 40 * day].map(catalogFreshnessTone), ["unknown", "fresh", "fresh", "fresh", "aging", "aging"]);
 });

@@ -174,3 +174,20 @@ export function forecastAgeHours(issuedAt: string, now: number): number | null {
 }
 
 export const COMPONENT_LABELS: Record<string, string> = { wind: "Wind", gust: "Gusts", temp: "Temperature", rain: "Rain", tod: "Time of day" };
+
+/**
+ * D6: the weather document's run against the price checkpoint (same guard shape as explain_run in ExplainViews).
+ * Mismatch when the published weather run differs from the priced run, or when the loaded document is not the one the index points to.
+ */
+export type WeatherCheckpointIndex = { weather_run?: string | null; weather_as_of?: string | null; explain_run?: string | null };
+export type WeatherCheckpoint = { weatherRun: string | null; priceRun: string | null; weatherAsOf: string | null; state: "match" | "mismatch" | "unknown"; message: string };
+const sameInstant = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b);
+export function weatherCheckpoint(event: WeatherCheckpointIndex, docAsOf: string | null | undefined): WeatherCheckpoint {
+  const weatherRun = event.weather_run ?? null;
+  const priceRun = event.explain_run ?? null;
+  const weatherAsOf = event.weather_as_of ?? docAsOf ?? null;
+  if (!weatherRun || !priceRun) return { weatherRun, priceRun, weatherAsOf, state: "unknown", message: "The index does not say which run this weather belongs to, so it cannot be compared with the price checkpoint." };
+  if (weatherRun !== priceRun) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `Weather is from ${weatherRun}, but the latest price checkpoint is ${priceRun}. The weather effects shown may not be the ones in the current prices.` };
+  if (event.weather_as_of && docAsOf && !sameInstant(event.weather_as_of, docAsOf)) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `The loaded weather document is dated ${docAsOf}, but the index lists ${event.weather_as_of} for this run. Reload before trusting it.` };
+  return { weatherRun, priceRun, weatherAsOf, state: "match", message: "Weather and prices come from the same run." };
+}

@@ -696,3 +696,7 @@ tbody tr { transition: background var(--dur-fast) ease; }
 }
 
 @media (max-width: 600px) { .panel-heading, .performance-filter-panel .panel-heading { align-items: stretch; } .panel-actions { flex-wrap: wrap; } }
+
+/* DataTable: optional sticky first column and phone-width column hiding (props stickyFirst / mobileColumns). */
+.data-table-wrap th.sticky-first, .data-table-wrap td.sticky-first { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+@media (max-width: 600px) { .data-table-wrap .mobile-hide { display: none; } }

@@ -45,9 +45,10 @@ test("server-renders the Golf Model application shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Golf Model<\/title>/i);
   assert.match(html, /Golf Model/);
-  assert.match(html, /Performance/i);
-  assert.match(html, /Finish distributions/i);
-  assert.match(html, /Performance/);
+  // Site audit C1: the landing page is This week; Performance is now "Scorecard and P&L" in the Review group.
+  assert.match(html, /This week/);
+  assert.match(html, /Scorecard and P&amp;L/);
+  assert.match(html, /Distributions/);
   assert.doesNotMatch(html, /Your site is taking shape/);
   assert.doesNotMatch(html, />Home</);
   assert.doesNotMatch(html, />Matchups</);
@@ -65,7 +66,7 @@ test("publishes absolute social metadata and supports retained routes", async ()
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /https?:\/\/[^"<]+\/og\.png/);
-  assert.match(html, /Performance/);
+  assert.match(html, /Scorecard and P&amp;L/);
   assert.match(layout, /x-forwarded-host/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
@@ -73,8 +74,10 @@ test("publishes absolute social metadata and supports retained routes", async ()
 test("forces full-page navigation for Cloudflare route compatibility", async () => {
   const dashboardApp = await readFile(new URL("../app/DashboardApp.tsx", import.meta.url), "utf8");
   assert.match(dashboardApp, /window\.location\.assign\(href\)/);
-  assert.match(dashboardApp, /navigateWithReload\(event, `\/\$\{item\.key\}`\)/);
-  assert.match(dashboardApp, /href="\/performance"/);
+  assert.match(dashboardApp, /navigateWithReload\(event, item\.href\)/);
+  // Site audit C1: the brand link goes to This week (it used to pin /performance).
+  assert.match(dashboardApp, /href="\/this-week"/);
+  assert.doesNotMatch(dashboardApp, /href="\/performance"/);
 });
 
 test("restores the legacy Performance analysis controls and default exclusions", async () => {

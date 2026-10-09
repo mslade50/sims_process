@@ -10,7 +10,7 @@
  * overrides/history/<time>-<action>-<id>.json entry carrying the Access user, then replaces overrides/active.json with an etag guard.
  * golfprice only reads active.json; nothing else in the bucket is written here.
  */
-import { accessIdentity, type AccessEnv } from "./access";
+import { accessIdentity, type AccessEnv, type Identity } from "./access";
 import { HISTORY_PREFIX, OVERRIDES_KEY, buildRecord, isoSeconds, isExpired, parseUtc, type OverrideRecord } from "../app/overrides-rules";
 
 export interface ApiEnv extends AccessEnv {
@@ -42,19 +42,25 @@ async function readActive(bucket: R2Bucket): Promise<{ records: OverrideRecord[]
   return { records: parsed as OverrideRecord[], etag: object.etag };
 }
 
-async function writeActive(bucket: R2Bucket, records: OverrideRecord[], etag: string | null): Promise<boolean> {
+/** Etag-guarded replace of active.json. Returns the new object's etag (needed to guard a compensating rollback), or null if the guard failed. */
+async function writeActive(bucket: R2Bucket, records: OverrideRecord[], etag: string | null): Promise<{ etag: string | null } | null> {
   const result = await bucket.put(OVERRIDES_KEY, JSON.stringify(records, null, 1), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" },
     onlyIf: etag ? { etagMatches: etag } : { etagDoesNotMatch: "*" },
   });
-  return result !== null;
+  return result === null ? null : { etag: (result as { etag?: string }).etag ?? null };
+}
+
+function randomSuffix(): string {
+  return [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 type Action = "create" | "remove" | "expire";
 
-async function appendHistory(bucket: R2Bucket, action: Action, now: number, who: { email: string; verified: boolean; subject?: string }, record: OverrideRecord, before?: OverrideRecord) {
+async function appendHistory(bucket: R2Bucket, action: Action, now: number, who: Identity, record: OverrideRecord, before?: OverrideRecord) {
   const stamp = new Date(now).toISOString().replace(/[-:]/g, "").replace(".", "");
-  const key = `${HISTORY_PREFIX}${stamp}-${action}-${record.id}.json`;
+  // Random suffix: two writes in the same millisecond must not collide on the key (the put is create-only).
+  const key = `${HISTORY_PREFIX}${stamp}-${action}-${record.id}-${randomSuffix()}.json`;
   const entry = { schema: "golfprice.override_history.v1", action, at: isoSeconds(now), by: who, record, ...(before ? { before } : {}) };
   const put = await bucket.put(key, JSON.stringify(entry, null, 1), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" },
@@ -64,15 +70,55 @@ async function appendHistory(bucket: R2Bucket, action: Action, now: number, who:
   return key;
 }
 
+type Mutation = { records: OverrideRecord[]; previous: OverrideRecord[]; etag: string | null };
+
 /** Read-modify-write of active.json with an etag guard (three attempts). `change` returns the new list or a Response to stop. */
-async function mutate(bucket: R2Bucket, change: (records: OverrideRecord[]) => OverrideRecord[] | Response): Promise<OverrideRecord[] | Response> {
+async function mutate(bucket: R2Bucket, change: (records: OverrideRecord[]) => OverrideRecord[] | Response): Promise<Mutation | Response> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const { records, etag } = await readActive(bucket);
     const next = change(records);
     if (next instanceof Response) return next;
-    if (await writeActive(bucket, next, etag)) return next;
+    const written = await writeActive(bucket, next, etag);
+    if (written) return { records: next, previous: records, etag: written.etag };
   }
   return fail(409, "overrides/active.json changed while saving; reload and try again");
+}
+
+const HISTORY_ATTEMPTS = 3;
+
+/**
+ * The audit entry must exist for every live change. Retry the history put; if it still fails, restore the previous records with an etag guard
+ * (only if nobody else changed active.json since) and report "change not applied". If the restore also fails, the change is live without an
+ * audit entry: say so, with the record id, so the owner can reconcile.
+ */
+async function commitWithAudit(bucket: R2Bucket, action: Action, now: number, who: Identity, record: OverrideRecord, applied: Mutation, before?: OverrideRecord): Promise<{ historyKey: string } | Response> {
+  let lastError = "history write failed";
+  for (let attempt = 0; attempt < HISTORY_ATTEMPTS; attempt += 1) {
+    try {
+      return { historyKey: await appendHistory(bucket, action, now, who, record, before) };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : lastError;
+    }
+  }
+  try {
+    const restored = await bucket.put(OVERRIDES_KEY, JSON.stringify(applied.previous, null, 1), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" },
+      onlyIf: applied.etag ? { etagMatches: applied.etag } : { etagDoesNotMatch: "*" },
+    });
+    if (restored !== null) return fail(500, `change not applied: the audit entry could not be written (${lastError})`);
+  } catch {
+    // fall through to the audit-missing report
+  }
+  return fail(500, `audit missing; live override present: ${record.id} (${action}); the audit entry could not be written (${lastError}) and the previous list could not be restored`);
+}
+
+/** Host of an Origin header, or null when it is not a URL (e.g. the literal "null"), which never matches the request host. */
+function originHost(origin: string): string | null {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null;
+  }
 }
 
 export async function handleOverridesApi(request: Request, env: ApiEnv, now = Date.now()): Promise<Response | null> {
@@ -81,7 +127,12 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
 
   if (path.startsWith("/api/golfprice/")) {
     if (request.method !== "GET" && request.method !== "HEAD") return fail(405, "read-only path");
-    const requested = decodeURIComponent(path.slice("/api/golfprice/".length));
+    let requested: string;
+    try {
+      requested = decodeURIComponent(path.slice("/api/golfprice/".length));
+    } catch {
+      return fail(400, "Invalid golfprice path");
+    }
     if (!requested || requested.includes("..") || requested.startsWith("/") || requested.includes("\\")) return fail(400, "Invalid golfprice path");
     if (!env.DASHBOARD_DATA) return fail(503, "dashboard bucket is not bound");
     const object = await env.DASHBOARD_DATA.get(`golfprice/${requested}`);
@@ -126,8 +177,10 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
   // Writes: Access identity first, then origin, then body.
   const identity = await accessIdentity(request, env, now);
   if (!identity) return fail(401, "A valid Cloudflare Access identity is required to change overrides");
+  // Overrides move prices, so only a signature-verified identity may write (the Worker needs ACCESS_TEAM_DOMAIN and ACCESS_AUD).
+  if (!identity.verified) return fail(403, "The Access identity could not be verified (the Worker needs ACCESS_TEAM_DOMAIN and ACCESS_AUD); override writes are refused");
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== url.host) return fail(403, "cross-origin write refused");
+  if (origin && originHost(origin) !== url.host) return fail(403, "cross-origin write refused");
 
   try {
     if (isCreate) {
@@ -149,11 +202,17 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
         return [...live, record];
       });
       if (result instanceof Response) return result;
-      const historyKey = await appendHistory(bucket, "create", now, identity, record);
-      return json({ ok: true, record, records: result, history_key: historyKey }, 201);
+      const audited = await commitWithAudit(bucket, "create", now, identity, record, result);
+      if (audited instanceof Response) return audited;
+      return json({ ok: true, record, records: result.records, history_key: audited.historyKey }, 201);
     }
 
-    const id = decodeURIComponent(path.slice("/api/overrides/".length));
+    let id: string;
+    try {
+      id = decodeURIComponent(path.slice("/api/overrides/".length));
+    } catch {
+      return fail(400, "invalid override id");
+    }
     const mode = url.searchParams.get("mode") ?? "remove";
     if (!id || id.length > 80 || !/^[A-Za-z0-9._:-]+$/.test(id)) return fail(400, "invalid override id");
     if (mode !== "remove" && mode !== "expire") return fail(400, "mode must be remove or expire");
@@ -169,8 +228,9 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
       return records.map((r) => (r.id === id ? (after as OverrideRecord) : r));
     });
     if (result instanceof Response) return result;
-    const historyKey = await appendHistory(bucket, mode === "remove" ? "remove" : "expire", now, identity, after ?? (before as OverrideRecord), before);
-    return json({ ok: true, id, mode, records: result, history_key: historyKey });
+    const audited = await commitWithAudit(bucket, mode === "remove" ? "remove" : "expire", now, identity, after ?? (before as OverrideRecord), result, before);
+    if (audited instanceof Response) return audited;
+    return json({ ok: true, id, mode, records: result.records, history_key: audited.historyKey });
   } catch (error) {
     return fail(500, error instanceof Error ? error.message : "override write failed");
   }

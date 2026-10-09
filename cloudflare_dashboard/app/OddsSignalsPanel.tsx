@@ -16,7 +16,7 @@ export function OddsSignalsPanel() {
       {loading ? (
         <p className="inputs-muted">Loading the latest odds check…</p>
       ) : !doc ? (
-        <EmptyState title="No odds check published yet" detail="It appears after the first odds check publishes golfprice/odds_signals/latest.json (runs by itself every 30 minutes from Monday afternoon to the Thursday tee)." />
+        <EmptyState title="No odds check published yet" detail="It appears after the first odds check publishes (runs by itself every 30 minutes from Monday afternoon to the Thursday tee)." />
       ) : (
         <div className="scorecard-body">
           {oddsStale(doc.generated_at, now) && <p className="inputs-note accent">The last odds check that found new quotes was {doc.generated_at}. Checks that find nothing new do not publish.</p>}
@@ -27,7 +27,7 @@ export function OddsSignalsPanel() {
               <h3 className="inputs-h3">
                 {event.name} <span className="inputs-muted">{event.n_signals} signals, {event.n_live} live; {event.new.length} new, {event.moved.length} moved, {event.dropped.length} dropped</span>
               </h3>
-              <p className="inputs-muted">Fairs: {event.fair_source} arm of the run {event.base_run}. Alert: {event.alert.sent ? "sent" : event.alert.note}.</p>
+              <p className="inputs-muted">Fair prices: {event.fair_source} model version of the run {event.base_run}. Alert: {event.alert.sent ? "sent" : event.alert.note}.</p>
               {event.signals.length === 0 ? (
                 <p className="inputs-muted">No quote clears its threshold right now.</p>
               ) : (

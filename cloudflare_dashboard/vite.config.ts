@@ -4,6 +4,30 @@ import { cloudflare, getLocalWorkerdCompatibilityDate } from "@cloudflare/vite-p
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 import { SCHEDULE_CRONS } from "./worker/cron-rules";
+import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { Plugin } from "vite";
+
+/**
+ * public/golfprice/ is an untracked, hand-copied snapshot used only by the no-Worker local preview (RESEARCH_LOCAL_PREVIEW=1), where
+ * /api/golfprice/* does not exist (site audit D2). The production Worker serves golfprice data from R2 and never reads these files
+ * (nothing in worker/ or the app requests /golfprice/ in production), so a production build drops the copy from dist/client.
+ * Keep it with RESEARCH_LOCAL_PREVIEW=1 or PACKAGE_GOLFPRICE_STATIC=1. Only the build OUTPUT is touched; public/golfprice is never deleted.
+ */
+function excludePackagedGolfprice(): Plugin {
+  let root = process.cwd();
+  return {
+    name: "exclude-packaged-golfprice",
+    apply: "build",
+    enforce: "post",
+    configResolved(config) {
+      root = config.root;
+    },
+    async closeBundle() {
+      await rm(resolve(root, "dist", "client", "golfprice"), { recursive: true, force: true });
+    },
+  };
+}
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -58,6 +82,7 @@ export default defineConfig(({ command }) => {
     plugins: [
       vinext(),
       ...(!localResearchPreview ? [sites()] : []),
+      ...(!localResearchPreview && process.env.PACKAGE_GOLFPRICE_STATIC !== "1" ? [excludePackagedGolfprice()] : []),
       ...(!useNodePreview ? [cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localResearchPreview

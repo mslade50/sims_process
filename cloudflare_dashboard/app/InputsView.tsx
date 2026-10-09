@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
+import { LABELS } from "./labels";
 import { matchPlayers, matchText } from "./inputs-search";
 import { DataRow, numberValue, palette, titleCase } from "./lib";
 import { ALLOWED, CUT_BOUNDS, MAX_LIFETIME_DAYS, checkOverride, isExpired, isoSeconds, specFor, type FieldSpec, type OverrideRecord, type Scope } from "./overrides-rules";
@@ -27,6 +28,10 @@ const pct = (value: unknown, digits = 1): string => {
   return v === null ? "—" : `${(v * 100).toFixed(digits)}%`;
 };
 
+function armLabel(name: string): string {
+  const known: Record<string, string> = { champion: "previous model", comparison: "alternative version", shadow: "alternative version" };
+  return known[name] ?? name.replaceAll("_", " ");
+}
 type IndexRun = { kind: string; run: string; as_of: string | null; after_round: number | null; key: string; hole_table_key: string | null; sha256: string; bytes: number; n_players: number; overrides_applied: string[]; overrides_rejected: string[] };
 type IndexEvent = { event_uid: string; name: string; tour: string; date_start: string; date_end: string; course: string; runs: IndexRun[]; latest_key: string | null };
 type PublishIndex = { schema: string; events: IndexEvent[] };
@@ -126,7 +131,7 @@ function playerRows(players: Obj[]): DataRow[] {
       name: String(p.name ?? ""),
       mu: num(ch.mu),
       mu_untouched: num(ch.mu_untouched),
-      vs_avg_pga_tour_player: num(ch.mu_tour),
+      [LABELS.thisWeekPga.short]: num(ch.mu_tour),
       sd: num(ch.sd),
       sd_untouched: num(ch.sd_untouched),
       se_kernel: num(ch.se_kernel),
@@ -266,7 +271,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust }: { player: Obj; choi
       <div className="mini-stat-grid">
         <div><span>{"Final mu (vs this week's field)"}</span><strong>{signed(ch.mu)}</strong></div>
         <div><span>Untouched mu</span><strong>{signed(ch.mu_untouched)}</strong></div>
-        <div title="Strokes per round vs an average PGA Tour player (DataGolf-style scale). Reference only; prices use the field-relative number."><span>vs avg PGA Tour player</span><strong>{signed(ch.mu_tour)}</strong></div>
+        <div title={`${LABELS.thisWeekPga.long}. Reference only; prices use the field-relative number.`}><span>{LABELS.thisWeekPga.short}</span><strong>{signed(ch.mu_tour)}</strong></div>
         <div><span>Round SD</span><strong>{fx(ch.sd, 2)}</strong></div>
         <div><span>Untouched SD</span><strong>{fx(ch.sd_untouched, 2)}</strong></div>
         <div><span>Kernel SE</span><strong>{fx(ch.se_kernel, 3)}</strong></div>
@@ -310,24 +315,24 @@ function PlayerDetail({ player, choices, onPick, onAdjust }: { player: Obj; choi
             <div><span>Course history residual (k=80)</span><b>{signed(cf.course_history_resid_k80, 4)}</b></div>
             <div><span>Course SD multiplier (feature)</span><b>{fx(cf.course_sd_mult_feature, 3)}</b></div>
             <div><span>Shrunk SD (feature)</span><b>{fx(cf.sd_shrunk_feature, 3)}</b></div>
-            <div><span>Champion J2 mu</span><b>{signed(hist.champion_mu_j2)}</b></div>
-            <div><span>Champion SE</span><b>{fx(hist.se_mu, 3)}{hist.se_mu_imputed ? " (imputed)" : ""}</b></div>
+            <div><span>Earlier-model course-history mu (J2)</span><b>{signed(hist.champion_mu_j2)}</b></div>
+            <div><span>Earlier-model standard error</span><b>{fx(hist.se_mu, 3)}{hist.se_mu_imputed ? " (imputed)" : ""}</b></div>
             {Object.entries(tee).map(([round, info]) => (
               <div key={round}><span>Tee {round.toUpperCase()}</span><b>{String(obj(info).teetime_local ?? "—")} ({String(obj(info).wave ?? "—")})</b></div>
             ))}
           </div>
         </div>
       </div>
-      <h3 className="inputs-h3">Prices by arm (model, before the market combiner)</h3>
+      <h3 className="inputs-h3">Model prices (before the market combiner)</h3>
       <div className="table-scroll">
         <table>
-          <thead><tr><th><span className="th-text">Arm</span></th><th><span className="th-text">Mu</span></th><th><span className="th-text">SD</span></th><th><span className="th-text">Win</span></th><th><span className="th-text">Top 5</span></th><th><span className="th-text">Top 10</span></th><th><span className="th-text">Top 20</span></th><th><span className="th-text">Make cut</span></th></tr></thead>
+          <thead><tr><th><span className="th-text">Version</span></th><th><span className="th-text">Mu</span></th><th><span className="th-text">SD</span></th><th><span className="th-text">Win</span></th><th><span className="th-text">Top 5</span></th><th><span className="th-text">Top 10</span></th><th><span className="th-text">Top 20</span></th><th><span className="th-text">Make cut</span></th></tr></thead>
           <tbody>
-            <tr className="active-row"><td>challenger (final)</td><td>{signed(ch.mu)}</td><td>{fx(ch.sd, 2)}</td><td>{pct(prob.p_win, 2)}</td><td>{pct(prob.p_top_5)}</td><td>{pct(prob.p_top_10)}</td><td>{pct(prob.p_top_20)}</td><td>{pct(prob.p_make_cut)}</td></tr>
-            {Object.keys(probU).length > 0 && <tr><td>challenger untouched</td><td>{signed(ch.mu_untouched)}</td><td>{fx(ch.sd_untouched, 2)}</td><td>{pct(probU.p_win, 2)}</td><td>{pct(probU.p_top_5)}</td><td>{pct(probU.p_top_10)}</td><td>{pct(probU.p_top_20)}</td><td>{pct(probU.p_make_cut)}</td></tr>}
+            <tr className="active-row"><td>model (final, with overrides)</td><td>{signed(ch.mu)}</td><td>{fx(ch.sd, 2)}</td><td>{pct(prob.p_win, 2)}</td><td>{pct(prob.p_top_5)}</td><td>{pct(prob.p_top_10)}</td><td>{pct(prob.p_top_20)}</td><td>{pct(prob.p_make_cut)}</td></tr>
+            {Object.keys(probU).length > 0 && <tr><td>model (untouched)</td><td>{signed(ch.mu_untouched)}</td><td>{fx(ch.sd_untouched, 2)}</td><td>{pct(probU.p_win, 2)}</td><td>{pct(probU.p_top_5)}</td><td>{pct(probU.p_top_10)}</td><td>{pct(probU.p_top_20)}</td><td>{pct(probU.p_make_cut)}</td></tr>}
             {arms.filter(([name]) => name !== "challenger").map(([name, value]) => {
               const a = obj(value);
-              return <tr key={name}><td>{name}</td><td>{signed(a.mu)}</td><td>{fx(a.sd, 2)}</td><td>{pct(a.p_win, 2)}</td><td>{pct(a.p_top_5)}</td><td>{pct(a.p_top_10)}</td><td>{pct(a.p_top_20)}</td><td>{pct(a.p_make_cut)}</td></tr>;
+              return <tr key={name}><td>{armLabel(name)}</td><td>{signed(a.mu)}</td><td>{fx(a.sd, 2)}</td><td>{pct(a.p_win, 2)}</td><td>{pct(a.p_top_5)}</td><td>{pct(a.p_top_10)}</td><td>{pct(a.p_top_20)}</td><td>{pct(a.p_make_cut)}</td></tr>;
             })}
           </tbody>
         </table>
@@ -343,7 +348,7 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
   const current = players.find((p) => num(p.dg_id) === selected) ?? players[0];
   const currentRow = rows.find((row) => row.dg_id === num(current?.dg_id)) ?? null;
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
-  const preferred = ["name", "mu", "vs_avg_pga_tour_player", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut", "fit_rs_ddacc", "override_total", ...FAMILIES.map(([key]) => `chl_${key}`)];
+  const preferred = ["name", "mu", LABELS.thisWeekPga.short, "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut", "fit_rs_ddacc", "override_total", ...FAMILIES.map(([key]) => `chl_${key}`)];
   const mus = rows.map((row) => numberValue(row.mu)).filter(Number.isFinite);
   const strength = obj(obj(doc.event).field_strength);
   const fieldOffset = num(strength.field_offset);
@@ -360,10 +365,10 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
           value={fieldOffset === null ? "—" : signed(fieldOffset, 2)}
           detail={fieldOffset === null ? "No tour-scale estimate for this run" : `this field is ${Math.abs(fieldOffset).toFixed(2)} strokes per round ${fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour field (skills as of ${String(strength.vintage ?? "").slice(0, 10)}). Reference only: prices use the field-relative mu.`}
         />
-        <Kpi label="Mean round SD" value={sdMean.toFixed(2)} detail="challenger, after overrides" />
+        <Kpi label="Mean round SD" value={sdMean.toFixed(2)} detail="model, after overrides" />
         <Kpi label="Players with an override" value={String(withOverride)} detail="untouched numbers are kept" tone={withOverride ? "positive" : "neutral"} />
       </div>
-      <Panel eyebrow="Challenger inputs" title="Every player, every component" actions={<span className="inputs-muted">{"Click a row, or search below, for the breakdown. \"Vs avg PGA Tour player\" is for reference; prices use mu (vs this week's field)."}</span>}>
+      <Panel eyebrow="Saved model inputs" title="Every player, every component" actions={<span className="inputs-muted">{"Click a row, or search below, for the breakdown. \"" + LABELS.thisWeekPga.short + "\" is for reference; prices use mu (vs this week's field)."}</span>}>
         <DataTable rows={rows} preferredColumns={preferred} label="Model inputs players" pageSize={30} onRowClick={(row) => setSelected(num(row.dg_id))} activeRow={currentRow} />
       </Panel>
       {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} />}
@@ -664,7 +669,7 @@ function FeaturesTab() {
   }, [features, family, model, query, sort]);
   const locShown = useMemo(() => (glossary?.location.columns ?? []).filter((c) => (family === "all" || family === "location") && matchText(`${c.name} ${c.base} ${c.measures} ${c.part} location`, query)), [glossary, family, query]);
   if (loading) return <LoadingState label="Loading the feature glossary" />;
-  if (error || !glossary) return <ErrorState message={error ?? "The feature glossary has not been published yet (golfprice/feature_glossary.json)."} />;
+  if (error || !glossary) return <ErrorState message={error ?? "The feature glossary has not been published yet."} />;
   const m = glossary.model;
   const share = (f: GlossaryFamily) => (model === "chl" ? f.share_abs_weight_chl : f.share_abs_weight_v21);
   const visibleFamilies = glossary.families.filter((f) => shown.some((x) => x.family === f.key));
@@ -905,8 +910,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   return (
     <div className="stack-lg">
       <div className="inputs-banner">
-        <strong>One-off fixes, applied directly to the challenger</strong>
-        <span>Each override appears as its own named line in the player breakdown. The untouched model number is stored for the forward test. Hard bounds reject, never clip. Saving writes <code>overrides/active.json</code> and an audit entry with your Access identity; golfprice reads it at its next run.</span>
+        <strong>One-off fixes, applied directly to the model price</strong>
+        <span>Each override appears as its own named line in the player breakdown. The untouched model number is stored for the forward test. Hard bounds reject, never clip. Saving updates the shared override list and records an audit entry with your Access identity; golfprice reads it at its next run.</span>
       </div>
       <Panel eyebrow="New override" title="Adjust the model">
         <form className="override-form" onSubmit={submit}>
@@ -1003,7 +1008,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           </div>
         )}
       </Panel>
-      {schema?.fields && <p className="inputs-muted">Bounds shown here match the published golfprice/overrides_schema.json ({schema.fields.length} fields).</p>}
+      {schema?.fields && <p className="inputs-muted">Bounds shown here match the published override limits ({schema.fields.length} fields).</p>}
       <Panel eyebrow="Audit" title="Recent changes">
         {history.length === 0 ? <p className="inputs-muted">No changes logged yet.</p> : (
           <div className="kv-table">

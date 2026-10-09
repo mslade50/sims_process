@@ -5,7 +5,7 @@
  * motion respects prefers-reduced-motion (CSS media query plus useReducedMotion for JS-driven animation).
  */
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { countUpText, freshnessTone, parseTimestamp, relativeAge, type FreshnessTone } from "./ui-rules";
+import { catalogFreshnessTone, countUpText, freshnessTone, parseTimestamp, relativeAge, type FreshnessTone } from "./ui-rules";
 
 export type Tone = "positive" | "negative" | "warning" | "model" | "market" | "am" | "pm" | "accent" | "neutral";
 export type SegmentTone = Tone | "chart-1" | "chart-2" | "chart-3" | "chart-4" | "chart-5" | "chart-6" | "chart-7" | "chart-8";
@@ -134,14 +134,14 @@ export function SkeletonPage({ label = "Loading dashboard data" }: { label?: str
 const FRESH_LABEL: Record<FreshnessTone, string> = { live: "Live", fresh: "Fresh", aging: "Aging", stale: "Stale", unknown: "No run yet" };
 
 /** "Last run N minutes ago" that keeps ticking. `at` is an ISO (or golfprice folder-style) timestamp. */
-export function FreshnessBadge({ at, label = "Last run" }: { at: unknown; label?: string }) {
+export function FreshnessBadge({ at, label = "Last run", scale = "run", title }: { at: unknown; label?: string; scale?: "run" | "catalog"; title?: string }) {
   const now = useNow(30_000);
   const parsed = parseTimestamp(at);
   const age = parsed === null ? null : now - parsed;
-  const tone = freshnessTone(age);
-  const text = age === null ? FRESH_LABEL.unknown : `${label} ${relativeAge(age)}`;
+  const tone = scale === "catalog" ? catalogFreshnessTone(age) : freshnessTone(age);
+  const text = age === null ? FRESH_LABEL.unknown : `${label} ${relativeAge(age)}${scale === "catalog" && tone === "aging" ? " · stale" : ""}`;
   return (
-    <span className={`freshness-badge fresh-${tone}`} title={parsed === null ? undefined : new Date(parsed).toLocaleString()}>
+    <span className={`freshness-badge fresh-${tone}`} title={title ?? (parsed === null ? undefined : new Date(parsed).toLocaleString())}>
       <LiveDot tone={tone === "aging" ? "warning" : tone === "stale" || tone === "unknown" ? "negative" : "positive"} pulse={tone === "live" || tone === "fresh"} />
       <span>{text}</span>
     </span>

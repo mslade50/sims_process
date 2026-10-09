@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { JOB_ID_RE, JOB_TYPES, MACHINES, MAX_QUEUE, machineStatus, waitingFor, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue } from "../app/jobs-rules.ts";
+import { JOB_ID_RE, JOB_TYPES, MACHINES, MAX_QUEUE, machineStatus, waitingFor, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue, listWindow } from "../app/jobs-rules.ts";
 
 const NOW = Date.parse("2026-10-05T14:00:00Z");
 
@@ -198,8 +198,9 @@ test("POST /api/jobs: identity, verification, origin, allow-list, rate limit", a
 
 test("GET /api/jobs lists newest first with statuses, derived states and heartbeats; log endpoint", async () => {
   const worker = await loadWorker();
-  const a = job({ id: "j-20261005T120000-aaaaaa", type: "tuesday" });
-  const b = job({ id: "j-20261005T130000-bbbbbb", type: "wednesday" });
+  const recent = (minutesAgo) => new Date(Date.now() - minutesAgo * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const a = job({ id: "j-20261005T120000-aaaaaa", type: "tuesday", requested_at: recent(120) });
+  const b = job({ id: "j-20261005T130000-bbbbbb", type: "wednesday", requested_at: recent(60) });
   const bucket = fakeBucket({
     "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [a, b] },
     [`jobs/status/${a.id}.json`]: { id: a.id, state: "done", machine: "desktop-2ki41v6", exit_code: 0, summary: "ok" },
@@ -307,3 +308,62 @@ test("POST /api/jobs with target_machine: stored on the job, unknown machine ref
   assert.equal(cancel.status, 200);
 });
 
+
+test("listWindow: last 50 non-cron jobs from 48 h plus the last 20 cron jobs, newest first", () => {
+  const at = (minutesAgo) => new Date(NOW - minutesAgo * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const jobs = [];
+  jobs.push(job({ id: "j-20261001T000000-old000", requested_at: at(60 * 24 * 4) })); // 4 days old, manual: outside the 48 h window
+  for (let i = 0; i < 60; i += 1) jobs.push(job({ id: `j-m${String(i).padStart(3, "0")}`, requested_at: at(1200 - i) }));
+  for (let i = 0; i < 150; i += 1) jobs.push(job({ id: `j-c${String(i).padStart(3, "0")}`, requested_by: "cron", type: "watch", requested_at: at(900 - i) }));
+  const listed = listWindow(jobs, NOW);
+  assert.equal(listed.filter((j) => j.requested_by === "cron").length, 20);
+  assert.equal(listed.filter((j) => j.requested_by !== "cron").length, 50);
+  assert.equal(listed.some((j) => j.id.startsWith("j-20261001")), false);
+  assert.equal(listed[0].id, "j-c149", "newest first");
+  assert.equal(listed.filter((j) => j.requested_by !== "cron")[0].id, "j-m059");
+  assert.equal(listed.find((j) => j.id === "j-m009"), undefined, "the 10 oldest manual jobs fall off the 50-job window");
+  assert.deepEqual(listWindow([], NOW), []);
+});
+
+test("GET /api/jobs reads exactly the listed jobs' status keys and never lists the status prefix (the 1000-key list cap)", async () => {
+  const worker = await loadWorker();
+  const recent = (minutesAgo) => new Date(Date.now() - minutesAgo * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const jobs = Array.from({ length: 3 }, (_, i) => job({ id: `j-20261005T12000${i}-aaaaa${i}`, type: "tuesday", requested_at: recent(30 - i) }));
+  const initial = { "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs } };
+  // 1,200 older unrelated status objects fill a 1000-key listing before the listed job's status key.
+  for (let i = 0; i < 1200; i += 1) initial[`jobs/status/j-19990101T${String(i).padStart(6, "0")}-zzzzzz.json`] = { id: "x", state: "done" };
+  initial[`jobs/status/${jobs[2].id}.json`] = { id: jobs[2].id, state: "done", machine: "desktop-2ki41v6", summary: "found" };
+  const bucket = fakeBucket(initial);
+  const realList = bucket.list;
+  const listed = [];
+  bucket.list = async (options = {}) => {
+    listed.push(options.prefix);
+    return realList({ ...options, limit: 1000 }).then((r) => ({ ...r, objects: r.objects.slice(0, 1000) }));
+  };
+  const data = await (await call(worker, bucket, "/api/jobs")).json();
+  assert.equal(data.jobs[0].id, jobs[2].id);
+  assert.equal(data.jobs[0].status.summary, "found");
+  assert.equal(data.jobs[0].state, "done");
+  assert.equal(listed.includes("jobs/status/"), false, "no list of the status prefix");
+});
+
+test("GET /api/jobs: a job with no status object is queued; an empty queue and a cron-only queue list cleanly", async () => {
+  const worker = await loadWorker();
+  const recent = (minutesAgo) => new Date(Date.now() - minutesAgo * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+  const lone = job({ id: "j-20261005T120000-aaaaaa", type: "tuesday", requested_at: recent(10) });
+  const one = await (await call(worker, fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [lone] } }), "/api/jobs")).json();
+  assert.equal(one.jobs.length, 1);
+  assert.equal(one.jobs[0].state, "queued");
+  assert.equal(one.jobs[0].status ?? null, null, "no status object -> no status");
+
+  const empty = await call(worker, fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] } }), "/api/jobs");
+  assert.equal(empty.status, 200);
+  assert.deepEqual((await empty.json()).jobs, []);
+
+  // Cron-only queue: 30 cron jobs, some older than 48 h; the last 20 are listed regardless of age.
+  const cron = Array.from({ length: 30 }, (_, i) => job({ id: `j-c${String(i).padStart(3, "0")}`, type: "watch", requested_by: "cron", requested_at: recent(60 * 60 - i * 60) }));
+  const listed = await (await call(worker, fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: cron } }), "/api/jobs")).json();
+  assert.equal(listed.jobs.length, 20);
+  assert.equal(listed.jobs[0].id, "j-c029", "newest first");
+  assert.ok(listed.jobs.every((j) => j.state === "queued"));
+});

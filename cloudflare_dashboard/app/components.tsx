@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { DataRow, formatCell, numberValue, titleCase } from "./lib";
 import { AnimatedNumber, Delta, SkeletonPage, Sparkline } from "./ui";
@@ -95,6 +95,11 @@ export function PageIntro({
       {controls && <div className="page-controls">{controls}</div>}
     </div>
   );
+}
+
+/** One-line banner for views fed by the retired simulation pipeline (event codes, not golfprice events). */
+export function LegacyNotice({ children }: { children?: React.ReactNode }) {
+  return <p className="legacy-notice" role="note"><strong>Legacy data.</strong> {children ?? "This archived view comes from the retired simulation pipeline and does not show the current golfprice week."}</p>;
 }
 
 export function EmptyState({ title, detail }: { title: string; detail: string }) {
@@ -197,6 +202,12 @@ export function DataTable({
   pageSize = 25,
   onRowClick,
   activeRow,
+  defaultColumns,
+  headerLabels,
+  verbatim = false,
+  stickyFirst = false,
+  renderCell,
+  mobileColumns,
 }: {
   rows: DataRow[];
   preferredColumns?: string[];
@@ -205,6 +216,18 @@ export function DataTable({
   /** Optional: makes rows clickable (used by the Model inputs player table). */
   onRowClick?: (row: DataRow) => void;
   activeRow?: DataRow | null;
+  /** Initial visible set (in table order). The column picker still offers every column. Default: the first nine. */
+  defaultColumns?: string[];
+  /** Optional display label per column key (header and picker). */
+  headerLabels?: Record<string, string>;
+  /** Render header, picker and text cells exactly as given (no title-casing), for tables whose columns and badges are already labels. */
+  verbatim?: boolean;
+  /** Keep the first column visible while scrolling sideways. */
+  stickyFirst?: boolean;
+  /** Optional per-column cell renderer; return undefined to fall back to the default text. */
+  renderCell?: (column: string, value: unknown, row: DataRow) => ReactNode | undefined;
+  /** Columns still shown at phone width (600px and under); the others are hidden by CSS. Omit to show all. */
+  mobileColumns?: string[];
 }) {
   const allColumns = useMemo(() => {
     const found = [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((column) =>
@@ -215,7 +238,13 @@ export function DataTable({
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(0);
-  const [visible, setVisible] = useState<string[]>(() => allColumns.slice(0, Math.min(9, allColumns.length)));
+  const [visible, setVisible] = useState<string[]>(() => {
+    const chosen = defaultColumns ? allColumns.filter((column) => defaultColumns.includes(column)) : [];
+    return chosen.length ? chosen : allColumns.slice(0, Math.min(9, allColumns.length));
+  });
+  const headText = (column: string) => headerLabels?.[column] ?? (verbatim ? column : titleCase(column));
+  const cellClass = (column: string, index: number, tone = "") =>
+    [tone, stickyFirst && index === 0 ? "sticky-first" : "", mobileColumns && !mobileColumns.includes(column) ? "mobile-hide" : ""].filter(Boolean).join(" ");
 
   const activeColumns = visible.filter((column) => allColumns.includes(column));
   const filtered = useMemo(() => {
@@ -302,7 +331,7 @@ export function DataTable({
                       }
                     />
                     <span className="checkbox-mark">{checked && <Check size={11} />}</span>
-                    {titleCase(column)}
+                    {headText(column)}
                   </label>
                 );
               })}
@@ -317,10 +346,10 @@ export function DataTable({
         <table>
           <thead>
             <tr>
-              {activeColumns.map((column) => (
-                <th key={column}>
+              {activeColumns.map((column, index) => (
+                <th key={column} className={cellClass(column, index)}>
                   <button type="button" onClick={() => toggleSort(column)}>
-                    {titleCase(column)}
+                    {headText(column)}
                     {sort?.column === column && <span>{sort.direction === "asc" ? " ↑" : " ↓"}</span>}
                   </button>
                 </th>
@@ -334,7 +363,7 @@ export function DataTable({
                 className={`${onRowClick ? "clickable-row" : ""} ${activeRow && activeRow === row ? "active-row" : ""}`}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
               >
-                {activeColumns.map((column) => {
+                {activeColumns.map((column, index) => {
                   const value = row[column];
                   const numeric = numberValue(value, Number.NaN);
                   const tone = /edge|units_won|miss_centered/i.test(column)
@@ -344,7 +373,9 @@ export function DataTable({
                         ? "negative"
                         : ""
                     : "";
-                  return <td className={tone} key={column}>{formatCell(value, column)}</td>;
+                  const custom = renderCell?.(column, value, row);
+                  const text = custom !== undefined ? custom : verbatim && typeof value === "string" && value !== "" ? value : formatCell(value, column);
+                  return <td className={cellClass(column, index, tone)} key={column}>{text}</td>;
                 })}
               </tr>
             ))}

@@ -60,6 +60,73 @@ export function freshnessTone(ageMs: number | null): FreshnessTone {
   return "stale";
 }
 
+/** Daily-refreshed reference catalogs (player profiles): fresh through 7 days, amber ("aging") beyond. */
+export const CATALOG_STALE_MS = 7 * 86_400_000;
+export function catalogFreshnessTone(ageMs: number | null): FreshnessTone {
+  if (ageMs === null) return "unknown";
+  return ageMs > CATALOG_STALE_MS ? "aging" : "fresh";
+}
+
+/* ------------------------------------------------------------------ header freshness (site audit C3) */
+export type IndexEventLite = {
+  name?: string; course?: string; date_start?: string; event_uid?: string;
+  runs?: Array<{ as_of?: string }>;
+  /** Added by runner release 1; ignored until present. */
+  published_at?: string; held_back?: unknown;
+};
+export type EventAge = { name: string; asOf: string | null; asOfMs: number | null; ageMs: number | null; publishedAt: string | null; heldBack: string | null };
+export type WeekSummary = {
+  title: string; sub: string;
+  /** OLDEST per-event as-of (each event's newest run), so one stale event cannot hide behind a fresh one. */
+  oldestAsOf: string | null;
+  events: EventAge[];
+  tooltip: string;
+  /** Display path for runner-release-1 fields: null (nothing shown) until index.json carries them. */
+  publishedLine: string | null;
+  heldBackNote: string | null;
+};
+
+/** Text for a `held_back` value: a string, {reason|message}, or a list of those. Empty/false/absent -> null. */
+export function heldBackText(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value.trim() || null;
+  if (Array.isArray(value)) return value.map(heldBackText).filter(Boolean).join("; ") || null;
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return heldBackText(o.reason ?? o.message ?? o.detail) ?? "a newer run was held back";
+  }
+  return "a newer run was held back";
+}
+
+export function summarizeWeek(index: { events?: IndexEventLite[] } | null | undefined, now: number): WeekSummary | null {
+  const dated = (index?.events ?? []).filter((e) => e.date_start);
+  if (!dated.length) return null;
+  const newest = dated.map((e) => e.date_start as string).sort().at(-1);
+  const week = dated.filter((e) => e.date_start === newest);
+  const events: EventAge[] = week.map((e) => {
+    const stamps = (e.runs ?? []).map((r) => ({ raw: r.as_of ?? "", ms: parseTimestamp(r.as_of) })).filter((s): s is { raw: string; ms: number } => s.ms !== null);
+    const last = stamps.sort((a, b) => a.ms - b.ms).at(-1) ?? null;
+    return {
+      name: e.name ?? e.event_uid ?? "event",
+      asOf: last?.raw ?? null, asOfMs: last?.ms ?? null, ageMs: last ? now - last.ms : null,
+      publishedAt: typeof e.published_at === "string" && parseTimestamp(e.published_at) !== null ? e.published_at : null,
+      heldBack: heldBackText(e.held_back),
+    };
+  });
+  const withRun = events.filter((e) => e.asOfMs !== null).sort((a, b) => (a.asOfMs as number) - (b.asOfMs as number));
+  const tooltip = events.map((e) => `${e.name}: ${e.ageMs === null ? "no run yet" : `run ${relativeAge(e.ageMs)}`}${e.publishedAt ? `; published ${relativeAge(now - (parseTimestamp(e.publishedAt) as number))}` : ""}`).join("\n");
+  const published = events.filter((e) => e.publishedAt).sort((a, b) => (parseTimestamp(a.publishedAt) as number) - (parseTimestamp(b.publishedAt) as number));
+  const held = events.filter((e) => e.heldBack);
+  return {
+    title: week.map((e) => e.name ?? e.event_uid ?? "").join(" · "),
+    sub: week.map((e) => e.course ?? "").filter(Boolean).join(" · "),
+    oldestAsOf: withRun[0]?.asOf ?? null,
+    events, tooltip,
+    publishedLine: published.length ? `Published ${relativeAge(now - (parseTimestamp(published[0].publishedAt) as number))}` : null,
+    heldBackNote: held.length ? `Newer run not published: ${held.map((e) => (events.length > 1 ? `${e.name}: ${e.heldBack}` : e.heldBack)).join("; ")}` : null,
+  };
+}
+
 /** User-selectable accents. d = fill/text on dark surfaces, l = fill/text on light surfaces (both validated for contrast in tests/theme.test.mjs). */
 export const ACCENTS = [
   { key: "sky", name: "Sky", d: "#8db4ff", l: "#1d5fb8" },

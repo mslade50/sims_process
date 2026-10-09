@@ -1,0 +1,358 @@
+{
+ "schema_version": "player_profiles.v1",
+ "as_of": "2026-10-08T16:27:09.371477+00:00",
+ "axes": [
+  {
+   "key": "sg_ott",
+   "label": "Off the tee",
+   "unit": "strokes/round"
+  },
+  {
+   "key": "sg_app",
+   "label": "Approach",
+   "unit": "strokes/round"
+  },
+  {
+   "key": "sg_arg",
+   "label": "Around the green",
+   "unit": "strokes/round"
+  },
+  {
+   "key": "sg_putt",
+   "label": "Putting",
+   "unit": "strokes/round"
+  }
+ ],
+ "references": {
+  "sg_app": {
+   "as_of": "2026-10-08T16:27:09.371477+00:00",
+   "higher_is_better": true,
+   "id": "global_recent:0da99c5b026296b4:sg_app",
+   "mean": -0.010246,
+   "min_rounds": 20,
+   "n_players": 382,
+   "population": "all source tours with valid category data; event-course-round centered when course is known",
+   "sd": 0.252371
+  },
+  "sg_arg": {
+   "as_of": "2026-10-08T16:27:09.371477+00:00",
+   "higher_is_better": true,
+   "id": "global_recent:0da99c5b026296b4:sg_arg",
+   "mean": -0.005415,
+   "min_rounds": 20,
+   "n_players": 382,
+   "population": "all source tours with valid category data; event-course-round centered when course is known",
+   "sd": 0.140414
+  },
+  "sg_ott": {
+   "as_of": "2026-10-08T16:27:09.371477+00:00",
+   "higher_is_better": true,
+   "id": "global_recent:0da99c5b026296b4:sg_ott",
+   "mean": -0.012784,
+   "min_rounds": 20,
+   "n_players": 382,
+   "population": "all source tours with valid category data; event-course-round centered when course is known",
+   "sd": 0.255537
+  },
+  "sg_putt": {
+   "as_of": "2026-10-08T16:27:09.371477+00:00",
+   "higher_is_better": true,
+   "id": "global_recent:0da99c5b026296b4:sg_putt",
+   "mean": -0.011854,
+   "min_rounds": 20,
+   "n_players": 382,
+   "population": "all source tours with valid category data; event-course-round centered when course is known",
+   "sd": 0.202553
+  }
+ },
+ "pga_benchmark_reference": {
+  "adjusted_sg_mean": -0.132787,
+  "available_after": "2026-01-01T00:00:00+00:00",
+  "id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
+  "label": "2025 PGA starts · R1–2, equal round weights",
+  "method": "Equal-round mean of provider adjusted total SG; no regular-player qualification filter",
+  "n_events": 46,
+  "n_players": 697,
+  "n_rounds": 11089,
+  "note": "A frozen average PGA start, not an equal-player average, not zero on the provider scale and not the average current field. First two rounds limit made-cut selection bias.",
+  "population": "Average valid adjusted-SG round in PGA-tagged 2025 events, rounds 1 and 2; each round weighted equally",
+  "rounds": [
+   1,
+   2
+  ],
+  "source": {
+   "database": "dg_historical",
+   "kind": "cloudflare_published_snapshot",
+   "manifest_sha256": "e9f67571a0d3d502e789d7e9d01c180b4a8c47202d5961ea2810da3a6b7c4051",
+   "object_key": "dg_historical/snapshots/2026-10-05T23-02-17-359780Z/player_rounds.parquet",
+   "rows": 443516,
+   "sha256": "71e9204f7191e52c22c948ab4fe09c81868e450152759fdbe2b8b9707dcf38e8",
+   "snapshot_id": "2026-10-05T23-02-17-359780Z"
+  },
+  "status": "available",
+  "year": 2025
+ },
+ "provenance": {
+  "identity_sources": [
+   {
+    "kind": "cloudflare_published_snapshot",
+    "manifest_sha256": "e9f67571a0d3d502e789d7e9d01c180b4a8c47202d5961ea2810da3a6b7c4051",
+    "object_key": "dg_historical/snapshots/2026-10-05T23-02-17-359780Z/model_results2.parquet",
+    "rows": 2715016,
+    "scope": "identity_only",
+    "sha256": "3516647222717ca5ea4199cb6d7aea17441a85b8804969925e1491b2110f2004",
+    "snapshot_id": "2026-10-05T23-02-17-359780Z",
+    "table": "model_results2"
+   },
+   {
+    "kind": "cloudflare_published_snapshot",
+    "manifest_sha256": "e9f67571a0d3d502e789d7e9d01c180b4a8c47202d5961ea2810da3a6b7c4051",
+    "object_key": "dg_historical/snapshots/2026-10-05T23-02-17-359780Z/player_tourney.parquet",
+    "rows": 87768,
+    "scope": "identity_only",
+    "sha256": "0cac73fb16901e5bfd29e004fe74fa5603765f4151394eeb974a75602ed07b3c",
+    "snapshot_id": "2026-10-05T23-02-17-359780Z",
+    "table": "player_tourney"
+   }
+  ],
+  "photos": {
+   "kind": "official_identity_photo_directory",
+   "retrieved_for_as_of": "2026-10-08T16:27:09.371477+00:00",
+   "rows": 2760,
+   "sha256": "1d5caf255863feb5e940b161c9fa03d21afdb7e3f1ff8483186a4516ef6c84b6",
+   "source": "https://www.pgatour.com/players"
+  },
+  "roster": {
+   "file": "player_list__20261003.json",
+   "kind": "datagolf_identity_roster",
+   "rows": 3575,
+   "scope": "identity_only",
+   "sha256": "de8c67495bc4e1ac7fedd8c4ee95261e0d038957fdfe4ba4fd7339dbb7868e67"
+  },
+  "rounds": {
+   "database": "dg_historical",
+   "kind": "cloudflare_published_snapshot",
+   "manifest_sha256": "e9f67571a0d3d502e789d7e9d01c180b4a8c47202d5961ea2810da3a6b7c4051",
+   "object_key": "dg_historical/snapshots/2026-10-05T23-02-17-359780Z/player_rounds.parquet",
+   "rows": 443516,
+   "sha256": "71e9204f7191e52c22c948ab4fe09c81868e450152759fdbe2b8b9707dcf38e8",
+   "snapshot_id": "2026-10-05T23-02-17-359780Z"
+  }
+ },
+ "generation": "8fa6e12521fc564abb9b",
+ "players": [
+  {
+   "aliases": [
+    "Matsuyama, Hideki"
+   ],
+   "amateur": 0,
+   "archetype": {
+    "label": "Low observed volatility · balanced or uncertain tails",
+    "status": "descriptive"
+   },
+   "available_axes": 4,
+   "country": "Japan",
+   "country_code": "JPN",
+   "dg_id": 13562,
+   "last_observation": "2026-08-30",
+   "n_rounds": 853,
+   "name": "Matsuyama, Hideki",
+   "pga_benchmark": {
+    "as_of": "2026-10-08T16:27:09.371477+00:00",
+    "decomposition": {
+     "formula": "weighted adjusted SG mean minus fixed PGA-start reference",
+     "half_life_days": 180,
+     "historical_mean_interval": {
+      "is_prediction_interval": false,
+      "kind": "historical_mean_sampling_interval",
+      "level": 0.95,
+      "lower": 1.117798,
+      "method": "event-cluster sandwich, Student t critical value",
+      "n_clusters": 71,
+      "note": "Approximate uncertainty of historical adjusted form, conditional on the published data and fixed reference. Excludes future round variance, provider revisions, reference uncertainty and dependence across events.",
+      "standard_error": 0.251862,
+      "upper": 2.122442
+     },
+     "prior_rounds": 0,
+     "raw_weighted_mean": 1.487333,
+     "reference_mean": -0.132787,
+     "round_numbers": [
+      1,
+      2
+     ],
+     "tour_weights": [
+      {
+       "contribution": 0.062559,
+       "n_events": 2,
+       "n_rounds": 4,
+       "raw_weighted_mean": 2.243857,
+       "tour": "euro",
+       "weight": 0.960976,
+       "weight_fraction": 0.026322
+      },
+      {
+       "contribution": 1.557561,
+       "n_events": 69,
+       "n_rounds": 137,
+       "raw_weighted_mean": 1.466881,
+       "tour": "pga",
+       "weight": 35.547083,
+       "weight_fraction": 0.973678
+      }
+     ],
+     "window_days": 1095
+    },
+    "effective_sample_size": 72.389169,
+    "label": "Recent adjusted form vs 2025 PGA starts",
+    "last_observation": "2026-08-28",
+    "method": {
+     "half_life_days": 180,
+     "min_events": 4,
+     "min_n_eff": 4,
+     "min_rounds": 12,
+     "prior_rounds": 0,
+     "window_days": 1095
+    },
+    "n_eff": 36.50806,
+    "n_events": 71,
+    "n_rounds": 141,
+    "note": "Recent adjusted performance, not the pricing model's expected skill. Positive means better than the fixed 2025 PGA first-two-round start average, with each valid round weighted equally; this is not an equal-player average. History is exponentially weighted by recency without shrinkage; no calibrated forecast interval is implied. Provider historical adjustments may be revised retrospectively.",
+    "observed_mean": 1.62012,
+    "raw_adjusted_sg_mean": 1.487333,
+    "reference_id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
+    "schema_version": "player_benchmark.v1",
+    "status": "available",
+    "unit": "strokes/round",
+    "value": 1.62012,
+    "weight_on_data": 1.0
+   },
+   "photo": {
+    "fallback": "initials",
+    "match_method": "unique_full_name_and_nonconflicting_country",
+    "provider_name": "Hideki Matsuyama",
+    "provider_player_id": "32839",
+    "source": "https://www.pgatour.com/players",
+    "source_name": "PGA TOUR",
+    "source_sha256": "1d5caf255863feb5e940b161c9fa03d21afdb7e3f1ff8483186a4516ef6c84b6",
+    "status": "provider_supplied",
+    "url": "https://pga-tour-res.cloudinary.com/image/upload/c_thumb,g_face,w_280,h_350,z_0.7/headshots_32839.jpg"
+   },
+   "profile_id": "13562",
+   "profile_key": "golfprice/player_profiles/fixture/batch_0000.json",
+   "search": "matsuyama hideki",
+   "status": "complete",
+   "tours": [
+    "euro",
+    "jpn",
+    "pga"
+   ]
+  },
+  {
+   "aliases": [
+    "Blair, Zac"
+   ],
+   "amateur": 0,
+   "archetype": {
+    "label": "Low observed volatility · balanced or uncertain tails",
+    "status": "descriptive"
+   },
+   "available_axes": 4,
+   "country": "United States",
+   "country_code": "USA",
+   "dg_id": 17639,
+   "last_observation": "2026-10-04",
+   "n_rounds": 696,
+   "name": "Blair, Zac",
+   "pga_benchmark": {
+    "as_of": "2026-10-08T16:27:09.371477+00:00",
+    "decomposition": {
+     "formula": "weighted adjusted SG mean minus fixed PGA-start reference",
+     "half_life_days": 180,
+     "historical_mean_interval": {
+      "is_prediction_interval": false,
+      "kind": "historical_mean_sampling_interval",
+      "level": 0.95,
+      "lower": 0.242407,
+      "method": "event-cluster sandwich, Student t critical value",
+      "n_clusters": 79,
+      "note": "Approximate uncertainty of historical adjusted form, conditional on the published data and fixed reference. Excludes future round variance, provider revisions, reference uncertainty and dependence across events.",
+      "standard_error": 0.243975,
+      "upper": 1.213843
+     },
+     "prior_rounds": 0,
+     "raw_weighted_mean": 0.595338,
+     "reference_mean": -0.132787,
+     "round_numbers": [
+      1,
+      2
+     ],
+     "tour_weights": [
+      {
+       "contribution": 0.198381,
+       "n_events": 13,
+       "n_rounds": 26,
+       "raw_weighted_mean": 0.46505,
+       "tour": "kft",
+       "weight": 13.93221,
+       "weight_fraction": 0.331831
+      },
+      {
+       "contribution": 0.529744,
+       "n_events": 66,
+       "n_rounds": 132,
+       "raw_weighted_mean": 0.660042,
+       "tour": "pga",
+       "weight": 28.053687,
+       "weight_fraction": 0.668169
+      }
+     ],
+     "window_days": 1095
+    },
+    "effective_sample_size": 76.05326,
+    "label": "Recent adjusted form vs 2025 PGA starts",
+    "last_observation": "2026-10-02",
+    "method": {
+     "half_life_days": 180,
+     "min_events": 4,
+     "min_n_eff": 4,
+     "min_rounds": 12,
+     "prior_rounds": 0,
+     "window_days": 1095
+    },
+    "n_eff": 41.985896,
+    "n_events": 79,
+    "n_rounds": 158,
+    "note": "Recent adjusted performance, not the pricing model's expected skill. Positive means better than the fixed 2025 PGA first-two-round start average, with each valid round weighted equally; this is not an equal-player average. History is exponentially weighted by recency without shrinkage; no calibrated forecast interval is implied. Provider historical adjustments may be revised retrospectively.",
+    "observed_mean": 0.728125,
+    "raw_adjusted_sg_mean": 0.595338,
+    "reference_id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
+    "schema_version": "player_benchmark.v1",
+    "status": "available",
+    "unit": "strokes/round",
+    "value": 0.728125,
+    "weight_on_data": 1.0
+   },
+   "photo": {
+    "fallback": "initials",
+    "match_method": "unique_full_name_and_nonconflicting_country",
+    "provider_name": "Zac Blair",
+    "provider_player_id": "40058",
+    "source": "https://www.pgatour.com/players",
+    "source_name": "PGA TOUR",
+    "source_sha256": "1d5caf255863feb5e940b161c9fa03d21afdb7e3f1ff8483186a4516ef6c84b6",
+    "status": "provider_supplied",
+    "url": "https://pga-tour-res.cloudinary.com/image/upload/c_thumb,g_face,w_280,h_350,z_0.7/headshots_40058.jpg"
+   },
+   "profile_id": "17639",
+   "profile_key": "golfprice/player_profiles/fixture/batch_0000.json",
+   "search": "blair zac",
+   "status": "complete",
+   "tours": [
+    "euro",
+    "kft",
+    "pga"
+   ]
+  }
+ ],
+ "count": 2
+}

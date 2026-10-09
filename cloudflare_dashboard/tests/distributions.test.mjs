@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -38,4 +39,29 @@ test("overlay curves retain independent current and prior mass and monotone CDFs
   assert.equal(rows[0].then_1, 30);
   assert.ok(rows.every((r, i) => !i || r.now_1 >= rows[i-1].now_1));
   assert.deepEqual(curveRows([], [], false), []);
+});
+import { SETTLEMENT_RANK_LABEL, markerLabel, cutReference } from "../app/distributions-rules.ts";
+test("B7: the cut marker uses the priced make-cut probability, not the sliced rank array; top-N markers are unchanged", () => {
+  const p = { probs: { win: { model: 0.05 }, top_5: { model: 0.2 }, top_10: { model: 0.3 }, top_20: { model: 0.5 }, make_cut: { model: 0.77 } }, finish: { pos: [0.1, 0.2, 0.3, 0.1] } };
+  assert.equal(marker(p, 65, 65), 0.77);
+  assert.equal(marker(p, 4), 0.1 + 0.2 + 0.3 + 0.1, "without a cut line the rank slice is used");
+  assert.equal(marker(p, 4, 65), 0.1 + 0.2 + 0.3 + 0.1, "a non-cut k still slices the rank curve");
+  assert.equal(marker(p, 10, 10), 0.3, "a cut line at a priced top-N keeps the model price");
+  assert.equal(marker(p, 5, 65), 0.2);
+  const noMarket = { probs: { win: { model: 0.05 }, top_5: { model: 0.2 }, top_10: { model: 0.3 }, top_20: { model: 0.5 }, make_cut: { model: null } }, finish: { pos: [0.5, 0.5] } };
+  assert.equal(marker(noMarket, 2, 2), 1, "no make-cut price falls back to the rank slice");
+  assert.equal(markerLabel(65, 65), "Make cut (top 65 and ties)");
+  assert.equal(markerLabel(10, 65), "Top 10");
+  assert.equal(markerLabel(65, null), "Top 65");
+  assert.match(SETTLEMENT_RANK_LABEL, /settlement rank \(missed cuts ranked below the field\)/);
+});
+
+test("W1: the cut reference is independent of the finish marker and uses p_make_cut", () => {
+  const p = { probs: { make_cut: { model: 0.876 } } };
+  assert.deepEqual(cutReference(p, 65), { x: 65, label: "Make cut (top 65 and ties)", prob: 0.876 });
+  assert.equal(cutReference(p, null), null);
+  assert.equal(cutReference({ probs: {} }, 65), null);
+  const src = readFileSync(new URL("../app/DistributionView.tsx", import.meta.url), "utf8");
+  assert.match(src, /cutReference\(p, doc\.event\.cut_top_n\)/);
+  assert.match(src, /ReferenceLine x=\{doc\.event\.cut_top_n\}/);
 });
