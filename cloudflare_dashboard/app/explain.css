@@ -176,3 +176,26 @@
   .ex-events button { white-space: normal; text-align: left; }
   .kpi small { overflow-wrap: anywhere; }
 }
+
+/* where we differ: contenders, bet-by-bet shape (October 9) */
+.ex-differ-rule { margin: 0 0 6px; }
+.ex-differ-field { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--muted-strong); }
+.ex-differ-cell { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.ex-differ small.ex-differ-nums { color: var(--muted); font-size: 10.5px; }
+.ex-differ .ex-differ-why { min-width: 280px; max-width: 440px; }
+.ex-differ-why strong { display: block; color: var(--foreground); font-weight: 650; line-height: 1.45; }
+.ex-differ-sub { display: block; margin-top: 3px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.ex-differ-value { display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--positive) 16%, transparent); color: var(--positive); font-size: 11px; font-weight: 700; }
+.ex-differ-groups { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--muted-strong); }
+.ex-differ-groups li + li { margin-top: 4px; }
+.ex-shape { display: block; overflow: visible; }
+.ex-shape-bar.pos { fill: var(--positive); }
+.ex-shape-bar.neg { fill: var(--negative); }
+.ex-shape-bar.flat { fill: var(--muted); opacity: .45; }
+.ex-shape-lab { fill: var(--muted); font-size: 8.5px; }
+.ex-shape-cell { width: 1%; }
+.ex-shape-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 8px; }
+@media (max-width: 640px) {
+  .ex-differ .ex-differ-why { min-width: 0; max-width: none; }
+  .ex-cards td.ex-shape-cell { width: auto; }
+}

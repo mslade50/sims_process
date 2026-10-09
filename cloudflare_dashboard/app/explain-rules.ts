@@ -547,3 +547,248 @@ export function cutLineRows(doc: ExplainDoc): Array<{ round: number; shift: numb
   return (doc.course_card.weather?.field ?? []).filter((f) => f.round <= (e.cut_round as number) && f.round > after).map((f) => ({ round: f.round, shift: f.cut_line_shift }));
 }
 export const availableMarkets = (doc: ExplainDoc): Market[] => MARKETS.filter((m) => m !== "make_cut" || !!doc.event.cut_round);
+
+/* ------------------------------------------------------------------ where we differ from the market: contenders and the shape of their chances
+ * Mirrors golfprice/explain_export.py (_shape_map / _invert_shape / _player_shape / _differ_block). The exported `shape` and `differ` fields are used when
+ * present; otherwise the same numbers are computed here from the published chances, skill and spread (documents published before October 9, 2026).
+ *
+ * Method: across the whole field our chance in each bet type follows our skill and spread closely: logit(chance) = s * (skill - q) / spread, fitted per bet
+ * type on our own chances (typically 96-99% of the variation). Running a player's sportsbook chances back through the same curves gives the skill and spread
+ * the market's prices imply; doing the same with our own chances and taking the difference cancels the approximation, so the gaps are like for like. */
+export type ShapeMap = Partial<Record<Market, { s: number; q: number; n: number }>>;
+export type MarketEdge = { model: number; market: number; rel: number; side: "yes" | "miss_cut" | null; ev: number | null; tone: "pos" | "neg" | "flat" };
+export type ShapePart = { key: string; label: string; value: number };
+export type Shape = {
+  skill_ours: number; skill_market: number; skill_gap: number; spread_ours: number; spread_market: number; spread_gap: number;
+  markets: Partial<Record<Market, MarketEdge>>; higher: Market[]; lower: Market[]; pattern: string; reason: string; sentence: string;
+  parts: ShapePart[]; base_gap: number; parts_sentence: string;
+};
+export type DifferGroup = { key: string; label: string; n: number; win_ours: number; win_market: number; win_rel: number; top20_ours: number | null; top20_market: number | null; top20_rel: number | null; skill_gap: number; spread_gap: number };
+export type Differ = { rule: string; ids: number[]; groups: DifferGroup[]; spread_gap_median: number | null; skill_gap_median: number | null; source: "export" | "page" };
+type Row = { player: ExPlayer; shape: Shape };
+
+const SHAPE_P_LO = 0.002;
+const SHAPE_P_HI = 0.995;
+export const EDGE_MIN = 0.05;       // a gap under 5% of the sportsbook's chance counts as "in line"
+export const SKILL_MIN = 0.05;      // strokes a round
+export const SPREAD_MIN = 0.08;     // strokes a round of round-to-round spread
+export const SHAPE_METHOD = "Where we differ: for each bet type, our chances across the whole field follow a smooth curve in each player's skill and spread (round-to-round swing). Running a player's sportsbook chances back through the same curves gives the skill and spread its prices imply; doing the same with our own chances and taking the difference keeps the comparison like for like. The skill gap is split into our week-specific adjustments (course, travel and home country, weather and tee times, owner adjustment) and the rest, which is a difference in base rating. Groups add up chances among the contenders. This is an explanation only; prices are unchanged.";
+export const CONTENDER_N = 25;
+export const CONTENDER_MIN_ROUNDS = 50;
+const MARKET_WORD: Record<Market, string> = { win: "win", top_5: "top 5", top_10: "top 10", top_20: "top 20", make_cut: "make cut" };
+const lgt = (p: number): number => Math.log(p / (1 - p));
+const okP = (p: number | null | undefined): p is number => typeof p === "number" && Number.isFinite(p) && p > SHAPE_P_LO && p < SHAPE_P_HI;
+const weatherSum = (p: ExPlayer): number => Object.entries(p.components).reduce((a, [k, v]) => a + (k.startsWith("wx_") && typeof v === "number" ? v : 0), 0);
+/** The skill our chances are built on: expected skill against the field plus the weather and tee-time effect (which is in our chances too). */
+export const effectiveSkill = (p: ExPlayer): number | null => (p.mu_rel === null || p.mu_rel === undefined ? null : p.mu_rel + weatherSum(p));
+
+/** Per bet type: least squares of logit(our chance) on skill/spread and 1/spread across the field (no intercept), giving the curve's steepness s and midpoint q. */
+export function shapeMap(doc: ExplainDoc): ShapeMap {
+  const out: ShapeMap = {};
+  const act = doc.players.filter((p) => !p.withdrawn && typeof p.sd === "number" && p.sd > 0 && effectiveSkill(p) !== null);
+  for (const m of MARKETS) {
+    let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0, n = 0;
+    for (const p of act) {
+      const pm = p.probs[m].model;
+      if (!okP(pm)) continue;
+      const sd = p.sd as number;
+      const x1 = (effectiveSkill(p) as number) / sd, x2 = 1 / sd, y = lgt(pm);
+      a11 += x1 * x1; a12 += x1 * x2; a22 += x2 * x2; b1 += x1 * y; b2 += x2 * y; n += 1;
+    }
+    const det = a11 * a22 - a12 * a12;
+    if (n < 10 || Math.abs(det) < 1e-12) continue;
+    const s = (b1 * a22 - b2 * a12) / det;
+    const c = (a11 * b2 - a12 * b1) / det;
+    if (!(s > 0.05)) continue;
+    out[m] = { s, q: -c / s, n };
+  }
+  return out;
+}
+
+/** Skill and spread that reproduce a set of chances through the field curves: each bet type gives skill - spread * logit(p) / s = q; least squares over the bet types. */
+export function invertShape(probs: Partial<Record<Market, number>>, map: ShapeMap): { mu: number; sd: number } | null {
+  const A: number[] = [], Q: number[] = [];
+  for (const m of MARKETS) {
+    const c = map[m];
+    const p = probs[m];
+    if (!c || !okP(p)) continue;
+    A.push(lgt(p) / c.s); Q.push(c.q);
+  }
+  if (A.length < 3) return null;
+  const ma = A.reduce((x, y) => x + y, 0) / A.length, mq = Q.reduce((x, y) => x + y, 0) / Q.length;
+  let sxx = 0, sxy = 0;
+  for (let i = 0; i < A.length; i++) { sxx += (A[i] - ma) ** 2; sxy += (A[i] - ma) * (Q[i] - mq); }
+  if (sxx < 1e-9) return null;
+  const sd = -sxy / sxx;
+  const mu = mq + sd * ma;
+  return Number.isFinite(mu) && Number.isFinite(sd) && sd > 0.5 && sd < 8 ? { mu, sd } : null;
+}
+
+const joinWords = (xs: string[]): string => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+const WEEK_PARTS: Array<{ key: string; label: string; match: (k: string) => boolean }> = [
+  { key: "course", label: "course fit and history", match: (k) => k === "course" },
+  { key: "location", label: "travel and home country", match: (k) => k.startsWith("loc_") },
+  { key: "weather", label: "weather and tee times", match: (k) => k.startsWith("wx_") },
+  { key: "override", label: "owner adjustment", match: (k) => k === "override" },
+];
+
+/** Bet-by-bet comparison, the pattern sentence and the additive split of the skill gap for one player (week documents with sportsbook chances only). */
+export function playerShape(p: ExPlayer, map: ShapeMap, markets: readonly Market[] = MARKETS): Shape | null {
+  const skill = effectiveSkill(p);
+  if (skill === null || typeof p.sd !== "number") return null;
+  const pm: Partial<Record<Market, number>> = {}, pk: Partial<Record<Market, number>> = {};
+  const edges: Partial<Record<Market, MarketEdge>> = {};
+  for (const m of markets) {
+    const e = p.probs[m];
+    if (e.model === null || e.market === null || !(e.market > 0) || !(e.market < 1)) continue;
+    const rel = e.model / e.market - 1;
+    const miss = m === "make_cut" && e.model < e.market ? (1 - e.model) / (1 - e.market) - 1 : null;
+    const ev = rel > 0 ? rel : miss;
+    const sig = m === "make_cut" ? (ev ?? 0) >= EDGE_MIN : Math.abs(rel) >= EDGE_MIN;
+    edges[m] = { model: e.model, market: e.market, rel, side: rel > 0 ? "yes" : miss !== null ? "miss_cut" : null, ev, tone: !sig ? "flat" : e.model > e.market ? "pos" : "neg" };
+    if (okP(e.model) && okP(e.market) && map[m]) { pm[m] = e.model; pk[m] = e.market; }
+  }
+  const fm = invertShape(pm, map), fk = invertShape(pk, map);
+  if (!fm || !fk) return null;
+  const skillGap = fm.mu - fk.mu, spreadGap = fm.sd - fk.sd;
+  const avail = markets.filter((m) => edges[m]);
+  const higher = avail.filter((m) => edges[m]?.tone === "pos"), lower = avail.filter((m) => edges[m]?.tone === "neg");
+  const rest = avail.filter((m) => edges[m]?.tone === "flat");
+  // consecutive runs of three or more bet types read as a range ("win to top 20")
+  const words = (ms: Market[]) => {
+    const idx = ms.map((m) => avail.indexOf(m));
+    return ms.length >= 3 && idx.every((v, i) => i === 0 || v === idx[i - 1] + 1) ? `${MARKET_WORD[ms[0]]} to ${MARKET_WORD[ms[ms.length - 1]]}` : joinWords(ms.map((m) => MARKET_WORD[m]));
+  };
+  let pattern: string;
+  if (!higher.length && !lower.length) pattern = "In line with the market on every bet";
+  else if (!lower.length) pattern = higher.length === avail.length ? "Higher across the board" : `Higher on ${words(higher)}, in line on ${words(rest)}`;
+  else if (!higher.length) pattern = lower.length === avail.length ? "Lower across the board" : `Lower on ${words(lower)}, in line on ${words(rest)}`;
+  else pattern = `Higher on ${words(higher)}, lower on ${words(lower)}`;
+  const sk = Math.abs(skillGap) >= SKILL_MIN, sp = Math.abs(spreadGap) >= SPREAD_MIN;
+  const spreadMarket = p.sd - spreadGap;
+  const spreadTxt = `spread ${p.sd.toFixed(2)} vs the market's ${spreadMarket.toFixed(2)}`;
+  const steady = spreadGap < 0;
+  // the "so it shows more in ..." clause only when the bet-by-bet pattern itself shows it (win side weaker or stronger than the top 20 / make cut side)
+  const rank = (m: Market) => (edges[m] ? { neg: -1, flat: 0, pos: 1 }[edges[m]!.tone] : null);
+  const winSide = rank("win");
+  const placeSide = Math.max(...(["top_20", "make_cut"] as Market[]).map(rank).filter((v): v is -1 | 0 | 1 => v !== null), -2);
+  const places = avail.includes("make_cut") ? "top 20 and make cut" : "top 20";
+  const consequence = !sp || winSide === null || placeSide === -2 ? "" : steady && winSide < placeSide ? `, so it shows more in ${places} than in wins` : !steady && winSide > placeSide ? `, so it shows more in wins than in ${places}` : "";
+  let reason: string;
+  if (sk && !sp) reason = `we rate their skill ${skillGap > 0 ? "higher" : "lower"} (${signed(skillGap)} strokes a round)`;
+  else if (!sk && sp) reason = `same skill as the market, but we see a ${steady ? "steadier, lower-ceiling" : "more boom-or-bust"} player (${spreadTxt})${consequence}`;
+  else if (sk && sp) reason = `we rate them ${skillGap > 0 ? "better" : "worse"} (${signed(skillGap)} strokes a round) and ${steady ? "steadier" : "more boom-or-bust"} (${spreadTxt})${consequence}`;
+  else reason = "no clear difference in skill or spread, so the gap is specific to that bet";
+  if (!higher.length && !lower.length) reason = "";
+  const sentence = reason ? `${pattern}: ${reason}.` : `${pattern}.`;
+  // additive split of the skill gap: our week-specific adjustments, then whatever is left over (a different base rating)
+  const parts: ShapePart[] = WEEK_PARTS.map((w) => ({ key: w.key, label: w.label, value: Object.entries(p.components).reduce((a, [k, v]) => a + (w.match(k) && typeof v === "number" ? v : 0), 0) }));
+  return { skill_ours: skill, skill_market: skill - skillGap, skill_gap: skillGap, spread_ours: p.sd, spread_market: spreadMarket, spread_gap: spreadGap,
+    markets: edges, higher, lower, pattern, reason, sentence, parts, ...partsSplit(skillGap, parts) };
+}
+
+/** "Skill gap +0.10 a round: course fit and history +0.04 and weather +0.02 come from our week-specific adjustments; the other +0.04 is ..." (the pieces add up to the gap). */
+export function partsSplit(skillGap: number, parts: ShapePart[]): { base_gap: number; parts_sentence: string } {
+  const partsTotal = parts.reduce((a, x) => a + x.value, 0);
+  const base = skillGap - partsTotal;
+  const shown = parts.filter((x) => Math.abs(x.value) >= 0.02).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  const small = partsTotal - shown.reduce((a, x) => a + x.value, 0);
+  const items = shown.map((x) => `${x.label} ${signed(x.value)}`);
+  if (items.length && Math.abs(small) >= 0.005) items.push(`smaller week items ${signed(small)}`);
+  const lead = `Skill gap ${signed(skillGap)} a round`;
+  const rest = Math.abs(base) < 0.02 ? "nothing is left over" : base > 0 ? `the other ${signed(base)} is a higher base rating than the market's (recent form and long-run skill)` : `the market rates their base form ${Math.abs(base).toFixed(2)} higher than we do`;
+  const s = items.length
+    ? `${lead}: ${joinWords(items)} come from our week-specific adjustments; ${rest}.`
+    : `${lead}: our course, travel, weather and owner adjustments add ${signed(partsTotal)}; ${rest}.`;
+  return { base_gap: base, parts_sentence: s };
+}
+
+/** The exported shape when the document carries one, otherwise computed here. */
+export function shapeOf(p: ExPlayer, map: ShapeMap, markets: readonly Market[] = MARKETS): Shape | null {
+  const ex = (p as ExPlayer & { shape?: Shape | null }).shape;
+  return ex && typeof ex === "object" && typeof ex.skill_gap === "number" && typeof ex.sentence === "string" && isObject(ex.markets) ? ex : playerShape(p, map, markets);
+}
+
+export const CONTENDER_RULE = `The ${CONTENDER_N} players with the best average win chance (ours and the sportsbook's), leaving out anyone with fewer than ${CONTENDER_MIN_ROUNDS} rounds on record unless the sportsbook has them in its top 10.`;
+/** "Players who matter": ranked by the average of our and the sportsbook's win chance; thin records out unless the sportsbook has them in its top 10. */
+export function contenders(doc: ExplainDoc, map: ShapeMap, n = CONTENDER_N, minRounds = CONTENDER_MIN_ROUNDS): Row[] {
+  const act = doc.players.filter((p) => !p.withdrawn && p.probs.win.market !== null);
+  const mrank = new Map([...act].sort((a, b) => (b.probs.win.market ?? 0) - (a.probs.win.market ?? 0)).map((p, i) => [p.id, i + 1] as const));
+  const score = (p: ExPlayer) => ((p.probs.win.market ?? 0) + (p.probs.win.model ?? p.probs.win.market ?? 0)) / 2;
+  const markets = availableMarkets(doc);
+  const out: Row[] = [];
+  for (const p of [...act].sort((a, b) => score(b) - score(a) || a.id - b.id)) {
+    if (out.length >= n) break;
+    const thin = typeof p.n_prior_rounds === "number" && p.n_prior_rounds < minRounds;
+    if (thin && (mrank.get(p.id) ?? 999) > 10) continue;
+    const shape = shapeOf(p, map, markets);
+    if (shape) out.push({ player: p, shape });
+  }
+  return out;
+}
+
+const median = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+/** Player-type groups among the contenders only, compared by summed chances (sums of chances net out honestly), with the average skill and spread gaps; small differences hidden. */
+export function differGroups(rows: Row[], minN = 3, minWin = 0.1, minTop20 = 0.05, limit = 6): DifferGroup[] {
+  const keys = new Set<string>();
+  rows.forEach((r) => r.player.tags.forEach((t) => keys.add(t)));
+  rows.forEach((r) => { if (r.player.wave === "early" || r.player.wave === "late") keys.add(r.player.wave); });
+  const out: DifferGroup[] = [];
+  for (const key of [...keys].sort()) {
+    const g = rows.filter((r) => playerHasTag(r.player, key));
+    if (g.length < minN || g.length >= rows.length) continue;
+    const total = (f: (r: Row) => number | null): number | null => { let s = 0; for (const r of g) { const v = f(r); if (v === null) return null; s += v; } return s; };
+    const wo = total((r) => r.player.probs.win.model), wm = total((r) => r.player.probs.win.market);
+    if (wo === null || wm === null || !(wm > 0)) continue;
+    const to = total((r) => r.player.probs.top_20.model), tm = total((r) => r.player.probs.top_20.market);
+    const winRel = wo / wm - 1;
+    const t20Rel = to !== null && tm !== null && tm > 0 ? to / tm - 1 : null;
+    if (Math.abs(winRel) < minWin && Math.abs(t20Rel ?? 0) < minTop20) continue;
+    out.push({ key, label: tagLabel(key), n: g.length, win_ours: wo, win_market: wm, win_rel: winRel, top20_ours: to, top20_market: tm, top20_rel: t20Rel,
+      skill_gap: g.reduce((a, r) => a + r.shape.skill_gap, 0) / g.length, spread_gap: g.reduce((a, r) => a + r.shape.spread_gap, 0) / g.length });
+  }
+  return out.sort((a, b) => Math.abs(b.win_rel) * Math.sqrt(b.n) - Math.abs(a.win_rel) * Math.sqrt(a.n) || a.key.localeCompare(b.key)).slice(0, limit);
+}
+
+/** Everything the "Where we differ" panel needs: the exported block when present, the page-side computation otherwise. */
+export function differView(doc: ExplainDoc): { rows: Row[]; differ: Differ } {
+  if (doc.kind === "live") return { rows: [], differ: { rule: CONTENDER_RULE, ids: [], groups: [], spread_gap_median: null, skill_gap_median: null, source: "page" } };
+  const map = shapeMap(doc);
+  const ex = (doc as ExplainDoc & { differ?: Partial<Differ> | null }).differ;
+  if (ex && isObject(ex) && Array.isArray(ex.ids) && ex.ids.length) {
+    const byId = new Map(doc.players.map((p) => [p.id, p] as const));
+    const markets = availableMarkets(doc);
+    const rows = ex.ids.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p).flatMap((p) => { const s = shapeOf(p, map, markets); return s ? [{ player: p, shape: s }] : []; });
+    const groups = Array.isArray(ex.groups) ? ex.groups.map((g) => ({ ...g, label: tagLabel(g.key) })) : differGroups(rows);
+    return { rows, differ: { rule: typeof ex.rule === "string" ? ex.rule : CONTENDER_RULE, ids: ex.ids, groups, spread_gap_median: ex.spread_gap_median ?? median(rows.map((r) => r.shape.spread_gap)),
+      skill_gap_median: ex.skill_gap_median ?? median(rows.map((r) => r.shape.skill_gap)), source: "export" } };
+  }
+  const rows = contenders(doc, map);
+  return { rows, differ: { rule: CONTENDER_RULE, ids: rows.map((r) => r.player.id), groups: differGroups(rows), spread_gap_median: median(rows.map((r) => r.shape.spread_gap)),
+    skill_gap_median: median(rows.map((r) => r.shape.skill_gap)), source: "page" } };
+}
+
+/** Text for one bet-type cell: how far our chance is from the no-margin sportsbook chance, and on make cut the miss-cut side when that is where the value is. */
+export function edgeCellText(e: MarketEdge | undefined): string {
+  if (!e) return "-";
+  if (e.side === "miss_cut" && e.tone === "neg") return `miss cut +${Math.round((e.ev ?? 0) * 100)}%`;
+  const r = Math.round(Math.abs(e.rel) * 100);
+  return r === 0 ? "0%" : `${e.rel > 0 ? "+" : "−"}${r}%`;
+}
+/** Bets where our chance beats the sportsbook's by at least EDGE_MIN (the side to back). */
+export function valueBets(s: Shape): string[] {
+  return MARKETS.flatMap((m) => {
+    const e = s.markets[m];
+    if (!e || e.ev === null || e.ev < EDGE_MIN) return [];
+    return [e.side === "miss_cut" ? "miss cut" : MARKET_WORD[m]];
+  });
+}
+/** One-line group reading. */
+export function groupSentence(g: DifferGroup): string {
+  const r = (v: number) => `${v > 0 ? "+" : "−"}${Math.round(Math.abs(v) * 100)}%`;
+  return `${g.label} (${g.n}): together ${pct(g.win_ours)} to win with us vs ${pct(g.win_market)} in the sportsbook (${r(g.win_rel)})${g.top20_rel !== null ? `, top 20 ${r(g.top20_rel)}` : ""}.`;
+}

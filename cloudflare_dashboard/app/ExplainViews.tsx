@@ -9,12 +9,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
-import { BiasChart, FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, Waterfall, type FinishSeries } from "./ExplainCharts";
+import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, Waterfall, type FinishSeries } from "./ExplainCharts";
 import {
-  DIMENSION_HELP, MARKETS, MARKET_LABEL, MAX_OVERLAY, TAG_GROUPS, american, availableMarkets, availableTags, biasBaseline, biasDimensions, biasSentence, biasView, cutLineRows, defaultCompetitors, edgeBadge,
-  explainChoices, explainKeyFor, favourites, filterWhy, gapText, leaderboard, nameMatches, orderEvents, parseExplain, pct, pctPair, plainCourseBullets, plainHoleSource, plainText, signed, sortWhy,
-  tagLabel, toParText, toggleCompetitor, topEdges, topK, tourName, waterfall, weatherStatus,
-  type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type SortKey,
+  EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
+  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, shapeOf, signed, sortWhy,
+  tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, waterfall, weatherStatus,
+  type Differ, type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
@@ -135,30 +135,24 @@ export function ThisWeekView() {
 }
 
 function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
-  const [dim, setDim] = useState("all");
-  const [pickedRow, setPickedRow] = useState<string | null>(null);
   const live = doc.kind === "live";
   const fav = useMemo(() => favourites(doc, 10), [doc]);
-  const edges = useMemo(() => topEdges(doc, 5), [doc]);
-  const dims = useMemo(() => biasDimensions(doc), [doc]);
-  const baseline = useMemo(() => biasBaseline(doc), [doc]);
-  const bias = useMemo(() => biasView(doc, dim, dim === "all" ? 14 : 8, baseline), [doc, dim, baseline]);
+  const differ = useMemo(() => differView(doc), [doc]);
   const markets = useMemo(() => availableMarkets(doc), [doc]);
   const shownMarket: Market = markets.includes(market) ? market : "win";
-  const picked = bias.find((r) => `${r.dimension}:${r.bucket}` === pickedRow) ?? bias[0];
   const top = fav[0];
   const cc = doc.course_card;
-  const ee = edges.above[0];
+  const ee = [...differ.rows].sort((a, b) => Math.abs(b.shape.skill_gap) - Math.abs(a.shape.skill_gap))[0];
   const field = doc.players.filter((p) => !p.withdrawn).length;
   const avgRound = cc.scoring_avg_vs_par === null || cc.scoring_avg_vs_par === undefined || !cc.par_per_round?.[0] ? null : cc.par_per_round[0] + cc.scoring_avg_vs_par;
   const bullets = plainCourseBullets(cc.what_drives_scoring);
-  const tech = [doc.edge_model.note, doc.edge_model.ridge_r2 === null ? "" : `Fit R-squared ${doc.edge_model.ridge_r2.toFixed(2)}`, cc.weather?.venue_class ? `Venue class (publisher): ${cc.weather.venue_class}` : "", cc.weather?.wind_slope_source ?? "", cc.weather?.label ?? "", cc.hole_source ? `Hole table: ${cc.hole_source}` : ""].filter(Boolean);
+  const tech = [live ? "" : SHAPE_METHOD, cc.weather?.venue_class ? `Venue class (publisher): ${cc.weather.venue_class}` : "", cc.weather?.wind_slope_source ?? "", cc.weather?.label ?? "", cc.hole_source ? `Hole table: ${cc.hole_source}` : ""].filter(Boolean);
   return (
     <>
       <div className="kpi-grid">
         <Kpi label="Field" value={`${field} players`} detail={doc.event.cut_rule ?? "no cut"} tone="neutral" />
         {top && <Kpi label={live ? "Best chance to win" : "Favourite"} value={pct(top.probs.win.model)} detail={live ? `${top.name} · our win chance now` : `${top.name} · our win chance, sportsbook ${pct(top.probs.win.market)}`} tone="model" />}
-        {!live && ee && <Kpi label="Biggest gap to the market" value={`+${(ee.edge_sg ?? 0).toFixed(2)} strokes a round`} detail={`${ee.name} · win chance ${pctPair(ee.probs.win.model, ee.probs.win.market).join(" vs ")}`} tone="positive" />}
+        {!live && ee && <Kpi label="Biggest skill gap to the market" value={`${signed(ee.shape.skill_gap)} strokes a round`} detail={`${ee.player.name} · ${ee.shape.pattern.toLowerCase()} (contenders only)`} tone={ee.shape.skill_gap >= 0 ? "positive" : "negative"} />}
         <Kpi label="Expected average round" value={avgRound === null ? "-" : avgRound.toFixed(1)} detail={`${signed(cc.scoring_avg_vs_par, 1)} to par · par ${cc.par_per_round?.[0] ?? "-"} · ${cc.yardage ? `${Math.round(cc.yardage).toLocaleString()} yd` : "yardage n/a"}`} tone="accent" />
       </div>
 
@@ -179,25 +173,13 @@ function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
         <p className="ex-muted ex-notice">While play is under way we do not compare our prices with the sportsbook: its prices are not live, so a gap would not mean anything. See Why priced for the comparison made before the event.</p>
       ) : (
         <>
-          <Panel title="Where we differ from the market" eyebrow="Player types" actions={<span className="ex-muted" title="Positive means we rate the group higher than the market does, compared with the rest of the field.">strokes a round, compared with the field</span>}>
-            <div className="ex-dimbar"><SegmentedControl label="Player-type dimension" value={dim} onChange={(v) => { setDim(v); setPickedRow(null); }}
-              options={[{ value: "all", label: "Top" }, ...dims.slice(0, 7).map((d) => ({ value: d.value, label: d.label }))]} /></div>
-            <p className="ex-muted ex-dimhelp">{DIMENSION_HELP[dim] ?? ""} Bars show how much higher (+) or lower (−) we rate each group than the market does, compared with the rest of the field.</p>
-            <BiasChart rows={bias} active={picked ? `${picked.dimension}:${picked.bucket}` : null} onPick={(r) => setPickedRow(`${r.dimension}:${r.bucket}`)} />
-            {picked && <p className="ex-bias-note"><strong>{biasSentence(picked)}</strong> {picked.p_win_model !== null && picked.p_win_market !== null && Math.sign(picked.p_win_model - picked.p_win_market) * Math.sign(picked.edge_sg ?? 0) >= 0 && <>Combined win chance: {pct(picked.p_win_model)} in our model, {pct(picked.p_win_market)} in the market. </>}</p>}
-            <p className="ex-muted">Edge means how many strokes per round better (+) or worse (−) we rate a group than the market does. The reasons are estimates, not proof.{Math.abs(baseline) >= 0.03 && ` Across the whole field our numbers sit about ${Math.abs(baseline).toFixed(2)} strokes ${baseline > 0 ? "above" : "below"} the market, and the bars take that out.`}</p>
-          </Panel>
-
-          <div className="two-column">
-            <EdgeList title="Where we are above the market" players={edges.above} market={shownMarket} openPlayer={openPlayer} />
-            <EdgeList title="Where we are below the market" players={edges.below} market={shownMarket} openPlayer={openPlayer} />
-          </div>
+          <DifferPanel doc={doc} rows={differ.rows} differ={differ.differ} openPlayer={openPlayer} />
         </>
       )}
 
       <Panel title="Headline: our chances" eyebrow={live ? "Ten best chances" : "Ten shortest-priced players"} actions={<SegmentedControl label="Bet type" value={shownMarket} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
         <div className="table-scroll"><table className="ex-table ex-cards">
-          <thead><tr><th>Player</th><th title="Our chance for this bet type, from the simulations.">Our chance</th>{!live && <th title="The chance implied by sportsbook odds, with the bookmaker margin removed.">Sportsbook</th>}{!live && <th title="How far our chance is from the sportsbook's, as a share of the sportsbook's chance. Plus means we are higher.">Gap</th>}<th title="The American odds that match our chance.">Our odds</th><th title="The biggest reasons for our rating of this player.">Why</th></tr></thead>
+          <thead><tr><th>Player</th><th title="Our chance for this bet type, from the simulations.">Our chance</th>{!live && <th title="The chance implied by sportsbook odds, with the bookmaker margin removed.">Sportsbook</th>}{!live && <th title="How far our chance is from the sportsbook's, as a share of the sportsbook's chance. Plus means we are higher.">Gap</th>}<th title="The American odds that match our chance.">Our odds</th>{!live && fav.some((p) => p.probs[shownMarket]?.fair != null) && <th title="The price the odds board publishes: our chance blended with the sportsbook consensus using weights fitted on past events. The blend leans further than either source when both agree, so it can sit slightly outside both numbers.">Board price</th>}<th title="The biggest reasons for our rating of this player.">Why</th></tr></thead>
           <tbody>{fav.map((p) => {
             const e = p.probs[shownMarket];
             const b = edgeBadge(p, shownMarket);
@@ -207,7 +189,7 @@ function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
                 <td data-label="Our chance">{pct(e.model)}</td>
                 {!live && <td data-label="Sportsbook">{pct(e.market)}</td>}
                 {!live && <td data-label="Gap" className={b.tone === "positive" ? "pos" : b.tone === "negative" ? "neg" : ""}>{b.text}</td>}
-                <td data-label="Our odds">{american(e.model)}</td><td data-label="Why" className="ex-why">{p.why}</td>
+                <td data-label="Our odds">{american(e.model)}</td>{!live && fav.some((p) => p.probs[shownMarket]?.fair != null) && <td data-label="Board price">{e.fair == null ? "—" : `${pct(e.fair)} · ${american(e.fair)}`}</td>}<td data-label="Why" className="ex-why">{p.why}</td>
               </tr>
             );
           })}</tbody>
@@ -220,23 +202,61 @@ function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
   );
 }
 
-function EdgeList({ title, players, market, openPlayer }: { title: string; players: ExPlayer[]; market: Market; openPlayer: (id: number) => void }) {
+const SORT_DIFFER = [{ value: "price", label: "Shortest price first" }, { value: "gap", label: "Biggest difference first" }] as const;
+const MARKET_HELP: Record<Market, string> = {
+  win: "Win outright.", top_5: "Finish in the top 5 (ties share the payout).", top_10: "Finish in the top 10 (ties share the payout).", top_20: "Finish in the top 20 (ties share the payout).",
+  make_cut: "Make the cut. When our chance is lower, the value is on the miss-cut side, shown as 'miss cut'.",
+};
+/** Contenders only: bet-by-bet gaps against the sportsbook, the pattern in words and the split of the skill gap; then player types among them by summed chances. */
+function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows: Array<{ player: ExPlayer; shape: Shape }>; differ: Differ; openPlayer: (id: number) => void }) {
+  const [sort, setSort] = useState<"price" | "gap">("price");
+  const markets = availableMarkets(doc).filter((m) => rows.some((r) => r.shape.markets[m]));
+  const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(b.shape.spread_gap) - Math.abs(a.shape.skill_gap) - Math.abs(a.shape.spread_gap));
+  const sg = differ.spread_gap_median;
+  const places = markets.includes("make_cut") ? "top 20 and make cut" : "top 10 and top 20";
+  const fieldLine = sg === null || Math.abs(sg) < 0.04 ? null : sg < 0
+    ? `Across these players the sportsbook prices in more boom-or-bust than we do (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour ${places} over outright wins.`
+    : `Across these players we see more boom-or-bust than the sportsbook does (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour outright wins over ${places}.`;
+  if (!rows.length) return <Panel title="Where we differ from the market" eyebrow="Players who matter"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
   return (
-    <Panel title={title} eyebrow="Biggest gaps" actions={<span className="ex-muted" title="Players with a win price of at least 0.5% in the market.">contenders only</span>}>
-      {players.length === 0 ? <p className="ex-muted">No contenders with a sportsbook price in this run.</p> : (
-        <ul className="ex-edges">{players.map((p) => {
-          const [a, b] = pctPair(p.probs[market].model, p.probs[market].market);
+    <Panel title="Where we differ from the market" eyebrow="Players who matter" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
+      <p className="ex-muted ex-differ-rule" title="Long shots with thin records swing wildly in percentage terms and would crowd out the players a bet actually depends on.">{differ.rule}</p>
+      {fieldLine && <p className="ex-differ-field">{fieldLine}</p>}
+      <div className="table-scroll"><table className="ex-table ex-cards ex-differ">
+        <thead><tr><th>Player</th>
+          <th title="One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, grey means within 5% (in line).">Shape</th>
+          {markets.map((m) => <th key={m} title={`${MARKET_HELP[m]} The % is how much higher (+) or lower (−) our chance is than the sportsbook's with its margin removed; under ${Math.round(EDGE_MIN * 100)}% counts as in line.`}>{MARKET_LABEL[m]}</th>)}
+          <th title="The pattern across bet types in words, with the skill and the spread (how much their scores swing round to round) that the sportsbook's prices imply, compared with ours.">What we see</th></tr></thead>
+        <tbody>{shown.map(({ player: p, shape: s }) => {
+          const value = valueBets(s);
           return (
-            <li key={p.id}>
-              <button type="button" onClick={() => openPlayer(p.id)}>
-                <span className="ex-edge-head"><strong>{p.name}</strong><Delta value={p.edge_sg ?? 0} digits={2} suffix=" strokes" /></span>
-                <span className="ex-edge-nums">{MARKET_LABEL[market]} chance: {a} (ours) vs {b} (sportsbook){p.tags.length > 0 && <> · <Tags tags={p.tags} max={3} /></>}</span>
-                {p.why_edge && <span className="ex-edge-why">{p.why_edge}</span>}
-              </button>
-            </li>
+            <tr key={p.id} className="clickable-row" onClick={() => openPlayer(p.id)}>
+              <th scope="row"><button type="button" className="ex-linkbtn" onClick={(ev) => { ev.stopPropagation(); openPlayer(p.id); }}>{p.name}</button></th>
+              <td data-label="Shape" className="ex-shape-cell"><ShapeBars shape={s} markets={markets} /></td>
+              {markets.map((m) => {
+                const e = s.markets[m];
+                return <td key={m} data-label={MARKET_LABEL[m]} title={e ? `Ours ${pct(e.model)}, sportsbook ${pct(e.market)} (margin removed)` : "No sportsbook price"}>
+                  {e ? <span className="ex-differ-cell"><span className={e.tone === "pos" || (e.tone === "neg" && e.side === "miss_cut") ? "pos" : e.tone === "neg" ? "neg" : "ex-muted"}>{edgeCellText(e)}</span><small className="ex-differ-nums">{pct(e.model)} vs {pct(e.market)}</small></span> : "-"}
+                </td>;
+              })}
+              <td data-label="What we see" className="ex-why ex-differ-why">
+                <strong>{s.sentence}</strong>
+                <span className="ex-differ-sub" title="Skill: strokes a round better than the field average. Our week-specific adjustments are course fit, travel and home country, weather and tee times, and any owner adjustment. The sportsbook does not say which parts it prices, so the rest is shown as one number.">{s.parts_sentence}</span>
+                {value.length > 0 && <span className="ex-differ-value">Value against the sportsbook: {value.join(", ")}</span>}
+              </td>
+            </tr>
           );
-        })}</ul>
-      )}
+        })}</tbody>
+      </table></div>
+      {differ.groups.length > 0 ? (
+        <>
+          <h3 className="ex-h3">Player types among these contenders</h3>
+          <ul className="ex-differ-groups">{differ.groups.map((g) => (
+            <li key={g.key}>{groupSentence({ ...g, label: g.label.charAt(0).toUpperCase() + g.label.slice(1) })} <span className="ex-muted">On average we rate them {signed(g.skill_gap)} strokes a round against the market, spread {signed(g.spread_gap)}.</span></li>
+          ))}</ul>
+        </>
+      ) : <p className="ex-muted">No player type among these contenders stands out: every group is within 10% of the sportsbook on win and 5% on top 20.</p>}
+      <p className="ex-muted">Percentages compare our chance with the sportsbook&rsquo;s after removing its margin; a real bet also has to beat the margin. The skill and spread the sportsbook implies come from running its prices back through the same curves our own chances follow, so the two are compared like for like. Groups add up chances, so a group shown above the market really does hold more chance with us.</p>
     </Panel>
   );
 }
@@ -306,7 +326,7 @@ const SORT_LABEL: Array<{ key: SortKey; label: string }> = [
   { key: "edge_sg", label: "Gap in strokes" }, { key: "rel", label: "Gap in %" }, { key: "model", label: "Our chance" }, { key: "market", label: "Sportsbook" }, { key: "mu", label: "Expected skill" }, { key: "name", label: "Name" },
 ];
 const SORT_HELP: Partial<Record<SortKey, string>> = {
-  edge_sg: "Gap in strokes: how many strokes per round better (+) or worse (-) we rate a player than the sportsbook does.",
+  edge_sg: "Gap in strokes: how many strokes a round better (+) or worse (-) our numbers rate a player than the sportsbook prices imply, allowing for how boom-or-bust each side sees them.",
   rel: "Gap in %: how far our chance is from the sportsbook's, as a share of the sportsbook's chance.",
   model: "Our chance for the chosen bet type.", market: "The sportsbook's chance for the chosen bet type.",
   mu: "Expected skill: strokes per round better (+) or worse (-) than the average player in this field.", name: "Alphabetical.",
@@ -316,7 +336,7 @@ const COLUMN_HELP = {
   model: "Our chance for this bet type, from the simulations.",
   market: "The chance implied by sportsbook odds, with the bookmaker margin removed.",
   rel: "How far our chance is from the sportsbook's, as a share of the sportsbook's. Plus means we are higher than the sportsbook.",
-  edge_sg: "The same gap expressed as strokes per round of skill: how much better (+) or worse (-) we rate them than the market does.",
+  edge_sg: "Skill gap: how many strokes a round better (+) or worse (-) we rate them than the sportsbook prices imply, after allowing for how much their scores swing (spread). Blank when the sportsbook prices too few bet types to tell.",
   mu: "Our estimate of their skill: strokes per round better (+) or worse (-) than the average player in this field.",
   sd: "How much their round scores typically bounce around, in strokes. Higher means a streakier, less predictable player.",
 } as const;
@@ -330,7 +350,13 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   const live = doc.kind === "live";
   const markets = useMemo(() => availableMarkets(doc), [doc]);
   const tagOptions = useMemo(() => availableTags(doc.players), [doc.players]);
-  const rows = useMemo(() => sortWhy(filterWhy(doc.players, { query, tags, market, onlyEdge: only, top: top === "all" ? null : Number(top) }), sort.key, sort.dir, market), [doc.players, query, tags, market, only, top, sort]);
+  // Before the event the strokes gap and the reason come from the bet-by-bet shape comparison (skill the sportsbook's prices imply vs ours); players it cannot be computed for show no gap.
+  const players = useMemo(() => {
+    if (live) return doc.players;
+    const map = shapeMap(doc);
+    return doc.players.map((p) => { const s = p.withdrawn ? null : shapeOf(p, map, markets); return { ...p, edge_sg: s ? s.skill_gap : null, why_edge: s ? s.sentence : null }; });
+  }, [doc, live, markets]);
+  const rows = useMemo(() => sortWhy(filterWhy(players, { query, tags, market, onlyEdge: only, top: top === "all" ? null : Number(top) }), sort.key, sort.dir, market), [players, query, tags, market, only, top, sort]);
   const hasMarket = !live && rows.some((p) => p.probs[market].market !== null);
   const hasModel = rows.some((p) => p.probs[market].model !== null);
   const hasGap = rows.some((p) => p.edge_sg !== null);
@@ -405,6 +431,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
   const [q, setQ] = useState("");
   const byId = useMemo(() => new Map(doc.players.map((p) => [p.id, p] as const)), [doc.players]);
   const wf = useMemo(() => waterfall(player, doc.components_legend), [player, doc.components_legend]);
+  const shape = useMemo(() => (doc.kind === "live" || player.withdrawn ? null : shapeOf(player, shapeMap(doc), availableMarkets(doc))), [doc, player]);
   const chosen = [player, ...competitors.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p)];
   const withShape = chosen.filter((p) => p.finish);
   const series: FinishSeries[] = withShape.map((p, i) => ({ id: p.id, name: p.name, pos: p.finish!.pos, missCut: doc.event.cut_round ? p.finish!.p_miss_cut : null, color: PLAYER_COLORS[i % PLAYER_COLORS.length] }));
@@ -442,19 +469,18 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
           {f && <Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" />}
           {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
         </div>
-        {player.why_edge && <p className="ex-callout">{player.why_edge}</p>}
+        {shape && <p className="ex-callout"><strong>{shape.sentence}</strong> {shape.parts_sentence}{valueBets(shape).length > 0 ? ` Value against the sportsbook: ${valueBets(shape).join(", ")}.` : ""}</p>}
 
         <section>
           <h3 className="ex-h3">Why this price</h3>
           <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. The skill rows add up to their expected skill{doc.kind === "live" ? "; the in-play rows are part of it" : ""}; weather is shown separately because it adjusts scores on top.</p>
           <Waterfall {...wf} />
-          {Object.keys(player.attribution).length > 0 && (
-            <p className="ex-muted">{doc.kind === "live" ? "" : `Our gap to the sportsbook (${gapText(player.edge_sg)} strokes a round) is linked most to: `}{doc.kind === "live" ? "" : Object.entries(player.attribution).map(([k, v]) => `${doc.components_legend[k]?.label ?? plainText(k)} ${signed(v)}`).join(", ")}{doc.kind === "live" ? "" : ". This is each piece's share of the gap, so it can differ from the size of the piece above."}</p>
-          )}
+          {shape && <p className="ex-muted">The sportsbook&rsquo;s prices imply skill {signed(shape.skill_market)} and spread {shape.spread_market.toFixed(2)}; ours are {signed(shape.skill_ours)} (including weather) and {shape.spread_ours.toFixed(2)}.</p>}
         </section>
 
         <section>
           <h3 className="ex-h3">Our chance vs the sportsbook</h3>
+          {shape && <div className="ex-shape-wrap"><ShapeBars shape={shape} markets={availableMarkets(doc)} /><span className="ex-muted">Up: our chance is higher than the sportsbook&rsquo;s. Down: lower. Grey: within {Math.round(EDGE_MIN * 100)}%.</span></div>}
           <MarketRows player={player} hasCut={!!doc.event.cut_round} />
         </section>
 

@@ -7,7 +7,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { bucketProbs, finishBuckets } from "./distributions-rules";
 import {
-  pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Pctl, type TotalScore, type WaterfallResult,
+  edgeCellText, pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Market, type Pctl, type Shape, type TotalScore, type WaterfallResult,
 } from "./explain-rules";
 
 export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -242,5 +242,33 @@ export function LegendGroups({ legend }: { legend: Record<string, LegendEntry> }
     <dl className="ex-glossary">
       {Object.entries(legend).map(([k, v]) => <div key={k}><dt>{v.label}</dt><dd>{v.meaning}</dd></div>)}
     </dl>
+  );
+}
+
+/* ------------------------------------------------------------------ shape: our chance vs the sportsbook's, bet by bet, for one player */
+const SHAPE_SHORT: Record<Market, string> = { win: "W", top_5: "5", top_10: "10", top_20: "20", make_cut: "MC" };
+const SHAPE_NAME: Record<Market, string> = { win: "win", top_5: "top 5", top_10: "top 10", top_20: "top 20", make_cut: "make cut" };
+/** Five small bars, one per bet type: up = our chance is higher than the sportsbook's (no-margin) chance, down = lower; grey = within 5% (in line). Capped at 50%. */
+export function ShapeBars({ shape, markets, cap = 0.5 }: { shape: Shape; markets: readonly Market[]; cap?: number }) {
+  const ms = markets.filter((m) => shape.markets[m]);
+  const w = 22, h = 34, mid = 15;
+  const label = ms.map((m) => `${SHAPE_NAME[m]} ${edgeCellText(shape.markets[m])}`).join(", ");
+  return (
+    <svg className="ex-shape" viewBox={`0 0 ${ms.length * w} ${h + 10}`} width={ms.length * w} height={h + 10} role="img" aria-label={`Our chance against the sportsbook's: ${label}`}>
+      <line x1="0" x2={ms.length * w} y1={mid} y2={mid} stroke="var(--line-strong)" strokeWidth="1" />
+      {ms.map((m, i) => {
+        const e = shape.markets[m]!;
+        const v = Math.max(-cap, Math.min(cap, e.rel));
+        const len = Math.max(1.5, (Math.abs(v) / cap) * (mid - 1));
+        const cls = e.tone === "pos" ? "pos" : e.tone === "neg" ? "neg" : "flat";
+        return (
+          <g key={m}>
+            <title>{`${SHAPE_NAME[m]}: ours ${pct(e.model)} vs sportsbook ${pct(e.market)} (${edgeCellText(e)})`}</title>
+            <rect className={`ex-shape-bar ${cls}`} x={i * w + 5} width={w - 10} y={v >= 0 ? mid - len : mid} height={len} rx="2" />
+            <text x={i * w + w / 2} y={h + 8} textAnchor="middle" className="ex-shape-lab">{SHAPE_SHORT[m]}</text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }

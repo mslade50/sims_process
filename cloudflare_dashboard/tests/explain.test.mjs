@@ -169,3 +169,36 @@ test("real v6 live explain document (D7b fixture): parsers return non-null with 
   assert.equal(scoring.probability_basis, "model");
   assert.ok(scoring.players.length > 0);
 });
+
+test("where we differ: contenders only, parts add up to the skill gap, groups net out by summed chances, live compares nothing", async () => {
+  const R = await import("../app/explain-rules.ts");
+  const { rows, differ } = R.differView(week);
+  assert.ok(rows.length > 0 && rows.length <= R.CONTENDER_N);
+  assert.equal(differ.source, "page");
+  const map = R.shapeMap(week);
+  assert.ok(map.win && map.top_20 && map.win.s > 0);
+  for (const { player: p, shape: s } of rows) {
+    assert.ok(Math.abs(s.parts.reduce((a, x) => a + x.value, 0) + s.base_gap - s.skill_gap) < 1e-9, "parts + remainder = skill gap");
+    assert.ok(Math.abs(s.skill_ours - s.skill_gap - s.skill_market) < 1e-9 && Math.abs(s.spread_ours - s.spread_gap - s.spread_market) < 1e-9);
+    for (const m of s.higher) assert.ok(s.markets[m].model > s.markets[m].market);
+    for (const m of s.lower) assert.ok(s.markets[m].model < s.markets[m].market);
+    assert.ok(s.sentence.startsWith(s.pattern) && !/NaN|undefined/.test(s.sentence + s.parts_sentence));
+    assert.ok(p.n_prior_rounds === null || p.n_prior_rounds === undefined || p.n_prior_rounds >= R.CONTENDER_MIN_ROUNDS || (p.probs.win.market ?? 0) > 0);
+  }
+  for (const g of differ.groups) {
+    const members = rows.filter((r) => R.playerHasTag(r.player, g.key));
+    const wo = members.reduce((a, r) => a + r.player.probs.win.model, 0), wm = members.reduce((a, r) => a + r.player.probs.win.market, 0);
+    assert.ok(Math.abs(g.win_ours - wo) < 1e-9 && Math.abs(g.win_market - wm) < 1e-9);
+    assert.equal(Math.sign(g.win_rel), Math.sign(wo - wm));
+  }
+  // chances generated from the curves invert exactly
+  const probs = Object.fromEntries(Object.entries(map).map(([m, c]) => [m, 1 / (1 + Math.exp(-c.s * (1.2 - c.q) / 2.6))]));
+  const back = R.invertShape(probs, map);
+  assert.ok(Math.abs(back.mu - 1.2) < 1e-9 && Math.abs(back.sd - 2.6) < 1e-9);
+  // the exported block wins when present
+  const exported = { ...week, differ: { rule: "r", ids: [rows[0].player.id], groups: [] } };
+  assert.equal(R.differView(exported).differ.source, "export");
+  assert.equal(R.differView(exported).rows.length, 1);
+  assert.equal(R.differView(live).rows.length, 0);
+  assert.equal(R.edgeCellText({ model: 0.8, market: 0.85, rel: -0.0588, side: "miss_cut", ev: 1 / 3, tone: "neg" }), "miss cut +33%");
+});
