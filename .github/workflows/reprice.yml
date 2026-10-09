@@ -127,7 +127,7 @@ jobs:
           key="$1"
           source="$2"
           for attempt in 1 2 3; do
-            if npx --yes wrangler@4 r2 object put \
+            if npx --yes wrangler@4.92.0 r2 object put \
               "golf-odds-data/odds_data/$key" \
               --file "$source" \
               --content-type application/json \
@@ -151,9 +151,8 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
-        [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
-          "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-          -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="FAILED: reprice workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          >/dev/null || true
+        python telegram_policy.py --key legacy-reprice --message "FAILED reprice: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+

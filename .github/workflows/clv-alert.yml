@@ -34,7 +34,7 @@ jobs:
         CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
         mkdir -p permanent_data
-        npx --yes wrangler@4 r2 object get \
+        npx --yes wrangler@4.92.0 r2 object get \
           golf-odds-board/board/closing.json \
           --file permanent_data/board_closing.json \
           --remote
@@ -55,9 +55,8 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
-        [ -n "$TELEGRAM_BOT_TOKEN" ] && curl -s --max-time 15 \
-          "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-          -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="FAILED: clv-alert workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          >/dev/null || true
+        python telegram_policy.py --key legacy-clv-alert --message "FAILED clv-alert: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+

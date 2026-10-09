@@ -156,19 +156,8 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       run: |
-        if ($env:TELEGRAM_BOT_TOKEN -and $env:TELEGRAM_CHAT_ID) {
-          $body = @{
-            chat_id = $env:TELEGRAM_CHAT_ID
-            text = "FAILED: nightly-round-sim workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          try {
-            Invoke-RestMethod `
-              -Uri "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/sendMessage" `
-              -Method Post `
-              -Body $body `
-              -TimeoutSec 15 | Out-Null
-          } catch {
-            Write-Warning "Telegram failure notification could not be sent: $($_.Exception.Message)"
-          }
-        }
+        & $env:RUNNER_PYTHON telegram_policy.py --key legacy-nightly-round-sim --message "FAILED nightly-round-sim: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
