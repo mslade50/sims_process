@@ -4,6 +4,7 @@ import {parseDeep,finite,GLOSS,type DeepProfile} from "./player-deep-rules";
 import {playerId,profileKey,PROFILE_AXES,type PlayerProfile} from "./player-profile-rules";
 import {filteredShotMetrics,filteredSkillProfile,hasSituationFilters,playerBaselineFilters,sliceHistory,type HistoryFilters,type ShotReference,type ObservedCategoryReference} from "./player-history-filters";
 import {ShotDetailsShape} from "./PlayerDeepDive";
+import {selectedRounds,type TrendRoundRow} from "./metric-trend-rules";
 const colors=["var(--chart-1)","var(--chart-2)","var(--chart-3)"];
 const labels=["Off the tee","Approach","Around green","Putting"];
 const labelHelp=[GLOSS.sgOtt,GLOSS.sgApp,GLOSS.sgArg,GLOSS.sgPutt];
@@ -14,7 +15,8 @@ export function FilteredPlayerShapes({profile,deep,comparisons,filters,reference
  const showBaseline=hasSituationFilters(active),baselineEvents=sliceHistory(deep?.history?.events??[],playerBaselineFilters(active)),baseline=filteredSkillProfile(profile,baselineEvents,categoryReference),baselineShots=filteredShotMetrics(deep,baselineEvents,reference);
  const own=filteredSkillProfile(profile,events,categoryReference),profiles=[own,...comparisons.flatMap((p,i)=>{const d=parseDeep(i===0?first.data:second.data,playerId(p.identity));return d&&d.as_of===deep?.as_of?[filteredSkillProfile(p,sliceHistory(d.history?.events??[],active),categoryReference)]:[];})];
  const point=(i:number,r:number)=>{const a=(i*90-90)*Math.PI/180;return [210+Math.cos(a)*125*r,178+Math.sin(a)*125*r];},polygon=(r:number)=>[0,1,2,3].map(i=>point(i,r).join(",")).join(" "),radius=(v:number)=>.5+Math.max(-3,Math.min(3,v))/6;
- const filteredDeep=deep?{...deep,shots:deep.shots?{...deep.shots,metrics:shots.metrics}:null}:null;
+ const selectedKeys=new Set(events.flatMap(e=>e.round_data.map(r=>`${e.id}|${r.round??r.round_num}`))),allShotRounds=(deep?.shots as {round_data?:TrendRoundRow[]}|null|undefined)?.round_data??[];
+ const filteredDeep=deep?{...deep,shots:deep.shots?{...deep.shots,metrics:shots.metrics,round_data:selectedRounds(allShotRounds,selectedKeys)}:null}:null;
  return <><div className="pd-shape-scope"><b>Skill shape for the selected rounds</b><span>Uses the same filters as the event record.{showBaseline&&" The dashed line is this player’s overall baseline for the same period, across all rounds and situations."}</span></div><div className="pp-shapes"><div><h3>Strokes-gained shape</h3><svg className="pp-radar" viewBox="0 0 420 355" role="img" aria-label={`Strokes gained by category for the selected rounds, compared with the PGA average.${showBaseline?" The dashed overlay shows this player’s overall baseline for the same period.":""} Exact values are in the table below.`}>
  {[.25,.5,.75,1].map(r=><polygon key={r} points={polygon(r)} fill="none" stroke={r===.5?"var(--muted)":"var(--line)"} strokeDasharray={r===.5?"5 4":undefined}/>)}
  {PROFILE_AXES.map((k,i)=>{const end=point(i,1),label=point(i,1.27);return <g key={k}><line x1="210" y1="178" x2={end[0]} y2={end[1]} stroke="var(--line)"/><text x={label[0]} y={label[1]} textAnchor="middle" fill="var(--muted-strong)" fontSize="12">{labels[i]}</text></g>;})}
