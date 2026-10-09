@@ -118,10 +118,10 @@ function NavLink({ item, activeView, collapsed }: { item: NavItem; activeView: s
     <>
       <a className={owns ? "active" : ""} href={item.href} onClick={(event) => navigateWithReload(event, item.href)} title={collapsed ? item.label : undefined}>
         <Icon size={18} />
-        {!collapsed && <span><strong>{item.label}</strong><small>{item.description}</small></span>}
+        <span className="nav-text"><strong>{item.label}</strong><small>{item.description}</small></span>
       </a>
-      {!collapsed && item.toggle && (
-        <div className="nav-toggle" role="group" aria-label={`${item.label} views`}>
+      {item.toggle && (
+        <div className="nav-toggle nav-text" role="group" aria-label={`${item.label} views`}>
           {item.toggle.map((t) => (
             <a key={t.key} className={activeView === t.key ? "active" : ""} href={t.href} aria-current={activeView === t.key ? "page" : undefined} onClick={(event) => navigateWithReload(event, t.href)}>{t.label}</a>
           ))}
@@ -191,7 +191,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Native navigation avoids the deployed vinext client-router failure. */}
           <a className="brand" href="/this-week" onClick={(event) => navigateWithReload(event, "/this-week")} aria-label="Golf Model home">
             <span className="brand-mark"><i /><i /><i /></span>
-            {!collapsed && <span><strong>Golf Model</strong><small>Simulation intelligence</small></span>}
+            <span className="nav-text"><strong>Golf Model</strong><small>Simulation intelligence</small></span>
           </a>
           <button className="mobile-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
@@ -211,7 +211,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           )}
         </nav>
         <div className="sidebar-footer">
-          <button type="button" onClick={() => setSettingsOpen(true)}><Settings2 size={18} />{!collapsed && <span>Customize</span>}</button>
+          <button type="button" onClick={() => setSettingsOpen(true)}><Settings2 size={18} /><span className="nav-text">Customize</span></button>
           <button className="collapse-button" type="button" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>{collapsed ? <ChevronRight size={17} /> : <><ChevronLeft size={17} /><span>Collapse</span></>}</button>
         </div>
       </aside>
@@ -221,8 +221,8 @@ export function DashboardApp({ initialView }: { initialView: string }) {
       <main>
         <header className="topbar">
           <div className="topbar-left">
-            <button className="menu-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Menu size={20} /></button>
-            <div><span>{activeMeta?.label}</span><small>{activeMeta?.description}</small></div>
+            <button className="menu-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open navigation menu"><Menu size={20} /><span>Menu</span></button>
+            <div className="topbar-title"><span>{activeMeta?.label}</span><small>{activeMeta?.description}</small></div>
           </div>
           <HeaderSearch onNavigate={navigateWithReload} />
           <div className="event-context">

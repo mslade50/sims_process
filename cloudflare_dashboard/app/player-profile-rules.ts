@@ -129,7 +129,7 @@ export function benchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchm
 export function isShrunk(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):boolean {
   return unshrunkValue(rating,reference)!==null && finite(rating?.shrunk_value);
 }
-export const NOT_YET_SHRUNK = "Not yet shrunk: the published data has no shrunk value for this player, so this is the raw recent-form figure.";
+export const NOT_YET_SHRUNK = "Raw average; not adjusted for small samples.";
 export function fieldBenchmark(ids:number[],players:ProfileEntry[],reference:PgaBenchmarkReference|undefined,checkpoint?:string|null):{mean:number|null;covered:number;total:number} {
   const unique=[...new Set(ids)];const byId=new Map(players.filter(p=>p.dg_id!==null).map(p=>[p.dg_id,p]));
   const values=unique.map(id=>checkpointBenchmarkValue(byId.get(id)?.pga_benchmark,reference,checkpoint)).filter((v):v is number=>v!==null);

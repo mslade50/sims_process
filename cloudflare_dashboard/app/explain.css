@@ -144,3 +144,35 @@
 .ex-viewbar .segmented { margin-bottom: 0; }
 .ex-notice { margin: 0 0 14px; }
 .ex-banner-time { margin: 0; }
+
+/* plain-language cleanup (October 9) */
+.ex-wf-label { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.ex-tag { margin-left: 0; }
+.ex-wf-note { margin: 12px 0 4px; }
+.ex-events { max-width: 100%; flex-wrap: wrap; margin-bottom: 0; }
+.ex-events button.empty { opacity: .55; }
+.ex-dimhelp { margin: 0 0 10px; }
+.ex-marketnote { margin: 0 0 10px; }
+.ex-sort { flex-wrap: wrap; }
+.ex-sortdir { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
+.ex-chipgroups { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 12px; align-items: flex-start; }
+.ex-chipgroup { display: grid; gap: 4px; }
+.ex-chipgroup-label { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.ex-chipgroup .ex-chips { margin-bottom: 0; }
+.ex-clear { align-self: flex-end; display: inline-flex; align-items: center; gap: 3px; min-height: 32px; padding: 0 11px; border: 1px dashed var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
+
+/* phones: tables that matter become one card per player instead of sideways scrolling */
+@media (max-width: 640px) {
+  .ex-cards { display: block; }
+  .ex-cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .ex-cards tbody, .ex-cards tr { display: block; }
+  .ex-cards tr { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-raised); }
+  .ex-cards th[scope="row"], .ex-cards td { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; white-space: normal; }
+  .ex-cards th[scope="row"] { font-size: 14px; text-align: left; position: static; min-width: 0; background: none; }
+  .ex-cards td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; font-size: 11px; font-weight: 700; flex: none; }
+  .ex-cards td.ex-why { display: block; text-align: left; min-width: 0; max-width: none; padding-top: 6px; }
+  .ex-cards td.ex-why::before { display: block; margin-bottom: 2px; }
+  .ex-table-wrapper, .table-scroll:has(.ex-cards) { border: 0; overflow: visible; }
+  .ex-events button { white-space: normal; text-align: left; }
+  .kpi small { overflow-wrap: anywhere; }
+}

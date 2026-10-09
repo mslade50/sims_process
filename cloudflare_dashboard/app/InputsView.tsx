@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Search } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl, humanValue } from "./components";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
@@ -16,17 +16,25 @@ type Obj = Record<string, unknown>;
 const obj = (value: unknown): Obj => (value && typeof value === "object" && !Array.isArray(value) ? (value as Obj) : {});
 const arr = (value: unknown): Obj[] => (Array.isArray(value) ? (value as Obj[]) : []);
 const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
-const fx = (value: unknown, digits = 3): string => {
+const fx = (value: unknown, digits = 2): string => {
   const v = num(value);
-  return v === null ? "—" : v.toFixed(digits);
+  if (v === null) return "—";
+  const text = v.toFixed(digits);
+  return /^-0(\.0+)?$/.test(text) ? text.slice(1) : text;
 };
-const signed = (value: unknown, digits = 3): string => {
+const signed = (value: unknown, digits = 2): string => {
   const v = num(value);
-  return v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
+  if (v === null) return "—";
+  const text = v.toFixed(digits);
+  if (/^-?0(\.0+)?$/.test(text)) return text.replace("-", "");
+  return `${v > 0 ? "+" : ""}${text}`;
 };
+/** A probability as a percentage; a real but tiny chance reads "<0.1%" rather than a misleading "0.0%". */
 const pct = (value: unknown, digits = 1): string => {
   const v = num(value);
-  return v === null ? "—" : `${(v * 100).toFixed(digits)}%`;
+  if (v === null) return "—";
+  if (v > 0 && v < 0.001 && digits <= 1) return "<0.1%";
+  return `${(v * 100).toFixed(digits)}%`;
 };
 
 /* ------------------------------------------------------------------ plain-English helpers */
@@ -58,6 +66,38 @@ function utcText(value: unknown): string {
   const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(String(value ?? ""));
   return m ? etTime(`${m[1]}T${m[2]}Z`, "") : "";
 }
+
+/** Publisher-supplied phrases translated for a golf bettor (display side only; the published text is unchanged). */
+const PHRASES: Array<[RegExp, string]> = [
+  [/kalman trend/gi, "recent form trend"],
+  [/kalman/gi, "form-tracking"],
+  [/cross-tour/gi, "tour strength adjustment"],
+  [/\bDPWT\b/g, "DP World Tour"],
+  [/market combiner/gi, "market blend"],
+  [/\bseeds?\b/gi, "batches"],
+];
+function plain(text: unknown): string {
+  let out = String(text ?? "");
+  for (const [pattern, replacement] of PHRASES) out = out.replace(pattern, replacement);
+  return out;
+}
+function joinAnd(items: string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+/** Hours -> "5 min" or "4 h 30 min". */
+function ageText(hours: number | null): string {
+  if (hours === null) return "";
+  const minutes = Math.round(hours * 60);
+  if (minutes < 60) return `${Math.max(minutes, 0)} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+const BOOK_NAMES: Record<string, string> = {
+  draftkings: "DraftKings", fanduel: "FanDuel", betmgm: "BetMGM", williamhill: "William Hill", skybet: "Sky Bet", bet365: "Bet365", caesars: "Caesars", pointsbet: "PointsBet", betonline: "BetOnline",
+  paddypower: "Paddy Power", betrivers: "BetRivers", betfred: "Betfred", bwin: "bwin", betway: "Betway", "888sport": "888sport", unibet: "Unibet", ladbrokes: "Ladbrokes", coral: "Coral", betcris: "Betcris", bovada: "Bovada", pinnacle: "Pinnacle", circa: "Circa", espnbet: "ESPN BET",
+};
+const bookName = (key: unknown) => BOOK_NAMES[String(key ?? "").toLowerCase().replace(/[\s_-]/g, "")] ?? titleCase(key);
 const MARKET_NAMES: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut", mc: "Make cut", miss_cut: "Miss cut" };
 const marketName = (key: string) => MARKET_NAMES[key] ?? titleCase(key);
 
@@ -76,33 +116,40 @@ function cutRuleSentence(rule: Obj): string {
   return `${text}${where}`;
 }
 
-/** Tee times arrive in the course's local clock. The offset to UTC is read from the event's first round-1 tee (UTC) against the earliest wave's local time, then every tee time is shown in Eastern. */
-function teeFormatter(doc: Obj): (local: unknown) => { text: string; local: string } {
+/** Tee times arrive in the course's local clock. The offset to UTC is read from the event's first round-1 tee (UTC) against the earliest wave's local time. `text` is the Eastern time; `local` is the course clock ("Thu 10:46 AM"); `both` joins them. */
+type Tee = { text: string; local: string; both: string };
+function teeFormatter(doc: Obj): (local: unknown) => Tee {
   const waves = arr(obj(doc.weather).waves).filter((w) => num(w.round) === 1 && typeof w.first_tee_local === "string");
   const firstUtc = Date.parse(String(obj(doc.event).first_r1_tee_utc ?? ""));
   const naive = (text: string) => Date.parse(`${text.trim().replace(" ", "T").slice(0, 19)}Z`);
   const firstLocal = waves.length ? Math.min(...waves.map((w) => naive(String(w.first_tee_local)))) : Number.NaN;
   const offset = Number.isFinite(firstUtc) && Number.isFinite(firstLocal) ? Math.round((firstLocal - firstUtc) / 900_000) * 900_000 : null;
+  const clock = (ms: number) => {
+    const d = new Date(ms);
+    const h = d.getUTCHours();
+    return `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()]} ${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+  };
   return (local) => {
     const text = typeof local === "string" ? local : "";
-    if (!text) return { text: "", local: "" };
+    if (!text) return { text: "", local: "", both: "" };
     const ms = naive(text);
-    if (offset === null || !Number.isFinite(ms)) return { text: text.replace(/:\d{2}$/, ""), local: "" };
-    return { text: etTime(new Date(ms - offset).toISOString(), ""), local: text.slice(11, 16) };
+    if (offset === null || !Number.isFinite(ms)) {
+      const plainText = text.replace(/:\d{2}$/, "");
+      return { text: plainText, local: "", both: plainText };
+    }
+    const et = etTime(new Date(ms - offset).toISOString(), "");
+    const here = clock(ms);
+    return { text: et, local: here, both: `${here} local (${et})` };
   };
 }
 
-/** The hole-table label is a registry string; turn it into one sentence. Returns the raw string for the Technical details box. */
-function describeHoleTable(rawLabel: string, courseName: string, layout: Obj): string {
-  if (!rawLabel) return "";
-  const proxy = /proxy edition at/.test(rawLabel);
-  const year = num(layout.year) ?? Number(/(\d{4})-\d{2}-\d{2}\]/.exec(rawLabel)?.[1] ?? NaN);
+/** The hole-table label is a registry string; turn it into one short sentence. The raw string goes in the Technical details box. */
+function describeHoleTable(rawLabel: string, layout: Obj): string {
+  if (!rawLabel || !/proxy edition at/.test(rawLabel)) return "";
   const nMed = Number(/n_med=(\d+)/.exec(rawLabel)?.[1] ?? NaN);
-  if (!proxy) return "";
-  let text = `Hole difficulty borrowed from last year's edition at ${courseName || "this course"}${Number.isFinite(year) ? ` (${year} layout)` : ""}`;
-  if (Number.isFinite(nMed)) text += nMed > 0 ? `, backed by a median of ${nMed} past rounds per hole` : ", with no past rounds at this venue counted yet";
-  text += ".";
-  if (layout.current_event_confirmed === false) text += " This year's layout is not confirmed yet.";
+  if (nMed === 0) return "No past rounds here yet, so every hole is estimated from par and length.";
+  let text = `Hole data is from last year's edition${Number.isFinite(nMed) ? ` (${nMed} rounds per hole)` : ""}.`;
+  if (layout.current_event_confirmed === false) text += " This year's layout isn't confirmed.";
   return text;
 }
 
@@ -123,7 +170,7 @@ function dropEmptyColumns(rows: DataRow[], alsoIfConstant: string[] = [], alsoIf
 function Technical({ children, label = "Technical details" }: { children: ReactNode; label?: string }) {
   return (
     <details className="config-file">
-      <summary><b>{label}</b><span>for debugging; safe to ignore</span></summary>
+      <summary><b>{label}</b><span>for support</span></summary>
       <div className="stack-lg">{children}</div>
     </details>
   );
@@ -138,27 +185,27 @@ type IndexEvent = { event_uid: string; name: string; tour: string; date_start: s
 type PublishIndex = { schema: string; events: IndexEvent[] };
 
 const FAMILIES: Array<[string, string]> = [
-  ["level_form", "Level and form"],
-  ["kalman", "Kalman trend"],
-  ["xtour", "Cross-tour"],
-  ["category", "Category skills"],
-  ["sit", "Situation"],
-  ["act", "Activity"],
-  ["sklv", "Skill level"],
+  ["level_form", "Long-run skill and form"],
+  ["kalman", "Current form trend"],
+  ["xtour", "Results on other tours"],
+  ["category", "Skill by part of the game"],
+  ["sit", "Layoff and age"],
+  ["act", "Recent activity"],
+  ["sklv", "Skill level estimate"],
   ["course", "Course fit and history"],
-  ["thin", "Thin-data shrink"],
-  ["disp", "Dispersion"],
-  ["other", "Other"],
+  ["thin", "Small-sample adjustment"],
+  ["disp", "Blow-up rounds"],
+  ["other", "Everything else"],
 ];
 registerFamilyLabels(FAMILIES);
 
 const TABS = [
   { value: "players", label: "Players" },
   { value: "course", label: "Course" },
-  { value: "variance", label: "Variance and engine" },
+  { value: "variance", label: "Round swings" },
   { value: "weather", label: "Weather and waves" },
   { value: "odds", label: "Odds freshness" },
-  { value: "config", label: "Config" },
+  { value: "config", label: "Run info" },
   { value: "features", label: "Features" },
   { value: "adjust", label: "Adjust" },
 ] as const;
@@ -173,7 +220,7 @@ function ChartTip({ active, payload, label }: { active?: boolean; payload?: Arra
       {hint && <span>{hint}</span>}
       {payload.map((item, index) => (
         <span key={`${item.name}-${index}`} style={{ color: item.color }}>
-          {item.name}: {Array.isArray(item.value) ? item.value.map((x) => Number(x).toFixed(3)).join(" to ") : typeof item.value === "number" ? item.value.toFixed(3) : String(item.value ?? "—")}
+          {item.name}: {Array.isArray(item.value) ? item.value.map((x) => Number(x).toFixed(2)).join(" to ") : typeof item.value === "number" ? (Number.isInteger(item.value) ? String(item.value) : item.value.toFixed(2)) : String(item.value ?? "—")}
         </span>
       ))}
     </div>
@@ -206,15 +253,24 @@ function flatten(value: unknown, prefix = "", depth = 0, out: Array<{ key: strin
   return out;
 }
 
+/** Timestamps in the technical list read in Eastern like everywhere else; plain text passes through. */
+function plainStamp(key: string, text: string): string {
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}/.test(text)) return snapshotTime(text) || text;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?Z$/.test(text)) return etTime(text, text);
+  if (/ UTC$/.test(text)) return utcText(text) || text;
+  if (/_at$/.test(key) && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) return etTime(`${text.replace(" ", "T")}Z`, text);
+  return text;
+}
+
 function KeyValue({ data, empty = "Nothing recorded for this run." }: { data: unknown; empty?: string }) {
-  const rows = flatten(data);
-  if (!rows.length || (rows.length === 1 && !rows[0].key)) return <p className="inputs-muted">{empty}</p>;
+  const rows = flatten(data).filter((row) => row.value !== "—" && row.value !== "");
+  if (!rows.length || (rows.length === 1 && !rows[0].key)) return empty ? <p className="inputs-muted">{empty}</p> : null;
   return (
     <div className="kv-table">
       {rows.map((row) => (
         <div key={row.key}>
-          <span>{row.key.replaceAll("_", " ")}</span>
-          <b>{row.value}</b>
+          <span>{row.key.split(".").map((part) => part.replaceAll("_", " ")).join(" › ")}</span>
+          <b>{plainStamp(row.key, row.value)}</b>
         </div>
       ))}
     </div>
@@ -274,24 +330,31 @@ const playerHasOverride = (p: Obj) => {
 };
 
 type Step = { name: string; value: number; hint: string; range: [number, number]; end: number };
-function waterfall(player: Obj, overridden: boolean): Step[] {
+type Part = { name: string; value: number; hint: string };
+/** The pieces of the rating. `parts` lists every non-zero piece; `steps` is the chart version, with the small pieces grouped into one "Everything else" bar. */
+function waterfall(player: Obj, overridden: boolean): { steps: Step[]; parts: Part[] } {
   const ch = obj(player.challenger);
   const bd = obj(ch.breakdown);
   const fam = obj(bd.chl_families);
   const loc = obj(bd.location);
   const ovr = obj(bd.override);
-  const parts: Array<{ name: string; value: number; hint: string }> = [];
-  for (const [key, label] of FAMILIES) parts.push({ name: label, value: num(fam[key]) ?? 0, hint: define(`chl_${key}`) });
-  parts.push({ name: "Location (home, travel, nationality)", value: num(loc.total) ?? 0, hint: define("location") });
-  if (overridden) parts.push({ name: "Your override", value: num(ovr.total) ?? 0, hint: define("override") });
+  const all: Part[] = [];
+  for (const [key, label] of FAMILIES) all.push({ name: label, value: num(fam[key]) ?? 0, hint: define(`chl_${key}`) });
+  all.push({ name: "Location (home, travel, nationality)", value: num(loc.total) ?? 0, hint: define("location") });
+  if (overridden) all.push({ name: "Your override", value: num(ovr.total) ?? 0, hint: define("override") });
+  const parts = all.filter((part) => Math.abs(part.value) >= 0.005);
+  const big = parts.filter((part) => Math.abs(part.value) >= 0.03 || part.name === "Your override");
+  const small = parts.filter((part) => !big.includes(part));
+  const chart = [...big];
+  if (small.length) chart.push({ name: "Everything else", value: small.reduce((total, part) => total + part.value, 0), hint: `Smaller pieces combined: ${small.map((part) => part.name.toLowerCase()).join(", ")}.` });
   let running = 0;
-  const steps: Step[] = parts.map((part) => {
+  const steps: Step[] = chart.map((part) => {
     const start = running;
     running += part.value;
     return { ...part, range: [Math.min(start, running), Math.max(start, running)], end: running };
   });
-  steps.push({ name: "Final mu", value: running, hint: define("mu"), range: [Math.min(0, running), Math.max(0, running)], end: running });
-  return steps;
+  steps.push({ name: "Final rating vs field", value: running, hint: define("mu"), range: [Math.min(0, running), Math.max(0, running)], end: running });
+  return { steps, parts };
 }
 
 type PlayerChoice = { name: string; dg_id: number };
@@ -365,11 +428,13 @@ function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (d
   );
 }
 
-function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust: (dgId: number) => void; fmtTee: (local: unknown) => { text: string; local: string } }) {
+const THIN_ROUNDS = 50;
+
+function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust: (dgId: number) => void; fmtTee: (local: unknown) => Tee; playedRounds: number }) {
   const ch = obj(player.challenger);
   const bd = obj(ch.breakdown);
   const overridden = playerHasOverride(player);
-  const steps = useMemo(() => waterfall(player, overridden), [player, overridden]);
+  const { steps, parts } = useMemo(() => waterfall(player, overridden), [player, overridden]);
   const arms = Object.entries(obj(player.arms)).filter(([name]) => name !== "challenger" && name !== "challenger_untouched");
   const prob = obj(ch.probabilities);
   const probU = obj(ch.probabilities_untouched);
@@ -378,9 +443,11 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee }: { player: O
   const tee = obj(player.tee);
   const loc = obj(bd.location);
   const weather = obj(ch.weather);
-  const weatherRows = Object.entries(weather).filter(([, v]) => (num(v) ?? 0) !== 0);
+  // Rounds already played in a live run no longer move the price, so only the rounds still to come are listed.
+  const weatherRows = Object.entries(weather).filter(([round, v]) => (num(v) ?? 0) !== 0 && Number(round.replace(/\D/g, "")) > playedRounds);
   const seKernel = num(ch.se_kernel) ?? 0;
-  const hasVenueFit = num(cf.fit_rs_ddacc_lam1000) !== null || num(cf.course_history_resid_k80) !== null;
+  const rounds = num(player.n_prior_rounds);
+  const thin = rounds !== null && rounds < THIN_ROUNDS;
   const priceRows: Array<{ label: string; active?: boolean; mu: unknown; sd: unknown; p: Obj }> = [
     { label: overridden ? "With your override" : "Model price", active: true, mu: ch.mu, sd: ch.sd, p: prob },
     ...(overridden && Object.keys(probU).length > 0 ? [{ label: "Before your override", mu: ch.mu_untouched, sd: ch.sd_untouched, p: probU }] : []),
@@ -388,6 +455,22 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee }: { player: O
   ];
   const showCut = priceRows.some((row) => num(row.p.p_make_cut) !== null);
   const th = (label: string, key?: string) => <th><span className="th-text"><Term k={key}>{label}</Term></span></th>;
+  const priceCells: Array<[string, string, string]> = [["Win", "p_win", "prob_win"], ["Top 5", "p_top_5", "prob_top_5"], ["Top 10", "p_top_10", "prob_top_10"], ["Top 20", "p_top_20", "prob_top_20"], ...(showCut ? ([["Make cut", "p_make_cut", "prob_make_cut"]] as Array<[string, string, string]>) : [])];
+  const teeRows = Object.entries(tee).flatMap(([round, info]) => {
+    const t = fmtTee(obj(info).teetime_local);
+    if (!t.text) return [];
+    const wave = obj(info).wave ? ` (${String(obj(info).wave)} wave)` : "";
+    return [{ round: round.replace(/\D/g, ""), text: t.local ? `${t.local} local${wave} · ${t.text}` : `${t.text}${wave}` }];
+  });
+  const courseLines = [
+    num(cf.fit_rs_ddacc_lam1000) !== null,
+    num(cf.course_history_resid_k80) !== null,
+    num(cf.course_sd_mult_feature) !== null,
+    num(cf.sd_shrunk_feature) !== null,
+    num(hist.champion_mu_j2) !== null,
+    num(hist.se_mu) !== null,
+    teeRows.length > 0,
+  ].some(Boolean);
   return (
     <Panel
       className="player-detail"
@@ -401,23 +484,23 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee }: { player: O
       }
     >
       <div className="mini-stat-grid">
-        <div><span><Term k="mu">Mu, vs this week&apos;s field</Term></span><strong>{signed(ch.mu)}</strong></div>
-        {overridden && <div><span><Term k="mu_untouched">Mu before your override</Term></span><strong>{signed(ch.mu_untouched)}</strong></div>}
+        <div><span><Term k="mu">Rating vs this week&apos;s field</Term></span><strong>{signed(ch.mu)}</strong></div>
+        {overridden && <div><span><Term k="mu_untouched">Rating before your override</Term></span><strong>{signed(ch.mu_untouched)}</strong></div>}
         {num(ch.mu_tour) !== null && <div title={`${LABELS.thisWeekPga.long}. Reference only; prices use the field-relative number.`}><span>{LABELS.thisWeekPga.short}</span><strong>{signed(ch.mu_tour)}</strong></div>}
-        <div><span><Term k="sd">Round SD</Term></span><strong>{fx(ch.sd, 2)}</strong></div>
-        {overridden && <div><span><Term k="sd_untouched">SD before your override</Term></span><strong>{fx(ch.sd_untouched, 2)}</strong></div>}
-        {seKernel !== 0 && <div><span><Term k="se_kernel">Skill uncertainty ±</Term></span><strong>{fx(seKernel, 3)}</strong></div>}
-        <div><span><Term k="extra_round_volatility_sd">Extra round volatility</Term></span><strong>{fx(ch.extra_round_volatility_sd, 2)}</strong></div>
-        <div><span><Term k="prior_rounds">Rounds of history</Term></span><strong>{fx(player.n_prior_rounds, 0)}</strong></div>
-        <div><span><Term k="override_total">Your override</Term></span><strong>{overridden ? signed(obj(bd.override).total) : "None"}</strong></div>
+        <div><span><Term k="sd">Round swing</Term></span><strong>{fx(ch.sd, 2)}</strong></div>
+        {overridden && <div><span><Term k="sd_untouched">Swing before your override</Term></span><strong>{fx(ch.sd_untouched, 2)}</strong></div>}
+        {seKernel !== 0 && <div><span><Term k="se_kernel">Rating uncertainty (±)</Term></span><strong>{fx(seKernel, 2)}</strong></div>}
+        <div><span><Term k="prior_rounds">Rounds of history</Term></span><strong>{fx(player.n_prior_rounds, 0)}{thin ? " (thin data)" : ""}</strong></div>
+        {overridden && <div><span><Term k="override_total">Your override</Term></span><strong>{signed(obj(bd.override).total)}</strong></div>}
       </div>
-      <h3 className="inputs-h3">How the mean is built (strokes gained per round, relative to the field)</h3>
+      {thin && <p className="inputs-muted">{GLOSSARY.thin_data}</p>}
+      <h3 className="inputs-h3">How the rating is built (strokes per round, relative to the field)</h3>
       <p className="inputs-muted">Hover a bar for what that piece means.</p>
       <div className="chart-medium waterfall">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={steps} layout="vertical" margin={{ top: 6, right: 24, bottom: 6, left: 8 }}>
             <CartesianGrid stroke="var(--line)" horizontal={false} />
-            <XAxis type="number" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+            <XAxis type="number" tickCount={7} tickFormatter={(v: number) => (Math.round(v * 100) / 100).toFixed(2)} tick={{ fill: "var(--muted)", fontSize: 10 }} />
             <YAxis type="category" dataKey="name" width={200} tick={{ fill: "var(--muted-strong)", fontSize: 10 }} />
             <ReferenceLine x={0} stroke="var(--line-strong)" />
             <Tooltip content={<ChartTip />} />
@@ -433,61 +516,71 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee }: { player: O
         <div>
           <h3 className="inputs-h3">Components</h3>
           <div className="kv-table">
-            {steps.slice(0, -1).map((step) => (
-              <div key={step.name}><span><Term text={step.hint}>{step.name}</Term></span><b>{signed(step.value)}</b></div>
+            {parts.map((part) => (
+              <div key={part.name}><span><Term text={part.hint}>{part.name}</Term></span><b>{signed(part.value)}</b></div>
             ))}
-            {num(loc.total) !== null && (
+            {num(loc.total) !== null && Math.abs(num(loc.total) ?? 0) >= 0.005 && (
               <>
-                <div><span className="inputs-muted"><Term k="location_home_travel">of which home base and travel</Term></span><b>{signed(loc.h2_home_base_travel)}</b></div>
-                <div><span className="inputs-muted"><Term k="location_nationality">of which nationality</Term></span><b>{signed(loc.nat_nationality)}</b></div>
-                <div><span className="inputs-muted"><Term k="location_refit">of which refit correction</Term></span><b>{signed(loc.reest_chl_refit)}</b></div>
+                {Math.abs(num(loc.h2_home_base_travel) ?? 0) >= 0.005 && <div><span className="inputs-muted"><Term k="location_home_travel">of which home base and travel</Term></span><b>{signed(loc.h2_home_base_travel)}</b></div>}
+                {Math.abs(num(loc.nat_nationality) ?? 0) >= 0.005 && <div><span className="inputs-muted"><Term k="location_nationality">of which nationality</Term></span><b>{signed(loc.nat_nationality)}</b></div>}
+                {Math.abs(num(loc.reest_chl_refit) ?? 0) >= 0.005 && <div><span className="inputs-muted"><Term k="location_refit">of which refit correction</Term></span><b>{signed(loc.reest_chl_refit)}</b></div>}
               </>
             )}
-            <div><span><Term k="skill_total">Skill families subtotal</Term></span><b>{signed(bd.chl_total)}</b></div>
-            {Math.abs(num(bd.sum_error_vs_mu) ?? 0) > 0.0005 && <div><span><Term k="rounding">Rounding difference</Term></span><b>{fx(bd.sum_error_vs_mu, 4)}</b></div>}
+            <div><span><Term k="skill_total">Skill before location</Term></span><b>{signed(bd.chl_total)}</b></div>
+            {Math.abs(num(bd.sum_error_vs_mu) ?? 0) > 0.0005 && <div><span><Term k="rounding">Rounding difference</Term></span><b>{fx(bd.sum_error_vs_mu, 3)}</b></div>}
             {weatherRows.map(([round, value]) => (
-              <div key={round}><span><Term k="weather_round">{`Weather, round ${round.replace(/\D/g, "")} (on top of mu)`}</Term></span><b>{signed(value)}</b></div>
+              <div key={round}><span><Term k="weather_round">{`Weather, round ${round.replace(/\D/g, "")} (added to the rating that round)`}</Term></span><b>{signed(value)}</b></div>
             ))}
           </div>
         </div>
-        <div>
-          <h3 className="inputs-h3">Course fit, history and tee times</h3>
-          <div className="kv-table">
-            <div><span><Term k="course_fit">Course fit and history</Term></span><b>{signed(cf.contribution_to_mu)}</b></div>
-            {num(cf.fit_rs_ddacc_lam1000) !== null && <div><span><Term k="fit_rs_ddacc">Venue fit (distance and accuracy)</Term></span><b>{signed(cf.fit_rs_ddacc_lam1000, 4)}</b></div>}
-            {num(cf.course_history_resid_k80) !== null && <div><span><Term k="course_history">Course history</Term></span><b>{signed(cf.course_history_resid_k80, 4)}</b></div>}
-            {num(cf.course_sd_mult_feature) !== null && <div><span><Term k="course_sd_mult">Course SD multiplier</Term></span><b>{fx(cf.course_sd_mult_feature, 3)}</b></div>}
-            {num(cf.sd_shrunk_feature) !== null && <div><span><Term k="sd_shrunk">Player SD before the course multiplier</Term></span><b>{fx(cf.sd_shrunk_feature, 3)}</b></div>}
-            {num(hist.champion_mu_j2) !== null && <div><span><Term text="The previous (champion) model's expected strokes per round for this player, kept for comparison.">Previous model&apos;s mu</Term></span><b>{signed(hist.champion_mu_j2)}</b></div>}
-            {num(hist.se_mu) !== null && <div><span><Term text="How uncertain the previous model was about this player's skill, in strokes per round.">Previous model&apos;s uncertainty ±</Term></span><b>{fx(hist.se_mu, 3)}{hist.se_mu_imputed ? " (estimated: little history)" : ""}</b></div>}
-            {Object.entries(tee).map(([round, info]) => {
-              const t = fmtTee(obj(info).teetime_local);
-              if (!t.text) return null;
-              return <div key={round}><span>Round {round.replace(/\D/g, "")} tee time</span><b title={t.local ? `${t.local} at the course` : undefined}>{t.text}{obj(info).wave ? ` (${String(obj(info).wave)} wave)` : ""}</b></div>;
-            })}
+        {courseLines && (
+          <div>
+            <h3 className="inputs-h3">Course and tee times</h3>
+            <div className="kv-table">
+              {num(cf.fit_rs_ddacc_lam1000) !== null && <div><span><Term k="fit_rs_ddacc">Venue fit (distance and accuracy)</Term></span><b>{signed(cf.fit_rs_ddacc_lam1000, 3)}</b></div>}
+              {num(cf.course_history_resid_k80) !== null && <div><span><Term k="course_history">Course history</Term></span><b>{signed(cf.course_history_resid_k80, 3)}</b></div>}
+              {num(cf.course_sd_mult_feature) !== null && <div><span><Term k="course_sd_mult">Course spread factor</Term></span><b>{fx(cf.course_sd_mult_feature, 3)}</b></div>}
+              {num(cf.sd_shrunk_feature) !== null && <div><span><Term k="sd_shrunk">Round swing before course adjustment</Term></span><b>{fx(cf.sd_shrunk_feature, 2)}</b></div>}
+              {num(hist.champion_mu_j2) !== null && <div><span><Term text="The previous (champion) model's rating for this player, kept for comparison.">Previous model&apos;s rating</Term></span><b>{signed(hist.champion_mu_j2)}</b></div>}
+              {num(hist.se_mu) !== null && <div><span><Term text="How uncertain the previous model was about this player's skill, in strokes per round.">Rating uncertainty (±, previous model)</Term></span><b>{fx(hist.se_mu, 2)}{hist.se_mu_imputed ? " (estimated: little history)" : ""}</b></div>}
+              {teeRows.map((row) => <div key={row.round}><span>Round {row.round} tee time</span><b>{row.text}</b></div>)}
+            </div>
           </div>
-          {!hasVenueFit && <p className="inputs-muted">Venue fit and course history are not saved separately for this run. Their combined effect is the Course fit and history line.</p>}
-        </div>
+        )}
       </div>
-      <h3 className="inputs-h3">Model prices (before the market combiner)</h3>
-      <div className="table-scroll">
-        <table>
-          <thead><tr>{th("Version")}{th("Mu", "mu")}{th("SD", "sd")}{th("Win", "prob_win")}{th("Top 5", "prob_top_5")}{th("Top 10", "prob_top_10")}{th("Top 20", "prob_top_20")}{showCut && th("Make cut", "prob_make_cut")}</tr></thead>
-          <tbody>
-            {priceRows.map((row) => (
-              <tr key={row.label} className={row.active ? "active-row" : ""}>
-                <td>{row.label}</td><td>{signed(row.mu)}</td><td>{fx(row.sd, 2)}</td><td>{pct(row.p.p_win, 2)}</td><td>{pct(row.p.p_top_5)}</td><td>{pct(row.p.p_top_10)}</td><td>{pct(row.p.p_top_20)}</td>{showCut && <td>{pct(row.p.p_make_cut)}</td>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!showCut && <p className="inputs-muted">No make-cut price: this event has no cut.</p>}
+      {priceRows.length === 1 ? (
+        <p className="inputs-note">
+          <b>Model price before blending with the market:</b>{" "}
+          {priceCells.map(([label, key], index) => `${index ? ", " : ""}${label} ${pct(priceRows[0].p[key], key === "p_win" ? 2 : 1)}`).join("")}
+          {showCut ? "" : ". No make-cut price: this event has no cut."}
+        </p>
+      ) : (
+        <>
+          <h3 className="inputs-h3">Model prices (before blending with the market)</h3>
+          <div className="table-scroll">
+            <table>
+              <thead><tr>{th("Version")}{th("Rating", "mu")}{th("Round swing", "sd")}{priceCells.map(([label, , key]) => <Fragment key={key}>{th(label, key)}</Fragment>)}</tr></thead>
+              <tbody>
+                {priceRows.map((row) => (
+                  <tr key={row.label} className={row.active ? "active-row" : ""}>
+                    <td>{row.label}</td><td>{signed(row.mu)}</td><td>{fx(row.sd, 2)}</td>
+                    {priceCells.map(([, key], index) => <td key={key}>{pct(row.p[key], index === 0 ? 2 : 1)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!showCut && <p className="inputs-muted">No make-cut price: this event has no cut.</p>}
+        </>
+      )}
     </Panel>
   );
 }
 
-function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => void }) {
+const SIGNED_COLUMNS = new Set(["mu", "mu_untouched", "location", "course_fit", "override_total", "course_history", "fit_rs_ddacc", LABELS.thisWeekPga.short]);
+const SWING_COLUMNS = new Set(["sd", "sd_untouched", "se_kernel", "course_sd_mult"]);
+
+function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust: (dgId: number) => void; playedRounds: number }) {
   const players = arr(doc.players);
   const showUntouched = useMemo(() => players.some(playerHasOverride), [players]);
   const rows = useMemo(() => playerRows(players, showUntouched), [players, showUntouched]);
@@ -497,8 +590,9 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
   const fmtTee = useMemo(() => teeFormatter(doc), [doc]);
   const present = new Set(rows.flatMap((row) => Object.keys(row)));
-  const preferred = ["name", "mu", "mu_untouched", LABELS.thisWeekPga.short, "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "fit_rs_ddacc", "override_total", "prior_rounds", "prob_win", "prob_top_5", "prob_top_10", "prob_top_20", "prob_make_cut", ...FAMILIES.map(([key]) => `chl_${key}`)];
-  const defaultColumns = ["name", "mu", "mu_untouched", "sd", "sd_untouched", LABELS.thisWeekPga.short, "location", "course_fit", "override_total", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut"].filter((key) => present.has(key));
+  const preferred = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "fit_rs_ddacc", "override_total", "prior_rounds", "prob_win", "prob_top_5", "prob_top_10", "prob_top_20", "prob_make_cut", LABELS.thisWeekPga.short, ...FAMILIES.map(([key]) => `chl_${key}`)];
+  // One rating column by default; the PGA-scale version is one click away under Columns.
+  const defaultColumns = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "location", "course_fit", "override_total", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut"].filter((key) => present.has(key));
   const headerLabels: Record<string, string> = { ...HEADERS, [LABELS.thisWeekPga.short]: LABELS.thisWeekPga.short };
   const headerTitles = titlesFor([...present], { [LABELS.thisWeekPga.short]: GLOSSARY.mu_tour });
   const best = players.reduce<Obj | null>((top, p) => ((num(obj(p.challenger).mu) ?? -Infinity) > (num(obj(top?.challenger).mu) ?? -Infinity) ? p : top), null);
@@ -508,31 +602,42 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
   const sdMean = players.length ? players.reduce((total, p) => total + numberValue(obj(p.challenger).sd), 0) / players.length : 0;
   const nAmateur = players.filter((p) => p.amateur).length;
   if (!players.length) return <EmptyState title="No players in this run" detail="The run published no player objects." />;
+  const gap = fieldOffset === null ? "" : Math.abs(fieldOffset).toFixed(2);
   return (
     <div className="stack-lg">
       <div className="kpi-grid">
-        <Kpi label="Players" value={String(players.length)} detail={nAmateur ? `${nAmateur} amateurs` : "in the field"} tone="accent" />
+        <Kpi label="Players" value={String(players.length)} detail={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "in the field"} tone="accent" />
         <Tip text={GLOSSARY.mu}><Kpi label="Strongest player" value={signed(num(obj(best?.challenger).mu), 2)} detail={`${String(best?.name ?? "")}: strokes per round better than this week's field average (the average is 0)`} /></Tip>
         {fieldOffset !== null && (
-          <Tip text="How this field compares with an average PGA Tour field, in strokes per round. Reference only: prices use the field-relative mu.">
+          <Tip text="How this field compares with a typical PGA Tour field, in strokes per round. Reference only: prices use the rating against this field.">
             <Kpi
               label="Field strength"
               value={signed(fieldOffset, 2)}
-              detail={`this field is ${Math.abs(fieldOffset).toFixed(2)} strokes per round ${fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour field${ymd(strength.vintage) ? ` (skills as of ${ymd(strength.vintage)})` : ""}`}
+              detail={`This field is ${gap} strokes per round ${fieldOffset < 0 ? "weaker" : "stronger"} than a typical PGA Tour field, so every PGA-scale rating is ${gap} ${fieldOffset < 0 ? "lower" : "higher"}. Prices are not affected.${ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}`}
             />
           </Tip>
         )}
-        <Tip text="The average of the players' round-to-round spread, in strokes, including any override."><Kpi label="Average round SD" value={sdMean.toFixed(2)} detail="strokes, after overrides" /></Tip>
-        <Tip text="How many players have a manual override on them for this event."><Kpi label="Players with an override" value={String(withOverride)} detail={withOverride ? "the original model numbers are kept alongside" : "none, so every number is the pure model"} tone={withOverride ? "positive" : "neutral"} /></Tip>
+        <Tip text="The average of the players' round swing, in strokes, including any override."><Kpi label="Average round swing" value={sdMean.toFixed(2)} detail="strokes, after overrides" /></Tip>
+        {withOverride > 0 && <Tip text="How many players have a manual override on them for this event."><Kpi label="Players with an override" value={String(withOverride)} detail="the original model numbers are kept alongside" tone="positive" /></Tip>}
       </div>
-      <Panel eyebrow="Saved model inputs" title="Every player, every component" actions={<span className="inputs-muted">{"Click a row, or search below, for the breakdown. Hover a column header for what it means. \"" + LABELS.thisWeekPga.short + "\" is for reference; prices use mu (vs this week's field)."}</span>}>
+      <Panel eyebrow="Saved model inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row, or search below, for the breakdown. Hover a column header for what it means.</span>}>
         <DataTable
           rows={rows}
           preferredColumns={preferred}
           defaultColumns={defaultColumns}
           headerLabels={headerLabels}
           headerTitles={headerTitles}
-          renderCell={(column, value, row) => ((column === "mu_untouched" && !differs(row.mu, value)) || (column === "sd_untouched" && !differs(row.sd, value)) ? "" : undefined)}
+          renderCell={(column, value, row) => {
+            if ((column === "mu_untouched" && !differs(row.mu, value)) || (column === "sd_untouched" && !differs(row.sd, value))) return "";
+            if (column === "name") {
+              const rounds = num(row.prior_rounds);
+              return rounds !== null && rounds < THIN_ROUNDS ? <>{String(value)} <span className="inputs-muted" title={GLOSSARY.thin_data} style={{ fontStyle: "italic" }}>(thin data)</span></> : undefined;
+            }
+            if (column.startsWith("prob_")) return pct(value);
+            if (column.startsWith("chl_") || SIGNED_COLUMNS.has(column)) return num(value) === null ? undefined : signed(value);
+            if (SWING_COLUMNS.has(column)) return num(value) === null ? undefined : fx(value, 2);
+            return undefined;
+          }}
           label="Model inputs players"
           pageSize={30}
           onRowClick={(row) => setSelected(num(row.dg_id))}
@@ -540,7 +645,7 @@ function PlayersTab({ doc, onAdjust }: { doc: Obj; onAdjust: (dgId: number) => v
         />
         {showUntouched && <p className="inputs-muted">The &quot;before your override&quot; columns stay empty for players you have not adjusted.</p>}
       </Panel>
-      {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} fmtTee={fmtTee} />}
+      {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
     </div>
   );
 }
@@ -553,7 +658,7 @@ function spread(values: number[]): { min: number; median: number; max: number } 
   return { min: v[0], median: v[Math.floor(v.length / 2)], max: v[v.length - 1] };
 }
 
-function CourseTab({ doc }: { doc: Obj }) {
+function CourseTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
   const course = obj(doc.course);
   const event = obj(doc.event);
   const tables = arr(course.hole_tables);
@@ -579,17 +684,18 @@ function CourseTab({ doc }: { doc: Obj }) {
       sensitivity: num(h.sensitivity),
     })),
   );
-  const chartData = holes.map((h) => ({ hole: String(h.hole), expected: num(h.exp_vs_par) ?? 0, birdie: (num(h.birdie_or_better) ?? 0) * 100, bogey: (num(h.bogey_or_worse) ?? 0) * 100 }));
+  const chartData = holes.map((h) => ({ hole: String(h.hole), expected: num(h.exp_vs_par) ?? 0 }));
   const first = perRound[0];
   const override = obj(obj(doc.engine).owner_overrides_on_engine);
-  // Course SD multiplier: the week runs publish venue_fit.course_sd_mult; live runs do not, but every player row carries the same course feature.
+  // Course spread factor: the week runs publish venue_fit.course_sd_mult; live runs do not, but every player row carries the same course feature.
   const fromFit = obj(fit.course_sd_mult);
   const sdMult = num(fromFit.median) !== null ? { min: num(fromFit.min) ?? NaN, median: num(fromFit.median) as number, max: num(fromFit.max) ?? NaN } : spread(players.map((p) => num(obj(p.course_fit).course_sd_mult_feature) ?? NaN));
   const rawLabel = String(course.table_label ?? "");
   const courseName = String(event.course_name ?? "");
   const layout = obj(obj(course.course_provenance).layout);
-  const sentence = describeHoleTable(rawLabel, courseName, layout);
-  const sourceName = /prior edition/i.test(String(course.hole_table_source ?? "")) ? "Last year's edition" : titleCase(course.hole_table_source) || "Unknown";
+  const sentence = describeHoleTable(rawLabel, layout);
+  const estimated = Number(/n_med=(\d+)/.exec(rawLabel)?.[1] ?? NaN) === 0;
+  const sourceName = estimated ? "Estimated from par and length" : /prior edition/i.test(String(course.hole_table_source ?? "")) ? "Last year's edition" : titleCase(course.hole_table_source) || "Unknown";
   const layoutYear = num(layout.year) ?? Number(/(\d{4})-\d{2}-\d{2}\]/.exec(rawLabel)?.[1] ?? NaN);
   const showUntouchedAvg = perRound.some((r) => differs(r.scoring_average_vs_par, r.scoring_average_vs_par_untouched));
   const perRoundRows = dropEmptyColumns(
@@ -606,8 +712,9 @@ function CourseTab({ doc }: { doc: Obj }) {
   const fitStats = ["fit_rs_ddacc_lam1000", "ch_resid_k80_hl1461"].map((key) => ({ key, stat: obj(fit[key]) })).filter(({ stat }) => num(stat.median) !== null);
   const courseOverrides = [
     num(course.course_scoring_avg_delta_override) !== null ? `scoring average ${signed(course.course_scoring_avg_delta_override, 2)} strokes` : "",
-    num(override.course_sd_mult) !== null && num(override.course_sd_mult) !== 1 ? `SD multiplier ${fx(override.course_sd_mult, 2)}` : "",
+    num(override.course_sd_mult) !== null && num(override.course_sd_mult) !== 1 ? `spread factor ${fx(override.course_sd_mult, 2)}` : "",
   ].filter(Boolean);
+  const showFit = fitStats.length > 0 || courseOverrides.length > 0;
   const holeKeys = ["hole", "par", "yardage", "expected_vs_par", "birdie_pct", "par_pct", "bogey_pct", "sensitivity"];
   const holeCols = ["hole", "par", "yardage", "expected_vs_par", "birdie_pct", "bogey_pct", "eagle_pct", "par_pct", "double_pct", "triple_pct", "sensitivity"];
   const roundCols = ["round", "par", "yardage", "scoring_avg", "scoring_avg_untouched", "birdies_per_round", "bogeys_per_round"];
@@ -615,35 +722,35 @@ function CourseTab({ doc }: { doc: Obj }) {
     <div className="stack-lg">
       <div className="kpi-grid">
         <Kpi label="Course" value={courseName || "—"} detail={`par ${String((arr(event.par_per_round) as unknown as number[])[0] ?? "—")}`} tone="accent" />
-        <Tip text="Where the hole-by-hole scoring numbers come from. Courses with no current data borrow last year's edition."><Kpi label="Hole difficulty from" value={sourceName} detail={Number.isFinite(layoutYear) ? `${layoutYear} layout` : undefined} /></Tip>
-        {first && num(first.scoring_average_vs_par) !== null && <Tip text={GLOSSARY.scoring_avg}><Kpi label="Scoring average vs par" value={signed(first.scoring_average_vs_par, 2)} detail="round 1, field-average player" /></Tip>}
+        <Tip text="Where the hole-by-hole scoring numbers come from. Courses with no current data borrow last year's edition, or are estimated from par and length."><Kpi label="Hole difficulty from" value={sourceName} detail={!estimated && Number.isFinite(layoutYear) ? `${layoutYear} layout` : undefined} /></Tip>
+        {first && num(first.scoring_average_vs_par) !== null && <Tip text={GLOSSARY.scoring_avg}><Kpi label="Scoring average vs par" value={signed(first.scoring_average_vs_par, 2)} detail="round 1, field-average player (other rounds in the table below)" /></Tip>}
         {sdMult && (
           <Tip text={GLOSSARY.course_sd_mult}>
-            <Kpi label="Course SD multiplier" value={fx(sdMult.median, 3)} detail={Math.abs(sdMult.max - sdMult.min) < 0.0005 ? "the same for every player" : `field range ${fx(sdMult.min, 3)} to ${fx(sdMult.max, 3)}`} />
+            <Kpi label="Course spread factor" value={fx(sdMult.median, 3)} detail={Math.abs(sdMult.max - sdMult.min) < 0.0005 ? "1.00 is a typical course; the same for every player" : `1.00 is a typical course; field range ${fx(sdMult.min, 3)} to ${fx(sdMult.max, 3)}`} />
           </Tip>
         )}
       </div>
       <Panel eyebrow="What the simulation played" title="Hole by hole">
-        <p className="inputs-note">This is each hole as the simulation plays it, for a reference player of zero skill. Each player&apos;s skill then moves the odds of birdies and bogeys up or down.{sentence ? ` ${sentence}` : ""}</p>
+        <p className="inputs-note">Each hole as the simulation plays it, for a reference player of zero skill. A player&apos;s skill then moves his chances of birdies and bogeys up or down.{sentence ? ` ${sentence}` : ""}</p>
         {tables.length > 1 && (
           <SegmentedControl label="Round group" value={String(group)} onChange={(v) => setGroup(Number(v))} options={tables.map((t, i) => ({ value: String(i), label: `Round${(t.rounds as unknown[]).length === 1 ? "" : "s"} ${(t.rounds as unknown[]).join(", ")}` }))} />
         )}
-        <div className="chart-medium">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
-              <CartesianGrid stroke="var(--line)" vertical={false} />
-              <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 10 }} />
-              <YAxis yAxisId="l" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Expected score vs par", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
-              <YAxis yAxisId="r" orientation="right" tick={{ fill: "var(--muted)", fontSize: 10 }} unit="%" />
-              <Tooltip content={<ChartTip />} />
-              <Legend />
-              <ReferenceLine yAxisId="l" y={0} stroke="var(--line-strong)" />
-              <Bar yAxisId="l" dataKey="expected" name="Expected score vs par" fill={palette[0]} radius={3} isAnimationActive={false} />
-              <Line yAxisId="r" dataKey="birdie" name="Birdie or better %" stroke={palette[1]} dot={false} isAnimationActive={false} />
-              <Line yAxisId="r" dataKey="bogey" name="Bogey or worse %" stroke={palette[3]} dot={false} isAnimationActive={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+        {!estimated && (
+          <div className="chart-medium">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Expected score vs par (red = hard, green = easy)", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+                <Tooltip content={<ChartTip />} />
+                <ReferenceLine y={0} stroke="var(--line-strong)" />
+                <Bar dataKey="expected" name="Expected score vs par" radius={3} isAnimationActive={false}>
+                  {chartData.map((point) => <Cell key={point.hole} fill={point.expected > 0 ? "var(--negative)" : "var(--positive)"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
         <DataTable
           rows={holeRows}
           label="Hole table"
@@ -652,31 +759,35 @@ function CourseTab({ doc }: { doc: Obj }) {
           defaultColumns={holeKeys}
           headerLabels={HEADERS}
           headerTitles={titlesFor(holeCols)}
+          renderCell={(column, value) => (column === "expected_vs_par" && num(value) !== null ? signed(value) : column === "sensitivity" && num(value) !== null ? fx(value) : undefined)}
         />
       </Panel>
-      <div className="two-column">
+      <div className={showFit ? "two-column" : undefined}>
         <Panel eyebrow="Per round" title="Course summary">
-          <DataTable rows={perRoundRows} label="Course per round" pageSize={8} preferredColumns={roundCols} headerLabels={HEADERS} headerTitles={titlesFor(roundCols)} />
-          <p className="inputs-note">
-            {num(course.hole_model_round_sd) !== null ? `The reference player's round SD on this course is ${fx(course.hole_model_round_sd, 2)}. ` : ""}
-            The table fixes the shape of scoring (the mix of birdies and bogeys, and how skill spreads). The simulation re-solves the scoring level for every player and round, so a scoring-average override moves the displayed level and the simulated scores, not the win probabilities.
-          </p>
+          <DataTable
+            rows={perRoundRows}
+            label="Course per round"
+            pageSize={8}
+            preferredColumns={roundCols}
+            headerLabels={HEADERS}
+            headerTitles={titlesFor(roundCols)}
+            renderCell={(column, value) => ((column === "scoring_avg" || column === "scoring_avg_untouched") && num(value) !== null ? signed(value) : column === "birdies_per_round" || column === "bogeys_per_round" ? (num(value) === null ? undefined : fx(value, 1)) : undefined)}
+          />
+          {courseOverrides.length > 0 && <p className="inputs-note">A scoring-average override changes the displayed scores but not win odds.</p>}
         </Panel>
-        <Panel eyebrow="Course fit" title="What this course changes">
-          <div className="kv-table">
-            {fitStats.map(({ key, stat }) => (
-              <div key={key}>
-                <span><Term k={key.startsWith("fit") ? "fit_rs_ddacc" : "course_history"}>{key.startsWith("fit") ? "Venue fit (distance and accuracy)" : "Course history"}</Term></span>
-                <b>low {fx(stat.min, 3)} · typical {fx(stat.median, 3)} · high {fx(stat.max, 3)}</b>
-              </div>
-            ))}
-            {sdMult && <div><span><Term k="course_sd_mult">Course SD multiplier</Term></span><b>{fx(sdMult.median, 3)}</b></div>}
-            <div><span>Your course overrides</span><b>{courseOverrides.length ? courseOverrides.join("; ") : "none"}</b></div>
-          </div>
-          {fitStats.length === 0 && (
-            <p className="inputs-muted">Venue fit and course history are not saved separately for this run. Their combined effect is in each player&apos;s Course fit and history line (Players tab).</p>
-          )}
-        </Panel>
+        {showFit && (
+          <Panel eyebrow="Course fit" title="What this course changes">
+            <div className="kv-table">
+              {fitStats.map(({ key, stat }) => (
+                <div key={key}>
+                  <span><Term k={key.startsWith("fit") ? "fit_rs_ddacc" : "course_history"}>{key.startsWith("fit") ? "Venue fit (distance and accuracy)" : "Course history"}</Term></span>
+                  <b>low {fx(stat.min, 3)} · typical {fx(stat.median, 3)} · high {fx(stat.max, 3)}</b>
+                </div>
+              ))}
+              {courseOverrides.length > 0 && <div><span>Your course overrides</span><b>{courseOverrides.join("; ")}</b></div>}
+            </div>
+          </Panel>
+        )}
       </div>
       <Technical>
         <KeyValue
@@ -692,16 +803,18 @@ function CourseTab({ doc }: { doc: Obj }) {
             data_coverage_note: obj(course.course_provenance).coverage_limitations,
             slopes_status: slopes.status,
             slopes_reason: slopes.reason,
+            reference_player_round_sd: course.hole_model_round_sd,
           }}
           empty=""
         />
+        {extra}
       </Technical>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ variance and engine */
-function VarianceTab({ doc }: { doc: Obj }) {
+function VarianceTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
   const eng = obj(doc.engine);
   const players = arr(doc.players);
   const points = players.map((p) => ({ name: String(p.name ?? ""), mu: num(obj(p.challenger).mu) ?? 0, sd: num(obj(p.challenger).sd) ?? 0 }));
@@ -712,30 +825,32 @@ function VarianceTab({ doc }: { doc: Obj }) {
   const oo = obj(eng.owner_overrides_on_engine);
   const engineOverrides = [
     num(oo.course_scoring_avg_delta) !== null ? `course scoring average ${signed(oo.course_scoring_avg_delta, 2)} strokes` : "",
-    num(oo.course_sd_mult) !== null && num(oo.course_sd_mult) !== 1 ? `course SD multiplier ${fx(oo.course_sd_mult, 2)}` : "",
+    num(oo.course_sd_mult) !== null && num(oo.course_sd_mult) !== 1 ? `course spread factor ${fx(oo.course_sd_mult, 2)}` : "",
     oo.rule_override ? `cut rule changed (${cutRuleSentence(obj(oo.rule_override))})` : "",
   ].filter(Boolean);
   const registry = obj(cut.registry_rule);
   const registryText = cutRuleSentence(registry);
   const cutText = Object.keys(cut).length ? cutRuleSentence(cut) : "";
   const wkRho = num(wl.wk_rho);
+  const noise = num(eng.seed_spread_max_abs_p_win);
+  const blowUp = num(dl.day_pb);
+  const career = num(dl.day_ph);
   return (
     <div className="stack-lg">
       <div className="kpi-grid">
-        <Tip text={GLOSSARY.n_sims}><Kpi label="Simulated tournaments" value={Number(eng.n_sims ?? 0).toLocaleString()} detail={eng.n_seeds ? `run as ${String(eng.n_seeds)} independent batches` : undefined} tone="accent" /></Tip>
-        <Tip text={GLOSSARY.tau}><Kpi label="Week-long form swing (SD)" value={fx(wl.tau, 2)} detail={`strokes per round; x${fx(wl.t12, 2)} in rounds 1-2, x${fx(wl.t34, 2)} in rounds 3-4`} /></Tip>
-        <Tip text={GLOSSARY.v_hole}><Kpi label="Hole-to-hole luck" value={fx(eng.V_hole, 2)} detail={`variance in strokes squared; carry-over between holes ${fx(eng.hole_a, 2)}`} /></Tip>
-        <Tip text={GLOSSARY.seed_spread}><Kpi label="Simulation noise" value={pct(eng.seed_spread_max_abs_p_win, 2)} detail="largest gap in any win probability between batches" /></Tip>
+        <Tip text={GLOSSARY.n_sims}><Kpi label="Simulated tournaments" value={Number(eng.n_sims ?? 0).toLocaleString()} tone="accent" /></Tip>
+        {num(wl.tau) !== null && <Tip text={GLOSSARY.tau}><Kpi label="Form drift over the week" value={`${fx(wl.tau, 1)} strokes`} detail="per round, up or down: how far a player's form can wander during a tournament" /></Tip>}
+        {noise !== null && <Tip text={GLOSSARY.seed_spread}><Kpi label="Win-odds precision" value={`±${(noise * 100).toFixed(1)} pts`} detail="win odds are accurate to about this many percentage points" /></Tip>}
       </div>
       <div className="two-column">
-        <Panel eyebrow="Spread" title="Round SD against mean">
-          <p className="inputs-muted">Each dot is a player: how good he is (mu) against how much his rounds swing (SD).</p>
+        <Panel eyebrow="Spread" title="Rating against round swing">
+          <p className="inputs-muted">Each dot is a player: how good he is (rating) against how much his rounds swing. Hover a dot for the name.</p>
           <div className="chart-medium">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 10, right: 16, bottom: 18, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" />
-                <XAxis type="number" dataKey="mu" name="Mu" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Mu (strokes gained per round vs field)", fill: "var(--muted)", fontSize: 10, position: "insideBottom", offset: -8 }} />
-                <YAxis type="number" dataKey="sd" name="Round SD" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Round SD", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+                <XAxis type="number" dataKey="mu" name="Rating" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Rating (strokes per round vs field)", fill: "var(--muted)", fontSize: 10, position: "insideBottom", offset: -8 }} />
+                <YAxis type="number" dataKey="sd" name="Round swing" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Round swing", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
                 <ZAxis range={[26, 26]} />
                 <Tooltip content={<ChartTip />} />
                 <Scatter data={points} fill={palette[0]} name="Player" isAnimationActive={false} />
@@ -743,36 +858,47 @@ function VarianceTab({ doc }: { doc: Obj }) {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel eyebrow="Rules" title="Cut and spread settings">
-          <div className="kv-table">
-            <div><span>Cut rule</span><b>{cutText}</b></div>
-            {Boolean(cut.override) && <div><span>Before your override</span><b>{registryText}</b></div>}
-            {num(eng.sd_scale) !== null && <div><span><Term k="sd_scale">Overall SD scale</Term></span><b>{fx(eng.sd_scale, 3)}</b></div>}
-          </div>
-          <p className="inputs-note">
-            Every player&apos;s round SD is built from his own history (pulled toward the tour norm), then scaled by how much this course widens or narrows scores.
-            {num(pin.ratio_mean) !== null ? ` The simulation reproduces those target SDs closely: on average it lands at ${fx(pin.ratio_mean, 3)} of the target (range ${fx(pin.ratio_min, 3)} to ${fx(pin.ratio_max, 3)}).` : ""}
-          </p>
-        </Panel>
-      </div>
-      <div className="two-column">
-        <Panel eyebrow="Luck built into every tournament" title="Week and day swings">
-          <div className="kv-table">
-            <div>
-              <span><Term k="tau">Week-long form swing</Term></span>
-              <b>SD {fx(wl.tau, 2)} strokes per round (x{fx(wl.t12, 2)} in rounds 1-2, x{fx(wl.t34, 2)} in rounds 3-4){wkRho !== null ? `; correlation ${fx(wkRho, 2)} between the two halves of the week` : ""}</b>
-            </div>
-            {num(dl.day_pb) !== null && <div><span>Bad day</span><b>{pct(dl.day_pb, 1)} chance in any round, about {fx(dl.day_db, 1)} strokes worse than usual</b></div>}
-            {num(dl.day_ph) !== null && <div><span>Hot day</span><b>{pct(dl.day_ph, 1)} chance in any round, about {fx(dl.day_dh, 1)} strokes better than usual</b></div>}
-          </div>
-        </Panel>
-        <Panel eyebrow="Owner" title="Overrides on the engine">
-          <p className="inputs-note">{engineOverrides.length ? `Active: ${engineOverrides.join("; ")}.` : "No engine-level override on this run."}</p>
-        </Panel>
+        <div className="stack-lg">
+          {cutText && (
+            <Panel eyebrow="Cut" title="Cut rule">
+              <div className="kv-table">
+                <div><span>Cut rule</span><b>{cutText}</b></div>
+                {Boolean(cut.override) && <div><span>Before your override</span><b>{registryText}</b></div>}
+              </div>
+            </Panel>
+          )}
+          {(blowUp !== null || career !== null || num(wl.tau) !== null) && (
+            <Panel eyebrow="Luck built into every tournament" title="Week and day swings">
+              <div className="kv-table">
+                {num(wl.tau) !== null && (
+                  <div>
+                    <span><Term k="tau">Form drift</Term></span>
+                    <b>about {fx(wl.tau, 1)} strokes per round either way{wkRho !== null && wkRho >= 0.95 ? "; one shared hot or cold streak carries through the whole week" : ""}</b>
+                  </div>
+                )}
+                {blowUp !== null && <div><span>Blow-up round</span><b>{pct(blowUp, 1)} of rounds (about 1 in {Math.round(1 / Math.max(blowUp, 0.001))}): roughly {fx(dl.day_db, 1)} strokes worse than the player&apos;s own average</b></div>}
+                {career !== null && <div><span>Career round</span><b>{pct(career, 1)} of rounds: roughly {fx(dl.day_dh, 1)} strokes better than the player&apos;s own average</b></div>}
+              </div>
+              {(num(dl.day_db) ?? 0) > (num(dl.day_dh) ?? 0) && <p className="inputs-muted">Blow-ups are far bigger than career rounds, as in real golf.</p>}
+            </Panel>
+          )}
+          {engineOverrides.length > 0 && (
+            <Panel eyebrow="Your overrides" title="Overrides on the engine">
+              <p className="inputs-note">{`Active: ${engineOverrides.join("; ")}.`}</p>
+            </Panel>
+          )}
+        </div>
       </div>
       <Technical>
         <KeyValue
           data={{
+            overall_spread_scale: eng.sd_scale,
+            hole_to_hole_luck_variance: eng.V_hole,
+            hole_carry_over: eng.hole_a,
+            batches: eng.n_seeds,
+            spread_match_average: pin.ratio_mean,
+            spread_match_min: pin.ratio_min,
+            spread_match_max: pin.ratio_max,
             variance_rule: eng.variance_rule,
             variance_params_version: eng.variance_params_version,
             simulator: eng.simulator,
@@ -784,11 +910,11 @@ function VarianceTab({ doc }: { doc: Obj }) {
             day_latent: eng.day_latent,
             shape_mixture: eng.shape_mixture,
             kernel_params: eng.kernel_params,
-            sd_pin_check: eng.sd_pin_check,
             cut_rule_basis: cut.rule_basis,
             registry_rule: registry,
           }}
         />
+        {extra}
       </Technical>
     </div>
   );
@@ -796,15 +922,19 @@ function VarianceTab({ doc }: { doc: Obj }) {
 
 /* ------------------------------------------------------------------ weather */
 function plainWeatherReason(text: string): string {
-  return text
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => part.replace(/^R(\d): no tee sheet: wave-free common component only$/, "Round $1: no tee times published yet, so only the shared weather effect applies").replace(/^R(\d):/, "Round $1:"))
-    .join("; ");
+  const parts = text.split(";").map((part) => part.trim()).filter(Boolean);
+  const noSheet: string[] = [];
+  const rest: string[] = [];
+  for (const part of parts) {
+    const m = /^R(\d): no tee sheet: wave-free common component only$/.exec(part);
+    if (m) noSheet.push(m[1]);
+    else rest.push(part.replace(/^R(\d):/, "Round $1:"));
+  }
+  if (noSheet.length) rest.unshift(`${noSheet.length === 1 ? "Round" : "Rounds"} ${joinAnd(noSheet)}: tee times are not out yet, so only the general forecast is used`);
+  return rest.join("; ");
 }
 
-function WeatherTab({ doc }: { doc: Obj }) {
+function WeatherTab({ doc, runAsOf, extra }: { doc: Obj; runAsOf: string; extra?: ReactNode }) {
   const w = obj(doc.weather);
   const waves = arr(w.waves);
   const snapshot = obj(w.forecast_snapshot);
@@ -812,21 +942,22 @@ function WeatherTab({ doc }: { doc: Obj }) {
   const cover = obj(w.tee_sheet_coverage);
   const roundStatus = obj(w.round_status);
   const fmtTee = teeFormatter(doc);
-  const data = waves.map((x) => ({ label: `Round ${String(x.round)}, ${String(x.wave)}`, wind: num(x.mean_forecast_wind_mph) ?? 0, players: num(x.n_players) ?? 0 }));
+  const data = waves.map((x) => ({ label: `Round ${String(x.round)}, ${String(x.wave)}`, wind: Math.round(num(x.mean_forecast_wind_mph) ?? 0), players: num(x.n_players) ?? 0 }));
   const coverage: Array<{ round: string; value: number }> = Object.keys(roundStatus).length
     ? Object.entries(roundStatus).map(([round, info]) => ({ round, value: num(obj(info).tee_coverage) ?? 0 }))
     : Object.entries(cover).map(([round, value]) => ({ round: round.replace(/\D/g, ""), value: num(value) ?? 0 }));
   const issued = snapshot.issued_at ?? display.fetched_at;
-  const age = num(snapshot.age_hours_at_as_of);
+  const hoursBefore = issued && runAsOf ? (Date.parse(runAsOf) - Date.parse(String(issued))) / 3_600_000 : Number.NaN;
   const reason = plainWeatherReason(String(w.reason ?? ""));
   const waveRows = waves.map((x) => ({
     round: num(x.round),
     wave: titleCase(x.wave),
     players: num(x.n_players),
-    first_tee: fmtTee(x.first_tee_local).text,
-    last_tee: fmtTee(x.last_tee_local).text,
-    mean_wind_mph: num(x.mean_forecast_wind_mph),
+    first_tee: fmtTee(x.first_tee_local).both,
+    last_tee: fmtTee(x.last_tee_local).both,
+    mean_wind_mph: num(x.mean_forecast_wind_mph) === null ? null : Math.round(num(x.mean_forecast_wind_mph) as number),
   }));
+  const published = coverage.filter((item) => item.value > 0);
   return (
     <div className="stack-lg">
       <div className="inputs-banner warn">
@@ -839,10 +970,10 @@ function WeatherTab({ doc }: { doc: Obj }) {
         </span>
       </div>
       <div className="kpi-grid">
-        {issued ? <Kpi label="Forecast issued" value={etTime(issued)} detail={age !== null ? `${age.toFixed(1)} hours before the odds snapshot` : undefined} tone="accent" /> : null}
-        {coverage.map((item) => (
+        {issued ? <Kpi label="Forecast issued" value={etTime(issued)} detail={Number.isFinite(hoursBefore) && hoursBefore >= 0 ? `${ageText(hoursBefore)} before this model run` : undefined} tone="accent" /> : null}
+        {published.map((item) => (
           <Tip key={item.round} text="Share of the field with a published tee time for this round. Without tee times only the shared (not wave-specific) weather effect can be applied.">
-            <Kpi label={`Tee times, round ${item.round}`} value={pct(item.value, 0)} detail={item.value > 0 ? "of players have a published time" : "not published yet"} />
+            <Kpi label={`Tee times, round ${item.round}`} value={pct(item.value, 0)} detail="of players have a published time" />
           </Tip>
         ))}
       </div>
@@ -853,7 +984,7 @@ function WeatherTab({ doc }: { doc: Obj }) {
               <BarChart data={data} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 10 }} />
-                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} allowDecimals={false} />
                 <Tooltip content={<ChartTip />} />
                 <Bar dataKey="wind" name="Average wind (mph)" fill={palette[2]} radius={3} isAnimationActive={false} />
               </BarChart>
@@ -862,19 +993,20 @@ function WeatherTab({ doc }: { doc: Obj }) {
         </Panel>
       )}
       {waveRows.length > 0 && (
-        <Panel eyebrow="Tee sheet" title="Waves (times in Eastern)">
+        <Panel eyebrow="Tee sheet" title="Waves (course time, with Eastern in brackets)">
           <DataTable
             rows={waveRows}
             label="Waves"
             pageSize={12}
             verbatim
             preferredColumns={["round", "wave", "players", "first_tee", "last_tee", "mean_wind_mph"]}
-            headerLabels={{ round: "Round", wave: "Wave", players: "Players", first_tee: "First tee (ET)", last_tee: "Last tee (ET)", mean_wind_mph: "Average forecast wind (mph)" }}
+            headerLabels={{ round: "Round", wave: "Wave", players: "Players", first_tee: "First tee", last_tee: "Last tee", mean_wind_mph: "Average forecast wind (mph)" }}
           />
         </Panel>
       )}
       <Technical>
         <KeyValue data={{ forecast_snapshot: snapshot, forecast_file: display.file, wind_converted_from_kmh: display.wind_mph_converted_from_kmh, recipe: w.recipe }} />
+        {extra}
       </Technical>
     </div>
   );
@@ -885,7 +1017,7 @@ const FEED_NAMES: Record<string, string> = {
   field_updates: "Field list",
   matchups_tournament_matchups: "Tournament matchups",
   outrights_make_cut: "Make-cut prices",
-  outrights_mc: "Make-cut prices (second feed)",
+  outrights_mc: "Make-cut prices (backup source)",
   outrights_win: "Win prices",
   outrights_top_5: "Top 5 prices",
   outrights_top_10: "Top 10 prices",
@@ -893,47 +1025,53 @@ const FEED_NAMES: Record<string, string> = {
   pre_tournament: "Data Golf pre-tournament model",
 };
 
-function OddsTab({ doc }: { doc: Obj }) {
+/** The latest time any book's prices were pulled (ISO), falling back to the data feeds, then to the run's own odds timestamp. */
+function oddsPulledAt(doc: Obj): string {
+  const odds = obj(doc.odds);
+  const times = [...arr(odds.books).map((b) => Date.parse(String(b.latest_fetch ?? ""))), ...Object.values(obj(odds.snapshot_inputs)).map((f) => Date.parse(String(obj(f).fetched_at ?? "")))].filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : String(odds.as_of ?? "");
+}
+
+function OddsTab({ doc, runAsOf }: { doc: Obj; runAsOf: string }) {
   const odds = obj(doc.odds);
   const books = arr(odds.books);
   const stale = books.filter((b) => (num(b.age_hours_at_asof) ?? 0) > 6).length;
   const excluded = Array.isArray(odds.excluded_books_config) ? (odds.excluded_books_config as unknown as string[]) : [];
-  const winQuotes = num(obj(odds.quotes_by_market).win);
   const feedRows = Object.entries(obj(odds.snapshot_inputs)).map(([key, value]) => {
     const f = obj(value);
     return { feed: FEED_NAMES[key] ?? titleCase(key), pulled: etTime(f.fetched_at, ""), source_updated: utcText(f.payload_last_updated) };
   });
   const marketRows = Object.entries(obj(odds.books_by_market)).map(([key, value]) => ({ market: marketName(key), books: num(value) }));
   const bookRows = books.map((b) => ({
-    book: titleCase(b.book),
-    age_hours: num(b.age_hours_at_asof),
+    book: bookName(b.book),
+    age: ageText(num(b.age_hours_at_asof)),
     quotes: num(b.n_quotes),
-    markets: Array.isArray(b.markets) ? (b.markets as unknown[]).map((m) => marketName(String(m))).join(", ") : String(b.markets ?? ""),
+    markets: Array.isArray(b.markets) ? [...new Set((b.markets as unknown[]).map((m) => marketName(String(m))))].join(", ") : String(b.markets ?? ""),
     latest_fetch: etTime(b.latest_fetch, ""),
     latest_book_update: etTime(b.latest_book_update, ""),
   }));
+  const pulled = oddsPulledAt(doc);
   return (
     <div className="stack-lg">
       <div className="kpi-grid">
-        <Kpi label="Prices as of" value={etTime(odds.as_of)} detail="odds were frozen at this time" tone="accent" />
-        <Tip text={GLOSSARY.odds_age}><Kpi label="Books" value={String(books.length)} detail={stale ? `${stale} with prices older than 6 hours` : "all prices under 6 hours old"} tone={stale ? "negative" : "positive"} /></Tip>
+        <Tip text="The most recent time any book's prices were pulled. A live run can reuse earlier odds."><Kpi label="Odds last pulled" value={etTime(pulled)} detail={runAsOf ? `model run built ${etTime(runAsOf)}` : undefined} tone="accent" /></Tip>
+        <Tip text={GLOSSARY.odds_age}><Kpi label="Books" value={String(books.length)} detail={stale ? `${stale} with prices older than 6 hours` : "all prices under 6 hours old when the run was built"} tone={stale ? "negative" : "positive"} /></Tip>
         {excluded.length > 0 && (
-          <Tip text="Prices from these sources are never treated as a sportsbook quote (for example Data Golf's own price is a model, not a book).">
-            <Kpi label="Not used as a book price" value={excluded.map(titleCase).join(", ")} />
+          <Tip text="Prices from these sources are compared against, never treated as a sportsbook price.">
+            <Kpi label="Comparison only" value={excluded.map(bookName).join(", ")} detail="used as a model comparison, not as a sportsbook price" />
           </Tip>
         )}
-        {winQuotes !== null && <Kpi label="Win prices collected" value={winQuotes.toLocaleString()} detail="across all books" />}
       </div>
-      <p className="inputs-note">Odds do not feed the simulation. They only enter the final fair prices through the market consensus and combiner step.</p>
-      <Panel eyebrow="Freshness" title="Each book when the odds were frozen">
+      <p className="inputs-note">Odds do not change the simulation. They only come in at the end, when the model&apos;s prices are blended with the market.</p>
+      <Panel eyebrow="Freshness" title="Each book's prices">
         <DataTable
           rows={dropEmptyColumns(bookRows)}
           label="Odds freshness"
           pageSize={20}
           verbatim
-          preferredColumns={["book", "age_hours", "quotes", "markets", "latest_fetch", "latest_book_update"]}
-          headerLabels={{ book: "Book", age_hours: "Age (hours)", quotes: "Prices", markets: "Markets", latest_fetch: "Pulled (ET)", latest_book_update: "Book last changed (ET)" }}
-          headerTitles={{ age_hours: GLOSSARY.odds_age, latest_fetch: GLOSSARY.fetched, latest_book_update: GLOSSARY.book_update }}
+          preferredColumns={["book", "age", "quotes", "markets", "latest_fetch", "latest_book_update"]}
+          headerLabels={{ book: "Book", age: "Age when run was built", quotes: "Prices", markets: "Markets", latest_fetch: "Pulled (ET)", latest_book_update: "Book last changed (ET)" }}
+          headerTitles={{ age: GLOSSARY.odds_age, latest_fetch: GLOSSARY.fetched, latest_book_update: GLOSSARY.book_update }}
         />
       </Panel>
       <div className="two-column">
@@ -952,7 +1090,7 @@ function OddsTab({ doc }: { doc: Obj }) {
   );
 }
 
-/* ------------------------------------------------------------------ config */
+/* ------------------------------------------------------------------ run info */
 const TOML_NAMES: Record<string, string> = {
   "books.toml": "Which books count as soft, sharp or excluded",
   "checks.toml": "Safety-check thresholds",
@@ -961,14 +1099,12 @@ const TOML_NAMES: Record<string, string> = {
   "staking.toml": "Staking rules",
 };
 
-function ConfigTab({ doc }: { doc: Obj }) {
+function ConfigTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
   const config = obj(doc.config);
   const files = obj(config.files);
   const prov = obj(doc.provenance);
   const run = obj(config.run);
   const chl = obj(prov.chl);
-  const arm = obj(obj(obj(prov.arms_status).challenger));
-  const [modelName, ...modelRest] = String(arm.what ?? "").split(":");
   const guard = obj(prov.v2_guard);
   const clock = obj(prov.forward_clock);
   const snap = snapshotTime(prov.foundation_id);
@@ -977,24 +1113,28 @@ function ConfigTab({ doc }: { doc: Obj }) {
   return (
     <div className="stack-lg">
       <div className="kpi-grid">
-        {modelName && <Kpi label="Model" value={modelName.trim()} detail={modelRest.join(":").trim() || undefined} tone="accent" />}
-        {snap && <Tip text="When the player-skill data snapshot behind this run was taken."><Kpi label="Skill data as of" value={snap} detail="snapshot of every round the model has seen" /></Tip>}
-        {history && <Tip text="The most recent round included in the players' history."><Kpi label="History through" value={history} detail="last round the model has seen" /></Tip>}
+        {(history || snap) && (
+          <Tip text="The most recent round included in the players' history, and when that data was last refreshed.">
+            <Kpi label="Player history" value={history ? `Rounds through ${history}` : `Refreshed ${snap}`} detail={history && snap ? `data refreshed ${snap}` : undefined} tone="accent" />
+          </Tip>
+        )}
+        {num(run.n_sims) !== null && <Tip text={GLOSSARY.n_sims}><Kpi label="Simulated tournaments" value={(num(run.n_sims) as number).toLocaleString()} /></Tip>}
         {clock.counts_for_forward_clock !== undefined && (
-          <Tip text="The forward test only counts live PGA events that have odds; other runs are for information.">
-            <Kpi label="Counts toward the forward test" value={clock.counts_for_forward_clock ? "Yes" : "No"} detail={String(clock.note ?? "") || undefined} />
+          <Tip text="Only live PGA Tour events that have odds go into the live track record; other runs are for information.">
+            <Kpi label="In the live track record" value={clock.counts_for_forward_clock ? "Yes" : "No"} detail={clock.counts_for_forward_clock ? "this run is scored against results" : "shown for information only"} />
           </Tip>
         )}
       </div>
-      <Panel eyebrow="This run" title="How it was set up">
-        <div className="kv-table">
-          {num(run.n_sims) !== null && <div><span><Term k="n_sims">Simulated tournaments</Term></span><b>{(num(run.n_sims) as number).toLocaleString()}</b></div>}
-          {places && <div><span>Finishing positions priced</span><b>Win and top {places}</b></div>}
-          {Object.keys(guard).length > 0 && <div><span>Model spec check</span><b>{guard.ok ? `Passed (${String(guard.n_checked ?? "")} checks)` : "FAILED"}</b></div>}
-          {prov.location_status !== undefined && <div><span>Location adjustment</span><b>{prov.location_status === "ok" ? "Applied" : titleCase(prov.location_status)}</b></div>}
-        </div>
-      </Panel>
+      {(places || prov.location_status !== undefined) && (
+        <Panel eyebrow="This run" title="How it was set up">
+          <div className="kv-table">
+            {places && <div><span>Finishing positions priced</span><b>Win and top {places}</b></div>}
+            {prov.location_status !== undefined && <div><span>Location adjustment</span><b>{prov.location_status === "ok" ? "Applied" : titleCase(prov.location_status)}</b></div>}
+          </div>
+        </Panel>
+      )}
       <Technical>
+        <KeyValue data={{ model: obj(obj(prov.arms_status).challenger).what, spec_check: Object.keys(guard).length ? { passed: guard.ok, checks: guard.n_checked } : undefined }} empty="" />
         <KeyValue data={{ params: config.params, run: config.run }} />
         <KeyValue data={{ ...prov, code_hashes: undefined }} />
         {Object.entries(files).map(([name, value]) => {
@@ -1006,6 +1146,7 @@ function ConfigTab({ doc }: { doc: Obj }) {
             </details>
           );
         })}
+        {extra}
       </Technical>
     </div>
   );
@@ -1029,7 +1170,7 @@ type Glossary = {
   location: { note: string; columns: GlossaryLocation[]; n_columns_2026: number };
 };
 
-const VARIANT_SHORT: Record<string, string> = { base: "All players, all events", xeuro: "+ at DPWT events", xband0: "+ player <30 rounds", xband1: "+ player 30-100 rounds", miss: "+ if missing", miss_xeuro: "+ if missing, DPWT event" };
+const VARIANT_SHORT: Record<string, string> = { base: "All players, all events", xeuro: "+ at DP World Tour events", xband0: "+ player <30 rounds", xband1: "+ player 30-100 rounds", miss: "+ if missing", miss_xeuro: "+ if missing, DP World Tour event" };
 type WeightModel = "chl" | "v21";
 type SortMode = "model" | "weight";
 
@@ -1066,7 +1207,7 @@ function FeaturesTab() {
   }, [features, family, model, query, sort]);
   const locShown = useMemo(() => (glossary?.location.columns ?? []).filter((c) => (family === "all" || family === "location") && matchText(`${c.name} ${c.base} ${c.measures} ${c.part} location`, query)), [glossary, family, query]);
   if (loading) return <LoadingState label="Loading the feature glossary" />;
-  if (error || !glossary) return <ErrorState message={error ?? "The feature glossary has not been published yet."} />;
+  if (error || !glossary) return <EmptyState title="Skill measurements are not available yet" detail="They were not saved for this run. They will appear here after the next publish." />;
   const m = glossary.model;
   const share = (f: GlossaryFamily) => (model === "chl" ? f.share_abs_weight_chl : f.share_abs_weight_v21);
   const visibleFamilies = glossary.families.filter((f) => shown.some((x) => x.family === f.key));
@@ -1079,19 +1220,19 @@ function FeaturesTab() {
         <Tip text="Inputs describing home base, travel and nationality."><Kpi label="Location inputs" value={String(glossary.location.n_columns_2026)} detail="home base, travel and nationality" /></Tip>
       </div>
       <Panel eyebrow="How to read this" title="What the weights mean">
-        <p className="inputs-note">{String(m.overview ?? "")}</p>
-        <p className="inputs-note">{glossary.reading_weights}</p>
+        <p className="inputs-note">{plain(m.overview)}</p>
+        <p className="inputs-note">{plain(glossary.reading_weights)}</p>
         <h3 className="inputs-h3">Variants of each feature</h3>
         <div className="kv-table variant-help">
           {glossary.variants.map((v) => (
-            <div key={v.key}><span>{v.label}</span><b>{v.text}</b></div>
+            <div key={v.key}><span>{plain(v.label)}</span><b>{plain(v.text)}</b></div>
           ))}
         </div>
         <details className="config-file">
           <summary><b>Standardisation and how the weights are fitted</b><span>walk-forward ridge, per season</span></summary>
           <div className="glossary-prose">
             <p className="inputs-note">{glossary.standardisation}</p>
-            <ul>{glossary.fit.map((line) => <li key={line}>{line}</li>)}</ul>
+            <ul>{glossary.fit.map((line) => <li key={line}>{plain(line)}</li>)}</ul>
           </div>
         </details>
       </Panel>
@@ -1101,29 +1242,29 @@ function FeaturesTab() {
             <Search size={15} />
             <input type="search" aria-label="Search features" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name or explanation…" />
           </label>
-          <Select label="Group" value={family} onChange={setFamily} options={[{ value: "all", label: "All groups" }, ...glossary.families.map((f) => ({ value: f.key, label: `${f.label} (${f.n_features})` })), { value: "location", label: `Location (${glossary.location.columns.length})` }]} />
+          <Select label="Group" value={family} onChange={setFamily} options={[{ value: "all", label: "All groups" }, ...glossary.families.map((f) => ({ value: f.key, label: `${plain(f.label)} (${f.n_features})` })), { value: "location", label: `Location (${glossary.location.columns.length})` }]} />
           <Select label="Order" value={sort} onChange={(v) => setSort(v as SortMode)} options={[{ value: "model", label: "Model order" }, { value: "weight", label: "Largest weight first" }]} />
           <SegmentedControl label="Weights from" value={model} onChange={setModel} options={[{ value: "chl", label: "Skill model alone" }, { value: "v21", label: "Refit with location" }]} />
         </div>
         <p className="inputs-muted">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardised coefficients ({model === "chl" ? "the skill model on its own" : "the skill model refit together with the location inputs"}).</p>
       </Panel>
       {visibleFamilies.map((fam) => (
-        <Panel key={fam.key} eyebrow={`${fam.n_features} features · ${(share(fam) * 100).toFixed(1)}% of total absolute weight`} title={fam.label}>
-          <p className="inputs-note">{fam.summary}</p>
+        <Panel key={fam.key} eyebrow={`${fam.n_features} features · ${(share(fam) * 100).toFixed(1)}% of total absolute weight`} title={plain(fam.label)}>
+          <p className="inputs-note">{plain(fam.summary)}</p>
           <div className="feature-grid">
             {shown.filter((f) => f.family === fam.key).map((f) => (
               <article className="feature-card" key={f.base} id={`feature-${f.base}`}>
                 <header>
-                  <h3>{f.name}</h3>
+                  <h3>{plain(f.name)}</h3>
                 </header>
-                <p>{f.measures}</p>
+                <p>{plain(f.measures)}</p>
                 <WeightStrip weights={model === "chl" ? f.weights.chl : f.weights.v21} />
                 <details>
                   <summary>How it is computed and what sign to expect</summary>
                   <h4>How it is computed</h4>
-                  <p>{f.computed}</p>
+                  <p>{plain(f.computed)}</p>
                   <h4>Expected sign</h4>
-                  <p>{f.sign_intuition}</p>
+                  <p>{plain(f.sign_intuition)}</p>
                   <h4>Technical: model column name</h4>
                   <p><code className="feature-code">{f.base}</code></p>
                 </details>
@@ -1181,13 +1322,26 @@ const localInput = (ms: number) => {
 
 const FIELD_LABELS: Record<string, string> = {
   skill_delta: "Skill change (strokes per round)",
-  sd_mult: "Round SD multiplier",
+  sd_mult: "Round swing multiplier (1.00 = no change)",
   withdraw: "Withdraw",
   scoring_avg_delta: "Course scoring average change",
-  course_sd_mult: "Course SD multiplier",
+  course_sd_mult: "Course spread factor (1.00 = no change)",
   cut_rule: "Cut rule",
 };
 const SCOPE_LABELS: Record<string, string> = { player: "Player", course: "Course", engine: "Cut rule" };
+
+/** One plain sentence about what an override field does, with its allowed range. */
+function specNote(spec: FieldSpec): string {
+  const range = spec.kind === "number" ? ` (between ${spec.lo} and ${spec.hi})` : "";
+  const known: Record<string, string> = {
+    skill_delta: "Added to this player's rating, in strokes per round",
+    sd_mult: "Multiplies this player's round swing",
+    scoring_avg_delta: "Shifts the course's scoring average, in strokes per round; this changes displayed scores, not win odds",
+    course_sd_mult: "Widens or narrows scores at this course",
+  };
+  const base = known[spec.field] ?? spec.what.replace(/\bchallenger\s+/gi, "").replace(/\.$/, "");
+  return `${base}${range}.`;
+}
 const fieldLabel = (field: string) => FIELD_LABELS[field] ?? titleCase(field);
 
 function describeValue(record: OverrideRecord): string {
@@ -1206,6 +1360,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   const [field, setField] = useState("skill_delta");
   const [eventKey, setEventKey] = useState(eventUid);
   const [target, setTarget] = useState<string>(presetPlayer ? String(presetPlayer) : "");
+  const [playerFilter, setPlayerFilter] = useState("");
   const [value, setValue] = useState("");
   const [cut, setCut] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
@@ -1246,6 +1401,12 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   const fieldsForScope = specs.filter((s) => s.scope === scope);
   const playerName = useMemo(() => new Map(players.map((p) => [String(p.dg_id), String(p.name ?? "")])), [players]);
   const effectiveCut = obj(eventObj.cut_rule);
+  const playerOptions = useMemo(() => {
+    const all = players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }]));
+    const shown = playerFilter.trim() ? matchPlayers(all, playerFilter, 30) : all;
+    const picked = all.find((c) => String(c.dg_id) === target);
+    return picked && !shown.includes(picked) ? [picked, ...shown] : shown;
+  }, [players, playerFilter, target]);
 
   const draftValue = (): unknown => {
     if (!spec) return undefined;
@@ -1282,8 +1443,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
     const ch = obj(player.challenger);
     const v = Number(value);
     if (!Number.isFinite(v) || value.trim() === "") return null;
-    if (field === "skill_delta") return `mu ${signed(ch.mu)} becomes about ${signed((num(ch.mu) ?? 0) + v)} (before the field is re-centred).`;
-    if (field === "sd_mult") return `Round SD ${fx(ch.sd, 2)} becomes about ${fx((num(ch.sd) ?? 0) * v, 2)}.`;
+    if (field === "skill_delta") return `Rating ${signed(ch.mu)} becomes about ${signed((num(ch.mu) ?? 0) + v)} (before the field is re-centred).`;
+    if (field === "sd_mult") return `Round swing ${fx(ch.sd, 2)} becomes about ${fx((num(ch.sd) ?? 0) * v, 2)}.`;
     return null;
   })();
 
@@ -1321,20 +1482,26 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   return (
     <div className="stack-lg">
       <div className="inputs-banner">
-        <strong>One-off fixes, applied directly to the model price</strong>
-        <span>Each override appears as its own named line in the player breakdown. The untouched model number is stored for the forward test. Hard bounds reject, never clip. Saving updates the shared override list and records an audit entry with your Access identity; golfprice reads it at its next run.</span>
+        <strong>One-off fixes to the model price</strong>
+        <span>An override changes the model&apos;s price for this event only and expires automatically. The original model number is kept. It is applied on the next run and shows as its own line in the player breakdown.</span>
       </div>
       <Panel eyebrow="New override" title="Adjust the model">
         <form className="override-form" onSubmit={submit}>
           <div className="form-grid">
             <Select label="Event" value={eventKey} onChange={setEventKey} options={[{ value: eventUid, label: String(eventObj.name ?? "This event") }, { value: "all", label: "All events" }]} />
-            <Select label="Scope" value={scope} onChange={(v) => { setScope(v as Scope); const first = specs.find((s) => s.scope === v); setField(first?.field ?? ""); setValue(""); }} options={[{ value: "player", label: "Player" }, { value: "course", label: "Course" }, { value: "engine", label: "Engine (cut rule)" }]} />
-            <Select label="Field" value={field} onChange={(v) => { setField(v); setValue(""); }} options={fieldsForScope.map((s) => ({ value: s.field, label: fieldLabel(s.field) }))} />
+            <Select label="Scope" value={scope} onChange={(v) => { setScope(v as Scope); const first = specs.find((s) => s.scope === v); setField(first?.field ?? ""); setValue(""); }} options={[{ value: "player", label: "Player" }, { value: "course", label: "Course" }, { value: "engine", label: "Cut rule" }]} />
+            <Select label="What to change" value={field} onChange={(v) => { setField(v); setValue(""); }} options={fieldsForScope.map((s) => ({ value: s.field, label: fieldLabel(s.field) }))} />
             {scope === "player" && (
-              <Select label="Player" value={target} onChange={setTarget} options={[{ value: "", label: "Choose a player…" }, ...players.map((p) => ({ value: String(p.dg_id), label: String(p.name) }))]} />
+              <>
+                <label className="field-label">
+                  <span>Find a player</span>
+                  <input type="search" autoComplete="off" value={playerFilter} onChange={(e) => setPlayerFilter(e.target.value)} placeholder="Type part of a name…" />
+                </label>
+                <Select label="Player" value={target} onChange={setTarget} options={[{ value: "", label: "Choose a player…" }, ...playerOptions.map((c) => ({ value: String(c.dg_id), label: c.name }))]} />
+              </>
             )}
           </div>
-          {spec && <p className="inputs-note">{spec.what}. Unit: {spec.unit}.{spec.kind === "number" ? ` Allowed ${spec.lo} to ${spec.hi}.` : ""}</p>}
+          {spec && <p className="inputs-note">{specNote(spec)}</p>}
           {spec?.kind === "number" && (
             <label className="field-label">
               <span>Value</span>
@@ -1373,7 +1540,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           )}
           <div className="form-actions">
             <button type="submit" className="inputs-button primary" disabled={busy || problems.length > 0}>{busy ? "Saving…" : "Save override"}</button>
-            <span className="inputs-muted">The server re-checks every bound. Times are shown in Eastern.</span>
+            <span className="inputs-muted">Times are shown in Eastern.</span>
           </div>
           {message && (
             <div className={`inputs-banner ${message.tone === "error" ? "warn" : ""}`} role="status">
@@ -1383,8 +1550,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           )}
         </form>
       </Panel>
-      <Panel eyebrow="In the bucket" title="Active overrides" actions={<button type="button" className="inputs-button subtle" onClick={() => void reload()}>Refresh</button>}>
-        {loadError && <ErrorState message={`Could not read overrides (${loadError}). Local previews have no bucket.`} />}
+      <Panel eyebrow="Overrides" title="Current overrides" actions={<button type="button" className="inputs-button subtle" onClick={() => void reload()}>Refresh</button>}>
+        {loadError && <EmptyState title="Couldn't load overrides" detail="Try again with Refresh." />}
         {!loadError && records === null && <LoadingState label="Loading overrides" />}
         {records && records.length === 0 && <EmptyState title="No overrides" detail="golfprice prices the model untouched." />}
         {records && records.length > 0 && (
@@ -1419,8 +1586,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           </div>
         )}
       </Panel>
-      <Panel eyebrow="Audit" title="Recent changes">
-        {history.length === 0 ? <p className="inputs-muted">No changes logged yet.</p> : (
+      {history.length > 0 && (
+        <Panel title="Recent changes">
           <div className="kv-table">
             {history.map((entry) => (
               <div key={`${entry.at}-${entry.record.id}-${entry.action}`}>
@@ -1429,13 +1596,25 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
               </div>
             ))}
           </div>
-        )}
-      </Panel>
+        </Panel>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ page */
+const subscribeNarrow = (notify: () => void) => {
+  const query = window.matchMedia("(max-width: 640px)");
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+};
+/** True on a phone-width screen, where the sub-tab strip becomes a dropdown so no tab is hidden off-screen. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, () => window.matchMedia("(max-width: 640px)").matches, () => false);
+}
+
+const OWN_TECHNICAL: Tab[] = ["course", "variance", "weather", "config"];
+
 export function InputsView() {
   const { data: index, loading, error } = useDashboardData<PublishIndex>("golfprice/index.json");
   const [eventUid, setEventUid] = useState<string>("");
@@ -1446,6 +1625,7 @@ export function InputsView() {
     return TABS.find((t) => t.value === wanted)?.value ?? "players";
   });
   const [presetPlayer, setPresetPlayer] = useState<number | null>(null);
+  const narrow = useNarrow();
 
   const events = useMemo(() => index?.events ?? [], [index]);
   const event = events.find((e) => e.event_uid === eventUid) ?? events[0];
@@ -1458,6 +1638,11 @@ export function InputsView() {
   if (error || !event) return <div><PageIntro eyebrow="Model" title="Model inputs" description="Every input that shapes the simulations: player skill, course fit, variance, weather, odds and config." /><ErrorState message={error ?? "No model run has been published yet. It will appear here after the next publish."} /></div>;
 
   const asOf = etTime(run?.as_of, "");
+  const pulled = doc ? etTime(oddsPulledAt(doc), "") : "";
+  const runAsOf = String(run?.as_of ?? "");
+  const playedRounds = run?.kind === "live" ? run.after_round ?? 0 : 0;
+  const runTech = run ? <KeyValue data={{ run_file: run.key, hole_table_file: run.hole_table_key, checksum: run.sha256, size_bytes: run.bytes, schema: index?.schema, overrides_applied: run.overrides_applied, overrides_rejected: run.overrides_rejected }} /> : null;
+  const tabOptions = TABS.map((t) => ({ value: t.value, label: t.label }));
   return (
     <div>
       <PageIntro
@@ -1466,7 +1651,7 @@ export function InputsView() {
         description="What went into the simulation: player skill, the course, how much scores swing, weather, odds and settings. Features explains every skill measurement; Adjust applies one-off overrides."
         controls={
           <div className="control-row wrap">
-            <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})` }))} />
+            <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
             <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
           </div>
         }
@@ -1474,26 +1659,25 @@ export function InputsView() {
       <div className="inputs-meta">
         <span><b>{event.course}</b></span>
         <span>{ymd(event.date_start)} to {ymd(event.date_end)}</span>
-        {asOf && <span title="The model's inputs were frozen at this time.">prices as of {asOf}</span>}
-        <span>{run?.n_players} players</span>
+        {asOf && <span title="When this model run was built.">model run {asOf}</span>}
+        {pulled && <span title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">odds pulled {pulled}</span>}
+        {run && <span>{run.n_players} players</span>}
         <span>{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "no overrides applied"}</span>
       </div>
-      <SegmentedControl label="Model inputs area" value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} />
-      {docLoading && <LoadingState label="Loading run" />}
-      {docError && <ErrorState message={docError} />}
-      {doc && tab === "players" && <PlayersTab key={run?.key} doc={doc} onAdjust={(id) => { setPresetPlayer(id); setTab("adjust"); }} />}
-      {doc && tab === "course" && <CourseTab doc={doc} />}
-      {doc && tab === "variance" && <VarianceTab doc={doc} />}
-      {doc && tab === "weather" && <WeatherTab doc={doc} />}
-      {doc && tab === "odds" && <OddsTab doc={doc} />}
-      {doc && tab === "config" && <ConfigTab doc={doc} />}
+      {narrow ? <Select label="Section" value={tab} onChange={(v) => setTab(v as Tab)} options={tabOptions} /> : <SegmentedControl label="Model inputs area" value={tab} onChange={setTab} options={tabOptions} />}
+      {docLoading && tab !== "features" && <LoadingState label="Loading run" />}
+      {docError && tab !== "features" && tab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
+      {doc && tab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={(id) => { setPresetPlayer(id); setTab("adjust"); }} />}
+      {doc && tab === "course" && <CourseTab doc={doc} extra={runTech} />}
+      {doc && tab === "variance" && <VarianceTab doc={doc} extra={runTech} />}
+      {doc && tab === "weather" && <WeatherTab doc={doc} runAsOf={runAsOf} extra={runTech} />}
+      {doc && tab === "odds" && <OddsTab doc={doc} runAsOf={runAsOf} />}
+      {doc && tab === "config" && <ConfigTab doc={doc} extra={runTech} />}
       {tab === "features" && <FeaturesTab />}
       {doc && tab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} />}
-      {run && (
+      {run && !OWN_TECHNICAL.includes(tab) && (
         <div style={{ marginTop: 24 }}>
-          <Technical>
-            <KeyValue data={{ run_file: run.key, hole_table_file: run.hole_table_key, checksum: run.sha256, size_bytes: run.bytes, schema: index?.schema, overrides_applied: run.overrides_applied, overrides_rejected: run.overrides_rejected }} />
-          </Technical>
+          <Technical>{runTech}</Technical>
         </div>
       )}
     </div>

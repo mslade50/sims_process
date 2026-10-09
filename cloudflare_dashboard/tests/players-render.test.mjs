@@ -16,7 +16,7 @@ test("/players fixture: catalog lists Hideki and Blair and shows the catalog as-
   assert.match(html, /Matsuyama, Hideki/);
   assert.match(html, /Blair, Zac/);
   assert.match(html, /Player list as of Oct 8, 12:27 PM ET/);
-  assert.match(html, /freshness-badge/);
+  assert.doesNotMatch(html, /freshness-badge/, "the freshness pill was removed from the catalog line; the date stays");
 });
 
 test("/players?player=17639 renders Blair's PGA benchmark card value from the fixture shard", () => {
@@ -38,10 +38,9 @@ test("/players: an old catalog as_of carries the amber stale badge, a recent one
   const old = { ...catalog, as_of: "2026-09-01T00:00:00Z" };
   const stale = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/dossier-review.json": old }, pathname: "/players" });
   assert.match(stale, /Player list as of Aug 31, 8:00 PM ET/);
-  assert.match(stale, /fresh-aging/);
-  assert.match(stale, /stale/);
+  assert.doesNotMatch(stale, /fresh-aging/);
   const fresh = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/dossier-review.json": { ...catalog, as_of: new Date().toISOString() } }, pathname: "/players" });
-  assert.match(fresh, /fresh-fresh|fresh-live/);
+  assert.match(fresh, /Player list as of /);
   assert.doesNotMatch(fresh, /fresh-aging/);
 });
 
@@ -55,7 +54,7 @@ test("/players?layout=next renders hero, SG bars (n/a state), filter summary bar
   assert.match(html, /vs PGA avg/);
   assert.match(html, /\+0\.73 <small/);
   assert.match(html, /For reference only: prices come from the event model/);
-  assert.match(html, /Descriptive, not a forecast/);
+  assert.match(html, /Descriptive only/);
   assert.match(html, /data-testid="sg-bars"|data-testid="sg-na"/);
   assert.match(html, /data-testid="filter-bar"/);
   assert.match(html, /R1-R2 · last 2 years · no situational filter/, "A4: next layout opens on R1-R2");
@@ -74,7 +73,7 @@ test("/players?layout=next: Method holds anchor, window, shrinkage status, refer
   const html = next();
   assert.match(html, /half-life 180 days/);
   assert.match(html, /Window 1095 days/);
-  assert.match(html, /Not yet shrunk: the published data has no shrunk value for this player/);
+  assert.match(html, /Raw average; not adjusted for small samples/);
   assert.match(html, /pga_2025_r12:74b9dbd5ef9b8cedc861/);
   assert.match(html, /recency-weighted count/);
   assert.match(html, /effective sample size/);
@@ -133,15 +132,15 @@ function savedData(inputsPatch = {}) {
 test("/players default layout: secondary card shows mu_tour with the PGA-scale label; vs field stays secondary", () => {
   const html = next("?player=17639", savedData());
   assert.match(html, /This week \(PGA scale\)/);
-  assert.match(html, /data-testid="pga-skill"[^>]*>\+0\.400/);
+  assert.match(html, /data-testid="pga-skill"[^>]*>\+0\.40 /);
   assert.match(html, /\(\+0\.100, how this field compares with a normal PGA field\)/);
-  assert.match(html, /vs field: \+0\.300/);
+  assert.match(html, /vs field: \+0\.30 /);
 });
 test("/players?layout=next: This-week chip shows mu_tour; the Method names the shared PGA-scale zero", () => {
   const html = next("?player=17639&layout=next", savedData());
   assert.match(html, /data-testid="pga-chip"/);
   assert.match(html, /<b>\+0\.40<\/b><small>This week \(PGA scale\)/);
-  assert.match(html, /Same zero as the headline, so the remaining gap is recent form versus the model&#x27;s view/);
+  assert.match(html, /the gap is form versus model/);
 });
 test("/players: no mu_tour in the matching document (or no matching document) keeps the old vs-field display", () => {
   for (const d of [savedData({ players: [{ dg_id: 17639, challenger: {} }] }), savedData({ generated_for_as_of: "2020-01-01T00:00:00Z" })]) {

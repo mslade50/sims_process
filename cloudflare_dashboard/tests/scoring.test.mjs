@@ -87,6 +87,8 @@ import { createRequire, Module } from "node:module";
 import { fileURLToPath } from "node:url";
 import * as scoringRules from "../app/scoring-rules.ts";
 import * as libRules from "../app/lib.ts";
+import * as weatherRules from "../app/weather-rules.ts";
+import * as glossaryRules from "../app/glossary.ts";
 const require = createRequire(import.meta.url);
 function renderedScoring({ payload, error = null, loading = false, player = false, expectedRun = "fixture" } = {}) {
   const filename = fileURLToPath(new URL("../app/ScoringView.tsx", import.meta.url));
@@ -99,6 +101,8 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "./data") return { useDashboardData: () => ({ data: payload, loading, error }) };
     if (id === "./scoring-rules") return scoringRules;
     if (id === "./lib") return libRules;
+    if (id === "./weather-rules") return weatherRules;
+    if (id === "./glossary") return glossaryRules;
     if (id === "./explain-rules" || id === "./distributions-rules" || id.endsWith(".css")) return {};
     if (id === "react") return { ...React, useState: (initial) => { const slot = state++; return [slot === 2 && player ? false : typeof initial === "function" ? initial() : initial, () => {}]; } };
     /* eslint-disable react/prop-types -- test-only stand-in components */
@@ -127,9 +131,9 @@ function scoringFixture() {
 test("rendered scoring separates layout, general fit, venue history, weather and unapplied actuals", () => {
   const fixture = scoringFixture();
   const html = renderedScoring({ payload: { scoring: fixture } });
-  for (const label of ["Where the course number comes from", "Hole difficulty", "Tour-wide hole model", "Venue history", "Historical weather", "Historical field strength is not separately normalized", "Historical hole outcomes are not individually weather-neutralized", "Completed-round update", "not applied", "Residual method awaits validation", "Skill response fit", "Dec 31, 2022", "editions 2024, 2025", "70.20", "Paired field mean quantiles", "Main data limitation", "No validated interval for the true mean"]) assert.ok(html.includes(label), label);
+  for (const label of ["Where the course difficulty comes from", "Hole difficulty", "Tour-wide comparison", "Earlier rounds on this course", "Past weather", "Historical field strength is not separately normalized", "Historical hole outcomes are not individually weather-neutralized", "Completed-round update", "not applied", "Residual method awaits validation", "Skill response data", "Dec 31, 2022", "editions 2024, 2025", "70.20", "Main data limitation", "No validated true-mean interval"]) assert.ok(html.includes(label), label);
   assert.match(html, /this year(&#x27;|')s setup not confirmed/);
-  assert.match(html, /were not used to adjust the round 2 course number/);
+  assert.match(html, /Round 2 difficulty was not updated from earlier round scores/);
   assert.match(html, /<details class="score-details score-investigate"><summary>Compare a manual player line/);
   assert.doesNotMatch(html, /HOW CONFIDENT|Read with care|Vs your manual no-vig input/);
   assert.equal(parseScoring(fixture).confidence.mean_interval, null);
@@ -140,9 +144,9 @@ test("rendered legacy checkpoint keeps its stored score and does not imply later
   delete fixture.round_update;
   const html = renderedScoring({ payload: { scoring: fixture } });
   assert.match(html, /71.00/);
-  assert.match(html, /does not record where its course number came from/);
+  assert.match(html, /does not record where its course difficulty came from/);
   assert.match(html, /has not been recalculated with a later release/);
-  assert.match(html, /Earlier checkpoint/);
+  assert.match(html, /Earlier run/);
   assert.doesNotMatch(html, /release-fixture|2025 geometry|strokes applied to round/);
 });
 test("staged round actuals show unavailable expected, weather and residual without implying zero", () => {
@@ -151,48 +155,48 @@ test("staged round actuals show unavailable expected, weather and residual witho
   const html = renderedScoring({ payload: { scoring: fixture } });
   assert.match(html, /Completed rounds<\/[^>]+>[\s\S]*Round 1 field average 70\.20/, "the bullet still says what was played");
   assert.doesNotMatch(html, /Completed rounds: actual vs expected/, "the expected/weather/residual table is hidden when none of those values exist");
-  assert.match(html, /These results have not changed the round 2 course number yet/);
+  assert.match(html, /Round 2 difficulty has not been updated from earlier round scores yet/);
   assert.match(html, /70\.20/);
-  assert.equal((html.match(/Not available/g) ?? []).length, 0, "no blank Not available cells");
+  assert.equal((html.match(/<td[^>]*>Not available/g) ?? []).length, 0, "no blank Not available cells");
   const actualsTable = html.match(/<table class="score-observed-table">([\s\S]*?)<\/table>/)?.[1] ?? "";
   assert.doesNotMatch(actualsTable, /0\.000 strokes|0\.00<\/td>/);
   assert.match(html, /Relative player-form update; shared course correction remains staged/);
-  assert.doesNotMatch(html, /moved the round \d course number/);
+  assert.doesNotMatch(html, /moved the round \d course difficulty/);
 });
 test("applied update requires matching round, explicit status, flag and finite amount", () => {
   const fixture = scoringFixture();
   fixture.round_update = { ...fixture.round_update, status: "applied", applied: true, adjustment_strokes: -0.15 };
   assert.equal(scoringEvidence(parseScoring(fixture)).updateApplied, true);
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Completed rounds moved the round 2 course number by -0.15 strokes/);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Completed rounds moved the round 2 course difficulty by -0.15 strokes/);
   for (const patch of [{ target_round: 3 }, { applied: false }, { adjustment_strokes: "-0.15" }, { status: "unavailable" }]) {
     const doc = parseScoring({ ...fixture, round_update: { ...fixture.round_update, ...patch } });
     assert.equal(scoringEvidence(doc).updateApplied, false);
-    assert.doesNotMatch(renderedScoring({ payload: { scoring: { ...fixture, round_update: { ...fixture.round_update, ...patch } } } }), /moved the round \d course number/);
+    assert.doesNotMatch(renderedScoring({ payload: { scoring: { ...fixture, round_update: { ...fixture.round_update, ...patch } } } }), /moved the round \d course difficulty/);
   }
 });
 test("zero history outranks layout warning and malformed optional metadata is empty-safe", () => {
   const fixture = scoringFixture();
   fixture.baseline.median_hole_observations = 0;
-  assert.match(scoringEvidence(parseScoring(fixture)).warning, /no past hole data/i);
+  assert.match(scoringEvidence(parseScoring(fixture)).warning, /no earlier rounds are recorded/i);
   fixture.baseline.course_provenance = "broken";
   fixture.round_update = [];
   const parsed = parseScoring(fixture);
   assert.ok(parsed);
   assert.equal(parsed.baseline.course_provenance, null);
   assert.equal(parsed.round_update, null);
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /no past hole data/i);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /no earlier rounds are recorded/i);
 });
 test("rendered field/player distributions and data failures retain explicit meanings", () => {
   const fixture = scoringFixture();
   const playerHtml = renderedScoring({ payload: { scoring: fixture }, player: true });
-  assert.match(playerHtml, /Cumulative distributions for Player Test/);
-  assert.match(playerHtml, /UNIT-STAKED EXPECTED VALUE/);
+  assert.match(playerHtml, /Player Test · chance of each round score/);
+  assert.match(playerHtml, /EXPECTED PROFIT PER 1 STAKED/);
   const fieldHtml = renderedScoring({ payload: { scoring: fixture } });
-  assert.match(fieldHtml, /PLAYER SELECTION REQUIRED/);
+  assert.match(fieldHtml, /PICK A PLAYER/);
   assert.match(renderedScoring({ error: "offline" }), /Scoring expectation unavailable.*offline/);
   assert.match(renderedScoring({ loading: true }), /Loading scoring expectation/);
-  assert.match(renderedScoring({ payload: { scoring: fixture }, expectedRun: "different" }), /Scoring checkpoint does not match/);
+  assert.match(renderedScoring({ payload: { scoring: fixture }, expectedRun: "different" }), /Scoring run does not match/);
   assert.match(renderedScoring({ payload: { scoring: { schema: "wrong" } } }), /Scoring expectation unavailable/);
   delete fixture.field.quantile_curve;
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Field curve unavailable/);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Field chart unavailable/);
 });

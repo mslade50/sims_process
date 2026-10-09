@@ -162,7 +162,10 @@ export function PlayerPicker({
   max?: number;
   label?: string;
 }) {
-  const available = options.filter((option) => !value.includes(option));
+  const [search, setSearch] = useState("");
+  const needle = search.trim().toLowerCase();
+  // Options arrive in the caller's order (the likeliest names first); a long list gets a search box so a phone user can type instead of scrolling.
+  const available = options.filter((option) => !value.includes(option) && (!needle || option.toLowerCase().includes(needle)));
   return (
     <div className="player-picker">
       <label>{label}</label>
@@ -176,13 +179,16 @@ export function PlayerPicker({
           </span>
         ))}
       </div>
+      {options.length > 12 && value.length < max && (
+        <input className="player-picker-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search players…" aria-label={`Search ${label.toLowerCase()}`} />
+      )}
       <select
         value=""
         disabled={value.length >= max || available.length === 0}
-        onChange={(event) => event.target.value && onChange([...value, event.target.value])}
+        onChange={(event) => { if (event.target.value) { onChange([...value, event.target.value]); setSearch(""); } }}
         aria-label={`Add ${label.toLowerCase()}`}
       >
-        <option value="">{value.length >= max ? `Maximum ${max} selected` : "Add player…"}</option>
+        <option value="">{value.length >= max ? `Maximum ${max} selected` : available.length === 0 ? "No player matches" : "Add player…"}</option>
         {available.map((player) => (
           <option key={player} value={player}>
             {titleCase(player)}

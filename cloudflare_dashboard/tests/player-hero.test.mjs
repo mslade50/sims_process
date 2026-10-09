@@ -4,7 +4,7 @@ import test from "node:test";
 import { renderView } from "./helpers/render-harness.mjs";
 import {
   barGeometry, describeFilters, liveChips, regularTick, roundSetBadge, sgBarRows, sparklinePaths, supportBadge, tourMixBadge,
-  CAVEAT_DESCRIPTIVE, CAVEAT_REFERENCE_ONLY, NO_CATEGORY_DATA, WEEKEND_ROUNDS_NOTE,
+  CAVEAT_REFERENCE_ONLY, NO_CATEGORY_DATA, WEEKEND_ROUNDS_NOTE,
 } from "../app/player-hero-rules.ts";
 
 const fx = (path) => JSON.parse(readFileSync(new URL(`./fixtures/${path}`, import.meta.url), "utf8"));
@@ -20,18 +20,18 @@ const hero = (over = {}) => renderView("PlayerHero.tsx", "PlayerHero", {
 
 // ---- rules -----------------------------------------------------------------------------------------------------------
 test("support badge: amber under 30 rounds, n<12 when unsupported, plain otherwise", () => {
-  assert.deepEqual(supportBadge({ n_rounds: 158, status: "available" }), { tone: "neutral", text: "n=158 rounds" });
+  assert.deepEqual(supportBadge({ n_rounds: 158, status: "available" }), { tone: "neutral", text: "158 rounds" });
   assert.equal(supportBadge({ n_rounds: 20, status: "available" }).tone, "warning");
   assert.equal(supportBadge({ n_rounds: 29, status: "available" }).tone, "warning");
-  assert.deepEqual(supportBadge({ n_rounds: 8, status: "insufficient_data" }), { tone: "negative", text: "n<12 rounds" });
-  assert.equal(supportBadge(undefined).text, "n<12 rounds");
+  assert.deepEqual(supportBadge({ n_rounds: 8, status: "insufficient_data" }), { tone: "negative", text: "under 12 rounds" });
+  assert.equal(supportBadge(undefined).text, "under 12 rounds");
 });
 
 test("tour-mix badge only when the primary tour differs from the event tour or PGA share is under half", () => {
   const pga = [{ tour: "pga", weight_fraction: 0.97 }, { tour: "euro", weight_fraction: 0.03 }];
   assert.equal(tourMixBadge(pga, "pga"), null);
   assert.equal(tourMixBadge(pga, null), null);
-  assert.match(tourMixBadge(pga, "euro"), /mostly PGA rounds \(97%\).*±0\.2/);
+  assert.match(tourMixBadge(pga, "euro"), /mostly PGA rounds \(97%\).*about 0\.2 strokes/);
   const kft = [{ tour: "kft", weight_fraction: 0.6 }, { tour: "pga", weight_fraction: 0.4 }];
   assert.match(tourMixBadge(kft, "pga"), /mostly KFT rounds/);
   assert.match(tourMixBadge(kft, null), /mostly KFT/);
@@ -121,9 +121,9 @@ test("hero renders the headline value, caveat rows 1 and 2, the zero sentence, s
   assert.match(html, /vs PGA avg/);
   assert.match(html, /vs 2025 PGA avg round/);
   assert.ok(html.includes(CAVEAT_REFERENCE_ONLY));
-  assert.ok(html.includes(CAVEAT_DESCRIPTIVE));
+  assert.match(html, /Raw average; not adjusted for small samples/);
   assert.match(html, /Zero is the average round on the 2025 PGA Tour \(opening two rounds/);
-  assert.match(html, /n=158 rounds/);
+  assert.match(html, /158 rounds/);
   assert.equal(html.includes("regular-tick"), false);
   assert.equal(html.includes("typical regular"), false);
   assert.match(html, /Zac|Blair/);
@@ -137,9 +137,9 @@ test("hero shows the stored typical-regular tick only when the catalog carries o
 
 test("hero badges: amber thin-sample, n<12 unsupported, and tour mix only when it applies", () => {
   const thin = hero({ profile: { ...blair, pga_benchmark: { ...blair.pga_benchmark, n_rounds: 20 } } });
-  assert.match(thin, /tone-warning[^>]*>n=20 rounds · thin sample/);
+  assert.match(thin, /tone-warning[^>]*>20 rounds · thin sample/);
   const unsupported = hero({ profile: { ...blair, pga_benchmark: { ...blair.pga_benchmark, n_rounds: 5, status: "insufficient_data", value: null } } });
-  assert.match(unsupported, /n&lt;12 rounds/);
+  assert.match(unsupported, /under 12 rounds/);
   assert.match(unsupported, /Unavailable/);
   assert.equal(unsupported.includes('data-testid="regular-tick"'), false);
   assert.equal(hero().includes("mostly"), false); // Blair: 67% PGA, event tour unknown
@@ -183,9 +183,8 @@ test("week chips: vs field, win and top 10 from the saved doc; live checkpoints 
   assert.match(html, /win/);
   assert.match(html, /top 10/);
   assert.match(html, /data-testid="live-chips"/);
-  assert.match(html, /this week, scoring so far/);
-  assert.match(html, /priced strength, next round/);
-  assert.match(html, /measured against everyone who started, not only players still in the field/);
+  assert.match(html, /skill for next round/);
+  assert.match(html, /Measured against everyone who started, not only players still in the field/);
   const week = hero({ entry, profile, weekly: { ...weekly, savedDoc: { ...live, kind: "week" } } });
   assert.equal(week.includes("live-chips"), false);
 });
@@ -245,7 +244,6 @@ test("week chip shows saved model skill on the PGA scale (mu_tour) with its labe
   assert.match(week, /data-testid="pga-chip"/);
   assert.match(week, /<b>\+0\.85<\/b><small>This week \(PGA scale\)<\/small>/);
   assert.match(week, /saved skill plus this field&#x27;s offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)/);
-  assert.match(week, /remaining gap is recent form versus the model&#x27;s view/);
   assert.match(week, /win/); assert.match(week, /top 10/);
   const lv = hero({ entry, profile, weekly: { ...base, savedDoc: live, pgaSkill: { value: 0.7, offset: 0.1002, live: true, preEvent: 0.851 } } });
   assert.match(lv, /This week \(PGA scale\), live[\s\S]*Live skill plus the pre-event field offset/);

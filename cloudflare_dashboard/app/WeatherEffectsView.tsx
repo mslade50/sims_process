@@ -7,7 +7,7 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
 import {
-  COMPONENT_HINTS, COMPONENT_LABELS, filterPlayers, modelName, windSourceText, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour, weatherCheckpoint,
+  COMPONENT_HINTS, COMPONENT_LABELS, filterPlayers, forecastAgeText, modelName, windSourceText, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour, weatherCheckpoint,
   type HourlyPoint, type PlayerRow, type SortKey, type Wave, type WeatherDoc,
 } from "./weather-rules";
 
@@ -191,14 +191,16 @@ function PlayersTable({ doc }: { doc: WeatherDoc }) {
   }, [doc.players]);
   const teeRounds = rounds.filter((r) => doc.players.some((p) => p.rounds[r]?.tee_time));
   const effectRounds = rounds.filter((r) => doc.players.some((p) => p.rounds[r] && (p.rounds[r].mean_off_rel ?? p.rounds[r].mean_off_strokes) !== null));
-  const showSd = doc.players.some((p) => p.sdMax !== null);
+  const sdValues = doc.players.map((p) => p.sdMax).filter((v): v is number => v !== null);
+  // A spread that is the same for every player says nothing, so the column only appears when it varies.
+  const showSd = sdValues.length > 0 && Math.max(...sdValues) - Math.min(...sdValues) > 0.0005;
   const columnCount = 2 + teeRounds.length + effectRounds.length + 1 + (showSd ? 1 : 0);
   const rows = useMemo(() => sortPlayers(filterPlayers(doc.players, query), sort.key, sort.dir), [doc.players, query, sort]);
   const shown = query ? rows : rows.slice(0, limit);
 
   const toggleSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "asc" }));
   const head = (key: SortKey, label: string, hint?: string) => (
-    <th title={hint} aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th key={key} title={hint} aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
       <button type="button" className="th-sort" onClick={() => toggleSort(key)}>{label}{sort.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}</button>
     </th>
   );
@@ -219,7 +221,7 @@ function PlayersTable({ doc }: { doc: WeatherDoc }) {
               {head("name", "Player")}
               {teeRounds.map((r) => <th key={`t${r}`} title={`Tee time in round ${r}. (10) means the player starts on the 10th tee.`}><span className="th-text">R{r} tee</span></th>)}
               {effectRounds.map((r) => head(`r${r}` as SortKey, `R${r} vs field`, `Strokes the weather and tee time are expected to add (positive) or save (negative) in round ${r}, compared with the average player in the field.`))}
-              {head("total12", "R1+R2", "The weather effect over rounds 1 and 2 combined, in strokes. Negative is a helpful draw.")}
+              {head("total12", "Total over two rounds", "The weather effect over rounds 1 and 2 combined, in strokes. Negative is a helpful draw.")}
               {showSd && head("sd", "Spread", "How much the weather widens (above 1) or narrows (below 1) the range of this player's possible scores.")}
             </tr>
           </thead>
@@ -241,7 +243,7 @@ function PlayerRows({ p, rounds, teeRounds, effectRounds, showSd, cols, open, on
   void rounds;
   const names = Object.keys(p.rounds).flatMap((r) => Object.keys(p.rounds[Number(r)].components));
   const comps = [...new Set(names)].filter((c) => c !== "tod");
-  const hasSd = Object.values(p.rounds).some((r) => r.sd_mult !== null);
+  const hasSd = showSd && Object.values(p.rounds).some((r) => r.sd_mult !== null);
   return (
     <>
       <tr className={open ? "active-row" : undefined}>
@@ -315,16 +317,15 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
   const v = doc.venue;
   return (
     <div className="wx-body">
-      {doc.synthetic && <p className="inputs-note accent">Example data: this forecast is invented to preview the layout and is not a real forecast.</p>}
+      {doc.synthetic && <p className="inputs-note accent">Sample data: this is a made-up forecast shown to preview the page. Do not use it for pricing.</p>}
       <Panel eyebrow="Venue" title={v.name || doc.event_uid}>
         <div className="kpi-grid">
           {v.class && <Kpi label="Course type" value={v.class.replace(/^./, (c) => c.toUpperCase())} detail="How exposed the course is to weather" hint="The course's weather profile, for example links or desert, which sets how much wind and temperature matter." />}
           {v.wind_slope !== null && <Kpi label="Wind sensitivity" value={`${v.wind_slope.toFixed(3)} strokes`} detail={`Per mph of wind, per round${windSourceText(v.wind_slope_source) ? `. ${windSourceText(v.wind_slope_source)}` : ""}`} tone="accent" hint="How many extra strokes a player loses per round for each additional mph of average wind at this course." />}
-          {doc.forecast.issued_at && <Kpi label="Forecast issued" value={etTime(doc.forecast.issued_at)} detail={age === null ? undefined : age < 1 ? "Under an hour old when this page loaded" : `${age.toFixed(1)} hours old when this page loaded`} tone={age !== null && age > 12 ? "negative" : "neutral"} hint="When the weather services last published the forecast the model used." />}
+          {doc.forecast.issued_at && <Kpi label="Forecast issued" value={etTime(doc.forecast.issued_at)} detail={age === null ? undefined : `${forecastAgeText(age)} when this page loaded`} tone={age !== null && age > 12 ? "negative" : "neutral"} hint="When the weather services last published the forecast the model used." />}
           {doc.forecast.models.length > 0 && <Kpi label="Forecast sources" value={String(doc.forecast.models.length)} detail={doc.forecast.models.map(modelName).join(", ")} hint="The weather models averaged together to make this forecast." />}
         </div>
         {doc.notes.filter((n) => !(doc.synthetic && /synthetic/i.test(n))).length > 0 && <ul className="wx-notes">{doc.notes.filter((n) => !(doc.synthetic && /synthetic/i.test(n))).map((n, i) => <li key={i} className="inputs-note">{n}</li>)}</ul>}
-        {doc.as_of && <p className="inputs-muted">Weather prepared {etTime(doc.as_of)}.</p>}
       </Panel>
 
       {doc.rounds.length > 0 && (
@@ -394,6 +395,7 @@ export function WeatherEffectsView() {
   return (
     <div>
       {intro}
+      <p className="inputs-muted" data-testid="data-as-of">Data as of {etTime(check.weatherAsOf ?? doc.as_of, "unknown time")} · page loaded {etTime(new Date(now).toISOString())}</p>
       <CheckpointBanner event={event} docAsOf={doc.as_of} />
       <WeatherBody key={event.event_uid} doc={doc} now={now} />
       <details className="tech-details">

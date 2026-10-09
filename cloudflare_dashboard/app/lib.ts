@@ -127,3 +127,36 @@ export function shortDate(value: unknown): string {
   if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
+
+/* ------------------------------------------------------------------ plain event and player-style names (site cleanup, October 2026) */
+const EVENT_NAMES: Record<string, string> = {
+  the_open: "The Open", rocket: "Rocket Classic", us_open: "U.S. Open", travelers: "Travelers Championship", pga_c: "PGA Championship",
+  masters: "The Masters", rbc_canada: "RBC Canadian Open", rbc: "RBC Heritage", wyndham: "Wyndham Championship", players: "The Players Championship",
+  houston: "Houston Open", scottish: "Scottish Open", cadillac: "Cadillac Championship", st_jude: "FedEx St. Jude Championship", memorial: "The Memorial",
+  valspar: "Valspar Championship", valero: "Valero Texas Open", schwab: "Charles Schwab Challenge", deere: "John Deere Classic", truist: "Truist Championship",
+  cjcup: "CJ Cup", "3m_open": "3M Open", bayhill: "Arnold Palmer Invitational (Bay Hill)", wm_phoenix: "WM Phoenix Open", cognizant: "Cognizant Classic",
+  genesis: "Genesis Invitational", att: "AT&T Pebble Beach", bmw: "BMW Championship",
+};
+/** A readable event name for a publisher slug ("pga_c" becomes "PGA Championship"); unknown slugs fall back to title case with a trailing number removed. */
+export function eventDisplayName(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const slug = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  return EVENT_NAMES[slug] ?? EVENT_NAMES[slug.replace(/_?\d+$/, "")] ?? titleCase(raw.replace(/\s+\d+$/, ""));
+}
+
+const STYLE_NAMES: Record<string, string> = {
+  APP_ARG: "Approach and short game", APP_PUTT: "Approach and putting", ARG_PUTT: "Short game and putting", OTT_APP: "Driving and approach", OTT_PUTT: "Driving and putting",
+  Stud: "Top all-round player", "Balanced APP": "Balanced, strong approach", "Balanced ARG": "Balanced, strong short game", "Balanced OTT": "Balanced, strong driver", "Balanced Putter": "Balanced, strong putter",
+  "Long Wild": "Long and wild", "Long Accurate": "Long and accurate", "Short Accurate": "Short and accurate", "Low Skill": "Below tour average", Unknown: "Not classified",
+};
+/** One-line definitions shown as hover text and in the key under player-style charts. */
+export const STYLE_DEFINITIONS: Record<string, string> = {
+  "Top all-round player": "Well above the field in every part of the game.",
+  "Below tour average": "Below the tour average in most parts of the game.",
+  "Long and wild": "Drives it far but not accurately.", "Long and accurate": "Drives it far and keeps it in play.", "Short and accurate": "Keeps it in play but gives up distance.",
+  "Ball Striker": "Strong off the tee and with approach shots.", "Short Game Specialist": "Gains most around the green and putting.", "Elite Putter": "Putting is clearly his best skill.",
+  "Not classified": "Not enough data to assign a style.",
+};
+/** A plain player-style name ("OTT_PUTT" becomes "Driving and putting"). */
+export const styleName = (value: unknown): string => STYLE_NAMES[String(value ?? "").trim()] ?? String(value ?? "");

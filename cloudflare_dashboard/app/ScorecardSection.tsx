@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EmptyState, Kpi, Panel } from "./components";
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
@@ -78,8 +78,15 @@ function EventTable({ event }: { event: ScorecardEvent }) {
 
 /** The model scorecard inside the Scorecard and P&L view: latest settled week, the forward record, and a plain-English readout. */
 export function GolfpriceScorecardSection() {
-  const { data, loading } = useDashboardData<unknown>(SCORECARD_KEY);
+  const { data, loading: fetching } = useDashboardData<unknown>(SCORECARD_KEY);
   const [now] = useState(() => Date.now());
+  // Never sit on "Loading" forever: after 10 seconds the panel says the scorecard is not available instead.
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setGaveUp(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const loading = fetching && !gaveUp;
   const card = parseScorecard(data);
   const events = card ? latestWeekEvents(card) : [];
   const paused = forwardClockPaused(card);
@@ -89,7 +96,7 @@ export function GolfpriceScorecardSection() {
       {loading ? (
         <p className="inputs-muted">Loading the weekly scorecard…</p>
       ) : !card ? (
-        <EmptyState title="No scorecard yet" detail="It appears after the first Monday settle grades the previous week." />
+        <EmptyState title={fetching ? "The scorecard is not available right now" : "No scorecard yet"} detail={fetching ? "It did not load. Reload in a minute; it updates after each Monday settle." : "It appears after the first Monday settle grades the previous week."} />
       ) : (
         <div className="scorecard-body">
           {isStale(card.generated_at, now) && <p className="inputs-note accent">This scorecard was last updated {etTime(card.generated_at)}, more than 8 days ago. A newer settle has not published yet.</p>}

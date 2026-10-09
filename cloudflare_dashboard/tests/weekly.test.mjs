@@ -99,13 +99,13 @@ test("vs PGA avg is gated on archived checkpoints (as-was): history newer than t
   assert.equal(current, "+0.900");
   const archived = benchmarkCell(rating(0.9), reference, "2026-06-01T12:00:00Z", deps); // last observation 2026-08-01 is after this checkpoint
   assert.notEqual(archived, "+0.900");
-  assert.equal(archived, "after this checkpoint");
+  assert.equal(archived, "after this run");
   const early = benchmarkCell(rating(0.9), reference, "2025-12-01T00:00:00Z", deps); // reference not yet available
-  assert.equal(early, "after this checkpoint");
+  assert.equal(early, "after this run");
   const players = [mkPlayer(1, "A, A", 0.4)];
   const d = { ...doc("week", players), as_of: "2026-06-01T12:00:00Z" };
   const t = buildTable({ doc: d, inputs, catalog, players, deps });
-  assert.equal(t.rows[0][LABELS.vsPgaAvg.short], "after this checkpoint");
+  assert.equal(t.rows[0][LABELS.vsPgaAvg.short], "after this run");
   assert.equal(t.rows[0][COL.gap], undefined, "the gap column is dropped when no player has one");
 });
 
@@ -169,12 +169,12 @@ test("/weekly-players renders the table through DataTable with the Method senten
   assert.ok(html.indexOf(`<p>${esc}</p>`) > html.indexOf("<summary>Method</summary>") && html.indexOf(`<p>${esc}</p>`) < html.indexOf("data-table-wrap"), "sentence sits inside Method, before the table");
   assert.ok(html.includes(`. ${esc}"`), "vs PGA avg hover carries the sentence");
   assert.ok(html.includes(ZERO_SENTENCE.slice(0, 40)));
-  assert.match(html, /live checkpoints keep the offset from before the event/);
-  assert.match(html, /Audit: how the saved skill adds up/);
-  assert.doesNotMatch(html, /<details[^>]*open[^>]*><summary>Audit: how the saved skill adds up/);
+  assert.match(html, /kept from before the event during live runs/);
+  assert.match(html, /How the saved skill adds up/);
+  assert.doesNotMatch(html, /<details[^>]*open[^>]*><summary>How the saved skill adds up/);
   const thead = html.match(/<thead>(.*?)<\/thead>/)[1];
   const headers = [...thead.matchAll(/<th[^>]*><button[^>]*>(.*?)<\/button>/g)].map((m) => m[1].replace(/<[^>]+>/g, ""));
-  assert.deepEqual(headers, ["Player", "This week (PGA scale)", "vs field", "Rounds (tour mix)", "Win", "Live skill", "Live shift"], "live default columns for a no-cut event: make-cut and the empty leaderboard-position column are dropped"
+  assert.deepEqual(headers, ["Player", "This week (PGA scale)", "vs field", "Rounds (tour mix)", "Win", "Live shift (strokes/rd)"], "live default columns for a no-cut event: make-cut and the empty leaderboard-position column are dropped"
   );
   assert.match(html, /This event has no cut, so make-cut odds are not shown/);
   assert.match(thead, /class="sticky-first"/);
@@ -185,7 +185,7 @@ test("/weekly-players renders the table through DataTable with the Method senten
 
 test("W1: reconciliation headers go through plainName, never raw keys", () => {
   const h = reconciliationHeaders(["act", "sit", "sklv", "xtour", "level_form"], doc("week", []).components_legend, plainName).map((x) => x.label);
-  assert.deepEqual(h.slice(0, 4), ["Activity", "Layoff and age", "Skill level", "Other tours"]);
+  assert.deepEqual(h.slice(0, 4), ["Activity", "Layoff and age", "Skill level", "Tour strength adjustment"]);
   assert.equal(h[4], "level form");
   assert.equal(h.includes("act") || h.includes("sit") || h.includes("sklv"), false);
 });

@@ -82,11 +82,11 @@ test("BenchmarkCard secondary card: mu_tour headline with label and offset, vs f
   const savedDoc={kind:"week",as_of:"2026-10-07T22:05:00Z",event:{},players:[{id:14139,mu:0.7488},{id:2,mu:-0.7488}]};
   const card=(over)=>renderCard("PlayerProfilesView.tsx","BenchmarkCard",{props:{rating:undefined,reference:undefined,fieldLabel:"Fixture Open",savedDoc,playerId:14139,...over}});
   const pre=card({pgaSkill:savedPgaSkill(muTourInputs,14139)});
-  assert.match(pre,/This week \(PGA scale\)/);assert.match(pre,/\+0\.851/);
+  assert.match(pre,/This week \(PGA scale\)/);assert.match(pre,/\+0\.85/);
   assert.match(pre,/The model&#x27;s saved skill plus this field&#x27;s offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)/);
-  assert.match(pre,/vs field: \+0\.749/);assert.doesNotMatch(pre,/Relative to this field/);
+  assert.match(pre,/vs field: \+0\.75/);assert.doesNotMatch(pre,/Relative to this field/);
   const lv=card({pgaSkill:savedPgaSkill({...muTourInputs,kind:"live"},14139),savedDoc:{...savedDoc,kind:"live",players:[{id:14139,mu:0.7488,live:{mu_live:0.6}},{id:2,mu:0,live:{mu_live:-0.6}}]}});
-  assert.match(lv,/Live skill plus the pre-event field offset/);assert.match(lv,/\+0\.700/);assert.match(lv,/The pre-event value was \+0\.851/);
+  assert.match(lv,/Live skill plus the pre-event field offset/);assert.match(lv,/\+0\.70/);assert.match(lv,/The pre-event value was \+0\.851/);
   const fb=card({pgaSkill:null});
-  assert.match(fb,/vs field · saved model/);assert.match(fb,/\+0\.749/);assert.doesNotMatch(fb,/This week \(PGA scale\)/);
+  assert.match(fb,/vs field · saved model/);assert.match(fb,/\+0\.75/);assert.doesNotMatch(fb,/This week \(PGA scale\)/);
 });

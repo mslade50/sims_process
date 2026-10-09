@@ -83,14 +83,14 @@ test("forces full-page navigation for Cloudflare route compatibility", async () 
 test("restores the legacy Performance analysis controls and default exclusions", async () => {
   const performanceView = await readFile(new URL("../app/views.tsx", import.meta.url), "utf8");
   for (const expected of [
-    "Excluded by default",
-    "Hidden until selected",
+    "Off by default, so not in the totals",
+    "Left out by the current filters",
     "finish_position_live",
     "score_bet",
     "Kalshi / NoVig",
     "Which bets to count",
-    "Kelly % edge",
-    "Raw % edge",
+    "Edge (Kelly)",
+    "Raw edge (%)",
     "Opponent type",
     "ROI by size of edge and odds",
     "Event summary",

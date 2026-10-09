@@ -40,7 +40,7 @@ export function PlayerSgBars({ profile, deep, loading, categoryReference, tours 
                 <i className="ph-sg-zero" style={{ left: `${r.zero}%` }} />
                 {r.status === "ok" && <i className="ph-sg-fill" data-sign={(r.z ?? 0) >= 0 ? "pos" : "neg"} style={{ left: `${r.left}%`, width: `${r.width}%` }} />}
               </span>
-              <span className="ph-sg-value">{r.status === "ok" ? <><b>{signed(r.value)}</b> SG/round · <span title="How many standard deviations above (+) or below (-) the typical PGA player. Larger numbers are further from typical.">{signed(r.z, 1)} SD</span></> : r.status === "thin" ? <span className="ph-muted">{r.n} rounds (needs 3)</span> : <span className="ph-muted" title="No rounds with strokes-gained categories in this window">No data</span>}</span>
+              <span className="ph-sg-value">{r.status === "ok" ? <><b>{signed(r.value)}</b> strokes per round · <span title="Compared with the typical PGA player: positive is better, and larger numbers are further from typical.">{signed(r.z, 1)} vs typical</span></> : r.status === "thin" ? <span className="ph-muted">{r.n} rounds (needs 3)</span> : <span className="ph-muted" title="No rounds with strokes-gained categories in this window">No data</span>}</span>
               {r.status === "ok" ? <small>{r.n} rounds</small> : <small />}
             </li>
           ))}

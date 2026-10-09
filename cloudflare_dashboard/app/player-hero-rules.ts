@@ -14,7 +14,7 @@ export const ZERO_LABEL = "vs 2025 PGA avg round";
 /** B2 row 9: one clause beside the interval. */
 export const INTERVAL_CLAUSE = "does not include future-round variability or uncertainty in the PGA average itself";
 /** B2 row 10 / A6. */
-export const CROSS_TOUR_BAND = "comparisons across tours are only good to about ±0.2";
+export const CROSS_TOUR_BAND = "comparisons across tours are only good to about 0.2 strokes";
 export const NO_CATEGORY_DATA = "No strokes-gained breakdown for this tour";
 export const RADAR_LABEL = "playing style, PGA and LIV rounds only";
 export const WEEKEND_ROUNDS_NOTE = "includes weekend rounds (only players who made the cut play them)";
@@ -34,9 +34,9 @@ export type SupportBadge = {tone: "neutral" | "warning" | "negative"; text: stri
 /** A: n badge. Amber under 30 rounds; "n<12 rounds" when the benchmark is unsupported. */
 export function supportBadge(rating: Pick<PgaBenchmark, "n_rounds" | "status"> | undefined, minRounds = 12): SupportBadge {
   const n = rating?.n_rounds ?? 0;
-  if (!rating || rating.status !== "available" || n < minRounds) return {tone: "negative", text: `n<${minRounds} rounds`};
-  if (n < 30) return {tone: "warning", text: `n=${n} rounds · thin sample`};
-  return {tone: "neutral", text: `n=${n} rounds`};
+  if (!rating || rating.status !== "available" || n < minRounds) return {tone: "negative", text: `under ${minRounds} rounds`};
+  if (n < 30) return {tone: "warning", text: `${n} rounds · thin sample`};
+  return {tone: "neutral", text: `${n} rounds`};
 }
 
 /** A6: tour-mix badge only when the primary tour differs from the comparison event's tour or the PGA share is under half. */
@@ -86,7 +86,7 @@ export function describeFilters(f: FilterLike): {text: string; situational: stri
 /** A7: live-checkpoint chips from the stored per-player live block. Null unless the transient latent exists. */
 export type LiveBlock = {tier?: number | null; mu_live?: number | null; week_latent_mean?: number | null; contention?: number | null} | null | undefined;
 /** A7: the stored week latent is centred over every entrant who played the completed rounds, not over the players still active. After a cut the active-field mean is above zero (survivors), so the chips are not centred on the field still playing. */
-export const LIVE_CENTRING_NOTE = "measured against everyone who started, not only players still in the field";
+export const LIVE_CENTRING_NOTE = "Measured against everyone who started, not only players still in the field";
 export function liveChips(live: LiveBlock): {transient: number; priced: number | null; contentionIncluded: boolean} | null {
   if (!live || !finite(live.week_latent_mean)) return null;
   // Tier 0 is active; 1 (MDF), 2 (missed cut) and 3/4 (WD) play no further round, so "next round" chips would mislead.

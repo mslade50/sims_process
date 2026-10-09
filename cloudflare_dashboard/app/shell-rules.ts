@@ -46,14 +46,14 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { key: "this-week", href: "/this-week", label: "This week", description: "Course, model vs market, who we favour and why" },
       {
-        key: "weekly-players", href: "/weekly-players", label: "Players", description: "The field table, or one golfer's profile",
-        toggle: [{ key: "weekly-players", href: "/weekly-players", label: "Field" }, { key: "players", href: "/players", label: "Player" }],
+        key: "weekly-players", href: "/weekly-players", label: "Players", description: "Everyone in the field, or one golfer's profile",
+        toggle: [{ key: "weekly-players", href: "/weekly-players", label: "Whole field" }, { key: "players", href: "/players", label: "One golfer" }],
       },
       { key: "why-priced", href: "/why-priced", label: "Why priced", description: "Every player's price, shape and drivers" },
       { key: "distributions", href: "/distributions", label: "Distributions", description: "Finish-position probability curves" },
       {
-        key: "round-scores", href: "/round-scores", label: "Scoring and weather", description: "Expected score, uncertainty and tee-time weather",
-        toggle: [{ key: "round-scores", href: "/round-scores", label: "Scoring" }, { key: "weather-effects", href: "/weather-effects", label: "Weather" }],
+        key: "round-scores", href: "/round-scores", label: "Scoring", description: "Expected score, how wide it could swing, and tee-time weather",
+        toggle: [{ key: "round-scores", href: "/round-scores", label: "Scores" }, { key: "weather-effects", href: "/weather-effects", label: "Weather" }],
       },
     ],
   },
@@ -64,8 +64,8 @@ export const NAVIGATION: NavGroup[] = [
     label: "Archive",
     collapsed: true,
     items: [
-      { key: "history", href: "/history", label: "History", description: "Archived simulations (legacy data)" },
-      { key: "diagnostics", href: "/diagnostics", label: "Diagnostics", description: "Model quality (legacy data)" },
+      { key: "history", href: "/history", label: "History", description: "Past tournaments from the old model" },
+      { key: "diagnostics", href: "/diagnostics", label: "Diagnostics", description: "How accurate the old model was" },
     ],
   },
 ];

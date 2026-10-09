@@ -21,7 +21,7 @@ import {
 import { DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import { GolfpriceScorecardSection } from "./ScorecardSection";
-import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, palette, safeMean, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
+import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, eventDisplayName, palette, safeMean, STYLE_DEFINITIONS, styleName, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
 
 const chartMargin = { top: 16, right: 18, bottom: 8, left: 0 };
 
@@ -50,10 +50,10 @@ function SelectControl({ label, value, options, onChange, hint }: { label: strin
   );
 }
 
-function RangeControl({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
+function RangeControl({ label, value, min, max, step = 1, onChange, suffix = "" }: { label: string; suffix?: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
   return (
     <label className="range-control">
-      <span>{label}<b>{value}</b></span>
+      <span>{label}<b>{value}{suffix}</b></span>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   );
@@ -141,7 +141,7 @@ function DistributionExplorer({ rows, title, subtitle }: { rows: DataRow[]; titl
   if (!rows.length) return <EmptyState title="No distribution snapshot" detail="Run the simulation and publish dashboard data to populate this view." />;
   return (
     <div className="stack-lg">
-      <Panel title={title} eyebrow={subtitle} actions={<RangeControl label="Ranks shown" value={maxRank} min={10} max={Math.max(40, Math.min(100, Math.max(...rows.map((row) => numberValue(row.rank))))) } step={5} onChange={setMaxRank} />}>
+      <Panel title={title} eyebrow={subtitle} actions={<RangeControl label="Showing the top" suffix=" finish places" value={maxRank} min={10} max={Math.max(40, Math.min(100, Math.max(...rows.map((row) => numberValue(row.rank))))) } step={5} onChange={setMaxRank} />}>
         <PlayerPicker options={options} value={activePlayers} onChange={setPlayers} max={5} />
         <div className="chart-large">
           <ResponsiveContainer width="100%" height="100%">
@@ -160,7 +160,7 @@ function DistributionExplorer({ rows, title, subtitle }: { rows: DataRow[]; titl
       </Panel>
       <div className="comparison-grid">
         {stats.map((stat, index) => (
-          <Panel key={stat.player} eyebrow={`Fair win ${americanOdds(stat.winNdh || stat.win)}`} title={titleCase(stat.player)} className="player-summary">
+          <Panel key={stat.player} eyebrow={`Fair win price ${americanOdds(stat.winNdh || stat.win)} (American odds, before the market)`} title={titleCase(stat.player)} className="player-summary">
             <div className="mini-stat-grid">
               {[ ["Win", stat.win], ["Top 5", stat.top5], ["Top 10", stat.top10], ["Top 20", stat.top20] ].map(([label, value]) => <div key={String(label)} style={{ borderColor: palette[index % palette.length] }}><span>{label}</span><strong>{(Number(value) * 100).toFixed(1)}%</strong></div>)}
             </div>
@@ -303,7 +303,8 @@ export function HistoryView() {
   const manifest = useDashboardData<HistoryManifest>("history.json");
   const [eventKey, setEventKey] = useState("");
   const [mode, setMode] = useState<"pre" | "live">("pre");
-  const events = manifest.data?.events ?? [];
+  // The archive can hold the same tournament twice (two seasons); one entry per event name, newest first, so the list has no repeats.
+  const events = (manifest.data?.events ?? []).filter((event, index, all) => all.findIndex((other) => eventDisplayName(other.event_name) === eventDisplayName(event.event_name)) === index);
   const activeEventKey = eventKey || events[0]?.key || "";
   const selectedEvent = events.find((event) => event.key === activeEventKey);
   const activeMode = selectedEvent?.modes.includes(mode) ? mode : (selectedEvent?.modes[0] as "pre" | "live" | undefined) ?? "pre";
@@ -312,10 +313,10 @@ export function HistoryView() {
   if (manifest.error || !manifest.data) return <ErrorState message={manifest.error ?? "Historical data is unavailable."} />;
   return (
     <>
-      <LegacyNotice /><PageIntro eyebrow="Model archive" title="Historical distributions" description="Reopen the finish-position odds the old model produced for past tournaments, before the event or during play." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: titleCase(event.event_name) }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
+      <LegacyNotice /><PageIntro eyebrow="Model archive" title="Historical distributions" description="Reopen the finish-position odds the old model produced for past tournaments, before the event or during play." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: eventDisplayName(event.event_name) }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
       {history.loading && <LoadingState label="Loading archived distribution" />}
       {history.error && <ErrorState message={history.error} />}
-      {history.data?.rows && <DistributionExplorer rows={history.data.rows} title={titleCase(selectedEvent?.event_name)} subtitle={`${activeMode === "live" ? "In-play" : "Pre-event"} finish probabilities from the archive`} />}
+      {history.data?.rows && <DistributionExplorer rows={history.data.rows} title={eventDisplayName(selectedEvent?.event_name)} subtitle={`${activeMode === "live" ? "In-play" : "Pre-event"} finish probabilities from the archive`} />}
     </>
   );
 }
@@ -422,8 +423,9 @@ function bucketRoi(rows: PerformanceRow[], group: string, color: string, buckets
   });
 }
 
-export function PerformanceView() {
+function LegacyBetResults() {
   const { data, loading, error } = useDashboardData<PerformancePayload>("performance.json");
+  const [allStyles, setAllStyles] = useState(false);
   const [eventsSelected, setEventsSelected] = useState<string[]>([]);
   const [typesSelected, setTypesSelected] = useState<string[]>([]);
   const [booksSelected, setBooksSelected] = useState<string[]>([]);
@@ -532,7 +534,7 @@ export function PerformanceView() {
   const eventOrder = [...eventFirstSeen.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([name]) => name);
   const byEvent = eventOrder.map((name) => {
     const eventRows = resolved.filter((row) => String(row.event_name) === name);
-    const point: DataRow = { event: titleCase(name), total: sum(eventRows.map((row) => row._units_won)) };
+    const point: DataRow = { event: eventDisplayName(name), total: sum(eventRows.map((row) => row._units_won)) };
     PERFORMANCE_TYPE_OPTIONS.forEach((option) => point[option.value] = sum(eventRows.filter((row) => row.bet_type === option.value).map((row) => row._units_won)));
     return point;
   });
@@ -557,15 +559,27 @@ export function PerformanceView() {
     archetypeSeries.forEach((values, archetype) => { if (values[index] !== undefined) point[archetype] = values[index]; });
     return point;
   });
+  const shownStyles = allStyles ? activeArchetypes : [...activeArchetypes].sort((a, b) => Math.abs(sum(resolved.filter((row) => row.archetype === b).map((row) => row._units_won))) - Math.abs(sum(resolved.filter((row) => row.archetype === a).map((row) => row._units_won)))).slice(0, 6);
   const archetypePnl = activeArchetypes.map((archetype) => ({ archetype, units: sum(resolved.filter((row) => row.archetype === archetype).map((row) => row._units_won)) })).sort((a, b) => a.units - b.units);
   const againstPnl = uniqueStrings(resolved, "archetype_against").map((archetype) => ({ archetype, units: sum(resolved.filter((row) => row.archetype_against === archetype).map((row) => row._units_won)) })).sort((a, b) => a.units - b.units);
   const eventSummary = eventOrder.map((name) => {
     const eventRows = resolved.filter((row) => String(row.event_name) === name);
     const risked = sum(eventRows.map((row) => row._units_wagered));
     const won = sum(eventRows.map((row) => row._units_won));
-    return { event_name: name, bets: eventRows.length, wins: eventRows.filter((row) => String(row.result).startsWith("win")).length, losses: eventRows.filter((row) => row.result === "loss").length, wagered: risked, units_won: won, roi: risked ? won / risked * 100 : 0 };
+    return { event_name: eventDisplayName(name), bets: eventRows.length, wins: eventRows.filter((row) => String(row.result).startsWith("win")).length, losses: eventRows.filter((row) => row.result === "loss").length, wagered: risked, units_won: won, roi: risked ? won / risked * 100 : 0 };
   }).sort((a, b) => b.units_won - a.units_won);
-  const detailRows = filtered.map((row) => ({ ...row, units_wagered: row._units_wagered, units_won: row._units_won }));
+  const detailRows = filtered.map((row) => ({
+    ...row,
+    event_name: eventDisplayName(row.event_name),
+    archetype: styleName(row.archetype),
+    archetype_against: styleName(row.archetype_against),
+    // Finish-position bets have no opponent: the column holds the market ("win", "top_5"), so it is shown under its own name and the opponent stays blank.
+    market: String(row.bet_type ?? "").startsWith("finish_position") ? titleCase(String(row.opponent ?? "").replace("winner", "win")) : "",
+    opponent: String(row.bet_type ?? "").includes("matchup") ? row.opponent : "",
+    units_wagered: row._units_wagered,
+    units_won: row._units_won,
+  }));
+  const implausibleEdges = filtered.filter((row) => numberValue(row.edge, 0) > 50).length;
   const activeFilterCount = [eventsSelected, typesSelected, booksSelected, roundsSelected, daysSelected, marketsSelected, archetypesSelected, againstSelected, playersSelected].filter((value) => value.length).length + [sampleMin, sampleMax, predMin, predMax, rawEdgeMin, rawEdgeMax, decimalMin, decimalMax].filter((value) => value !== null).length + (kellyEdgeMin !== null && kellyEdgeMin !== 0 ? 1 : 0) + (kellyEdgeMax !== null ? 1 : 0) + (includeLive ? 1 : 0) + (side !== "all" ? 1 : 0) + (analysisMode !== "all" ? 1 : 0);
 
   function resetFilters() {
@@ -577,20 +591,19 @@ export function PerformanceView() {
 
   return (
     <>
-      <PageIntro eyebrow="Review" title="Scorecard and P&L" description="How the current model is doing against the market, then every bet result with filters and profit breakdowns." />
-      <GolfpriceScorecardSection />
-      <LegacyNotice>The bet results below come from the retired simulation pipeline. They are kept for reference and do not include the current model&apos;s bets.</LegacyNotice>
+      <p className="inputs-muted">Left out by the current filters: {(rows.length - filtered.length).toLocaleString()} of {rows.length.toLocaleString()} bets (score bets, live finish bets and exchange prices are off until chosen).</p>
+      {implausibleEdges > 0 && <p className="inputs-note accent" role="note">{implausibleEdges.toLocaleString()} of these bets show an edge above 50%. Edges that large usually mean a stale or mispriced quote rather than a real advantage, so read them with caution.</p>}
       <Panel title="Filters and what is counted" eyebrow={`${activeFilterCount} active filter${activeFilterCount === 1 ? "" : "s"}`} actions={<button type="button" className="icon-button" onClick={resetFilters}>Reset filters</button>} className="performance-filter-panel">
         <div className="inclusion-rules" aria-label="Default bet inclusion rules">
-          <span className={typesSelected.includes("score_bet") ? "included" : "excluded"}><b>Score bets</b>{typesSelected.includes("score_bet") ? "Included by selection" : "Excluded by default"}</span>
-          <span className={includeLive || typesSelected.includes("finish_position_live") ? "included" : "excluded"}><b>Live finish bets</b>{includeLive || typesSelected.includes("finish_position_live") ? "Included" : "Excluded by default"}</span>
-          <span className={booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "included" : "excluded"}><b>Kalshi / NoVig</b>{booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "Included by selection" : "Hidden until selected"}</span>
+          <span title="Bets on a player's total score. They are left out of the totals unless you pick them under Bet type." className={typesSelected.includes("score_bet") ? "included" : "excluded"}><b>Score bets</b>{typesSelected.includes("score_bet") ? "Included by selection" : "Off by default, so not in the totals"}</span>
+          <span title="Finish-position bets placed while the tournament was underway. They are left out of the totals unless you turn on Live bets." className={includeLive || typesSelected.includes("finish_position_live") ? "included" : "excluded"}><b>Live finish bets</b>{includeLive || typesSelected.includes("finish_position_live") ? "Included" : "Off by default, so not in the totals"}</span>
+          <span title="Kalshi and NoVig are betting exchanges, not sportsbooks. Their prices are off by default and counted only if you pick them under Sportsbook." className={booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "included" : "excluded"}><b>Kalshi / NoVig</b>{booksSelected.some((book) => EXCHANGE_BOOKS.some((exchange) => book.toLowerCase().includes(exchange))) ? "Included by selection" : "Off by default, so not in the totals"}</span>
         </div>
         <div className="filter-section"><h3>Bet universe</h3><div className="performance-filter-grid">
-          <MultiSelectControl label="Event" value={eventsSelected} onChange={setEventsSelected} placeholder="All events" options={events.map((value) => ({ value, label: titleCase(value) }))}/>
+          <MultiSelectControl label="Event" value={eventsSelected} onChange={setEventsSelected} placeholder="All events" options={events.map((value) => ({ value, label: eventDisplayName(value) }))}/>
           <MultiSelectControl label="Bet type" value={typesSelected} onChange={setTypesSelected} placeholder="Default types" options={PERFORMANCE_TYPE_OPTIONS}/>
           <MultiSelectControl label="Sportsbook" value={booksSelected} onChange={setBooksSelected} placeholder="Default books" options={books.map((value) => ({ value, label: titleCase(value) }))}/>
-          <NumberRangeControl hint="Kelly edge: how much the model liked the bet, as a percent of bankroll under the staking rule." label="Kelly % edge" minValue={kellyEdgeMin} maxValue={kellyEdgeMax} onMinChange={setKellyEdgeMin} onMaxChange={setKellyEdgeMax} min={0} step={0.5}/>
+          <NumberRangeControl hint="Edge (Kelly): how much the model liked the bet, as a percent of bankroll under the staking rule. Values above about 50% are usually a stale price." label="Edge (Kelly)" minValue={kellyEdgeMin} maxValue={kellyEdgeMax} onMinChange={setKellyEdgeMin} onMaxChange={setKellyEdgeMax} min={0} step={0.5}/>
           <label className="toggle-filter"><input type="checkbox" aria-label="Include live finish-position bets" checked={includeLive} onChange={(event) => setIncludeLive(event.target.checked)}/><span><b>Live bets</b><small>Include live finish positions</small></span></label>
         </div></div>
         <div className="filter-section"><h3>Timing & market</h3><div className="performance-filter-grid performance-filter-grid-six">
@@ -602,11 +615,11 @@ export function PerformanceView() {
           <SelectControl hint="Yes bets that the player finishes in the market; No bets against it." label="Side (finish markets)" value={side} onChange={setSide} options={[{value:"all",label:"All sides"},{value:"yes",label:"YES side"},{value:"no",label:"NO side (fades)"}]}/>
         </div></div>
         <div className="filter-section"><h3>Analysis</h3><div className="performance-filter-grid performance-filter-grid-six">
-          <SelectControl hint="Best price keeps only the best-edge quote for each bet. Sharp only keeps the sharpest sportsbooks." label="Which bets to count" value={analysisMode} onChange={setAnalysisMode} options={[{value:"all",label:"All bets"},{value:"best_price",label:"Best price"},{value:"sharp_only",label:"Sharp only"},{value:"sharp_best",label:"Sharp only, best price"}]}/>
-          <NumberRangeControl hint="The model's chance minus the sportsbook's implied chance, in percentage points." label="Raw % edge" minValue={rawEdgeMin} maxValue={rawEdgeMax} onMinChange={setRawEdgeMin} onMaxChange={setRawEdgeMax} step={0.5}/>
+          <SelectControl hint="Best price keeps only the best-edge quote for each bet. Sharp only keeps Pinnacle, BetOnline and Betcris, the books whose prices are hardest to beat." label="Which bets to count" value={analysisMode} onChange={setAnalysisMode} options={[{value:"all",label:"All bets"},{value:"best_price",label:"Best price"},{value:"sharp_only",label:"Sharp only"},{value:"sharp_best",label:"Sharp only, best price"}]}/>
+          <NumberRangeControl hint="The model's chance minus the sportsbook's implied chance, in percentage points." label="Raw edge (%)" minValue={rawEdgeMin} maxValue={rawEdgeMax} onMinChange={setRawEdgeMin} onMaxChange={setRawEdgeMax} step={0.5}/>
           <NumberRangeControl hint="The payout for a 1 unit stake, including the stake." label="Decimal odds" minValue={decimalMin} maxValue={decimalMax} onMinChange={setDecimalMin} onMaxChange={setDecimalMax} min={1} step={0.1}/>
-          <MultiSelectControl hint="A label for the player's style (for example a long hitter or a strong putter)." label="Player type" value={archetypesSelected} onChange={setArchetypesSelected} placeholder="All types" options={archetypes.map((value) => ({value,label:value}))}/>
-          <MultiSelectControl hint="The style of the opponent the player was bet against, in matchups." label="Opponent type" value={againstSelected} onChange={setAgainstSelected} placeholder="All types" options={archetypesAgainst.map((value) => ({value,label:value}))}/>
+          <MultiSelectControl hint="The player's style, for example long and wild or strong putter. See the key under the player-type charts." label="Player type" value={archetypesSelected} onChange={setArchetypesSelected} placeholder="All types" options={archetypes.map((value) => ({value,label:styleName(value)}))}/>
+          <MultiSelectControl hint="The style of the opponent the player was bet against, in matchups." label="Opponent type" value={againstSelected} onChange={setAgainstSelected} placeholder="All types" options={archetypesAgainst.map((value) => ({value,label:styleName(value)}))}/>
           <MultiSelectControl label="Player" value={playersSelected} onChange={setPlayersSelected} placeholder="All players" options={players.map((value) => ({value,label:titleCase(value)}))}/>
         </div></div>
       </Panel>
@@ -621,13 +634,28 @@ export function PerformanceView() {
         </div>
         <Panel title="ROI by size of edge and odds" eyebrow="Grouped by raw edge, Kelly edge and decimal odds"><div className="chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={bucketRows} margin={{...chartMargin,bottom:76}}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="bucket" stroke="var(--muted)" angle={-28} textAnchor="end" interval={0} height={92}/><YAxis stroke="var(--muted)" tickFormatter={(value) => `${value}%`}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="roi" name="ROI %" radius={[5,5,0,0]}>{bucketRows.map((row,index) => <Cell key={index} fill={String(row.color)}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
         <div className="performance-chart-grid">
-          <Panel title="Cumulative P&L by player type" eyebrow="By player style (long hitter, strong putter and so on)"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={archetypeCurve} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="index" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Legend/>{activeArchetypes.map((archetype,index) => <Line key={archetype} type="monotone" dataKey={archetype} stroke={palette[index % palette.length]} dot={false} strokeWidth={1.8}/>)}</LineChart></ResponsiveContainer></div></Panel>
-          <Panel title="Total P&L by player type" eyebrow="Player bet on"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypePnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{archetypePnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
-          <Panel title="P&L by opponent type" eyebrow="Player bet against"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={againstPnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{againstPnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+          <Panel title="Cumulative P&L by player type" eyebrow={allStyles ? "All player styles" : "The six styles with the biggest swings"} actions={activeArchetypes.length > 6 ? <button type="button" className="icon-button" onClick={() => setAllStyles((value) => !value)}>{allStyles ? "Show top 6" : "Show all styles"}</button> : undefined}><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={archetypeCurve} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="index" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Legend/>{shownStyles.map((archetype,index) => <Line key={archetype} type="monotone" dataKey={archetype} name={styleName(archetype)} stroke={palette[index % palette.length]} dot={false} strokeWidth={1.8}/>)}</LineChart></ResponsiveContainer></div></Panel>
+          <Panel title="Total P&L by player type" eyebrow="Player bet on"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypePnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125} tickFormatter={styleName}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{archetypePnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+          <Panel title="P&L by opponent type" eyebrow="Player bet against"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={againstPnl} layout="vertical" margin={{...chartMargin,left:62}}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="archetype" stroke="var(--muted)" width={125} tickFormatter={styleName}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="units" radius={[0,5,5,0]}>{againstPnl.map((row) => <Cell key={row.archetype} fill={row.units >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
         </div>
+        <details className="tech-details" open><summary>What the player styles mean</summary><ul>{Object.entries(STYLE_DEFINITIONS).map(([name, text]) => <li key={name}><b>{name}</b>: {text}</li>)}<li>Combined names such as Driving and putting mean those two parts of his game are his strengths.</li></ul></details>
         <Panel title="Event summary" eyebrow="Resolved performance by tournament"><DataTable rows={eventSummary} label="Event summary" preferredColumns={["event_name","bets","wins","losses","wagered","units_won","roi"]} pageSize={30}/></Panel>
-        <Panel title="Filtered bets" eyebrow="Search, sort, customize, export"><DataTable rows={detailRows} label="Filtered bets" preferredColumns={["bet_on","opponent","bookmaker","bet_type","round","event_name","archetype","archetype_against","edge","raw_edge","dec_odds","pred_on","result","units_wagered","units_won"]} pageSize={40}/></Panel>
+        <Panel title="Filtered bets" eyebrow="Search, sort, customize, export"><DataTable rows={detailRows} label="Filtered bets" preferredColumns={["bet_on","opponent","market","bookmaker","bet_type","round","event_name","archetype","archetype_against","edge","raw_edge","dec_odds","pred_on","result","units_wagered","units_won"]} pageSize={40}/></Panel>
       </>}
+    </>
+  );
+}
+
+export function PerformanceView() {
+  const [showLegacy, setShowLegacy] = useState(false);
+  return (
+    <>
+      <PageIntro eyebrow="Review" title="Scorecard and P&L" description="How the current model is doing against the market. The older bet-by-bet results are one click below." />
+      <GolfpriceScorecardSection />
+      <Panel title="Older bet results" eyebrow="Retired simulation pipeline" actions={<button type="button" className="icon-button" aria-expanded={showLegacy} onClick={() => setShowLegacy((value) => !value)}>{showLegacy ? "Hide older results" : "Show older results"}</button>}>
+        <LegacyNotice>These bet results come from the retired simulation pipeline. They are kept for reference and do not include the current model&apos;s bets.</LegacyNotice>
+      </Panel>
+      {showLegacy && <LegacyBetResults />}
     </>
   );
 }
@@ -652,7 +680,7 @@ export function DiagnosticsView() {
   });
   const archetypes = uniqueStrings(rows, "archetype").map((archetype) => {
     const archetypeRows = rows.filter((row) => String(row.archetype) === archetype);
-    const point: DataRow = { archetype: titleCase(archetype) };
+    const point: DataRow = { archetype: styleName(archetype) };
     categories.forEach((category) => point[category] = weightedMean(archetypeRows.filter((row) => String(row.category) === category), "miss_centered"));
     return point;
   });
@@ -661,27 +689,29 @@ export function DiagnosticsView() {
     const totalRows = playerRows.filter((row) => String(row.category) === "total");
     const point: DataRow = {
       player_name: name,
-      archetype: totalRows[0]?.archetype,
+      archetype: styleName(totalRows[0]?.archetype),
       events: diagnosticEventCount(totalRows.length ? totalRows : playerRows),
       rounds: diagnosticRoundCount(playerRows),
     };
     categories.forEach((category) => point[category] = weightedMean(playerRows.filter((row) => String(row.category) === category), "miss_centered"));
     point.max_abs_miss = Math.max(...categories.map((category) => Math.abs(numberValue(point[category]))));
     return point;
-  }).filter((row) => event !== "all" || numberValue(row.events) >= 2).sort((a, b) => numberValue(b.max_abs_miss) - numberValue(a.max_abs_miss));
+  }).filter((row) => event !== "all" || numberValue(row.events) >= 2).sort((a, b) => numberValue(b.max_abs_miss) - numberValue(a.max_abs_miss))
+    // The "biggest miss" figure only repeats the largest of the four shot columns shown beside it, so it is used for the order and then dropped.
+    .map((row) => { const { max_abs_miss: _ignored, ...rest } = row; void _ignored; return rest as DataRow; });
   const selectedRows = rows.filter((row) => !player || String(row.player_name) === player);
 
   return (
     <>
       <LegacyNotice /><PageIntro eyebrow="Model QA" title="Diagnostics" description="How well the old model's skill predictions matched what happened in rounds 1 and 2, overall and by type of shot." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: titleCase(label) }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
-      <div className="kpi-grid">{bias.map((row) => <Kpi key={row.category} label={`${row.category}: miss vs prediction`} hint={`Actual strokes gained minus what the model predicted, per round, ${row.category === "Total" ? "overall" : `for ${row.category.toLowerCase()}`}. Near zero is good; above zero means players beat the model.`} value={`${row.miss >= 0 ? "+" : ""}${row.miss.toFixed(3)}`} detail={`${row.sample.toLocaleString()} rounds`} tone={Math.abs(row.miss) < 0.05 ? "positive" : Math.abs(row.miss) > 0.15 ? "negative" : "neutral"}/>)}</div>
+      <div className="kpi-grid">{bias.map((row) => <Kpi key={row.category} label={`${row.category}: how far off`} hint={`How far our strokes-gained estimate was off, per round, ${row.category === "Total" ? "overall" : `for ${row.category.toLowerCase()}`} (0 is perfect). Above zero means players did better than we expected; below zero, worse.`} value={`${row.miss >= 0 ? "+" : ""}${row.miss.toFixed(3)}`} detail={`${row.sample.toLocaleString()} rounds`} tone={Math.abs(row.miss) < 0.05 ? "positive" : Math.abs(row.miss) > 0.15 ? "negative" : "neutral"}/>)}</div>
       <div className="two-column">
-        <Panel title="Rounds 1 and 2: miss vs prediction" eyebrow="Actual minus predicted strokes gained, whole field, weighted by rounds played"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
-        <Panel title="Misses by player type" eyebrow="Miss by shot type, compared with the field average"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypes.slice(0, 10)} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="archetype" stroke="var(--muted)" angle={-20} textAnchor="end" height={70}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{categories.map((category, index) => <Bar key={category} dataKey={category} fill={palette[index]} radius={[3,3,0,0]}/>)}</BarChart></ResponsiveContainer></div></Panel>
+        <Panel title="How far off our estimates were" eyebrow="Rounds 1 and 2. Actual minus predicted strokes gained per round, whole field (0 is perfect)"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
+        <Panel title="Misses by player type" eyebrow="Strokes per round, compared with the field average miss"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={archetypes.slice(0, 10)} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="archetype" stroke="var(--muted)" angle={-20} textAnchor="end" height={90} interval={0}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{categories.map((category, index) => <Bar key={category} dataKey={category} name={CATEGORY_NAMES[category]} fill={palette[index]} radius={[3,3,0,0]}/>)}</BarChart></ResponsiveContainer></div></Panel>
       </div>
       {player && <Panel title={titleCase(player)} eyebrow="Prediction against result, by event and shot type"><DataTable rows={selectedRows} label="Player diagnostics" preferredColumns={["event_name", "category", "predicted_sg", "actual_sg", "miss", "miss_centered", "rounds", "archetype"]}/></Panel>}
-      <Panel title={event === "all" ? "Largest recurring misses" : "Largest player misses"} eyebrow={event === "all" ? "Players with at least two events, ranked by their biggest miss in any shot type" : "Players ranked by their biggest miss in any shot type"}><DataTable rows={recurring} label={event === "all" ? "Recurring misses" : "Player misses"} preferredColumns={["player_name", "archetype", "events", "rounds", "ott", "app", "arg", "putt", "max_abs_miss"]} pageSize={30}/></Panel>
-      <Panel title="Pulling predictions toward the market" eyebrow="Whether blending with the market got closer to the actual result"><DataTable rows={data.market_regression} label="Market regression" preferredColumns={["event_name", "player_name", "pred", "my_pred_regressed", "actual_sg", "error_raw", "error_regressed", "regress_helped", "mkt_adj", "mu_adj"]}/></Panel>
+      <Panel title={event === "all" ? "Largest recurring misses" : "Largest player misses"} eyebrow={`${recurring.length.toLocaleString()} players, strokes per round compared with the field, ordered by the biggest miss in any shot type${event === "all" ? " (players with at least two events)" : ""}`}><DataTable rows={recurring} label={event === "all" ? "Recurring misses" : "Player misses"} preferredColumns={["player_name", "archetype", "events", "rounds", "ott", "app", "arg", "putt"]} pageSize={30}/></Panel>
+      <Panel title="Blending with the market" eyebrow="Whether mixing our numbers with the market's got closer to the real result">{data.market_regression.length === 0 ? <EmptyState title="Not computed for this event yet" detail="Appears after the next results update." /> : <DataTable rows={data.market_regression} label="Market regression" preferredColumns={["event_name", "player_name", "pred", "my_pred_regressed", "actual_sg", "error_raw", "error_regressed", "regress_helped", "mkt_adj", "mu_adj"]}/>}</Panel>
     </>
   );
 }

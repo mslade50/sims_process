@@ -102,7 +102,7 @@ test("headline lists: top edges, bias rows and sentences", () => {
   assert.ok(rows.length > 3);
   assert.ok(biasDimensions(week).some((d) => d.value === "depth"));
   assert.ok(biasForDimension(week, "depth").every((r) => r.dimension === "depth"));
-  assert.match(biasSentence(rows[0]), /strokes\/round (above|below) the market|in line/);
+  assert.match(biasSentence(rows[0]), /(higher|lower) than the market does|in line with the rest of the field/);
 });
 
 test("competitor overlay: same-odds neighbours preselected, capped, toggled", () => {

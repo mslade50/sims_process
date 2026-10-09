@@ -58,7 +58,7 @@ test("a redirect route renders a moved notice with a link (the browser then repl
 /* ------------------------------------------------------------------ navigation */
 test("navigation groups: Week, Model, Operate, Review, then a collapsed Archive", () => {
   assert.deepEqual(NAVIGATION.map((g) => g.label), ["Week", "Model", "Operate", "Review", "Archive"]);
-  assert.deepEqual(NAVIGATION[0].items.map((i) => i.label), ["This week", "Players", "Why priced", "Distributions", "Scoring and weather"]);
+  assert.deepEqual(NAVIGATION[0].items.map((i) => i.label), ["This week", "Players", "Why priced", "Distributions", "Scoring"]);
   assert.deepEqual(NAVIGATION.at(-1).items.map((i) => i.label), ["History", "Diagnostics"]);
   assert.equal(NAVIGATION.at(-1).collapsed, true);
   assert.equal(NAVIGATION.filter((g) => g.collapsed).length, 1);
@@ -73,14 +73,14 @@ test("one Players entry toggles Field and Player; the active entry resolves for 
   assert.equal(players.href, "/weekly-players");
   assert.equal(navEntryFor("players").item, players);
   assert.equal(navEntryFor("weekly-players").item, players);
-  assert.equal(navEntryFor("weather-effects").item.label, "Scoring and weather");
+  assert.equal(navEntryFor("weather-effects").item.label, "Scoring");
   assert.equal(navEntryFor("nope"), null);
   for (const item of NAV_ITEMS) for (const key of [item.key, ...(item.toggle ?? []).map((t) => t.key)]) assert.ok(registered.includes(key), key);
 });
 
 test("the rendered nav shows the groups and keeps the Archive group closed", async () => {
   const html = await (await render("/this-week")).text();
-  for (const label of ["Week", "Model", "Operate", "Review", "Archive", "Scoring and weather", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
+  for (const label of ["Week", "Model", "Operate", "Review", "Archive", "Scoring", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
   assert.match(html, /<details class="nav-group nav-archive"/);
   assert.doesNotMatch(html, /<details class="nav-group nav-archive" open/);
 });
@@ -217,11 +217,11 @@ test("the Run page suggests today's weekday group in New York time", () => {
   assert.equal(suggestedGroup(Date.parse("2026-10-13T02:00:00Z")), "Monday", "Tuesday 02:00 UTC is still Monday evening in New York");
 });
 
-test("Run page source: Suggested now, collapsed rest, and 'Machine: unavailable'", async () => {
+test("Run page source: Suggested now, collapsed rest, and a plain runner-unavailable message", async () => {
   const run = await readFile(new URL("../app/RunView.tsx", import.meta.url), "utf8");
   assert.match(run, /Suggested now/);
   assert.match(run, /run-collapsed/);
-  assert.match(run, /Machine: unavailable/);
+  assert.match(run, /desktop runner status could not be loaded/);
   assert.doesNotMatch(run, /Unknown until the page can load/);
 });
 

@@ -16,6 +16,8 @@ export type WeeklyDeps = {
   /** The standing "form versus model" sentence (labels.ts GAP_METHOD_SENTENCE), used in column hover text. */
   gapSentence?: string;
   plainName: (key: string, legend?: Record<string, { label?: string } | undefined>) => string;
+  /** Display-side translation of publisher phrases (labels.ts plainPhrase). */
+  plainPhrase?: (text: string) => string;
   signedZ: (v: unknown, digits?: number) => string;
   pct: (p: number | null | undefined, digits?: number) => string;
   savedFieldSkill: (doc: ExplainDoc | null, id: number | null) => { value: number | null };
@@ -31,7 +33,7 @@ export const NA = "n/a";
 export const THIN_BADGE = "under 12 rounds";
 /** Per-event accuracy of the field offset (tour_scale.md: 308-event re-run against provider field strength). */
 export const ACCURACY_SENTENCE = "The field offset is typically within about 0.12 strokes of the true figure for an event; a single event can be off by up to 0.4.";
-export const ESTIMATOR_NAME = "Smoothed player strength ratings (365-day half-life), averaged over the field";
+export const ESTIMATOR_NAME = "Smoothed player strength ratings, averaged over the field";
 
 /** Fixed column names (these are the table headers; DataTable title-cases keys). */
 export const COL = {
@@ -41,8 +43,8 @@ export const COL = {
   makeCut: "Make cut",
   top10: "Top 10",
   liveSkill: "Live skill",
-  b8: "Live shift",
-  contention: "Leaderboard-position shift",
+  b8: "Live shift (strokes/rd)",
+  contention: "Leaderboard shift (strokes/rd)",
   preEventSkill: "Pre-event skill (vs field)",
   gap: "This week minus form",
   base: "Base skill",
@@ -61,22 +63,30 @@ export function columnTitles(deps: Pick<WeeklyDeps, "LABELS">, gapSentence: stri
     [L.thisWeekPga.short]: L.thisWeekPga.long,
     [L.vsField.short]: L.vsField.long,
     [L.vsPgaAvg.short]: `${L.vsPgaAvg.long}. ${gapSentence}`,
-    [COL.nTour]: "Rounds behind the player's PGA-average rating. A note appears when the player's main tour is not this event's tour, or PGA is under half of the weight.",
+    [COL.nTour]: "Rounds behind the player's recent-form rating. A note appears when the player mostly plays another tour, or has a thin record.",
     [COL.win]: "The model's chance of winning the event.",
     [COL.makeCut]: "The model's chance of making the cut.",
     [COL.top10]: "The model's chance of a top-10 finish.",
-    [COL.liveSkill]: "The model's skill estimate for the rest of the event, updated for scoring so far.",
-    [COL.b8]: "How much the player's scoring so far this week has moved the skill estimate up (+) or down (-).",
-    [COL.contention]: "Adjustment for where the player sits on the leaderboard: leaders and chasers play differently from players out of it.",
+    [COL.liveSkill]: "The model's skill estimate for the rest of the event, updated for scoring so far, in strokes per round against the field.",
+    [COL.b8]: "How much the player's scoring so far this week has moved the skill estimate up (+) or down (-), in strokes per round.",
+    [COL.contention]: "Adjustment for where the player sits on the leaderboard (+ helps, - hurts), in strokes per round.",
     [COL.preEventSkill]: "The model's skill estimate before the event began, minus the field's average.",
     [COL.gap]: `${L.thisWeekPga.short} minus ${L.vsPgaAvg.short}. ${gapSentence}`,
     [COL.base]: "The model's skill estimate before course-location and owner adjustments.",
     [COL.location]: "Adjustment for travel, home region and nationality at this event's location.",
     [COL.override]: "A one-off change to the player's skill set by the owner on the private site.",
     [COL.sum]: "Base skill plus every adjustment added up.",
-    [COL.baseline]: "The model's final saved skill for the event, before weather and any live updates.",
+    [COL.baseline]: "The model's final saved skill for the event, before any live updates. Weather is shown separately and is not included.",
     [COL.residual]: "How far the saved skill differs from the sum of its parts. It should be zero; anything shown is a flagged mismatch.",
   };
+}
+
+/** One precision for chances: "<0.1%" for tiny values, otherwise one decimal. Display only. */
+export function chance(p: number | null | undefined): string {
+  if (!fin(p)) return NA;
+  if (p <= 0) return "0%";
+  if (p < 0.001) return "<0.1%";
+  return `${(p * 100).toFixed(1)}%`;
 }
 
 export function nameOf(p: { name: string }): string {
@@ -113,7 +123,10 @@ export function nCell(rating: PgaBenchmark | undefined, fallbackN: number | null
   const n = fin(rating?.n_rounds) ? rating!.n_rounds : fallbackN;
   const badge = tourMixBadge(rating, eventTour);
   const base = fin(n) ? String(n) : NA;
-  return badge ? `${base} · ${badge}` : base;
+  const parts = [base];
+  if (fin(n) && n < 12) parts.push("thin record");
+  if (badge) parts.push(badge);
+  return parts.join(" · ");
 }
 
 /** "vs PGA avg" cell: as-was gated; a missing value says why. */
@@ -122,7 +135,7 @@ export function benchmarkCell(rating: PgaBenchmark | undefined, reference: PgaBe
   if (value !== null) return deps.signedZ(value, 3);
   if (!rating) return NA;
   if (rating.status !== "available" || (fin(rating.n_rounds) && rating.n_rounds < 12)) return THIN_BADGE;
-  return "after this checkpoint";
+  return "after this run";
 }
 
 export const RESIDUAL_EPS = 1e-5;
@@ -201,7 +214,7 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
   const reference = catalog?.pga_benchmark_reference;
   const keys = [...new Set(doc.players.flatMap((p) => Object.keys(p.components)))];
   const familyKeys = [...new Set((inputs?.players ?? []).flatMap((p) => Object.keys(savedSkill(p).families)))];
-  const weatherRounds = [...new Set((inputs?.players ?? []).flatMap((p) => Object.keys(savedSkill(p).weather)))];
+  const weatherRounds = activeWeatherRounds((inputs?.players ?? []).map((p) => ({ weather: savedSkill(p).weather })));
   const noCut = doc.event.cut_round === 0 || doc.event.cut_rule === "no cut";
   const taken = new Set<string>([...plan.defaults, ...plan.picker, COL.base, COL.location, COL.override, COL.sum, COL.baseline, COL.residual]);
   const componentLabel = new Map(keys.map((k) => [k, uniqueLabel(plainName(k, doc.components_legend), taken)]));
@@ -209,8 +222,9 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
   // Until DataTable accepts a default-column prop it shows the first 9 columns: the three that follow the defaults are deliberately harmless (never "vs PGA avg").
   const ordered: string[] = [...plan.defaults, COL.top10, COL.base, COL.location, COL.override, L.vsPgaAvg.short, COL.gap, ...(live ? [COL.preEventSkill] : []), ...familyLabel.values(), COL.sum, COL.baseline, COL.residual, ...weatherRounds.map((r) => `Weather ${r}`), ...componentLabel.values()];
   const titles = columnTitles(deps, deps.gapSentence ?? "");
-  for (const [k, label] of componentLabel) titles[label] = doc.components_legend?.[k]?.meaning ?? "A saved part of the model's skill estimate, in strokes per round against the field.";
-  for (const [k, label] of familyLabel) titles[label] = `Part of base skill: ${doc.components_legend?.[k]?.meaning ?? plainName(k, doc.components_legend)}. Parts are shown for reference and are not added a second time.`;
+  const say = deps.plainPhrase ?? ((t: string) => t);
+  for (const [k, label] of componentLabel) titles[label] = say(doc.components_legend?.[k]?.meaning ?? "A saved part of the model's skill estimate, in strokes per round against the field.");
+  for (const [k, label] of familyLabel) titles[label] = say(doc.components_legend?.[k]?.meaning ?? plainName(k, doc.components_legend));
   for (const r of weatherRounds) titles[`Weather ${r}`] = `Effect of the forecast weather on the model's skill estimate for round ${r}.`;
   const rows = players.map((p): WeeklyRow => {
     const input = byInput.get(p.id);
@@ -225,8 +239,8 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
       [L.thisWeekPga.short]: tw === null ? NA : signedZ(tw, 3),
       [L.vsField.short]: signedZ(savedFieldSkill(doc, p.id).value, 3),
       [COL.nTour]: nCell(rating, p.n_prior_rounds, doc.event.tour),
-      [COL.win]: deps.pct(p.probs.win.model),
-      [COL.makeCut]: noCut ? "No cut" : deps.pct(p.probs.make_cut.model),
+      [COL.win]: chance(p.probs.win.model),
+      [COL.makeCut]: noCut ? "No cut" : chance(p.probs.make_cut.model),
     };
     if (live) {
       row[COL.liveSkill] = signedZ(p.live?.mu_live, 3);
@@ -236,7 +250,7 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
     row[L.vsPgaAvg.short] = benchmarkCell(rating, reference, doc.as_of, deps);
     row[COL.gap] = tw !== null && vsPga !== null ? signedZ(tw - vsPga, 3) : NA;
     if (live) row[COL.preEventSkill] = signedZ(p.mu, 3);
-    row[COL.top10] = deps.pct(p.probs.top_10.model);
+    row[COL.top10] = chance(p.probs.top_10.model);
     row[COL.base] = signedZ(s?.base, 3);
     for (const k of familyKeys) row[familyLabel.get(k)!] = signedZ(s?.families[k], 3);
     row[COL.location] = signedZ(obj(bd.location).total, 3);
@@ -259,6 +273,13 @@ export function buildTable({ doc, inputs, catalog, players, deps }: BuildArgs): 
     if (col === COL.player) continue;
     if (!keep(col) || (col === COL.makeCut && noCut)) gone.add(col);
   }
+  // Two names for one number: when Live skill equals vs field on every row, show it once.
+  if (live && !gone.has(COL.liveSkill) && !gone.has(L.vsField.short) && rows.every((r) => r[COL.liveSkill] === r[L.vsField.short])) {
+    gone.add(COL.liveSkill);
+    notes.push("Live skill matches the vs field column for every player, so it is shown once.");
+  }
+  // The residual and sum columns repeat the saved skill when nothing is unexplained.
+  if (!gone.has(COL.sum) && !gone.has(COL.baseline) && rows.every((r) => r[COL.sum] === r[COL.baseline])) gone.add(COL.sum);
   const cleanRows = rows.map((r) => { const o: WeeklyRow = {}; for (const [k, v] of Object.entries(r)) if (!gone.has(k)) o[k] = v; return o; });
   return { rows: cleanRows, defaults: plan.defaults.filter((c) => !gone.has(c)), ordered: ordered.filter((c) => !gone.has(c)), titles, notes };
 }
@@ -273,6 +294,12 @@ export function expandEntries(row: WeeklyRow, deps: Pick<WeeklyDeps, "LABELS">):
 }
 
 /** Plain-name headers for the closed reconciliation table's family columns (never the raw keys). */
+/** Weather rounds that carry a real effect; rounds that are zero for everyone (no forecast yet) are left out. */
+export function activeWeatherRounds(players: Array<{ weather: Record<string, unknown> }>): string[] {
+  const rounds = [...new Set(players.flatMap((p) => Object.keys(p.weather)))];
+  return rounds.filter((r) => players.some((p) => fin(p.weather[r]) && Math.abs(p.weather[r] as number) > 1e-9));
+}
+
 export function reconciliationHeaders(keys: string[], legend: Record<string, { label?: string } | undefined> | undefined, plain: WeeklyDeps["plainName"]): Array<{ key: string; label: string }> {
   return keys.map((key) => ({ key, label: plain(key, legend) }));
 }

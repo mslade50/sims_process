@@ -54,3 +54,23 @@ details.tech-details { margin-top: 12px; border-top: 1px solid var(--line); padd
 details.tech-details > summary { cursor: pointer; color: var(--muted); font-weight: 650; }
 details.tech-details ul { margin: 6px 0 0; padding-left: 18px; }
 .next-step-note { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+
+/* Cleanup (October 2026): labels stay readable on phones, the menu is a full-width sheet, the first table column stays in view. */
+.nav-text { min-width: 0; }
+@media (min-width: 821px) { .sidebar-collapsed .sidebar .nav-text { display: none; } }
+.menu-button { gap: 6px; font-size: 13px; font-weight: 650; color: var(--foreground); }
+.topbar-left .menu-button span { font-weight: 650; }
+@media (max-width: 820px) {
+  .menu-button { width: auto; padding: 0 12px; grid-auto-flow: column; align-items: center; }
+  .sidebar, .sidebar-collapsed .sidebar { width: 100vw; max-width: 420px; }
+}
+@media (max-width: 480px) {
+  .sidebar, .sidebar-collapsed .sidebar { max-width: none; }
+  .nav-group a { min-height: 48px; }
+}
+@media (max-width: 600px) {
+  .data-table-wrap th:first-child, .data-table-wrap td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--line); max-width: 44vw; }
+  .topbar-left .menu-button span { display: inline; }
+}
+.player-picker-search { width: 100%; min-height: 38px; margin: 8px 0 4px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--foreground); font: inherit; }
+.tag-wrap { white-space: normal; overflow-wrap: anywhere; }

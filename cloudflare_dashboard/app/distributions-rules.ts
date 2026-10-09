@@ -12,7 +12,7 @@ export function checkpoints(event: DistributionEvent): Checkpoint[] {
 }
 export function runLabel(run: Checkpoint): string {
   const stamp = etTime(run.as_of, "time unknown");
-  return `${run.kind === "week" ? "Pre-event" : `After R${run.after_round}`} · ${stamp}`;
+  return `${run.kind === "week" ? "Before the event" : `After round ${run.after_round}`} · ${stamp}`;
 }
 export function matchup(doc: DistributionDoc | null, a: number, b: number): { p: number; tie: number | null } | null {
   if (!doc || a === b || doc.head_to_heads?.method !== "joint_simulation") return null;

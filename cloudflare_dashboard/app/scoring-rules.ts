@@ -191,19 +191,20 @@ export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { r
   let layoutText: string;
   if (p?.layout.current_event_confirmed === true) layoutText = "using this year's confirmed hole layout";
   else if (p?.layout.year != null) layoutText = `using ${ctx.eventYear != null && p.layout.year === ctx.eventYear - 1 ? "last year's" : `the ${p.layout.year}`} hole layout (this year's setup not confirmed)`;
-  else layoutText = "hole layout not recorded for this older checkpoint";
+  else layoutText = "hole layout not recorded for this older run";
   rows.push({ label: "Course", value: `${venue}, ${layoutText}.`, detail: "Which course and which version of its 18 holes the model scored. Hole lengths and pars come from this layout." });
 
   // Hole difficulty: own-venue history vs tour-wide model.
   const fit = p?.general_fit, hist = p?.venue_history;
   const fitBits = fit ? [fit.observations != null ? `${compactCount(fit.observations)} holes` : null, yearSpan(fit.start, fit.end)].filter(Boolean).join(", ") : "";
-  const tourModel = `a tour-wide ${fit?.method && /par\s*[×x]\s*yardage/i.test(fit.method) ? "par/yardage " : ""}model${fitBits ? ` (${fitBits})` : ""}`;
+  const tourModel = 'similar courses on tour';
+  const tourDetail = fitBits ? ` The tour-wide comparison uses ${fitBits}.` : '';
   const venueObs = hist?.observations ?? (p ? null : doc.baseline.median_hole_observations);
-  if (venueObs === 0) rows.push({ label: "Hole difficulty", value: `No past hole data at this venue, so hole difficulty comes from ${tourModel}.`, detail: "With no earlier rounds recorded on this course, each hole's expected score is estimated from similar par and yardage holes across the tour." });
+  if (venueObs === 0) rows.push({ label: "Hole difficulty", value: `No earlier rounds recorded on this course, so hole difficulty comes from ${tourModel}.`, detail: `With no earlier rounds recorded here, each hole's expected score is estimated from holes of similar par and yardage across the tour.${tourDetail}` });
   else if (venueObs != null && venueObs > 0) {
     const span = hist && yearSpan(hist.year_min, hist.year_max);
-    rows.push({ label: "Hole difficulty", value: hist?.observations != null ? `Uses ${venueObs.toLocaleString("en-US")} past holes played here${span ? ` (${span})` : ""}, together with ${tourModel}.` : `Uses about ${venueObs.toLocaleString("en-US")} past plays per hole here, together with ${tourModel}.`, detail: "How hard each hole plays comes from the scores players actually made on this course, anchored by a tour-wide model of par and yardage." });
-  } else rows.push({ label: "Hole difficulty", value: p ? `Hole difficulty comes from ${tourModel}; how much past data exists at this venue was not reported.` : "This older checkpoint does not record how much past hole data supported the course number.", detail: "Past rounds at this venue make the course number more reliable." });
+    rows.push({ label: "Hole difficulty", value: hist?.observations != null ? `Uses ${venueObs.toLocaleString("en-US")} holes played here${span ? ` (${span})` : ""}, blended with ${tourModel}.` : `Uses earlier rounds played here, blended with ${tourModel}.`, detail: `How hard each hole plays comes from the scores players actually made on this course, anchored by similar courses.${tourDetail}` });
+  } else rows.push({ label: "Hole difficulty", value: p ? `Hole difficulty comes from ${tourModel}; how many earlier rounds exist here was not reported.` : "This older run does not record how much past hole data supported the course difficulty.", detail: "Past rounds at this venue make the course number more reliable." });
 
   // Weather.
   const w = doc.baseline.common_weather;
@@ -216,15 +217,52 @@ export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { r
   if (done.length) rows.push({ label: "Completed rounds", value: `${done.map((r) => `Round ${r.round} field average ${r.field_actual!.toFixed(2)}${r.players != null ? ` (${r.players} players)` : ""}`).join("; ")}.`, detail: "The actual average score of the players who have finished that round." });
   if (u) {
     const t = u.target_round;
-    const text = applied ? `Completed rounds moved the round ${t} course number by ${u.adjustment_strokes! >= 0 ? "+" : ""}${u.adjustment_strokes!.toFixed(2)} strokes.`
-      : u.status === "staged_not_applied" ? `These results have not changed the round ${t ?? "next"} course number yet. Scores alone cannot tell a hard course from bad weather, so the adjustment waits on a validated method.`
-      : `These results were not used to adjust the round ${t ?? "next"} course number.`;
-    rows.push({ label: "Effect on next round", value: text, detail: "Whether what happened in earlier rounds was fed back into the course number for the next round." });
+    const text = applied ? `Completed rounds moved the round ${t} course difficulty by ${u.adjustment_strokes! >= 0 ? "+" : ""}${u.adjustment_strokes!.toFixed(2)} strokes.`
+      : u.status === "staged_not_applied" ? `Round ${t ?? "next"} difficulty has not been updated from earlier round scores yet.`
+      : `Round ${t ?? "next"} difficulty was not updated from earlier round scores.`;
+    rows.push({ label: "Effect on next round", value: text, detail: "Whether what happened in earlier rounds was fed back into the course difficulty for the next round." });
   }
 
-  const warning = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0 ? "There is no past hole data for this venue, so the course number leans on a tour-wide model and the earlier layout. Treat it as less certain than at a course with history."
-    : p && p.layout.current_event_confirmed !== true ? "This year's hole layout is not confirmed, so the course number uses an earlier layout. Check it before relying on the number."
-    : !p ? "This older checkpoint does not record where its course number came from. The stored expectation has not been recalculated with a later release."
+  const warning = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0 ? "No earlier rounds are recorded on this course, so course difficulty leans on similar courses and the earlier layout. Treat it as less certain than at a course with history."
+    : p && p.layout.current_event_confirmed !== true ? "This year's hole layout is not confirmed, so course difficulty uses an earlier layout. Check it before relying on the number."
+    : !p ? "This older run does not record where its course difficulty came from. The stored expectation has not been recalculated with a later release."
     : doc.confidence.reasons[0] ?? null;
   return { rows, warning, updateApplied: applied };
+}
+
+/** Phrases the publisher writes that a bettor cannot read, mapped to plain words (display side only). */
+const PLAIN_PHRASES: Array<[RegExp, string]> = [
+  [/kalman\s+trend/gi, "recent form trend"],
+  [/cross[-_ ]tour/gi, "tour strength adjustment"],
+  [/\bproxy edition\b/gi, "an earlier edition"],
+  [/\bprior edition\b/gi, "last year's edition"],
+  [/\bverified[_ ]recovery\b/gi, "verified"],
+];
+const ID_LIKE = /\bV_[A-Za-z]{2,3}_|inputs\/|\w+\.\w+\.\w+|\w=\S|\b[0-9a-f]{32,}\b|\b[a-z]+_r\d|\bv\d+[._]\d+|\[layout|\bn_med\b|\w+:\d{6,}/i;
+/** Publisher text for a human reader: known phrases translated, underscores spaced, and null when it is mostly identifiers or file paths (those stay in the data, not the page). */
+export function plainText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let t = value;
+  for (const [re, to] of PLAIN_PHRASES) t = t.replace(re, to);
+  if (ID_LIKE.test(t)) return null;
+  t = t.replace(/(?<=[A-Za-z])_(?=[A-Za-z])/g, " ").trim();
+  return t || null;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** "2026-10-08 09:20" (course-local; the publisher gives no time zone) to "Thu Oct 8, 9:20 AM local". Anything unreadable is returned unchanged. */
+export function plainTeeTime(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/.exec(value);
+  if (!m) return value;
+  const day = WEEKDAYS[new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay()];
+  const h = Number(m[4]);
+  return `${day} ${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${h % 12 || 12}:${m[5]} ${h < 12 ? "AM" : "PM"} local`;
+}
+
+/** Tick values every `step` strokes covering [lo, hi]. */
+export function wholeTicks(lo: number, hi: number, step = 2): number[] {
+  const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out: number[] = [];
+  for (let v = a; v <= b + 1e-9; v += step) out.push(v);
+  return out;
 }

@@ -7,7 +7,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { bucketProbs, finishBuckets } from "./distributions-rules";
 import {
-  pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Pctl, type TotalScore, type WaterfallRow,
+  pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Pctl, type TotalScore, type WaterfallResult,
 } from "./explain-rules";
 
 export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -118,34 +118,49 @@ export function ScoreFan({ items, rounds }: { items: Array<{ id: number; name: s
 }
 
 /* ------------------------------------------------------------------ waterfall ("why this price") */
-export function Waterfall({ rows, total, small, smallCount, label = "Strokes per round vs the field average" }: { rows: WaterfallRow[]; total: number; small: number; smallCount: number; label?: string }) {
-  const max = Math.max(0.05, ...rows.map((r) => Math.abs(r.value)), Math.abs(small), Math.abs(total) * 0.6);
+const GROUP_TAG: Record<string, string> = { course: "Course", location: "Location", override: "Manual", live: "In play", weather: "Weather" };
+export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained, label = "Strokes per round vs the field average" }: WaterfallResult & { label?: string }) {
+  const skillRows = rows.filter((r) => r.group !== "weather");
+  const weatherRows = rows.filter((r) => r.group === "weather");
+  const weatherSmall = small - smallSkill;
+  const skillNet = skillTotal + unexplained;
+  const max = Math.max(0.05, ...rows.map((r) => Math.abs(r.value)), Math.abs(smallSkill), Math.abs(skillNet) * 0.6, Math.abs(weatherTotal));
   const bar = (v: number) => (
     <span className="ex-wf-track" aria-hidden="true">
       <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${(Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
     </span>
   );
+  const row = (r: (typeof rows)[number], i: number, list: typeof rows) => (
+    <div className="ex-wf-row" role="row" key={r.key} title={r.meaning}>
+      <span className="ex-wf-label" role="cell">{r.label}{(i === 0 || list[i - 1].group !== r.group) && r.group !== "skill" && r.group !== "weather" && <em className={`ex-tag g-${r.group}`}>{GROUP_TAG[r.group] ?? r.group}</em>}</span>
+      {bar(r.value)}
+      <b className={r.value >= 0 ? "pos" : "neg"} role="cell">{signed(r.value)}</b>
+    </div>
+  );
   return (
     <div className="ex-wf" role="table" aria-label={label}>
-      {rows.map((r, i) => (
-        <div className="ex-wf-row" role="row" key={r.key} title={r.meaning}>
-          <span className="ex-wf-label" role="cell">{r.label}{(i === 0 || rows[i - 1].group !== r.group) && r.group !== "skill" && <em className={`ex-tag g-${r.group}`}>{r.group}</em>}</span>
-          {bar(r.value)}
-          <b className={r.value >= 0 ? "pos" : "neg"} role="cell">{signed(r.value)}</b>
-        </div>
-      ))}
-      {smallCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallCount} smaller items</span>{bar(small)}<b role="cell">{signed(small)}</b></div>}
-      <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Net (all shown)</span>{bar(total)}<b className={total >= 0 ? "pos" : "neg"} role="cell">{signed(total)}</b></div>
+      {skillRows.map(row)}
+      {smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallSkillCount} smaller items</span>{bar(smallSkill)}<b role="cell">{signed(smallSkill)}</b></div>}
+      {Math.abs(unexplained) >= 0.01 && <div className="ex-wf-row ex-wf-small" role="row" title="Rounding and items too small to list."><span className="ex-wf-label" role="cell">Rounding and other</span>{bar(unexplained)}<b role="cell">{signed(unexplained)}</b></div>}
+      <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Expected skill</span>{bar(skillNet)}<b className={skillNet >= 0 ? "pos" : "neg"} role="cell">{signed(skillNet)}</b></div>
+      {(weatherRows.length > 0 || Math.abs(weatherSmall) >= 0.005) && (
+        <>
+          <p className="ex-muted ex-wf-note">Weather adjusts scores on top of expected skill:</p>
+          {weatherRows.map(row)}
+          {smallCount - smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallCount - smallSkillCount} smaller weather items</span>{bar(weatherSmall)}<b role="cell">{signed(weatherSmall)}</b></div>}
+          <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Weather total</span>{bar(weatherTotal)}<b className={weatherTotal >= 0 ? "pos" : "neg"} role="cell">{signed(weatherTotal)}</b></div>
+        </>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ bias chart (player types we favour / fade) */
 export function BiasChart({ rows, onPick, active }: { rows: BiasRow[]; onPick?: (r: BiasRow) => void; active?: string | null }) {
-  if (!rows.length) return <p className="ex-muted">No player-type comparison without market prices in this run.</p>;
+  if (!rows.length) return <p className="ex-muted">No player type stands out from the rest of the field in this run.</p>;
   const max = Math.max(0.1, ...rows.map((r) => Math.abs(r.edge_sg ?? 0)));
   return (
-    <ul className="ex-bias" aria-label="Strokes per round: model minus market, by player type">
+    <ul className="ex-bias" aria-label="Strokes per round we rate each player type above or below the market, compared with the rest of the field">
       {rows.map((r) => {
         const v = r.edge_sg ?? 0;
         const key = `${r.dimension}:${r.bucket}`;
@@ -153,7 +168,7 @@ export function BiasChart({ rows, onPick, active }: { rows: BiasRow[]; onPick?: 
         return (
           <li key={key} className={active === key ? "active" : ""}>
             <button type="button" onClick={() => onPick?.(r)} aria-pressed={active === key}>
-              <span className="ex-bias-label">{r.label}<small> · {r.n} players{d ? ` · ${d.label.toLowerCase()}` : ""}</small></span>
+              <span className="ex-bias-label">{r.label}<small> · {r.n} players{d ? ` · biggest reason: ${d.label.toLowerCase()}` : ""}</small></span>
               <span className="ex-wf-track" aria-hidden="true"><span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${(Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} /></span>
               <b className={v >= 0 ? "pos" : "neg"}>{v > 0 ? "▲" : v < 0 ? "▼" : "•"} {Math.abs(v).toFixed(2)}</b>
             </button>
@@ -175,42 +190,50 @@ export function HoleStrip({ holes }: { holes: HoleRow[] }) {
         <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="var(--line)" vertical={false} />
           <XAxis dataKey="hole" stroke="var(--muted)" tick={{ fontSize: 10 }} interval={0} />
-          <YAxis stroke="var(--muted)" width={34} tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v > 0 ? `+${v}` : `${v}`)} />
+          <YAxis stroke="var(--muted)" width={34} tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "0")} />
           <Tooltip content={<HoleTooltip />} />
           <Bar dataKey="exp" isAnimationActive={false} radius={[2, 2, 2, 2]}>
             {data.map((d) => <Cell key={d.hole} fill={PAR_COLOR[d.par] ?? "var(--chart-4)"} fillOpacity={0.8} />)}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-      <ul className="ex-legend ex-legend-inline"><li><i style={{ background: PAR_COLOR[3] }} />par 3</li><li><i style={{ background: PAR_COLOR[4] }} />par 4</li><li><i style={{ background: PAR_COLOR[5] }} />par 5</li><li className="ex-muted">bars: expected score vs par, below zero = scoring hole</li></ul>
+      <ul className="ex-legend ex-legend-inline"><li><i style={{ background: PAR_COLOR[3] }} />par 3</li><li><i style={{ background: PAR_COLOR[4] }} />par 4</li><li><i style={{ background: PAR_COLOR[5] }} />par 5</li><li className="ex-muted">Hole number along the bottom; bars show strokes vs par (below zero = an easier hole)</li></ul>
     </div>
   );
 }
 function HoleTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: { hole: number; par: number; exp: number; yd: number | null; bird: number | null; bog: number | null } }> }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
-  return <div className="ex-tooltip"><strong>Hole {p.hole} · par {p.par}{p.yd ? ` · ${p.yd} yd` : ""}</strong><span>Expected {signed(p.exp)} vs par</span><span>Birdie or better {pct(p.bird, 0)}, bogey or worse {pct(p.bog, 0)}</span></div>;
+  return <div className="ex-tooltip"><strong>Hole {p.hole} · par {p.par}{p.yd ? ` · ${p.yd} yd` : ""}</strong><span>Average player: {signed(p.exp)} vs par</span><span>Birdie or better {pct(p.bird, 0)}, bogey or worse {pct(p.bog, 0)}</span></div>;
 }
 
 /* ------------------------------------------------------------------ model vs market table for one player */
-export function MarketRows({ player }: { player: ExPlayer }) {
-  const rows = (["win", "top_5", "top_10", "top_20", "make_cut"] as const).map((m) => ({ m, e: player.probs[m] }));
-  const label: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut" };
+const MARKET_NAME: Record<string, string> = { win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut" };
+export function MarketRows({ player, hasCut = true }: { player: ExPlayer; hasCut?: boolean }) {
+  const rows = (["win", "top_5", "top_10", "top_20", "make_cut"] as const).filter((m) => hasCut || m !== "make_cut").map((m) => ({ m, e: player.probs[m] }));
+  const hasMarket = rows.some(({ e }) => e.market !== null);
   return (
-    <div className="table-scroll"><table className="ex-table">
-      <thead><tr><th>Market</th><th>Model</th><th>Market</th><th>Edge</th><th>Fair</th></tr></thead>
-      <tbody>
-        {rows.map(({ m, e }) => (
-          <tr key={m}>
-            <th scope="row">{label[m]}</th>
-            <td>{pct(e.model)}</td>
-            <td>{pct(e.market)}{e.n_books ? <small className="ex-muted"> {e.n_books}b</small> : null}</td>
-            <td className={e.rel === null ? "" : e.rel > 0 ? "pos" : "neg"}>{e.rel === null ? "-" : `${e.rel > 0 ? "▲" : e.rel < 0 ? "▼" : "•"} ${Math.abs(e.rel * 100).toFixed(0)}%`}</td>
-            <td>{pct(e.fair)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table></div>
+    <>
+      <div className="table-scroll"><table className="ex-table">
+        <thead><tr><th>Bet type</th><th title="Our chance, from the simulations.">Our chance</th>{hasMarket && <th title="The chance implied by sportsbook odds, with the bookmaker margin removed.">Sportsbook</th>}{hasMarket && <th title="How far our chance is from the sportsbook's, as a share of the sportsbook's chance.">Gap</th>}</tr></thead>
+        <tbody>
+          {rows.map(({ m, e }) => (
+            <tr key={m}>
+              <th scope="row">{MARKET_NAME[m]}</th>
+              <td>{pct(e.model)}</td>
+              {hasMarket && <td title={e.n_books ? `Average of ${e.n_books} sportsbooks` : undefined}>{pct(e.market)}</td>}
+              {hasMarket && <td className={e.rel === null ? "" : e.rel > 0 ? "pos" : "neg"}>{e.rel === null ? "-" : Math.round(Math.abs(e.rel * 100)) === 0 ? "0%" : `${e.rel > 0 ? "▲" : "▼"} ${Math.abs(e.rel * 100).toFixed(0)}%`}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+      <details className="ex-glossary-wrap"><summary>Technical details</summary>
+        <div className="table-scroll"><table className="ex-table">
+          <thead><tr><th>Bet type</th><th title="The fair price we publish for this bet type, which can differ from our chance above.">Published fair chance</th><th>Sportsbooks averaged</th></tr></thead>
+          <tbody>{rows.map(({ m, e }) => <tr key={m}><th scope="row">{MARKET_NAME[m]}</th><td>{pct(e.fair)}</td><td>{e.n_books ?? "-"}</td></tr>)}</tbody>
+        </table></div>
+      </details>
+    </>
   );
 }
 

@@ -46,7 +46,12 @@ function duration(status: JobStatus | null, now: number): string {
   return s < 120 ? `${s} s` : s < 7200 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
 }
 
-const errorText = (result: { status: number; body: { error?: string } }) => result.body.error ?? `The request failed (code ${result.status}).`;
+/** Plain next step for the owner; the raw HTTP code goes to the console for developers, never into the page. */
+const errorText = (result: { status: number; body: { error?: string } }) => {
+  if (result.body.error && !/^The request failed \(code \d+\)\.?$/.test(result.body.error)) return result.body.error;
+  if (typeof console !== "undefined") console.warn(`Dashboard request failed with code ${result.status}`);
+  return "That did not go through. Try again in a minute.";
+};
 
 /** "Settle last week" for the job a machine reports it is running; "a job" when it cannot be matched. */
 function runningName(id: string | null, jobs: JobRow[] | undefined): string {
@@ -126,7 +131,8 @@ export function RunView() {
       setData(result.body);
       setError(null);
     } else {
-      setError(errorText(result));
+      const text = errorText(result);
+      setError(text.startsWith("That did not go through") ? "Recent runs are not available right now. Try again in a minute." : text);
     }
   }, []);
 
@@ -179,11 +185,11 @@ export function RunView() {
 
       <Panel eyebrow="Run on" title="Machine">
         {!data ? (
-          error ? <p className="inputs-muted">Machine: unavailable</p> : <LoadingState label="Loading machines" />
+          error ? <p className="inputs-muted">The desktop runner status could not be loaded, so jobs cannot be started from here right now. Try again in a minute.</p> : <LoadingState label="Loading machines" />
         ) : (
           <>
             {machines.every((m) => m.status === "offline") && (
-              <div className="inputs-banner warn"><strong>No machine is reporting in.</strong>Jobs will wait in the queue until one comes back online.</div>
+              <div className="inputs-banner warn"><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong>Jobs wait in the queue until a machine comes back online.</div>
             )}
             <div className="run-machines" role="radiogroup" aria-label="Machine to run on">
               <label className={`run-machine ${target === "auto" ? "selected" : ""}`} aria-label="Automatic: the always-on desktop, the backup only if it is down">
@@ -228,10 +234,10 @@ export function RunView() {
         const grid = (
           <div className="run-grid">
             {specs.map((spec) => (
-              <button type="button" key={spec.type} className="run-card" onClick={() => setPending(spec)} disabled={busyTypes.has(spec.type)}>
+              <button type="button" key={spec.type} className="run-card" onClick={() => setPending(spec)} disabled={busyTypes.has(spec.type) || !data}>
                 <strong>{spec.label}</strong>
                 <span>{spec.does}</span>
-                <small>{busyTypes.has(spec.type) ? "Already waiting or running" : spec.when}</small>
+                <small>{busyTypes.has(spec.type) ? "Already waiting or running" : !data ? "Unavailable until the runner status loads" : spec.when}</small>
               </button>
             ))}
           </div>

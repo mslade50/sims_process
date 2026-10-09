@@ -13,7 +13,7 @@ export function OddsSignalsPanel() {
   const doc = parseOddsSignals(data);
 
   return (
-    <Panel eyebrow="Odds moves" title="Latest betting edges (not re-simulated)">
+    <Panel eyebrow="Odds moves" title="Latest odds movement. Prices are not re-run.">
       {loading ? (
         <p className="inputs-muted">Loading the latest odds check…</p>
       ) : !doc ? (
@@ -21,7 +21,7 @@ export function OddsSignalsPanel() {
       ) : (
         <div className="scorecard-body">
           {oddsStale(doc.generated_at, now) && <p className="inputs-note accent">The last odds check that found new prices was {etTime(doc.generated_at)}. Checks that find nothing new do not publish.</p>}
-          <p className="inputs-muted">Provisional: sportsbook prices compared with the model&apos;s numbers from the last full run, not re-simulated. The next full run decides. Checked {etTime(doc.generated_at)}.</p>
+          <p className="inputs-muted">Provisional: sportsbook prices compared with the model&apos;s numbers from the last full run, not re-run since. The next full run decides. Checked {etTime(doc.generated_at)}.</p>
           {doc.events.length === 0 && <EmptyState title="No event" detail="The check found no event before its first tee." />}
           {doc.events.map((event) => (
             <div key={event.event_uid}>

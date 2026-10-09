@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Badge, FreshnessBadge, Skeleton } from "./ui";
+import { Badge, Skeleton } from "./ui";
 import { LABELS, ZERO_SENTENCE } from "./labels";
 import { etTime } from "./lib";
 import { pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
@@ -9,7 +9,7 @@ import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
 import {
-  CAVEAT_DESCRIPTIVE, CAVEAT_REFERENCE_ONLY, LIVE_CENTRING_NOTE, ZERO_LABEL, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
+  CAVEAT_REFERENCE_ONLY, LIVE_CENTRING_NOTE, ZERO_LABEL, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
 } from "./player-hero-rules";
 import "./player-hero.css";
 
@@ -58,18 +58,18 @@ function TrendTeaser({ deep, loading, error, anchor }: { deep: DeepProfile | nul
   const paths = sparklinePaths(visible, 180, 44);
   const latest = series.at(-1);
   if (!paths || !latest) {
-    return <div className="ph-trend" data-testid="trend-unavailable"><span className="eyebrow">Trend</span><p className="ph-muted">{error ? "Round-by-round history did not load." : "Needs at least 20 rounds for the first trend line."}</p></div>;
+    return <div className="ph-trend" data-testid="trend-unavailable"><span className="eyebrow">Trend</span><p className="ph-muted">{error ? <>Round-by-round history did not load. <button type="button" className="ph-link" onClick={() => window.location.reload()}>Retry</button></> : "Needs at least 20 rounds for the first trend line."}</p></div>;
   }
   const diff = typeof latest.sma20 === "number" && typeof latest.sma50 === "number" ? latest.sma20 - latest.sma50 : null;
   return (
     <div className="ph-trend" data-testid="trend-teaser">
-      <span className="eyebrow">Trend · R1-R2</span>
+      <span className="eyebrow">Recent trend · opening rounds</span>
       <svg viewBox="0 0 180 44" role="img" aria-label={`Teaser: 20 and 50 round averages, past 3 years. 20-round ${signed(latest.sma20)}, 50-round ${signed(latest.sma50)}.`} preserveAspectRatio="none">
         {paths.zero !== null && <line x1="0" x2="180" y1={paths.zero} y2={paths.zero} className="ph-spark-zero" />}
         {paths.sma50 && <path d={paths.sma50} className="ph-spark-50" fill="none" vectorEffect="non-scaling-stroke" />}
         {paths.sma20 && <path d={paths.sma20} className="ph-spark-20" fill="none" vectorEffect="non-scaling-stroke" />}
       </svg>
-      <p className="ph-muted">20-round {signed(latest.sma20)} · 50-round {signed(latest.sma50)}{diff !== null && <> · recent minus longer {signed(diff)}</>}</p>
+      <p className="ph-muted">Last 20 rounds {signed(latest.sma20)} · last 50 rounds {signed(latest.sma50)}{diff !== null && <> · recent minus longer {signed(diff)}</>}</p>
       <a className="ph-link" href="#player-history">Open the full trend chart</a>
     </div>
   );
@@ -100,9 +100,9 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
           <p>{entry.country ?? entry.country_code ?? "Country unavailable"}{(entry.tours ?? []).length > 0 && <> · {(entry.tours ?? []).map(t => t.toUpperCase()).join(" / ")}</>}</p>
         </div>
         <dl className="ph-facts">
-          <div><dt>Rounds observed</dt><dd>{entry.n_rounds ?? "Unavailable"}</dd></div>
-          <div><dt>Last observation</dt><dd>{shortProfileDate(entry.last_observation)}</dd></div>
-          <div><dt>Profile as of</dt><dd>{shortProfileDate(profile.as_of)} <FreshnessBadge at={profile.as_of} label="Updated" scale="catalog" title={etTime(profile.as_of)} /></dd></div>
+          <div><dt>Rounds on record</dt><dd>{entry.n_rounds ?? "Unavailable"}</dd></div>
+          <div><dt>Latest round on record</dt><dd>{shortProfileDate(entry.last_observation)}</dd></div>
+          <div><dt>Profile as of</dt><dd title={etTime(profile.as_of)}>{shortProfileDate(profile.as_of)}</dd></div>
         </dl>
       </div>
 
@@ -110,7 +110,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
         <article className="ph-headline" title={`${LABELS.vsPgaAvg.long}. ${ZERO_SENTENCE}`}>
           <span className="eyebrow">{LABELS.vsPgaAvg.short} · {ZERO_LABEL}</span>
           <strong className="ph-number" data-testid="hero-value" title={value === null ? undefined : `${signed(value, 3)} strokes per round`}>
-            {value === null ? (withheld ? "Withheld" : "Unavailable") : signed(value)} {value !== null && <small>SG/round</small>}
+            {value === null ? (withheld ? "Withheld" : "Unavailable") : signed(value)} {value !== null && <small>strokes per round</small>}
           </strong>
           {value !== null && <HeadlineBar value={value} tick={tick} />}
           <div className="ph-badges">
@@ -120,9 +120,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
             {unsupported && <Badge tone="neutral">Too few opening-round results for a stable number</Badge>}
           </div>
           <p className="ph-caveat">{CAVEAT_REFERENCE_ONLY}</p>
-          <p className="ph-caveat">{CAVEAT_DESCRIPTIVE}</p>
           {value !== null && !shrunk && <p className="ph-caveat" data-testid="not-shrunk">{NOT_YET_SHRUNK}</p>}
-          <small className="ph-zero" data-testid="zero-sentence">{ZERO_SENTENCE}</small>
           {withheld && <p className="ph-caveat" role="status">Withheld for this old checkpoint: the profile is rebuilt from the latest data, so it would include rounds played after that moment.</p>}
         </article>
 
@@ -137,12 +135,12 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
               </div>
               {live && (
                 <div className="ph-chips" data-testid="live-chips">
-                  <span className="ph-chip" title="How much better or worse this player has scored so far this week than their pre-event skill suggested. It is already counted in the live shift. Centred on everyone who started, not only players still in the field."><b>{signed(live.transient, 3)}</b><small>this week, scoring so far</small></span>
-                  {live.priced !== null && <span className="ph-chip" title={`Live skill plus this week's scoring so far${live.contentionIncluded ? " plus the leaderboard-position shift" : " (no leaderboard-position shift published)"}. Centred on everyone who started, not only players still in the field.`}><b>{signed(live.priced, 3)}</b><small>priced strength, next round</small></span>}
-                  <small className="ph-chip-note">{LIVE_CENTRING_NOTE}</small>
+                  {live.priced !== null
+                    ? <span className="ph-chip" title={`Live skill plus this week's scoring so far (${signed(live.transient, 2)})${live.contentionIncluded ? " plus the leaderboard-position shift" : ""}. ${LIVE_CENTRING_NOTE}.`}><b>{signed(live.priced, 2)}</b><small>skill for next round</small></span>
+                    : <span className="ph-chip" title={`How much better or worse this week's scoring is than the pre-event skill suggested. ${LIVE_CENTRING_NOTE}.`}><b>{signed(live.transient, 2)}</b><small>this week&apos;s form</small></span>}
                 </div>
               )}
-              {pga ? <p className="ph-muted" data-testid="pga-sub">{pgaSkillWords(pga).sub}. {LABELS.vsField.short} {signed(model.value, 3)} is the same skill minus the field&apos;s average. Same zero as the headline, so the remaining gap is recent form versus the model&apos;s view.</p> : <p className="ph-muted">{LABELS.vsField.short} is the model&apos;s skill minus the field&apos;s average. It is a different measure from the headline.</p>}
+              {pga ? <p className="ph-muted" data-testid="pga-sub">{pgaSkillWords(pga).sub}.</p> : <p className="ph-muted">{LABELS.vsField.short}: the model&apos;s skill minus the field&apos;s average.</p>}
             </>
           ) : (
             <p className="ph-muted" data-testid="week-absent">

@@ -173,6 +173,14 @@ export function forecastAgeHours(issuedAt: string, now: number): number | null {
   return Number.isFinite(t) ? Math.max(0, (now - t) / 3_600_000) : null;
 }
 
+/** "Under an hour old", "5.3 hours old", "8 days old". Past two days the count switches to days, which is easier to judge. */
+export function forecastAgeText(hours: number): string {
+  if (hours < 1) return "Under an hour old";
+  if (hours < 48) return `${Math.round(hours)} hour${Math.round(hours) === 1 ? "" : "s"} old`;
+  const days = Math.round(hours / 24);
+  return `${days} days old`;
+}
+
 export const COMPONENT_LABELS: Record<string, string> = { wind: "Wind", gust: "Gusts", temp: "Temperature", rain: "Rain", tod: "Time of day" };
 
 /** One sentence per effect column, for hover text. */
