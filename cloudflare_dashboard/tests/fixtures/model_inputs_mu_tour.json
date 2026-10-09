@@ -1,0 +1,9 @@
+{
+  "schema": "golfprice.model_inputs.v1",
+  "kind": "week",
+  "event": { "event_uid": "pga:fixture", "field_strength": { "field_offset": 0.1002, "n_field": 2, "n_imputed": 0 } },
+  "players": [
+    { "dg_id": 14139, "name": "Thomas, Justin", "challenger": { "mu": 0.7488, "mu_tour": 0.851 }, "live": { "mu_live": 0.6, "mu_pre_event": 0.7488 } },
+    { "dg_id": 17639, "name": "Blair, Zac", "challenger": { "mu": -0.1, "mu_tour": null }, "live": null }
+  ]
+}

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { Badge, FreshnessBadge, Skeleton } from "./ui";
 import { LABELS, ZERO_SENTENCE } from "./labels";
-import { checkpointBenchmarkValue, benchmarkValue, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
+import { pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
 import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
@@ -18,6 +18,8 @@ export type HeroWeekly = {
   eventTour?: string | null;
   options: Array<{ uid: string; label: string }>;
   savedDoc: ExplainDoc | null;
+  /** Saved model skill on the PGA scale (mu_tour) from the matching model_inputs; absent falls back to vs field. */
+  pgaSkill?: PgaSkill | null;
   onEvent: (uid: string) => void;
 };
 export type HeroProps = {
@@ -85,6 +87,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
   const model = savedFieldSkill(weekly.savedDoc, dgId);
   const row = weekly.savedDoc?.players.find(p => p.id === dgId && !p.withdrawn);
   const live = weekly.savedDoc?.kind === "live" ? liveChips((row as unknown as { live?: Parameters<typeof liveChips>[0] } | undefined)?.live) : null;
+  const pga = weekly.pgaSkill ?? null;
   const unsupported = value === null && !withheld;
   return (
     <section className="ph-hero" data-testid="player-hero" aria-label="Player summary">
@@ -125,7 +128,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
           {weekly.savedDoc && row ? (
             <>
               <div className="ph-chips">
-                <span className="ph-chip"><b>{signed(model.value)}</b><small>{LABELS.vsField.short}</small></span>
+                {pga ? <span className="ph-chip" data-testid="pga-chip" title={pgaSkillWords(pga).title}><b>{signed(pga.value)}</b><small>{pga.live ? `${LABELS.thisWeekPga.short}, live skill + pre-event field offset` : LABELS.thisWeekPga.short}</small></span> : <span className="ph-chip"><b>{signed(model.value)}</b><small>{LABELS.vsField.short}</small></span>}
                 <span className="ph-chip"><b>{pct1(row.probs.win.model)}</b><small>win</small></span>
                 <span className="ph-chip"><b>{pct1(row.probs.top_10.model)}</b><small>top 10</small></span>
               </div>
@@ -136,7 +139,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
                   <small className="ph-chip-note">{LIVE_CENTRING_NOTE}</small>
                 </div>
               )}
-              <p className="ph-muted">{LABELS.vsField.short} is saved model skill minus the active-field mean; a different estimator from the headline.</p>
+              {pga ? <p className="ph-muted" data-testid="pga-sub">{pgaSkillWords(pga).sub}. {LABELS.vsField.short} {signed(model.value, 3)} is the same skill minus the active-field mean. Same PGA-scale zero as the headline; the remaining gap is form versus model.</p> : <p className="ph-muted">{LABELS.vsField.short} is saved model skill minus the active-field mean; a different estimator from the headline.</p>}
             </>
           ) : (
             <p className="ph-muted" data-testid="week-absent">

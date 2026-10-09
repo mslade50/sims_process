@@ -31,6 +31,7 @@ export function PlayerMethod({ rating, reference, catalog }: { rating: PgaBenchm
       {tick && <p>The tick on the bar marks a typical full-time PGA regular ({signedZ(tick.value, 2)}{tick.asOf ? `, as of ${tick.asOf.slice(0, 10)}` : ""}), stored with the catalog, not computed in the browser.</p>}
       <p>Revised, not as-was: profiles are recomputed from the latest revised history, so an archived checkpoint cannot show them as known at the time.</p>
       <h4>How this relates to this week&apos;s model number</h4>
+      <p>The headline and this week&apos;s saved model skill (&quot;{LABELS.thisWeekPga.short}&quot;) now share the PGA-scale zero; the remaining gap is form versus model.</p>
       <p>{GAP_METHOD_SENTENCE}</p>
       <h4>Other caveats</h4>
       <ul>

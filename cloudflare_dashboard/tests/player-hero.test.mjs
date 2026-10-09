@@ -235,3 +235,22 @@ test("W1: layout guards - hero identity keeps a minimum column; legacy header ro
   const shell = rf(new URL("../app/shell.css", import.meta.url), "utf8");
   assert.match(shell, /\.topbar \.event-context \{[^}]*flex-wrap: wrap/);
 });
+
+test("week chip shows saved model skill on the PGA scale (mu_tour) with its label; live variant; fallback keeps vs field", () => {
+  const p = live.players.find((q) => q.live.week_latent_mean !== null);
+  const entry = { ...blairEntry, dg_id: p.id };
+  const profile = { ...blair, identity: { ...blair.identity, dg_id: p.id } };
+  const base = { ...weekly, eventUid: live.event_uid, eventName: live.event.name, eventTour: "pga" };
+  const week = hero({ entry, profile, weekly: { ...base, savedDoc: { ...live, kind: "week" }, pgaSkill: { value: 0.851, offset: 0.1002, live: false, preEvent: 0.851 } } });
+  assert.match(week, /data-testid="pga-chip"/);
+  assert.match(week, /<b>\+0\.85<\/b><small>This week \(PGA scale\)<\/small>/);
+  assert.match(week, /Saved model skill \+ this field&#x27;s offset to the PGA scale \(F02\); field offset \+0\.100/);
+  assert.match(week, /remaining gap is form versus model/);
+  assert.match(week, /win/); assert.match(week, /top 10/);
+  const lv = hero({ entry, profile, weekly: { ...base, savedDoc: live, pgaSkill: { value: 0.7, offset: 0.1002, live: true, preEvent: 0.851 } } });
+  assert.match(lv, /This week \(PGA scale\), live skill \+ pre-event field offset/);
+  assert.match(lv, /Pre-event value \+0\.851/);
+  const fb = hero({ entry, profile, weekly: { ...base, savedDoc: { ...live, kind: "week" } } });
+  assert.equal(fb.includes("pga-chip"), false);
+  assert.match(fb, /vs field/);
+});

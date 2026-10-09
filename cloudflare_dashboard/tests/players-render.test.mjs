@@ -114,3 +114,38 @@ test("B5: catalog 404 shows a hint and a retry action; an absent player ID gets 
   assert.match(absent, /Player not in this catalog/);
   assert.match(absent, />Clear this selection</);
 });
+
+// ---- mu_tour card, full-page (owner decision October 9) -------------------------------------------------------------
+const explainWeek = JSON.parse(readFileSync(new URL("./fixtures/explain_week.json", import.meta.url), "utf8"));
+const muInputs = JSON.parse(readFileSync(new URL("./fixtures/model_inputs_mu_tour.json", import.meta.url), "utf8"));
+function savedData(inputsPatch = {}) {
+  const [p0, p1] = explainWeek.players;
+  const explain = { ...explainWeek, players: [{ ...p0, id: 17639, withdrawn: false, mu: 0.3 }, { ...p1, id: 5, withdrawn: false, mu: -0.3 }] };
+  const run = { kind: "week", run: explainWeek.run, as_of: explainWeek.as_of, key: "golfprice/runs/fx/week_x/model_inputs.json" };
+  const inputs = { ...muInputs, event: { ...muInputs.event, event_uid: explainWeek.event_uid }, generated_for_as_of: explainWeek.as_of, provenance: { run_dir: `golfprice/week/runs/fx/${explainWeek.run}` }, players: [{ dg_id: 17639, challenger: { mu_tour: 0.4002 } }], ...inputsPatch };
+  return { ...data,
+    "golfprice/index.json": { events: [{ event_uid: explainWeek.event_uid, name: "Fixture Open", tour: "pga", date_start: "2026-10-01", explain_run: `week_${explainWeek.run}`, explain_key: "golfprice/explain/fx.json", runs: [run] }] },
+    "golfprice/player_profiles/fields.json": { schema_version: "player_profiles.fields.v1", fields: [{ event_uid: explainWeek.event_uid, player_ids: [17639, 5] }] },
+    "golfprice/explain/fx.json": explain, [run.key]: inputs };
+}
+test("/players default layout: secondary card shows mu_tour with the PGA-scale label; vs field stays secondary", () => {
+  const html = next("?player=17639", savedData());
+  assert.match(html, /This week \(PGA scale\)/);
+  assert.match(html, /data-testid="pga-skill"[^>]*>\+0\.400/);
+  assert.match(html, /field offset \+0\.100/);
+  assert.match(html, /vs field: \+0\.300/);
+});
+test("/players?layout=next: This-week chip shows mu_tour; the Method names the shared PGA-scale zero", () => {
+  const html = next("?player=17639&layout=next", savedData());
+  assert.match(html, /data-testid="pga-chip"/);
+  assert.match(html, /<b>\+0\.40<\/b><small>This week \(PGA scale\)/);
+  assert.match(html, /now share the PGA-scale zero; the remaining gap is form versus model/);
+});
+test("/players: no mu_tour in the matching document (or no matching document) keeps the old vs-field display", () => {
+  for (const d of [savedData({ players: [{ dg_id: 17639, challenger: {} }] }), savedData({ generated_for_as_of: "2020-01-01T00:00:00Z" })]) {
+    const html = next("?player=17639", d);
+    assert.match(html, /Relative to this field/);
+    assert.doesNotMatch(html, /data-testid="pga-skill"/);
+    assert.doesNotMatch(next("?player=17639&layout=next", d), /data-testid="pga-chip"/);
+  }
+});

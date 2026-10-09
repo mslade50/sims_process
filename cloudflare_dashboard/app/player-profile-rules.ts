@@ -93,6 +93,24 @@ export function matchingInputRun(event:{event_uid:string;explain_run?:string|nul
   return row && row.as_of ? {...row,as_of:row.as_of,event_uid:event.event_uid} : null;
 }
 
+/** Saved model skill on the PGA scale (challenger.mu_tour = mu + field_offset) for one player, read from a checkpoint-matched model_inputs document. Live checkpoints use mu_live + the pre-event field offset (no active-field recompute yet); the pre-event value is kept. Null when the document lacks the needed numbers, so callers fall back to the field-centred display. */
+export type PgaSkill = {value:number;offset:number|null;live:boolean;preEvent:number|null};
+export function savedPgaSkill(inputs:unknown,id:number|null):PgaSkill|null {
+  const d=record(inputs);if(id===null || !Array.isArray(d.players)) return null;
+  const row=d.players.map(record).find(p=>p.dg_id===id);if(!row) return null;
+  const tour=record(row.challenger).mu_tour, offsetRaw=record(record(d.event).field_strength).field_offset;
+  const offset=finite(offsetRaw) ? offsetRaw : null, preEvent=finite(tour) ? tour : null;
+  if(d.kind==="live"){const mu=record(row.live).mu_live;return finite(mu) && offset!==null ? {value:mu+offset,offset,live:true,preEvent} : null;}
+  return preEvent!==null ? {value:preEvent,offset,live:false,preEvent} : null;
+}
+const offsetText=(v:number|null)=>v===null ? "unavailable" : `${v>0 ? "+" : ""}${v.toFixed(3)}`;
+/** One wording for the secondary card and the hero chip. */
+export function pgaSkillWords(s:PgaSkill):{sub:string;title:string} {
+  return s.live
+    ? {sub:`Live skill + pre-event field offset (F02); field offset ${offsetText(s.offset)}`,title:`Live skill + pre-event field offset (F02). Pre-event value ${offsetText(s.preEvent)}. The active-field recompute is not yet published.`}
+    : {sub:`Saved model skill + this field's offset to the PGA scale (F02); field offset ${offsetText(s.offset)}`,title:`Saved model skill + this field's offset to the PGA scale (F02); field offset ${offsetText(s.offset)}.`};
+}
+
 /** Only supported, explicitly referenced published ratings can enter a field mean. */
 export function benchmarkValue(rating:PgaBenchmark|undefined,reference:PgaBenchmarkReference|undefined):number|null {
   return rating?.schema_version === "player_benchmark.v1" && rating.status === "available" && reference?.status === "available" && rating.reference_id === reference.id && finite(rating.value) ? rating.value : null;
