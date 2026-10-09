@@ -1,5 +1,6 @@
 import type { ExplainDoc, ExPlayer, Market } from "./explain-rules";
 import { etTime } from "./lib.ts";
+import { finishingProbs } from "./explain-rules.ts";
 
 export type Checkpoint = { run: string; kind: "week" | "live"; as_of: string | null; after_round: number | null; key: string; validated: boolean };
 export type DistributionEvent = { event_uid: string; name: string; tour: string; date_start: string; explain_key?: string; distribution_runs?: Checkpoint[] };
@@ -23,7 +24,7 @@ export function matchup(doc: DistributionDoc | null, a: number, b: number): { p:
 /** The finish arrays (finish.pos) are settlement rank: players who miss the cut are ranked below the field. */
 export const SETTLEMENT_RANK_LABEL = "finish position, with ties shared and missed cuts ranked below the field";
 /** One plain sentence under the finish chart. */
-export const FINISH_CHART_CAPTION = "Each bar is the chance the player finishes in that range of finish positions (ties shared), out of 100%; hover a bar for the exact figure.";
+export const FINISH_CHART_CAPTION = "One bar per finish position (ties shared); the last bar is missing the cut. Hover for the exact figure.";
 /** Marker label: the cut line is "Make cut" (the priced make-cut probability), not an ordinary top-N. */
 export function markerLabel(k: number, cutTopN: number | null | undefined): string {
   return cutTopN && k === cutTopN ? `Make cut (top ${k} and ties)` : `Top ${k}`;
@@ -90,6 +91,40 @@ export function bucketProbs(pos: number[], pMiss: number | null | undefined, buc
     if (last >= 0) out[last] = Math.max(0, out[last] - miss);
   }
   return out;
+}
+/* ------------------------------------------------------------------ per-position histogram */
+export type PositionSeries = { key: string; pos: number[]; missCut: number | null | undefined };
+export const MISSED_CUT_LABEL = "Missed cut";
+/** One row per finish position (1..N) in percent, plus a final "Missed cut" row (missed cut) when the event has a cut. Cumulative mode drops the MC row and accumulates. */
+export function positionRows(series: PositionSeries[], cumulative: boolean, hasCut: boolean): Record<string, number | string>[] {
+  const adj = series.map((s) => finishingProbs(s.pos, s.missCut, hasCut));
+  // Stop the axis at the last position anyone can realistically finish (missed-cut mass is removed above), so a cut event does not show 80 empty slots.
+  const lastUsed = Math.max(0, ...adj.map((a) => { let k = a.length; while (k > 0 && a[k - 1] < 5e-5) k--; return k; }));
+  const n = Math.min(Math.max(0, ...series.map((s) => s.pos.length)), Math.max(lastUsed, 1));
+  const run = series.map(() => 0);
+  const rows: Record<string, number | string>[] = Array.from({ length: n }, (_, i) => {
+    const row: Record<string, number | string> = { label: String(i + 1) };
+    series.forEach((s, j) => {
+      if (i >= s.pos.length) return;
+      const v = adj[j][i];
+      run[j] += v;
+      row[s.key] = +(100 * (cumulative ? run[j] : v)).toFixed(3);
+    });
+    return row;
+  });
+  if (hasCut && !cumulative) {
+    const row: Record<string, number | string> = { label: MISSED_CUT_LABEL };
+    series.forEach((s) => { if (Number.isFinite(s.missCut ?? NaN)) row[s.key] = +(100 * Math.max(0, s.missCut as number)).toFixed(3); });
+    rows.push(row);
+  }
+  return rows;
+}
+/** X-axis ticks every 10 positions (1, 10, 20, ...) plus the Missed cut tick. */
+export function positionTicks(n: number, hasMissed: boolean): string[] {
+  const t: string[] = n >= 1 ? ["1"] : [];
+  for (let k = 10; k <= n; k += 10) t.push(String(k));
+  if (hasMissed) t.push(MISSED_CUT_LABEL);
+  return t;
 }
 /** Chart rows for the finish histogram, in percent. Cumulative mode leaves out the missed-cut bar and counts "this range or better". */
 export function bucketRows(players: ExPlayer[], previous: ExPlayer[], cumulative: boolean, fieldSize: number, hasCut: boolean): Record<string, number | string>[] {

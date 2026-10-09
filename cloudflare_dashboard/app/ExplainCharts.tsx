@@ -4,8 +4,8 @@
  * Charts for the explain views (This week, Why priced, player drawer). Colors only from design tokens (var(--...)); every chart has a text alternative
  * (aria-label / visible numbers) and never relies on color alone (sign glyphs, labels). Pure data shaping lives in explain-rules.ts.
  */
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { bucketProbs, finishBuckets } from "./distributions-rules";
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { MISSED_CUT_LABEL, positionRows, positionTicks } from "./distributions-rules";
 import {
   edgeCellText, pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Market, type Pctl, type Shape, type TotalScore, type WaterfallResult,
 } from "./explain-rules";
@@ -14,52 +14,70 @@ export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3
 
 /* ------------------------------------------------------------------ finish shape */
 export type FinishSeries = { id: number; name: string; pos: number[]; missCut: number | null; color: string };
+/** One series of a per-position finish histogram: "bar" = filled bars (the main player), "line" = thin step outline, "dashed" = dashed outline (an earlier run). */
+export type PositionChartSeries = { key: string; name: string; color: string; pos: number[]; missCut: number | null | undefined; style: "bar" | "line" | "dashed" };
 
-export function FinishChart({ series, fieldSize, cutTopN, mode }: { series: FinishSeries[]; fieldSize: number; cutTopN: number | null; mode: "probability" | "cumulative" }) {
+/** Finish histogram with one bar per finish position (1, 2, 3 ... last finisher); the missed-cut chance is reported beside the chart. The first "bar" series is drawn as bars; the others as thin step outlines on top, so shapes compare at a glance. */
+export function PositionChart({ series, hasCut, cumulative, height, ariaLabel }: { series: PositionChartSeries[]; hasCut: boolean; cumulative: boolean; height?: number; ariaLabel: string }) {
+  // The missed-cut chance is one outcome covering many players; as a bar it dwarfs every finishing position, so it is shown in the legend instead.
+  const withMc = false;
+  const base = positionRows(series, cumulative, hasCut).filter((r) => r.label !== MISSED_CUT_LABEL);
+  const lineKeys = new Set(series.filter((s) => s.style !== "bar").map((s) => s.key));
+  const rows = base.map((r) => {
+    if (r.label !== MISSED_CUT_LABEL) return r;
+    const o: Record<string, number | string> = { label: r.label };
+    for (const [k, v] of Object.entries(r)) if (k !== "label") o[lineKeys.has(k) ? `${k}__mc` : k] = v;
+    return o;
+  });
+  const n = rows.filter((r) => r.label !== MISSED_CUT_LABEL).length;
+  const bar = series.find((s) => s.style === "bar");
+  return (
+    <div className="ex-chart" style={height ? { height } : undefined} role="img" aria-label={ariaLabel}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} barCategoryGap={0} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke="var(--line)" vertical={false} />
+          <XAxis dataKey="label" stroke="var(--muted)" ticks={positionTicks(n, withMc)} interval={0} tick={{ fontSize: 11 }} />
+          <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 11 }} domain={cumulative ? [0, 100] : [0, "auto"]} tickFormatter={(v: number) => String(Math.round(v))} />
+          <Tooltip cursor={{ fill: "var(--tint-1)" }} content={<PositionTooltip series={series} cumulative={cumulative} />} />
+          {bar && <Bar dataKey={bar.key} name={bar.name} fill={bar.color} fillOpacity={0.6} isAnimationActive={false} />}
+          {series.filter((s) => s.style !== "bar").flatMap((s) => [
+            <Line key={s.key} dataKey={s.key} name={s.name} type="stepAfter" stroke={s.color} strokeWidth={1.75} strokeDasharray={s.style === "dashed" ? "5 3" : undefined} dot={false} activeDot={false} isAnimationActive={false} connectNulls={false} />,
+            ...(withMc ? [<Line key={`${s.key}__mc`} dataKey={`${s.key}__mc`} legendType="none" stroke="none" dot={{ r: 4, fill: s.color, stroke: s.color }} activeDot={false} isAnimationActive={false} />] : []),
+          ])}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PositionTooltip({ active, payload, label, series, cumulative }: { active?: boolean; payload?: Array<{ payload: Record<string, number | string> }>; label?: string; series: PositionChartSeries[]; cumulative: boolean }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  const mc = label === MISSED_CUT_LABEL;
+  return (
+    <div className="ex-tooltip">
+      <strong>{mc ? "Missed the cut" : label === "1" ? "Win (finish 1)" : `Finish ${label}${cumulative ? " or better" : ""}`}</strong>
+      {series.map((s) => {
+        const v = row[mc && s.style !== "bar" ? `${s.key}__mc` : s.key];
+        return <span key={s.key}><i style={{ background: s.color }} aria-hidden="true" /> {s.name}: {typeof v === "number" ? `${v.toFixed(v < 1 ? 2 : 1)}%` : "n/a"}</span>;
+      })}
+    </div>
+  );
+}
+
+export function FinishChart({ series, cutTopN, mode }: { series: FinishSeries[]; fieldSize?: number; cutTopN: number | null; mode: "probability" | "cumulative" }) {
   const cumulative = mode === "cumulative";
   const hasCut = !!cutTopN || series.some((s) => (s.missCut ?? 0) > 0);
-  const all = finishBuckets(fieldSize, hasCut);
-  const buckets = all.filter((b) => !(cumulative && b.missed));
-  const probs = series.map((s) => bucketProbs(s.pos, s.missCut, all).filter((_, i) => !(cumulative && all[i].missed)));
-  const rows = buckets.map((b, i) => {
-    const row: Record<string, number | string> = { label: b.label };
-    probs.forEach((pr, j) => { row[`p${j}`] = +(100 * (cumulative ? pr.slice(0, i + 1).reduce((a, v) => a + v, 0) : pr[i])).toFixed(2); });
-    return row;
-  });
+  const ps: PositionChartSeries[] = series.map((s, j) => ({ key: `p${j}`, name: s.name, color: s.color, pos: s.pos, missCut: s.missCut, style: j === 0 ? "bar" : "line" }));
   return (
     <div>
-      <div className="ex-chart" role="img" aria-label={`Chance of finishing ${cumulative ? "in each range or better" : "in each range"} for ${series.map((s) => s.name).join(", ")}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} barCategoryGap="14%" barGap={2} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="var(--line)" vertical={false} />
-            <XAxis dataKey="label" stroke="var(--muted)" interval={0} tick={{ fontSize: 11 }} />
-            <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 11 }} domain={cumulative ? [0, 100] : [0, "auto"]} tickFormatter={(v: number) => String(Math.round(v))} />
-            <Tooltip cursor={{ fill: "var(--tint-1)" }} content={<FinishTooltip series={series} cumulative={cumulative} />} />
-            {series.map((s, j) => <Bar key={s.id} dataKey={`p${j}`} name={s.name} fill={s.color} fillOpacity={series.length === 1 ? 0.7 : 0.85} isAnimationActive={false} radius={[3, 3, 0, 0]} />)}
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <p className="ex-muted">{cumulative ? "Each bar is the chance of finishing in that range of finish positions or better (ties shared)." : "Each bar is the chance of finishing in that range of finish positions (ties shared); hover for the exact figure."}</p>
+      <PositionChart series={ps} hasCut={hasCut} cumulative={cumulative} ariaLabel={`Chance of finishing in each position ${cumulative ? "or better " : ""}for ${series.map((s) => s.name).join(", ")}`} />
+      <p className="ex-muted">{cumulative ? "Each bar is the chance of finishing at that position or better (ties shared)." : "One bar per finish position (ties shared)"}{hasCut ? "; bars cover made-cut finishes only, and the chance of missing the cut is listed under the chart" : ""}{!cumulative ? "; hover for the exact figure." : ""}{series.length > 1 ? " The first player is the bars; the others are outlines on top." : ""}</p>
       <ul className="ex-legend">
         {series.map((s) => (
           <li key={s.id}><i style={{ background: s.color }} aria-hidden="true" />{s.name}{s.missCut !== null && <small> · misses the cut {pct(s.missCut, 0)}</small>}</li>
         ))}
       </ul>
-    </div>
-  );
-}
-
-function FinishTooltip({ active, payload, label, series, cumulative }: { active?: boolean; payload?: Array<{ payload: Record<string, number> }>; label?: string; series: FinishSeries[]; cumulative: boolean }) {
-  if (!active || !payload?.length) return null;
-  const row = payload[0].payload;
-  const range = label === "Win" ? "Win" : label === "Missed cut" ? "Missed cut" : `Finish ${label}`;
-  return (
-    <div className="ex-tooltip">
-      <strong>{range}{cumulative && label !== "Win" ? " or better" : ""}</strong>
-      {series.map((s, j) => {
-        const v = row[`p${j}`];
-        return <span key={s.id}><i style={{ background: s.color }} aria-hidden="true" /> {s.name}: {v === undefined ? "n/a" : `${v.toFixed(1)}%`}</span>;
-      })}
     </div>
   );
 }
@@ -119,15 +137,16 @@ export function ScoreFan({ items, rounds }: { items: Array<{ id: number; name: s
 
 /* ------------------------------------------------------------------ waterfall ("why this price") */
 const GROUP_TAG: Record<string, string> = { course: "Course", location: "Location", override: "Manual", live: "In play", weather: "Weather" };
-export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained, label = "Strokes per round vs the field average" }: WaterfallResult & { label?: string }) {
+export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained, scale, label = "Strokes per round vs the field average" }: WaterfallResult & { label?: string; scale: number }) {
   const skillRows = rows.filter((r) => r.group !== "weather");
   const weatherRows = rows.filter((r) => r.group === "weather");
   const weatherSmall = small - smallSkill;
   const skillNet = skillTotal + unexplained;
-  const max = Math.max(0.05, ...rows.map((r) => Math.abs(r.value)), Math.abs(smallSkill), Math.abs(skillNet) * 0.6, Math.abs(weatherTotal));
+  const max = Math.max(0.5, scale);
   const bar = (v: number) => (
     <span className="ex-wf-track" aria-hidden="true">
-      <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${(Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
+      <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${Math.min(1, Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
+      {Math.abs(v) > max && <span className={`ex-wf-clip ${v >= 0 ? "pos" : "neg"}`}>{v >= 0 ? "›" : "‹"}</span>}
     </span>
   );
   const row = (r: (typeof rows)[number], i: number, list: typeof rows) => (
@@ -139,6 +158,8 @@ export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, s
   );
   return (
     <div className="ex-wf" role="table" aria-label={label}>
+      <div className="ex-wf-scale" role="row"><span role="cell" /><span className="ex-wf-axis" role="cell"><em>−{max}</em><em>0</em><em>+{max}</em></span><span role="cell" /></div>
+      <p className="ex-muted ex-wf-note">Bar ends = ±{max} strokes a round, the same scale for every player in this event; a longer bar is cut off and marked with an arrow.</p>
       {skillRows.map(row)}
       {smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallSkillCount} smaller items</span>{bar(smallSkill)}<b role="cell">{signed(smallSkill)}</b></div>}
       {Math.abs(unexplained) >= 0.01 && <div className="ex-wf-row ex-wf-small" role="row" title="Rounding and items too small to list."><span className="ex-wf-label" role="cell">Rounding and other</span>{bar(unexplained)}<b role="cell">{signed(unexplained)}</b></div>}

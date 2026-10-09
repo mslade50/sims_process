@@ -202,3 +202,21 @@ test("where we differ: contenders only, parts add up to the skill gap, groups ne
   assert.equal(R.differView(live).rows.length, 0);
   assert.equal(R.edgeCellText({ model: 0.8, market: 0.85, rel: -0.0588, side: "miss_cut", ev: 1 / 3, tone: "neg" }), "miss cut +33%");
 });
+
+test("modalFinish picks the most likely single finishing position; missing the cut is never compared with one position", async () => {
+  const { modalFinish, modalFinishText, finishingProbs, waterfallScale } = await import("../app/explain-rules.ts");
+  assert.deepEqual(modalFinish({ pos: [0.1, 0.3, 0.2, 0.4] }, false), { kind: "pos", pos: 4 });
+  assert.deepEqual(modalFinish({ pos: [0.1, 0.3, 0.2, 0.4], p_miss_cut: 0 }, true), { kind: "pos", pos: 4 });
+  // 45% miss the cut: that mass is ranked last and removed from the tail; the likeliest made-cut position still wins.
+  assert.deepEqual(modalFinish({ pos: [0.1, 0.2, 0.2, 0.5], p_miss_cut: 0.45 }, true), { kind: "pos", pos: 2 });
+  assert.deepEqual(modalFinish({ pos: [0, 0, 0, 1], p_miss_cut: 1 }, true), { kind: "miss" });
+  assert.deepEqual(modalFinish({ pos: [0.2, 0.3, 0.2, 0.3], p_miss_cut: 0.25 }, true), { kind: "pos", pos: 2 });
+  assert.equal(modalFinish(null, true), null);
+  assert.equal(modalFinishText({ kind: "pos", pos: 12 }), "Most likely finish: 12");
+  assert.equal(modalFinishText({ kind: "miss" }), "Most likely: misses cut");
+  const f = finishingProbs([0.1, 0.2, 0.2, 0.5], 0.6, true);
+  assert.ok(Math.abs(f.reduce((a, b) => a + b, 0) - 0.4) < 1e-9 && f[3] === 0);
+  const players = [{ withdrawn: false, mu_rel: 0.3, components: { a: 0.1 } }, { withdrawn: false, mu_rel: 2.2, components: { a: 0.4, b: -0.7 } }];
+  assert.equal(waterfallScale(players), 2.5);
+  assert.equal(waterfallScale([]), 1);
+});

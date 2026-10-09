@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Search, X, Layers3, ArrowRight } from "lucide-react";
 import { useDashboardData } from "./data";
 import { EmptyState, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { american, MARKETS, MARKET_LABEL, nameMatches, orderEvents, parseExplain, pct, tourName, type ExPlayer } from "./explain-rules";
-import { FINISH_CHART_CAPTION, bucketRows, checkpoints, cutReference, marker, markerLabel, matchup, runLabel, type DistributionDoc, type DistributionEvent } from "./distributions-rules";
+import { FINISH_CHART_CAPTION, checkpoints, cutReference, marker, markerLabel, matchup, runLabel, type DistributionDoc, type DistributionEvent } from "./distributions-rules";
 import { etTime } from "./lib";
+import { PositionChart, type PositionChartSeries } from "./ExplainCharts";
 import "./explain.css";
 import "./distributions.css";
 
@@ -40,7 +40,7 @@ function Explorer({ event }: { event: DistributionEvent }) {
   return <>
     <div className="dist-controls">
       <label className="dist-select">Simulation<select title="Pick which run to look at: before the event, or after a given round." aria-label="Simulation checkpoint" value={runKey} onChange={(e) => setRunKey(e.target.value)}>{runs.length ? runs.map((r) => <option key={r.key} value={r.key}>{runLabel(r)}{r.key === latest?.key ? " · Latest" : ""}</option>) : <option value={runKey}>Latest simulation</option>}</select></label>
-      <label className="dist-select">Compare with<select title="Show another run as lighter outlined bars next to the current one." aria-label="Compare shapes with" value={compare} onChange={(e) => setCompare(e.target.value)}><option value="">No comparison</option>{runs.filter((r) => r.key !== runKey).map((r) => <option key={r.key} value={r.key}>{runLabel(r)}</option>)}</select></label>
+      <label className="dist-select">Compare with<select title="Show another run as dashed outlines over the current one." aria-label="Compare shapes with" value={compare} onChange={(e) => setCompare(e.target.value)}><option value="">No comparison</option>{runs.filter((r) => r.key !== runKey).map((r) => <option key={r.key} value={r.key}>{runLabel(r)}</option>)}</select></label>
     </div>
     <Snapshot key={`${runKey}:${compare}`} runKey={runKey} compareKey={compare === runKey ? "" : compare} compareLabel={(() => { const r = runs.find((x) => x.key === compare); return r ? runLabel(r) : ""; })()} onStopCompare={() => setCompare("")} ids={ids} setIds={setIds} latest={runKey === latest?.key} />
   </>;
@@ -61,9 +61,12 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
   const players = active.map((id) => doc.players.find((p) => p.id === id)).filter((p): p is ExPlayer => !!p);
   const prior = then ? active.map((id) => then.players.find((p) => p.id === id)).filter((p): p is ExPlayer => !!p) : [];
   const hasCut = !!doc.event.cut_round || !!doc.event.cut_top_n;
-  const fieldSize = doc.event.field_size ?? doc.players.length;
   const cumulative = mode === "cumulative";
-  const rows = players.some((p) => p.finish?.pos?.length) ? bucketRows(players, prior, cumulative, fieldSize, hasCut) : [];
+  const chartSeries: PositionChartSeries[] = [
+    ...players.filter((p) => p.finish?.pos?.length).map((p, i) => ({ key: `now_${p.id}`, name: name(p), color: COLORS[players.indexOf(p)], pos: p.finish!.pos, missCut: hasCut ? p.finish!.p_miss_cut : null, style: (i === 0 ? "bar" : "line") as "bar" | "line" })),
+    ...prior.filter((p) => p.finish?.pos?.length).map((p) => ({ key: `then_${p.id}`, name: `${name(p)} (comparison)`, color: COLORS[active.indexOf(p.id)], pos: p.finish!.pos, missCut: hasCut ? p.finish!.p_miss_cut : null, style: "dashed" as const })),
+  ];
+  const rows = chartSeries.length ? chartSeries : [];
   const matches = query ? ranked.filter((p) => nameMatches(p.name, query) && !active.includes(p.id)).slice(0, 8) : [];
   const changePlayer = (id: number) => { setIds([...active.filter((p) => p !== id), id].slice(-4)); setQuery(""); };
   const remove = (id: number) => { if (active.length > 1) setIds(active.filter((p) => p !== id)); };
@@ -76,8 +79,8 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
     <div className="dist-player-cards">{players.map((p, i) => { const old = prior.find((q) => q.id === p.id); return <article key={p.id} style={{ borderTopColor: COLORS[i] }}><span>{name(p)}</span><strong>{pct(p.probs.win.model)}<small> win</small></strong><div><b>{american(p.probs.win.model)}</b><span title="The finish position that half of the simulations beat and half did not. It is not the same as the average finish.">{p.finish ? `Median finish: ${p.finish.median}` : "No finish chart for this player"}</span></div>{old && <small className="dist-change">{delta(p.probs.win.model, old.probs.win.model)} win vs comparison</small>}</article>; })}</div>
     <Panel title="Where each player is likely to finish" eyebrow="Same simulation for every player">
       <div className="dist-chart-tools"><SegmentedControl label="Chart view" value={mode} onChange={setMode} options={[{ value: "probability", label: "Finish range" }, { value: "cumulative", label: "Range or better" }]} /><label className="dist-marker" title="Choose N to see each player's chance and fair odds of finishing in the top N, listed under the chart.">Show odds for top<input aria-label="Finish marker" type="number" min={1} max={doc.players.length} value={finish} onChange={(e) => setFinish(Math.max(1, Math.min(doc.players.length, Number(e.target.value) || 1)))} /></label></div>
-      {!rows.length ? <EmptyState title="Finish chart unavailable" detail="The finish chart is not available for this simulation. The prices below are still valid." /> : <div className="dist-chart" role="img" aria-label={`${cumulative ? "Chance of finishing in each range or better" : "Chance of finishing in each range"} for ${players.map(name).join(", ")}`}><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} barCategoryGap="14%" barGap={2} margin={{ top: 20, right: 18, left: 0, bottom: 18 }}><CartesianGrid vertical={false} stroke="var(--line)" /><XAxis dataKey="label" stroke="var(--muted)" tick={{ fontSize: 11 }} interval={0} label={{ value: cumulative ? "Chance of finishing this well or better" : "Finish position (ties shared)", position: "insideBottom", offset: -12, fill: "var(--muted)" }} /><YAxis unit="%" tickFormatter={(v) => Number(v).toFixed(0)} width={48} stroke="var(--muted)" tick={{ fontSize: 11 }} domain={cumulative ? [0, 100] : [0, "auto"]} /><Tooltip cursor={{ fill: "var(--tint-1)" }} contentStyle={{ background: "var(--popover)", border: "1px solid var(--line)", borderRadius: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} labelFormatter={(v) => `${v === "Win" ? "Win" : v === "Missed cut" ? "Missed cut" : `Finish ${v}`}${cumulative && v !== "Win" ? " or better" : ""}`} />{players.flatMap((p, i) => [<Bar key={`now${p.id}`} name={name(p)} dataKey={`now_${p.id}`} fill={COLORS[i]} isAnimationActive={false} radius={[3, 3, 0, 0]} />, ...(prior.some((q) => q.id === p.id) ? [<Bar key={`then${p.id}`} name={`${name(p)} (comparison)`} dataKey={`then_${p.id}`} fill={COLORS[i]} fillOpacity={0.22} stroke={COLORS[i]} strokeWidth={1.5} isAnimationActive={false} radius={[3, 3, 0, 0]} />] : [])])}</BarChart></ResponsiveContainer></div>}
-      <div className="dist-legend">{players.map((p, i) => <span key={p.id}><i style={{ background: COLORS[i] }} />{name(p)} · {markerLabel(finish, doc.event.cut_top_n)}: {pct(marker(p, finish, doc.event.cut_top_n))} / {american(marker(p, finish, doc.event.cut_top_n))}</span>)}{doc.event.cut_top_n && doc.event.cut_top_n !== finish ? players.map((p, i) => { const c = cutReference(p, doc.event.cut_top_n); return c ? <span key={`cut${p.id}`} data-testid="dist-cut-ref"><i style={{ background: COLORS[i] }} />{name(p)} · {c.label}: {pct(c.prob)} / {american(c.prob)}</span> : null; }) : null}{then && <span><Layers3 size={14} />Lighter outlined bars: the simulation you are comparing with</span>}</div>
+      {!rows.length ? <EmptyState title="Finish chart unavailable" detail="The finish chart is not available for this simulation. The prices below are still valid." /> : <div className="dist-chart"><PositionChart series={chartSeries} hasCut={hasCut} cumulative={cumulative} height={360} ariaLabel={`${cumulative ? "Chance of finishing at each position or better" : "Chance of finishing at each position"} for ${players.map(name).join(", ")}`} /></div>}
+      <div className="dist-legend">{players.map((p, i) => <span key={p.id}><i style={{ background: COLORS[i] }} />{name(p)} · {markerLabel(finish, doc.event.cut_top_n)}: {pct(marker(p, finish, doc.event.cut_top_n))} / {american(marker(p, finish, doc.event.cut_top_n))}</span>)}{doc.event.cut_top_n && doc.event.cut_top_n !== finish ? players.map((p, i) => { const c = cutReference(p, doc.event.cut_top_n); return c ? <span key={`cut${p.id}`} data-testid="dist-cut-ref"><i style={{ background: COLORS[i] }} />{name(p)} · {c.label}: {pct(c.prob)} / {american(c.prob)}</span> : null; }) : null}<span>First player: bars. Other players: outlines on top.</span>{then && <span><Layers3 size={14} />Dashed outlines: the simulation you are comparing with</span>}</div>
       <p className="ex-muted">{FINISH_CHART_CAPTION}{doc.event.cut_top_n ? " Make cut is the model's priced chance of playing the weekend." : ""}</p>
       {compareKey && previous.loading && <p className="ex-muted">Loading the comparison simulation…</p>}{compareKey && previous.error && <p role="alert" className="ex-muted">{`The comparison run${compareLabel ? ` (${compareLabel})` : ""} could not be loaded, so only the current run is shown. Choose another run in Compare with, or `}<button type="button" className="dist-linkbtn" onClick={() => onStopCompare()}>stop comparing</button>.</p>}
     </Panel>

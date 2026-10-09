@@ -199,3 +199,14 @@
   .ex-differ .ex-differ-why { min-width: 0; max-width: none; }
   .ex-cards td.ex-shape-cell { width: auto; }
 }
+
+.ex-wf-scale { display: grid; grid-template-columns: minmax(104px, 34%) 1fr 54px; gap: 8px; font-size: 10.5px; color: var(--muted); }
+.ex-wf-axis { display: flex; justify-content: space-between; }
+.ex-wf-axis em { font-style: normal; }
+.ex-wf-clip { position: absolute; top: -2px; bottom: -2px; display: flex; align-items: center; font-size: 13px; font-weight: 800; line-height: 1; }
+.ex-wf-clip.pos { right: 1px; color: var(--foreground); }
+.ex-wf-clip.neg { left: 1px; color: var(--foreground); }
+@media (max-width: 650px) { .ex-wf-scale { grid-template-columns: minmax(96px, 38%) 1fr 50px; } }
+.ex-modal { display: block; margin-top: 2px; font-size: 11px; opacity: .8; }
+.ex-kpi-wrap { display: flex; flex-direction: column; min-width: 0; }
+.ex-kpi-wrap .ex-modal { padding: 0 4px; color: var(--muted-strong); }

@@ -232,6 +232,14 @@ export function waterfall(player: ExPlayer, legend: Record<string, LegendEntry>,
   return { rows, total, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained };
 }
 
+/** One bar scale shared by every player of an event, in strokes per round: the (near-)largest expected skill or component in the field, rounded up to a half stroke (at least 1). Bars beyond it are clipped and marked. */
+export function waterfallScale(players: ExPlayer[]): number {
+  const q = (xs: number[], f: number) => { const s = xs.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * f))] : 0; };
+  const mu = players.filter((p) => !p.withdrawn).map((p) => Math.abs(p.mu_rel ?? 0));
+  const comps = players.filter((p) => !p.withdrawn).flatMap((p) => Object.values(p.components ?? {}).filter((v): v is number => typeof v === "number").map(Math.abs));
+  return Math.max(1, Math.ceil(Math.max(q(mu, 0.97), q(comps, 0.995)) * 2) / 2);
+}
+
 /* ------------------------------------------------------------------ why-priced table */
 export type SortKey = "name" | "model" | "market" | "edge" | "rel" | "edge_sg" | "mu" | "sd" | "pos";
 export type WhyFilter = { query: string; tags: string[]; market: Market; onlyEdge: "all" | "above" | "below"; top?: number | null };
@@ -377,6 +385,26 @@ export function movers(doc: ExplainDoc, n = 8): ExPlayer[] {
 
 /* ------------------------------------------------------------------ overlay */
 export const MAX_OVERLAY = 5;
+/** finish.pos ranks missed cuts below the field, so their mass sits in the last positions: remove it from the tail (backwards) so finishing bars exclude it. */
+export function finishingProbs(pos: number[], missCut: number | null | undefined, hasCut: boolean): number[] {
+  const out = [...pos];
+  let left = hasCut && Number.isFinite(missCut ?? NaN) ? Math.max(0, missCut as number) : 0;
+  for (let i = out.length - 1; i >= 0 && left > 1e-12; i--) { const take = Math.min(out[i], left); out[i] -= take; left -= take; }
+  return out;
+}
+/** Most likely (modal) finish position. Missing the cut is one outcome spread over many players, so it is not compared with single positions; "miss" only when no position has any chance. */
+export type ModalFinish = { kind: "pos"; pos: number } | { kind: "miss" } | null;
+export function modalFinish(finish: { pos: number[]; p_miss_cut?: number } | null | undefined, hasCut: boolean): ModalFinish {
+  if (!finish?.pos?.length) return null;
+  const pos = finishingProbs(finish.pos, finish.p_miss_cut, hasCut);
+  let best = 0;
+  pos.forEach((v, i) => { if (v > pos[best]) best = i; });
+  const miss = hasCut && Number.isFinite(finish.p_miss_cut ?? NaN) ? (finish.p_miss_cut as number) : 0;
+  return pos[best] <= 0 && miss > 0 ? { kind: "miss" } : { kind: "pos", pos: best + 1 };
+}
+export function modalFinishText(m: ModalFinish): string {
+  return !m ? "" : m.kind === "miss" ? "Most likely: misses cut" : `Most likely finish: ${m.pos}`;
+}
 /** Preselected comparison: the player's same-odds neighbours (as exported), restricted to players that have a finish shape. */
 export function defaultCompetitors(doc: ExplainDoc, id: number, n = 3): number[] {
   const p = doc.players.find((x) => x.id === id);

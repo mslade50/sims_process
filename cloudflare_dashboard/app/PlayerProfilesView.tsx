@@ -100,7 +100,7 @@ function ProfilePanel({entry, catalog, compareIds, selectedEvent, update, next}:
   const parsedDeep=parseDeep(deepLoad.data,playerId(entry));
   const coverage=(catalog as ProfileCatalog & {deep_coverage?:{shots?:ShotReference;history?:{pga_round_reference_key?:string;observed_category_reference?:ObservedCategoryReference}}}).deep_coverage;
   const shotReference=coverage?.shots??{};
-  const deep=parsedDeep?.shots ? {...parsedDeep,shots:{...parsedDeep.shots,metrics:parsedDeep.shots.metrics.map(m=>({...m,reference_n_players:shotReference.metrics?.[m.key]?.n_players,higher_is_better:shotReference.metrics?.[m.key]?.higher_is_better,reference_id:shotReference.id,reference_as_of:shotReference.as_of}))}} : parsedDeep;
+  const deep=parsedDeep?.shots ? {...parsedDeep,shots:{...parsedDeep.shots,metrics:parsedDeep.shots.metrics.map(m=>({...m,reference_n_players:shotReference.metrics?.[m.key]?.n_players,reference_mean:shotReference.metrics?.[m.key]?.mean,reference_sd:shotReference.metrics?.[m.key]?.sd,higher_is_better:shotReference.metrics?.[m.key]?.higher_is_better,reference_id:shotReference.id,reference_as_of:shotReference.as_of}))}} : parsedDeep;
   if(main.loading) return <LoadingState label={`Loading ${entry.name}'s historical profile`} />;
   if(main.error || !p) return <EmptyState title="Profile unavailable" detail={main.error ?? "The published shard does not match this player identity."} />;
   const requested=[first ? parseProfile(a.data,playerId(first)):null,second ? parseProfile(b.data,playerId(second)):null].filter((v):v is PlayerProfile=>!!v);

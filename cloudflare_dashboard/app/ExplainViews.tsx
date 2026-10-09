@@ -13,7 +13,7 @@ import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreF
 import {
   EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
   explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, shapeOf, signed, sortWhy,
-  tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, waterfall, weatherStatus,
+  modalFinish, modalFinishText, waterfallScale, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, waterfall, weatherStatus,
   type Differ, type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
@@ -90,7 +90,7 @@ function ExplainBody({ event, params, update, preEventFirst, children }: { event
   if (error || !doc || stale) return <EmptyState title={`Nothing to show for ${event.name ?? event.event_uid} yet`} detail="Prices for this event have not been run since this page was updated. They will appear after the next pricing run." />;
   const market = params.m ?? "win";
   const player = params.p ? doc.players.find((p) => p.id === params.p) ?? null : null;
-  const competitors = params.vs.length || !player ? params.vs : defaultCompetitors(doc, player.id);
+  const competitors = params.vs;
   return (
     <>
       <RunBanner doc={doc} />
@@ -338,7 +338,7 @@ const COLUMN_HELP = {
   rel: "How far our chance is from the sportsbook's, as a share of the sportsbook's. Plus means we are higher than the sportsbook.",
   edge_sg: "Skill gap: how many strokes a round better (+) or worse (-) we rate them than the sportsbook prices imply, after allowing for how much their scores swing (spread). Blank when the sportsbook prices too few bet types to tell.",
   mu: "Our estimate of their skill: strokes per round better (+) or worse (-) than the average player in this field.",
-  sd: "How much their round scores typically bounce around, in strokes. Higher means a streakier, less predictable player.",
+  sd: "Std dev: the standard deviation of their round scores, in strokes. Higher means a streakier, less predictable player.",
 } as const;
 
 function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
@@ -392,7 +392,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
       </div>
       <div className="table-scroll">
         <table className="ex-table ex-why-table ex-cards">
-          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos", COLUMN_HELP.pos)}{hasModel && th("model", "Our chance", COLUMN_HELP.model)}{hasMarket && th("market", "Sportsbook", COLUMN_HELP.market)}{hasMarket && th("rel", "Gap (%)", COLUMN_HELP.rel)}{hasGap && hasMarket && th("edge_sg", "Gap (strokes)", COLUMN_HELP.edge_sg)}{th("mu", "Expected skill", COLUMN_HELP.mu)}{hasSd && th("sd", "Spread", COLUMN_HELP.sd)}<th title="The biggest reasons our price differs from the sportsbook.">Why</th></tr></thead>
+          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos", COLUMN_HELP.pos)}{hasModel && th("model", "Our chance", COLUMN_HELP.model)}{hasMarket && th("market", "Sportsbook", COLUMN_HELP.market)}{hasMarket && th("rel", "Gap (%)", COLUMN_HELP.rel)}{hasGap && hasMarket && th("edge_sg", "Gap (strokes)", COLUMN_HELP.edge_sg)}{th("mu", "Expected skill", COLUMN_HELP.mu)}{hasSd && th("sd", "Std dev", COLUMN_HELP.sd)}<th title="The biggest reasons our price differs from the sportsbook.">Why</th></tr></thead>
           <tbody>
             {rows.map((p) => {
               const e = p.probs[market];
@@ -404,7 +404,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
                   {hasModel && <td data-label="Our chance">{pct(e.model)}</td>}{hasMarket && <td data-label="Sportsbook">{pct(e.market)}</td>}
                   {hasMarket && <td data-label="Gap (%)" className={b.tone === "positive" ? "pos" : b.tone === "negative" ? "neg" : ""}>{b.text}</td>}
                   {hasGap && hasMarket && <td data-label="Gap (strokes)" className={Math.abs(p.edge_sg ?? 0) < 0.005 ? "" : (p.edge_sg ?? 0) > 0 ? "pos" : "neg"}>{gapText(p.edge_sg)}</td>}
-                  <td data-label="Expected skill">{signed(p.mu_rel)}</td>{hasSd && <td data-label="Spread">{p.sd?.toFixed(2) ?? "-"}</td>}
+                  <td data-label="Expected skill">{signed(p.mu_rel)}</td>{hasSd && <td data-label="Std dev">{p.sd?.toFixed(2) ?? "-"}</td>}
                   <td data-label="Why" className="ex-why">{(hasMarket ? p.why_edge : null) ?? p.why}</td>
                 </tr>
               );
@@ -431,6 +431,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
   const [q, setQ] = useState("");
   const byId = useMemo(() => new Map(doc.players.map((p) => [p.id, p] as const)), [doc.players]);
   const wf = useMemo(() => waterfall(player, doc.components_legend), [player, doc.components_legend]);
+  const wfScale = useMemo(() => waterfallScale(doc.players), [doc.players]);
   const shape = useMemo(() => (doc.kind === "live" || player.withdrawn ? null : shapeOf(player, shapeMap(doc), availableMarkets(doc))), [doc, player]);
   const chosen = [player, ...competitors.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p)];
   const withShape = chosen.filter((p) => p.finish);
@@ -465,8 +466,8 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <div className="ex-drawer-kpis">
           <Kpi label={`${MARKET_LABEL[market]} chance`} value={pct(player.probs[market].model)} detail={doc.kind === "live" ? "our chance now" : `sportsbook ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Round-to-round spread ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
-          {f && <Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" />}
+          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Std dev ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
+          {f && <div className="ex-kpi-wrap"><Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" /><small className="ex-modal">{modalFinishText(modalFinish(f, !!doc.event.cut_round))}</small></div>}
           {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
         </div>
         {shape && <p className="ex-callout"><strong>{shape.sentence}</strong> {shape.parts_sentence}{valueBets(shape).length > 0 ? ` Value against the sportsbook: ${valueBets(shape).join(", ")}.` : ""}</p>}
@@ -474,7 +475,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
         <section>
           <h3 className="ex-h3">Why this price</h3>
           <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. The skill rows add up to their expected skill{doc.kind === "live" ? "; the in-play rows are part of it" : ""}; weather is shown separately because it adjusts scores on top.</p>
-          <Waterfall {...wf} />
+          <Waterfall {...wf} scale={wfScale} />
           {shape && <p className="ex-muted">The sportsbook&rsquo;s prices imply skill {signed(shape.skill_market)} and spread {shape.spread_market.toFixed(2)}; ours are {signed(shape.skill_ours)} (including weather) and {shape.spread_ours.toFixed(2)}.</p>}
         </section>
 
@@ -489,7 +490,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
             <SegmentedControl label="Chart type" value={mode} onChange={setMode} options={[{ value: "probability", label: "Position" }, { value: "cumulative", label: "Cumulative" }]} /></div>
           {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">Finish odds are not available for this run.</p> : (
             <>
-              <FinishChart series={series} fieldSize={doc.players.filter((p) => !p.withdrawn).length} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
+              <FinishChart series={series} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
               <div className="ex-compare">
                 <h4>Compare with</h4>
                 <div className="chip-row">
@@ -504,11 +505,11 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
                 {hits.length > 0 && <ul className="ex-hits">{hits.map((p) => <li key={p.id}><button type="button" onClick={() => { setCompetitors(toggleCompetitor(competitors, p.id)); setQ(""); }}>{p.name}<small>{pct(p.probs.win.model)} win</small></button></li>)}</ul>}
               </div>
               <div className="table-scroll"><table className="ex-table ex-compare-table">
-                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 10</th><th title="The finish position that half of the simulations beat and half did not.">Median finish</th>{doc.event.cut_round ? <th>Misses cut</th> : null}</tr></thead>
+                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 10</th><th title="The finish position that half of the simulations beat and half did not. The smaller note is the single most likely finish.">Median finish</th>{doc.event.cut_round ? <th>Misses cut</th> : null}</tr></thead>
                 <tbody>{withShape.map((p, i) => (
                   <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }} aria-hidden="true" />
                     {p.id === player.id ? p.name : <button type="button" className="ex-linkbtn" onClick={() => onSelect(p.id)}>{p.name}</button>}</th>
-                    <td>{signed(p.mu_rel)}</td><td>{pct(p.probs.win.model)}</td><td>{pct(p.probs.top_10.model)}</td><td>{p.finish!.median}</td>{doc.event.cut_round ? <td>{pct(p.finish!.p_miss_cut, 0)}</td> : null}</tr>
+                    <td>{signed(p.mu_rel)}</td><td>{pct(p.probs.win.model)}</td><td>{pct(p.probs.top_10.model)}</td><td>{p.finish!.median}<small className="ex-modal" title="The single most likely finish position">{modalFinishText(modalFinish(p.finish, !!doc.event.cut_round)).replace("Most likely finish: ", "most likely ").replace("Most likely: ", "most likely: ")}</small></td>{doc.event.cut_round ? <td>{pct(p.finish!.p_miss_cut, 0)}</td> : null}</tr>
                 ))}</tbody></table></div>
               <p className="ex-muted">Finish chances come from {doc.finish.method === "exact_tapes" ? "the simulations themselves" : `${doc.finish.n_draws?.toLocaleString() ?? "many"} replayed tournaments`}{doc.finish.calibration?.top_20 ? `; on average they sit within ${pct(doc.finish.calibration.top_20.mean_abs, 1)} of the posted top-20 chances` : ""}.</p>
             </>

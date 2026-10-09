@@ -63,6 +63,19 @@ test("W1: the cut reference is independent of the finish marker and uses p_make_
   assert.equal(cutReference({ probs: {} }, 65), null);
   const src = readFileSync(new URL("../app/DistributionView.tsx", import.meta.url), "utf8");
   assert.match(src, /cutReference\(p, doc\.event\.cut_top_n\)/);
-  assert.doesNotMatch(src, /ReferenceLine/, "finish chart is grouped bars with no reference lines; the cut shows as a legend line and a Missed cut bar");
-  assert.match(src, /Missed cut/);
+  assert.doesNotMatch(src, /ReferenceLine/, "finish chart is a per-position histogram with no reference lines; the cut shows as a legend line and a Missed cut bar");
+  assert.match(src, /PositionChart/, "the finish chart is the per-position histogram, which ends with a Missed cut bar");
+});
+
+test("positionRows gives one row per finish position plus a missed-cut row", async () => {
+  const { positionRows, positionTicks } = await import("../app/distributions-rules.ts");
+  const rows = positionRows([{ key: "a", pos: [0.1, 0.2, 0.3, 0.4], missCut: 0.25 }], false, true);
+  assert.deepEqual(rows.map((r) => r.label), ["1", "2", "3", "4", "Missed cut"]);
+  assert.equal(rows[3].a, 15); // 40% less the 25% that missed the cut
+  assert.equal(rows[4].a, 25);
+  const cum = positionRows([{ key: "a", pos: [0.1, 0.2, 0.3, 0.4], missCut: 0 }], true, true);
+  assert.equal(cum.length, 4);
+  assert.ok(Math.abs(Number(cum[3].a) - 100) < 1e-6);
+  assert.deepEqual(positionTicks(35, true), ["1", "10", "20", "30", "Missed cut"]);
+  assert.deepEqual(positionTicks(72, false), ["1", "10", "20", "30", "40", "50", "60", "70"]);
 });

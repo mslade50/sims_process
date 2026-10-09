@@ -166,7 +166,13 @@ export function filterPlayers(rows: PlayerRow[], query: string): PlayerRow[] {
   });
 }
 
-export const signedFixed = (value: number | null, digits = 2): string => (value === null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(digits)}`);
+export const signedFixed = (value: number | null, digits = 2): string => {
+  if (value === null) return "-";
+  const text = value.toFixed(digits);
+  // Values that round to zero print as "0.00", never "-0.00".
+  if (Number(text) === 0) return (0).toFixed(digits);
+  return `${value > 0 ? "+" : ""}${text}`;
+};
 
 export function forecastAgeHours(issuedAt: string, now: number): number | null {
   const t = Date.parse(issuedAt);

@@ -247,7 +247,7 @@ const COLUMN_NAMES: Record<string, string> = {
   units_wagered: "Units risked", units_won: "Units won", roi: "ROI %", wagered: "Units risked", archetype: "Player type", archetype_against: "Opponent type",
   miss: "Miss", miss_centered: "Miss vs field", max_abs_miss: "Biggest miss", ott: "Off the tee", app: "Approach", arg: "Around the green", putt: "Putting",
   predicted_sg: "Predicted SG", actual_sg: "Actual SG", pred: "Prediction", my_pred_regressed: "Prediction (adjusted)", error_raw: "Error", error_regressed: "Error (adjusted)",
-  regress_helped: "Adjustment helped", mkt_adj: "Market adjustment", mu_adj: "Skill adjustment", n_eff: "Effective sample", std: "Spread", skew: "Skew",
+  regress_helped: "Adjustment helped", mkt_adj: "Market adjustment", mu_adj: "Skill adjustment", n_eff: "Effective sample", std: "Std dev", skew: "Skew",
   excess_kurtosis: "Tail weight", p1_weather_adv: "Player 1 weather edge", p2_weather_adv: "Player 2 weather edge", differential: "Difference",
 };
 const COLUMN_HINTS: Record<string, string> = {
