@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, bandIndex, bandLabel, bandStats, compare, dispersionKey, headline, laterality, parseIndex, parsePayload,
-  parseReference, quantile, referenceBand, roundCount, selectPoints, tourSd, viewWindow, windowSpan} from '../app/player-dispersion-rules.ts';
+  parseReference, quantile, referenceBand, roundCount, selectPoints, tourSd, viewWindow, windowSpan, fmtDist, sideRange, depthRange, greenWindow, fairwayGuide, fmtFt} from '../app/player-dispersion-rules.ts';
 
 const index = {schema_version: 'player_dispersion.index.v1', generation: 'g', prefix: 'golfprice/player_profiles/dispersion-abc/', reference_key: 'golfprice/player_profiles/dispersion-abc/reference.json', as_of: '2026-10-10', count: 2, player_ids: [7, 9]};
 // half-yard integers: tee shots (forward 600=300 yd, lateral 20=10 yd right), approach shots
@@ -90,4 +90,26 @@ test('plain labels and chart window', () => {
   const v = viewWindow(pts, 'tee');
   assert.ok(v.xMax >= 40 && v.xMax <= 70 && v.yLo < v.yHi);
   assert.deepEqual(viewWindow([], 'app').yHi > 0, true);
+});
+
+test('green view: units, ranges, scale and median proximity', () => {
+  assert.equal(fmtDist(3), '9 ft'); assert.equal(fmtDist(-12.4), '12 yd'); assert.equal(fmtDist(null), '—'); assert.equal(fmtFt(7.4), '22 ft');
+  assert.equal(sideRange(-9, 8), '27 ft left to 24 ft right'); assert.equal(sideRange(-19, 18), '19 yd left to 18 yd right'); assert.equal(sideRange(-0.2, 4), 'the line to 12 ft right');
+  assert.equal(depthRange(-12, 6), '12 yd short to 18 ft long');
+  const pts = selectPoints(payload, 'app', 20, DEFAULT_APP_BANDS);
+  const stats = bandStats(pts, 'app', DEFAULT_APP_BANDS);
+  const s0 = stats.find((s) => s.band === 1);
+  assert.equal(s0.n, 1); assert.ok(Math.abs(s0.proxMed - Math.hypot(5, -4)) < 1e-9);
+  assert.equal(s0.alongQ10 <= s0.alongQ90, true);
+  const w = greenWindow(pts);
+  assert.ok([15, 20, 30, 40, 60, 90].includes(w.radius) && w.rings.every((r) => r < w.radius));
+  assert.equal(greenWindow([]).radius, 20);
+});
+
+test('fairway guide is one strip at the median published field extent', () => {
+  const r = parseReference({...ref, tee: {'2': {...ref.tee['2'], fairway_lat: {n: 900, q02: -14, q98: 15}}}});
+  const g = fairwayGuide(r, DEFAULT_TEE_BANDS, 240, 340);
+  assert.deepEqual(g, [{y0: 240, y1: 340, left: -14, right: 15}]);
+  assert.deepEqual(fairwayGuide(null, DEFAULT_TEE_BANDS, 240, 340), []);
+  assert.deepEqual(fairwayGuide(parseReference(ref), DEFAULT_TEE_BANDS, 240, 340), []);
 });

@@ -58,7 +58,7 @@ export const AXIS_HELP:Record<string,string>={
 };
 /** What each group cannot show yet (shown as a note, never drawn). */
 export const GROUP_MISSING:Record<string,string>={
-  "Driving":"which side of the fairway tee shots miss on (the published shot data has no verified left/right convention).",
+  "Driving":"which side of the fairway tee shots miss on (left and right are verified from the published coordinates; right is positive).",
   "Approach":"",
   "Short game":"",
   "Putting":"",

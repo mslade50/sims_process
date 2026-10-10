@@ -13,7 +13,8 @@ export type TeeBlock = { r: number[]; f: number[]; l: number[]; z: string };
 export type AppBlock = { r: number[]; s: number[]; l: number[]; a: number[]; z: string; o: string };
 export type DispersionPayload = { schema_version: string; dg_id: number; as_of: string; rounds: Array<[string, number, string]>; tee?: TeeBlock; app?: AppBlock };
 export type Spread = { n: number; mean: number; sd: number | null; q10: number; q90: number; player_sd?: { n_players: number; p10: number; p50: number; p90: number } };
-export type RefBand = { n_shots: number; n_players: number; lat: Spread; fwd?: Spread; along?: Spread; green_rate?: number; fairway_rate?: number; end_lie_known_n?: number };
+export type RefBand = { n_shots: number; n_players: number; lat: Spread; fwd?: Spread; along?: Spread; green_rate?: number; fairway_rate?: number; end_lie_known_n?: number;
+  prox_med?: number; fairway_lat?: { n: number; q02: number; q98: number } };
 export type Reference = {
   schema_version: string; as_of: string; max_rounds: number; n_players: number; min_player_shots: number;
   tee_bands: number[][]; app_bands: number[][]; tee: Record<string, RefBand>; app: Record<string, Record<string, RefBand>>;
@@ -22,6 +23,7 @@ export type Point = { lat: number; y: number; dist: number; along: number; band:
 export type BandStat = {
   band: number; n: number; meanLat: number; sdLat: number | null; q10: number; q90: number; width: number;
   meanY: number; meanAlong: number; rate: number | null; rateN: number;
+  medLat: number; proxMed: number; alongQ10: number; alongQ90: number;
 };
 export type Verdict = { text: string; tone: "narrower" | "similar" | "wider" | "unknown"; ratio: number | null };
 
@@ -141,6 +143,8 @@ export function bandStats(points: Point[], kind: Kind, bands: number[][]): BandS
     const hit = known.filter((p) => p.lie === (kind === "tee" ? "F" : "G")).length;
     out.push({
       band: b, n: pts.length, meanLat: mean, sdLat: sd, q10: quantile(lat, 0.1), q90: quantile(lat, 0.9), width: quantile(lat, 0.9) - quantile(lat, 0.1),
+      medLat: quantile(lat, 0.5), proxMed: quantile(pts.map((p) => Math.hypot(p.lat, p.along)).sort((x, y) => x - y), 0.5),
+      alongQ10: quantile(pts.map((p) => p.along).sort((x, y) => x - y), 0.1), alongQ90: quantile(pts.map((p) => p.along).sort((x, y) => x - y), 0.9),
       meanY: pts.reduce((s, p) => s + p.y, 0) / pts.length, meanAlong: pts.reduce((s, p) => s + p.along, 0) / pts.length,
       rate: known.length >= MIN_BAND_SHOTS ? hit / known.length : null, rateN: known.length,
     });
@@ -212,4 +216,50 @@ export function viewWindow(points: Point[], kind: Kind): { yLo: number; yHi: num
 
 export function fmt(v: number | null | undefined, digits = 1): string {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "—";
+}
+
+/** Distance in plain units: feet when under 10 yards, else yards. */
+export function fmtDist(yd: number | null | undefined): string {
+  if (typeof yd !== "number" || !Number.isFinite(yd)) return "—";
+  return Math.abs(yd) < 10 ? `${Math.round(Math.abs(yd) * 3)} ft` : `${Math.round(Math.abs(yd))} yd`;
+}
+
+/** Proximity is quoted in feet, as golf does. */
+export function fmtFt(yd: number | null | undefined): string {
+  return typeof yd === "number" && Number.isFinite(yd) ? `${Math.round(Math.abs(yd) * 3)} ft` : "—";
+}
+
+/** "9 yd left to 8 yd right" from a left(-)/right(+) pair. */
+export function sideRange(lo: number, hi: number): string {
+  const one = (v: number) => (Math.abs(v) < 0.5 ? "the line" : `${fmtDist(v)} ${v < 0 ? "left" : "right"}`);
+  return `${one(lo)} to ${one(hi)}`;
+}
+
+/** "12 yd short to 6 yd long" from a short(-)/long(+) pair. */
+export function depthRange(lo: number, hi: number): string {
+  const one = (v: number) => (Math.abs(v) < 0.5 ? "the pin" : `${fmtDist(v)} ${v < 0 ? "short" : "long"}`);
+  return `${one(lo)} to ${one(hi)}`;
+}
+
+export const GREEN_RINGS = [5, 10, 20, 30, 45, 60];
+export const GREEN_HALF_WIDTH = 11, GREEN_HALF_DEPTH = 15; // stylised green, yards (about 22 x 30 yd)
+
+/** Green-view scale: half-width (yards) of the square view, from the shots in view, and the rings that fit. */
+export function greenWindow(points: Point[]): { radius: number; rings: number[]; outside: number } {
+  const d = points.map((p) => Math.max(Math.abs(p.lat), Math.abs(p.along))).sort((a, b) => a - b);
+  const raw = d.length ? quantile(d, 0.97) : 20;
+  const radius = [15, 20, 30, 40, 60, 90].find((r) => raw <= r) ?? 90;
+  return { radius, rings: GREEN_RINGS.filter((r) => r < radius), outside: points.filter((p) => Math.abs(p.lat) > radius || Math.abs(p.along) > radius).length };
+}
+
+/** Fairway-width guide for the tee view: one strip over the whole distance range, at the median of the field's per-band fairway extents. */
+export function fairwayGuide(ref: Reference | null, bands: number[][], yLo: number, yHi: number): Array<{ y0: number; y1: number; left: number; right: number }> {
+  if (!ref) return [];
+  const lefts: number[] = [], rights: number[] = [];
+  bands.forEach((_, i) => {
+    const f = ref.tee[String(i)]?.fairway_lat;
+    if (f) { lefts.push(f.q02); rights.push(f.q98); }
+  });
+  if (!lefts.length || yHi <= yLo) return [];
+  return [{ y0: yLo, y1: yHi, left: quantile(lefts.sort((a, b) => a - b), 0.5), right: quantile(rights.sort((a, b) => a - b), 0.5) }];
 }
