@@ -3,9 +3,13 @@
  * Four short names; the long form lives in a tooltip or the Method disclosure. Never invent
  * a fifth label for one of these quantities in a view; import from here.
  */
+/** The zero point of every "vs PGA avg" number (Q15, Oct 10 2026): the average PGA Tour round over nine complete seasons, fixed. Published as pga_benchmark_reference.span. */
+export const RULER_SPAN = "2017–2025";
+export const RULER_NAME = `average PGA Tour round, ${RULER_SPAN}`;
+
 export const LABELS = {
-  /** Descriptive headline: recency-weighted R1-R2 adjusted SG, pulled toward the player's main-tour level, minus the fixed 2025 PGA round anchor. */
-  vsPgaAvg: { short: "vs PGA avg", long: "Strokes per round better (+) or worse (-) than the average 2025 PGA Tour round, judged from recent form in rounds 1 and 2. Players with few rounds are pulled toward the typical level of their main tour, so a small hot streak is not overstated", unit: "strokes per round" },
+  /** Descriptive headline: recency-weighted R1-R2 adjusted SG, pulled toward the player's main-tour level, minus the fixed multi-season PGA round anchor (RULER_NAME). */
+  vsPgaAvg: { short: "vs PGA avg", long: "Strokes per round better (+) or worse (-) than the average PGA Tour round of 2017–2025, judged from recent form in rounds 1 and 2. Players with few rounds are pulled toward the typical level of their main tour, so a small hot streak is not overstated", unit: "strokes per round" },
   /** Saved event model skill re-expressed on the tour scale: mu + field_offset (F02 field mean). */
   thisWeekPga: { short: "This week (PGA scale)", long: "The model's skill estimate for this week on the PGA Tour scale: its saved skill number plus how this field compares with a normal PGA field, including course location and weather", unit: "strokes per round" },
   /** Saved event model skill centred on the active field (mean exactly 0). */
@@ -17,10 +21,10 @@ export type LabelKey = keyof typeof LABELS;
 
 /** The one standing sentence that accompanies the two numbers when they share a screen (step0_gap REPORT). */
 export const GAP_METHOD_SENTENCE =
-  "'vs PGA avg' is recent form (rounds 1 and 2) on the average-2025-PGA-round scale. 'This week' is the model's all-round skill on the same scale, adjusted for course location and weather. A few tenths of a stroke apart per player is normal; the gap is form versus model.";
+  "'vs PGA avg' is recent form (rounds 1 and 2) on the average-PGA-Tour-round (2017–2025) scale. 'This week' is the model's all-round skill on the same scale, adjusted for course location and weather. A few tenths of a stroke apart per player is normal; the gap is form versus model.";
 
 /** Zero-point sentence for every PGA-scale number (BRIEF_v2 A3 / B2 row 8). */
-export const ZERO_SENTENCE = "Zero is the average round on the 2025 PGA Tour (opening two rounds), not an average player; a typical full-time PGA regular reads about +0.4.";
+export const ZERO_SENTENCE = "Zero is the average PGA Tour round, 2017–2025 (opening two rounds, nine seasons weighted equally), not an average player; a typical full-time PGA regular reads about +0.4.";
 
 /** Plain names for saved-component keys that appear as raw headers today (BRIEF_v2 B4). Prefer the explain document's components_legend label when present; fall back here. */
 const PLAIN: Record<string, string> = {

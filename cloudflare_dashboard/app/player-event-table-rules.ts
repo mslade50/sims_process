@@ -2,9 +2,14 @@ import {finite, type HistoryEvent} from "./player-deep-rules.ts";
 
 /** Event-by-event table: columns, colour scale, shot aggregation and sorting (pure, tested). */
 export type ShotRoundRow={event_id:string;round:number;date?:string;metrics:Record<string,{total:number;n_shots:number}|undefined>};
-export type ShotRef=Record<string,{mean?:number|null;sd?:number|null;higher?:boolean}>;
-export function shotReferenceOf(metrics?:Array<{key:string;reference_mean?:number|null;reference_sd?:number|null;higher_is_better?:boolean}>):ShotRef{
-  const out:ShotRef={};for(const m of metrics??[])out[m.key]={mean:m.reference_mean,sd:m.reference_sd,higher:m.higher_is_better};return out;
+/** mean/sd: PGA golfers' multi-year averages (spread between golfers). eventMean/eventSd: PGA golfers' single-event results (what one table row is), preferred for shading when published. */
+export type ShotRef=Record<string,{mean?:number|null;sd?:number|null;higher?:boolean;eventMean?:number|null;eventSd?:number|null}>;
+export function shotReferenceOf(metrics?:Array<{key:string;reference_mean?:number|null;reference_sd?:number|null;higher_is_better?:boolean;event_reference_mean?:number|null;event_reference_sd?:number|null}>):ShotRef{
+  const out:ShotRef={};for(const m of metrics??[]){
+    out[m.key]={mean:m.reference_mean,sd:m.reference_sd,higher:m.higher_is_better};
+    if(finite(m.event_reference_mean)&&finite(m.event_reference_sd)){out[m.key].eventMean=m.event_reference_mean;out[m.key].eventSd=m.event_reference_sd;}
+  }
+  return out;
 }
 export type SgKey="sg_total"|"sg_ott"|"sg_app"|"sg_arg"|"sg_putt"|"t2g";
 export const SG_COLUMNS:Array<{key:SgKey;label:string;help:string;range:number}>=[
@@ -37,7 +42,7 @@ export const SHOT_COLUMNS:Array<{key:ShotKey;label:string;unit:ShotUnit;help:str
   {key:"radar_apex",label:"Apex ft",unit:"ft",min:5,descriptive:true,help:"Average peak height of the flight in feet on par 4/5 tee shots."},
 ];
 export type EventRow={id:string;date:string;name:string;course?:string;tour:string;major:boolean;finish?:string;rounds:number;score_to_par:number|null;
-  sg:Record<SgKey,number|null>;shots:Record<ShotKey,{value:number|null;n:number;z:number|null}>;event:HistoryEvent};
+  sg:Record<SgKey,number|null>;shots:Record<ShotKey,{value:number|null;n:number;z:number|null;avg:number|null;basis:"event"|"player"|null}>;event:HistoryEvent};
 const sum3=(a:number|null|undefined,b:number|null|undefined,c:number|null|undefined)=>finite(a)&&finite(b)&&finite(c)?a+b+c:null;
 export function aggregateShots(eventId:string,rounds:number[],rows:ShotRoundRow[]|undefined,ref:ShotRef):EventRow["shots"]{
   const want=new Set(rounds),mine=(rows??[]).filter(r=>r.event_id===eventId&&want.has(r.round));
@@ -45,8 +50,10 @@ export function aggregateShots(eventId:string,rounds:number[],rows:ShotRoundRow[
   for(const c of SHOT_COLUMNS){
     let total=0,n=0;for(const r of mine){const m=r.metrics[c.key];if(m&&finite(m.total)&&finite(m.n_shots)&&m.n_shots>0){total+=m.total;n+=m.n_shots;}}
     const value=n>=c.min?total/n:null,x=ref[c.key];
-    const z=!c.descriptive&&finite(value)&&finite(x?.mean)&&finite(x?.sd)&&x.sd>0?(value-x.mean)/x.sd*(x.higher===false?-1:1):null;
-    out[c.key]={value,n,z};
+    // A table row is one event, so it is shaded against PGA golfers' single-event results; the multi-year spread is only a fallback.
+    const useEvent=finite(x?.eventMean)&&finite(x?.eventSd)&&x.eventSd>0,mean=useEvent?x?.eventMean:x?.mean,sd=useEvent?x?.eventSd:x?.sd;
+    const z=!c.descriptive&&finite(value)&&finite(mean)&&finite(sd)&&sd>0?(value-mean)/sd*(x?.higher===false?-1:1):null;
+    out[c.key]={value,n,z,avg:!c.descriptive&&finite(mean)?mean:null,basis:!c.descriptive&&finite(mean)&&finite(sd)&&sd>0?(useEvent?"event":"player"):null};
   }
   return out;
 }

@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { runAlerts } from "./alerts";
 import { handleScheduled } from "./cron";
+import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
 import { handleOverridesApi } from "./overrides-api";
 
@@ -56,6 +57,16 @@ const worker = {
         })
         .catch((error: unknown) => {
           console.error(`alerts failed: ${error instanceof Error ? error.message : String(error)}`);
+        }),
+    );
+    // Daily retention of old job status/log/claim objects (worker/retention.ts). OFF unless jobs/retention/config.json exists; independent of the two above.
+    ctx.waitUntil(
+      handleRetention(controller, env)
+        .then((outcome) => {
+          if (outcome.ran) console.log(`retention (${outcome.mode}): ${outcome.note}`);
+        })
+        .catch((error: unknown) => {
+          console.error(`retention failed: ${error instanceof Error ? error.message : String(error)}`);
         }),
     );
   },

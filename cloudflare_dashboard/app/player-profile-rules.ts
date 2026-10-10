@@ -3,7 +3,7 @@ export const PROFILE_AXES = ["sg_ott", "sg_app", "sg_arg", "sg_putt"] as const;
 export type ProfileAxis = typeof PROFILE_AXES[number];
 export type Photo = { url: string | null; source: string | null; source_name?:string; status?: string };
 export type PgaBenchmark = {schema_version:string;status:string;value:number|null;shrunk_value?:number|null;shrink_stale?:boolean|null;shrink_weight_on_data?:number|null;shrink_prior_tour?:string|null;observed_mean?:number|null;raw_adjusted_sg_mean?:number|null;decomposition?:{tour_weights?:Array<{tour:string;n_rounds:number;weight_fraction:number}>;historical_mean_interval?:{lower:number;upper:number;level?:number;note?:string}};n_rounds:number;n_events:number;n_eff:number;effective_sample_size?:number;weight_on_data:number;last_observation:string|null;as_of:string;reference_id:string|null;unit:string;note?:string;method:{window_days:number;half_life_days:number;prior_rounds:number;min_rounds:number;min_events:number;min_n_eff:number}};
-export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown;regular_tick?:{unshrunk?:number|null;shrunk?:number|null;as_of?:string}};
+export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;years?:number[];span?:string;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown;regular_tick?:{unshrunk?:number|null;shrunk?:number|null;as_of?:string}};
 export type ProfileEntry = {pga_benchmark?:PgaBenchmark; profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
 export const playerId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);
 export type Reference = { id: string; population: string; n_players: number; min_rounds: number; mean: number | null; sd: number | null; as_of: string; higher_is_better: boolean };
@@ -64,6 +64,15 @@ export function radarExtent(profiles: PlayerProfile[]): number {
   return Math.max(3, ...profiles.flatMap(p => p.radar.map(m => finite(m.z) ? Math.ceil(Math.abs(m.z)) : 0)));
 }
 export function radarRadius(z: number, extent: number): number { return (z + extent) / (2 * extent); }
+/** The season span the zero point averages ("2017–2025"): published span, else the years list, else the old single year; "the reference years" when none. */
+export function referenceSpan(ref: PgaBenchmarkReference | undefined): string {
+  if (ref?.span) return ref.span;
+  const ys = (ref?.years ?? []).filter(y => Number.isFinite(y));
+  if (ys.length) { const lo = Math.min(...ys), hi = Math.max(...ys); return lo === hi ? String(lo) : `${lo}–${hi}`; }
+  return Number.isFinite(ref?.year) ? String(ref!.year) : "the reference years";
+}
+/** Indices of the radar axes that have data for this profile (area is drawn through these; the rest get a dashed "no data" spoke). */
+export function radarDrawable(p: PlayerProfile): number[] { return PROFILE_AXES.flatMap((key, i) => finite(p.radar.find(m => m.key === key)?.z) ? [i] : []); }
 export function completeRadar(p: PlayerProfile): boolean { return PROFILE_AXES.every(key => finite(p.radar.find(m => m.key === key)?.z)); }
 export function sameReference(a: PlayerProfile, b: PlayerProfile): boolean {
   return PROFILE_AXES.every(key => {const x = a.radar.find(m => m.key === key); const y = b.radar.find(m => m.key === key); return !!x?.reference && x.reference === y?.reference && JSON.stringify(a.references?.[key]) === JSON.stringify(b.references?.[key]);});

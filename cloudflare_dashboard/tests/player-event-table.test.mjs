@@ -22,6 +22,15 @@ test('shot aggregation sums only the selected rounds, needs enough shots, and or
 });
 test('shotReferenceOf maps published reference fields',()=>{
   assert.deepEqual(shotReferenceOf([{key:'a',reference_mean:1,reference_sd:2,higher_is_better:false}]),{a:{mean:1,sd:2,higher:false}});
+  assert.deepEqual(shotReferenceOf([{key:'a',reference_mean:1,reference_sd:2,higher_is_better:true,event_reference_mean:.5,event_reference_sd:4}]),{a:{mean:1,sd:2,higher:true,eventMean:.5,eventSd:4}});
+});
+test('rows are shaded against the PGA single-event population when published, else the multi-year spread',()=>{
+  const rows=[{event_id:'1',round:1,metrics:{tee_distance:{total:3000,n_shots:10}}}];
+  const ev=aggregateShots('1',[1],rows,{tee_distance:{mean:290,sd:10,higher:true,eventMean:295,eventSd:20}}).tee_distance;
+  assert.equal(ev.z,.25);assert.equal(ev.avg,295);assert.equal(ev.basis,'event');
+  const fb=aggregateShots('1',[1],rows,{tee_distance:{mean:290,sd:10,higher:true}}).tee_distance;
+  assert.equal(fb.z,1);assert.equal(fb.basis,'player');
+  const none=aggregateShots('1',[1],rows,{}).tee_distance;assert.equal(none.z,null);assert.equal(none.basis,null);
 });
 test('diverging scale: green positive, red negative, centred on 0, saturating, null-safe',()=>{
   assert.equal(divergingBackground(0,1),undefined);assert.equal(divergingBackground(null,1),undefined);

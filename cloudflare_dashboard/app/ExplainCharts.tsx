@@ -7,7 +7,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { MISSED_CUT_LABEL, positionRows, positionTicks } from "./distributions-rules";
 import {
-  edgeCellText, pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Market, type Pctl, type Shape, type TotalScore, type WaterfallResult,
+  edgeCellText, niceScale, pct, signed, type BiasRow, type ExPlayer, type HoleRow, type LegendEntry, type Market, type Pctl, type Shape, type TotalScore, type WaterfallResult, type WaterfallScales,
 } from "./explain-rules";
 
 export const PLAYER_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -137,39 +137,46 @@ export function ScoreFan({ items, rounds }: { items: Array<{ id: number; name: s
 
 /* ------------------------------------------------------------------ waterfall ("why this price") */
 const GROUP_TAG: Record<string, string> = { course: "Course", location: "Location", override: "Manual", live: "In play", weather: "Weather" };
-export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained, scale, label = "Strokes per round vs the field average" }: WaterfallResult & { label?: string; scale: number }) {
+export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, smallSkill, smallSkillCount, unexplained, scale, scales, label = "Strokes per round vs the field average" }: WaterfallResult & { label?: string; scale: number; scales?: WaterfallScales }) {
   const skillRows = rows.filter((r) => r.group !== "weather");
   const weatherRows = rows.filter((r) => r.group === "weather");
   const weatherSmall = small - smallSkill;
   const skillNet = skillTotal + unexplained;
-  const max = Math.max(0.5, scale);
-  const bar = (v: number) => (
-    <span className="ex-wf-track" aria-hidden="true">
-      <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${Math.min(1, Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
-      {Math.abs(v) > max && <span className={`ex-wf-clip ${v >= 0 ? "pos" : "neg"}`}>{v >= 0 ? "›" : "‹"}</span>}
-    </span>
-  );
+  const end = (m: number) => (m < 1 ? m.toFixed(Math.round(m * 1000) % 10 !== 0 ? 3 : 2) : String(m));
+  // Every row has its own scale (the printed bar end), so small items stay readable; expected skill uses the event-wide scale.
+  const bar = (v: number, m: number) => {
+    const max = Math.max(0.01, m);
+    return (
+      <>
+        <span className="ex-wf-track" aria-hidden="true">
+          <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${Math.min(1, Math.abs(v) / max) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
+          {Math.abs(v) > max && <span className={`ex-wf-clip ${v >= 0 ? "pos" : "neg"}`}>{v >= 0 ? "›" : "‹"}</span>}
+        </span>
+        <small className="ex-wf-end" title={`The ends of this bar are −${end(max)} and +${end(max)} strokes a round.`}>±{end(max)}</small>
+      </>
+    );
+  };
+  const rs = (k: string, fallback: number) => scales?.rows[k] ?? fallback;
   const row = (r: (typeof rows)[number], i: number, list: typeof rows) => (
     <div className="ex-wf-row" role="row" key={r.key} title={r.meaning}>
       <span className="ex-wf-label" role="cell">{r.label}{(i === 0 || list[i - 1].group !== r.group) && r.group !== "skill" && r.group !== "weather" && <em className={`ex-tag g-${r.group}`}>{GROUP_TAG[r.group] ?? r.group}</em>}</span>
-      {bar(r.value)}
+      {bar(r.value, rs(r.key, niceScale(Math.abs(r.value))))}
       <b className={r.value >= 0 ? "pos" : "neg"} role="cell">{signed(r.value)}</b>
     </div>
   );
   return (
     <div className="ex-wf" role="table" aria-label={label}>
-      <div className="ex-wf-scale" role="row"><span role="cell" /><span className="ex-wf-axis" role="cell"><em>−{max}</em><em>0</em><em>+{max}</em></span><span role="cell" /></div>
-      <p className="ex-muted ex-wf-note">Bar ends = ±{max} strokes a round, the same scale for every player in this event; a longer bar is cut off and marked with an arrow.</p>
+      <p className="ex-muted ex-wf-note">Every row has its own scale, printed at the end of its bar (±0.10 means the bar ends are −0.10 and +0.10 strokes). It is set to about the biggest value that item takes among players in this event, so compare a player with the field on the same row, not one row with another. Longer bars are cut off and marked with an arrow. Expected skill uses a wider scale.</p>
       {skillRows.map(row)}
-      {smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallSkillCount} smaller items</span>{bar(smallSkill)}<b role="cell">{signed(smallSkill)}</b></div>}
-      {Math.abs(unexplained) >= 0.01 && <div className="ex-wf-row ex-wf-small" role="row" title="Rounding and items too small to list."><span className="ex-wf-label" role="cell">Rounding and other</span>{bar(unexplained)}<b role="cell">{signed(unexplained)}</b></div>}
-      <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Expected skill</span>{bar(skillNet)}<b className={skillNet >= 0 ? "pos" : "neg"} role="cell">{signed(skillNet)}</b></div>
+      {smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallSkillCount} smaller items</span>{bar(smallSkill, scales?.smallSkill ?? niceScale(Math.abs(smallSkill)))}<b role="cell">{signed(smallSkill)}</b></div>}
+      {Math.abs(unexplained) >= 0.01 && <div className="ex-wf-row ex-wf-small" role="row" title="Rounding and items too small to list."><span className="ex-wf-label" role="cell">Rounding and other</span>{bar(unexplained, scales?.unexplained ?? niceScale(Math.abs(unexplained)))}<b role="cell">{signed(unexplained)}</b></div>}
+      <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Expected skill</span>{bar(skillNet, Math.max(0.5, scale))}<b className={skillNet >= 0 ? "pos" : "neg"} role="cell">{signed(skillNet)}</b></div>
       {(weatherRows.length > 0 || Math.abs(weatherSmall) >= 0.005) && (
         <>
           <p className="ex-muted ex-wf-note">Weather adjusts scores on top of expected skill:</p>
           {weatherRows.map(row)}
-          {smallCount - smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallCount - smallSkillCount} smaller weather items</span>{bar(weatherSmall)}<b role="cell">{signed(weatherSmall)}</b></div>}
-          <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Weather total</span>{bar(weatherTotal)}<b className={weatherTotal >= 0 ? "pos" : "neg"} role="cell">{signed(weatherTotal)}</b></div>
+          {smallCount - smallSkillCount > 0 && <div className="ex-wf-row ex-wf-small" role="row"><span className="ex-wf-label" role="cell">{smallCount - smallSkillCount} smaller weather items</span>{bar(weatherSmall, scales?.weatherSmall ?? niceScale(Math.abs(weatherSmall)))}<b role="cell">{signed(weatherSmall)}</b></div>}
+          <div className="ex-wf-row ex-wf-total" role="row"><span className="ex-wf-label" role="cell">Weather total</span>{bar(weatherTotal, scales?.weatherTotal ?? niceScale(Math.abs(weatherTotal)))}<b className={weatherTotal >= 0 ? "pos" : "neg"} role="cell">{signed(weatherTotal)}</b></div>
         </>
       )}
     </div>

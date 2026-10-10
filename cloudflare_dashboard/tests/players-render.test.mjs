@@ -23,7 +23,7 @@ test("/players?player=17639 renders Blair's PGA benchmark card value from the fi
   const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, search: "?player=17639", pathname: "/players" });
   const expected = catalog.players.find((p) => p.dg_id === 17639).pga_benchmark.value;
   const signed = `${expected > 0 ? "+" : ""}${expected.toFixed(3)}`;
-  assert.match(html, /recent form vs the 2025 PGA average/);
+  assert.match(html, /recent form vs the average PGA Tour round, 2017–2025/);
   assert.ok(html.includes(signed), `benchmark value ${signed} rendered`);
   assert.match(html, /strokes\/round/);
   assert.match(html, /What the headline number means/);
@@ -66,7 +66,7 @@ test("/players?layout=next renders hero, SG bars (n/a state), filter summary bar
   // The old stacked layout pieces are gone from the new layout.
   assert.equal(html.includes("What the headline number means"), false);
   assert.equal(html.includes("Saved event context"), false);
-  assert.equal(html.includes("recent form vs the 2025 PGA average"), false);
+  assert.equal(html.includes("recent form vs the average PGA Tour round, 2017–2025"), false);
 });
 
 test("/players?layout=next: Method holds anchor, window, shrinkage status, reference ids, n_eff naming and the gap sentence", () => {
@@ -74,7 +74,7 @@ test("/players?layout=next: Method holds anchor, window, shrinkage status, refer
   assert.match(html, /half-life 180 days/);
   assert.match(html, /Window 1095 days/);
   assert.match(html, /Raw average; not adjusted for small samples/);
-  assert.match(html, /pga_2025_r12:74b9dbd5ef9b8cedc861/);
+  assert.match(html, /pga_2017_2025_r12:431eb2b4d605985d2fc6/);
   assert.match(html, /recency-weighted count/);
   assert.match(html, /effective sample size/);
   assert.match(html, /&#x27;vs PGA avg&#x27; is recent form[\s\S]*the gap is form versus model/);
@@ -149,4 +149,10 @@ test("/players: no mu_tour in the matching document (or no matching document) ke
     assert.doesNotMatch(html, /data-testid="pga-skill"/);
     assert.doesNotMatch(next("?player=17639&layout=next", d), /data-testid="pga-chip"/);
   }
+});
+
+test("/players zero-point wording uses the published ruler span, not a single year", () => {
+  const html = next();
+  assert.match(html, /average PGA Tour round over 2017–2025/);
+  assert.equal(html.includes("2025 PGA Tour"), false);
 });

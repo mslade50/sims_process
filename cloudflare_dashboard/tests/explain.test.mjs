@@ -220,3 +220,59 @@ test("modalFinish picks the most likely single finishing position; missing the c
   assert.equal(waterfallScale(players), 2.5);
   assert.equal(waterfallScale([]), 1);
 });
+
+test("each waterfall row gets its own small scale; expected skill keeps the event-wide one", async () => {
+  const { niceScale, waterfallRowScales, waterfallScale } = await import("../app/explain-rules.ts");
+  assert.equal(niceScale(0), 0.01);
+  assert.equal(niceScale(0.04), 0.05);
+  assert.equal(niceScale(0.11), 0.15);
+  assert.equal(niceScale(0.9), 1);
+  assert.equal(niceScale(3.2), 3.5);
+  const legend = { a: { label: "A", group: "skill", meaning: "" }, b: { label: "B", group: "skill", meaning: "" }, wx_wind: { label: "Weather: wind", group: "weather", meaning: "" } };
+  const players = Array.from({ length: 20 }, (_, i) => ({ withdrawn: false, mu_rel: i / 10, components: { a: 0.9 * (i % 2 ? 1 : -1), b: 0.01 * (i % 5), wx_wind: 0.02 * (i % 3) } }));
+  const sc = waterfallRowScales(players, legend);
+  assert.equal(sc.rows.a, 1);
+  assert.equal(sc.rows.b, 0.05);
+  assert.equal(sc.rows.wx_wind, 0.05);
+  assert.ok(sc.rows.b < waterfallScale(players) / 10);
+  assert.ok(sc.weatherTotal >= 0.01 && sc.unexplained >= 0.01);
+  assert.equal(waterfallRowScales([], legend).rows.a, undefined);
+});
+
+test("weather status follows the published flag and the field-wide shift, not only the per-player rows", async () => {
+  const { weatherStatus, weatherEffectLines, venueClassLines, fieldWeatherRows, roundsWithoutTeeTimes } = await import("../app/explain-rules.ts");
+  const mk = (wx, comps, kind = "week", after = null) => {
+    const base = structuredClone(week);
+    base.kind = kind; base.after_round = after;
+    base.course_card.weather = wx;
+    base.components_legend = { ...base.components_legend, wx_wind: { label: "Weather: wind", group: "weather", meaning: "m" }, wx_rain: { label: "Weather: rain", group: "weather", meaning: "m" } };
+    base.players = base.players.map((p, i) => ({ ...p, components: { ...p.components, wx_wind: comps ? 0.05 * (i % 2 ? 1 : -1) : 0, wx_rain: 0 } }));
+    return base;
+  };
+  const field = [{ round: 1, common: -0.4, cut_line_shift: -0.4 }, { round: 2, common: -0.3, cut_line_shift: -0.7 }, { round: 3, common: -0.2, cut_line_shift: -0.9 }];
+  const rounds = [{ round: 1, status: "ok", tee_coverage: 1, reason: null, venue_seen: true }, { round: 2, status: "common_only", tee_coverage: 0, reason: "no tee sheet", venue_seen: true }, { round: 3, status: "common_only", tee_coverage: 0, reason: "no tee sheet", venue_seen: true }];
+  // genuinely excluded: the publisher says so and nothing moves
+  const off = weatherStatus(mk({ applied_in_prices: false, label: "NOT APPLIED" }, false));
+  assert.equal(off.short, "Weather not in prices");
+  // applied, but only the field-wide shift (no tee times yet): must NOT say it is excluded
+  const common = weatherStatus(mk({ applied_in_prices: true, label: "APPLIED", field, rounds }, false));
+  assert.equal(common.short, "Weather in prices: whole field");
+  assert.match(common.long, /round 1 −0\.40/);
+  assert.match(common.long, /rounds 2 and 3 because tee times are not out yet/);
+  // applied with player-level effects: zero rain is "no effect", not "not in the prices"
+  const full = weatherStatus(mk({ applied_in_prices: true, label: "APPLIED", field, rounds }, true));
+  assert.equal(full.short, "Weather included");
+  assert.match(full.long, /through wind/);
+  assert.match(full.long, /Rain has no effect for anyone/);
+  assert.doesNotMatch(full.long, /Not in the prices/);
+  // live runs only count rounds still to play
+  assert.deepEqual(fieldWeatherRows(mk({ applied_in_prices: true, field }, false, "live", 2)).map((f) => f.round), [3]);
+  assert.deepEqual(roundsWithoutTeeTimes(mk({ applied_in_prices: true, field, rounds }, false, "live", 2)), [3]);
+  assert.equal(weatherStatus(mk({ applied_in_prices: true, label: "x" }, false)).short, "Weather has no effect yet");
+  const lines = weatherEffectLines(mk({ applied_in_prices: true, field }, true));
+  assert.equal(lines.find((l) => l.key === "wx_wind").spread, 0.05);
+  assert.ok(lines.find((l) => l.key === "wx_wind").helped && lines.find((l) => l.key === "wx_wind").hurt);
+  assert.equal(lines.find((l) => l.key === "wx_rain").spread, 0);
+  assert.deepEqual(venueClassLines({ venue_class: "desert", wind_slope: 0.199, m_v: 0.9, wind_prior_source: "own history" }).length, 2);
+  assert.match(venueClassLines({ venue_class: "desert", wind_slope: 0.199, m_v: 0.9 })[1], /matters less here/);
+});

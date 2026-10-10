@@ -2,7 +2,7 @@
 
 import { GAP_METHOD_SENTENCE, LABELS, ZERO_SENTENCE } from "./labels";
 import { etTime } from "./lib";
-import { NOT_YET_SHRUNK, finite, isShrunk, shortProfileDate, signedZ, unshrunkValue, benchmarkValue, type PgaBenchmark, type PgaBenchmarkReference } from "./player-profile-rules";
+import { NOT_YET_SHRUNK, finite, isShrunk, shortProfileDate, signedZ, unshrunkValue, benchmarkValue, referenceSpan, type PgaBenchmark, type PgaBenchmarkReference } from "./player-profile-rules";
 import { CROSS_TOUR_BAND, INTERVAL_CLAUSE, RADAR_LABEL, regularTick } from "./player-hero-rules";
 
 const pct = (v: unknown) => (finite(v) ? `${(v * 100).toFixed(0)}%` : "unknown");
@@ -25,7 +25,7 @@ export function PlayerMethod({ rating, reference, catalog }: { rating: PgaBenchm
       <p>{LABELS.vsPgaAvg.long}.</p>
       <p>{ZERO_SENTENCE}</p>
       <p>
-        The zero point is the average round on the {reference?.year ?? "2025"} PGA Tour (rounds {reference?.rounds?.join(" and ") ?? "1 and 2"}), which is {signedZ(reference?.adjusted_sg_mean, 3)} strokes on the data provider&apos;s scale, from {reference?.n_rounds?.toLocaleString("en-US") ?? "an unknown number of"} rounds by {reference?.n_players ?? "an unknown number of"} players. It stays fixed so numbers are comparable week to week.
+        The zero point is the average PGA Tour round over {referenceSpan(reference)} (rounds {reference?.rounds?.join(" and ") ?? "1 and 2"}), which is {signedZ(reference?.adjusted_sg_mean, 3)} strokes on the data provider&apos;s scale, from {reference?.n_rounds?.toLocaleString("en-US") ?? "an unknown number of"} rounds by {reference?.n_players ?? "an unknown number of"} players. It stays fixed so numbers are comparable week to week.
       </p>
       <p>
         Recent form: {method ? `rounds from the last ${Math.round(method.window_days / 365 * 10) / 10} years count, and a round's weight halves every ${Math.round(method.half_life_days / 30)} months` : "the weighting is unavailable"}. Only rounds with published adjusted strokes gained are used, and a player needs at least {method?.min_rounds ?? 12} rounds to get a number.

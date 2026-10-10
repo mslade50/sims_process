@@ -36,7 +36,9 @@ export type CourseCard = {
   by_par: Record<string, { holes: number; avg_exp_vs_par: number | null; avg_birdie: number | null; avg_bogey: number | null; avg_sensitivity: number | null }>;
   cut_rule: string | null; what_drives_scoring: string[];
   weather: { status: string | null; applied_in_prices: boolean | null; label: string | null; venue_class?: string | null; wind_slope?: number | null; wind_slope_source?: string | null; issued_at?: string | null;
-    waves?: Array<{ round: number; wave: string; rel: number | null; mean_wind: number | null }>; field?: Array<{ round: number; common: number | null; cut_line_shift: number | null }> };
+    waves?: Array<{ round: number; wave: string; rel: number | null; mean_wind: number | null }>; field?: Array<{ round: number; common: number | null; cut_line_shift: number | null }>;
+    /** Per round: whether tee times were available ("ok") or only the wave-free field-wide shift applies ("common_only"). Published from explain v8 on. */
+    rounds?: Array<{ round: number; status: string | null; tee_coverage: number | null; reason: string | null; venue_seen: boolean | null }>; m_v?: number | null; wind_prior_source?: string | null; layer?: string | null };
 };
 export type ExplainDoc = {
   schema: string; kind: "week" | "live"; event_uid: string; run: string; as_of: string | null; after_round: number | null;
@@ -96,7 +98,7 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
 /* ------------------------------------------------------------------ index / event selection */
 export type DistributionRun = { key?: string | null; kind?: string | null; run?: string | null; as_of?: string | null; after_round?: number | null; validated?: boolean | null };
 export type IndexEvent = {
-  event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null;
+  event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null; weather_key?: string | null;
   distribution_runs?: DistributionRun[] | null;
 };
 export const explainKeyFor = (e: IndexEvent): string => e.explain_key || `golfprice/explain/${e.event_uid.replace(/:/g, "_")}/latest.json`;
@@ -238,6 +240,24 @@ export function waterfallScale(players: ExPlayer[]): number {
   const mu = players.filter((p) => !p.withdrawn).map((p) => Math.abs(p.mu_rel ?? 0));
   const comps = players.filter((p) => !p.withdrawn).flatMap((p) => Object.values(p.components ?? {}).filter((v): v is number => typeof v === "number").map(Math.abs));
   return Math.max(1, Math.ceil(Math.max(q(mu, 0.97), q(comps, 0.995)) * 2) / 2);
+}
+
+const NICE_STEPS = [0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2, 2.5, 3];
+/** The smallest round bar-end value (0.01, 0.02, 0.05, 0.1, 0.2 ...) that is at least x. */
+export function niceScale(x: number): number {
+  if (!Number.isFinite(x) || x <= 0) return NICE_STEPS[0];
+  return NICE_STEPS.find((s) => s >= x - 1e-9) ?? Math.ceil(x * 2) / 2;
+}
+/** Each "Why this price" row has its own bar scale: how far that item reaches across the players of the event (95th percentile of the absolute values, rounded up to a round number). Expected skill keeps the event-wide waterfallScale. */
+export type WaterfallScales = { rows: Record<string, number>; smallSkill: number; weatherSmall: number; unexplained: number; weatherTotal: number };
+export function waterfallRowScales(players: ExPlayer[], legend: Record<string, LegendEntry>, minAbs = 0.015): WaterfallScales {
+  const field = players.filter((p) => !p.withdrawn);
+  const p95 = (xs: number[]): number => { const s = xs.filter(Number.isFinite).map(Math.abs).sort((a, b) => a - b); return niceScale(s.length ? s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] : 0); };
+  const keys = [...new Set(field.flatMap((p) => Object.keys(p.components ?? {})))];
+  const rows: Record<string, number> = {};
+  for (const k of keys) rows[k] = p95(field.map((p) => p.components[k]).filter((v): v is number => typeof v === "number"));
+  const wfs = field.map((p) => waterfall(p, legend, minAbs));
+  return { rows, smallSkill: p95(wfs.map((w) => w.smallSkill)), weatherSmall: p95(wfs.map((w) => w.small - w.smallSkill)), unexplained: p95(wfs.map((w) => w.unexplained)), weatherTotal: p95(wfs.map((w) => w.weatherTotal)) };
 }
 
 /* ------------------------------------------------------------------ why-priced table */
@@ -559,13 +579,74 @@ export function weatherCoverage(doc: ExplainDoc): { included: string[]; excluded
   const used = (k: string) => doc.players.some((p) => Math.abs(p.components[k] ?? 0) >= 0.005);
   return { included: keys.filter(used).map((k) => WX_NAME[k] ?? k), excluded: keys.filter((k) => !used(k)).map((k) => WX_NAME[k] ?? k) };
 }
+const roundsText = (rs: number[]): string => (rs.length === 1 ? `round ${rs[0]}` : `rounds ${joinList(rs.map(String))}`);
+const cap = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1);
+/** Rounds still to be played in this run, with the whole-field weather shift the model applies to everyone's scores (versus typical conditions). */
+export function fieldWeatherRows(doc: ExplainDoc): Array<{ round: number; common: number }> {
+  const after = doc.kind === "live" ? doc.after_round ?? 0 : 0;
+  return (doc.course_card.weather?.field ?? []).filter((f) => f.round > after && typeof f.common === "number" && Number.isFinite(f.common)).map((f) => ({ round: f.round, common: f.common as number }));
+}
+/** Rounds still to come that have no tee times yet, so only the whole-field shift (no early/late wave effect) applies to them. */
+export function roundsWithoutTeeTimes(doc: ExplainDoc): number[] {
+  const after = doc.kind === "live" ? doc.after_round ?? 0 : 0;
+  return (doc.course_card.weather?.rounds ?? []).filter((r) => r.round > after && r.status === "common_only").map((r) => r.round);
+}
+/**
+ * Whether weather is in the prices. This follows the published `applied_in_prices` flag, not whether a player-level effect is non-zero:
+ * the per-player weather rows only exist for rounds with published tee times (the early/late wave and tee-group wind parts), whereas the
+ * whole-field shift (how hard the course plays for everyone, which also moves the cut line) comes from the forecast alone. Judging "in the prices" from the
+ * player rows alone wrongly reported "Weather not in prices" before tee times came out and in later rounds of live runs.
+ */
 export function weatherStatus(doc: ExplainDoc): { short: string; long: string } {
   const w = doc.course_card.weather;
   const { included, excluded } = weatherCoverage(doc);
-  if (!w || (!w.label && !w.status && !included.length)) return { short: "", long: "" };
-  if (!included.length) return { short: "Weather not in prices", long: "Weather is not included in these prices." };
-  if (!excluded.length) return { short: "Weather included", long: `Weather is included in the prices: ${joinList(included)}.` };
-  return { short: "Weather partly included", long: `In the prices: ${joinList(included)}. Not in the prices: ${joinList(excluded)}.` };
+  const shifts = fieldWeatherRows(doc);
+  const noTee = roundsWithoutTeeTimes(doc);
+  if (!w || (!w.label && !w.status && !w.venue_class && !shifts.length && !included.length)) return { short: "", long: "" };
+  if (w.applied_in_prices === false && !included.length) return { short: "Weather not in prices", long: "Weather is shown for review only; these prices do not use the forecast." };
+  const shiftText = shifts.length ? ` The forecast changes how hard the course plays for everyone (${shifts.map((f) => `round ${f.round} ${signed(f.common)}`).join(", ")} strokes against typical conditions), which also moves the cut line.` : "";
+  if (!included.length) {
+    if (!shifts.length) return { short: "Weather has no effect yet", long: "The weather model is on, but it adds nothing to any price in this run: there is no forecast or tee-time information for the rounds still to play." };
+    const why = noTee.length ? ` Early and late tee times are not separated for ${roundsText(noTee)} because tee times are not out yet.` : " No player is helped or hurt by their tee time or wind exposure.";
+    return { short: "Weather in prices: whole field", long: `Weather is in the prices as a field-wide shift.${shiftText}${why}` };
+  }
+  const idle = excluded.length ? ` ${cap(joinList(excluded))} ${excluded.length > 1 ? "have" : "has"} no effect for anyone in this forecast.` : "";
+  const gap = noTee.length ? ` ${cap(roundsText(noTee))} ${noTee.length > 1 ? "have" : "has"} only the field-wide shift because tee times are not out yet.` : "";
+  return { short: "Weather included", long: `Weather is in the prices. It moves players' prices through ${joinList(included)}.${idle}${shiftText}${gap}` };
+}
+
+const WX_WHAT: Record<string, { label: string; what: string }> = {
+  wx_wind: { label: "Wind", what: "The wind each player's tee group faces, scaled by how much wind matters at this kind of course." },
+  wx_gust: { label: "Gusts", what: "Gusts during the round, which make club choice harder." },
+  wx_temp: { label: "Temperature", what: "Cooler or warmer than the field's average conditions, which changes how far the ball flies." },
+  wx_rain: { label: "Rain", what: "Rain during the round, which softens the course and changes scoring." },
+  wx_tod: { label: "Time of day", what: "Early versus late: the course plays differently in the morning (firmness and light) than later in the day." },
+  wx_traj: { label: "Ball flight in wind", what: "How the wind suits each player's usual ball flight, for players with launch-monitor data." },
+};
+export type WeatherEffectLine = { key: string; label: string; what: string; spread: number; helped: { name: string; value: number } | null; hurt: { name: string; value: number } | null };
+/** The weather effects behind the prices, in strokes a round: how far apart the field is on each and who is helped or hurt most. */
+export function weatherEffectLines(doc: ExplainDoc): WeatherEffectLine[] {
+  const live = doc.players.filter((p) => !p.withdrawn);
+  return Object.keys(doc.components_legend).filter((k) => k.startsWith("wx_")).map((key) => {
+    const vals = live.map((p) => ({ name: p.name, value: p.components[key] })).filter((x): x is { name: string; value: number } => typeof x.value === "number" && Number.isFinite(x.value));
+    const best = vals.reduce<{ name: string; value: number } | null>((a, b) => (!a || b.value > a.value ? b : a), null);
+    const worst = vals.reduce<{ name: string; value: number } | null>((a, b) => (!a || b.value < a.value ? b : a), null);
+    const meta = WX_WHAT[key] ?? { label: doc.components_legend[key].label.replace(/^Weather:\s*/i, ""), what: plainText(doc.components_legend[key].meaning) };
+    return { key, label: meta.label, what: meta.what, spread: Math.max(Math.abs(best?.value ?? 0), Math.abs(worst?.value ?? 0)), helped: best && best.value >= 0.005 ? best : null, hurt: worst && worst.value <= -0.005 ? worst : null };
+  });
+}
+const CLASS_WORD: Record<string, string> = { parkland: "Parkland", links: "Links", desert: "Desert", coastal: "Coastal", mountain: "Mountain", heathland: "Heathland", resort: "Resort" };
+/** Plain-English course type and wind sensitivity for the This week page. */
+export function venueClassLines(w: CourseCard["weather"] | undefined): string[] {
+  if (!w) return [];
+  const out: string[] = [];
+  const cls = w.venue_class ? (CLASS_WORD[w.venue_class.toLowerCase()] ?? cap(w.venue_class)) : null;
+  if (cls) out.push(`${cls} course.${w.wind_slope != null ? ` Each extra mph of wind costs the average round about ${w.wind_slope.toFixed(2)} strokes here.` : ""}`);
+  if (w.m_v != null) {
+    const src = w.wind_prior_source === "own history" ? "this course's own past events" : "courses of the same type";
+    out.push(`The model scales every wind effect by ×${w.m_v.toFixed(2)} for this course, learned from ${src}${w.m_v > 1.05 ? ": wind matters more here than at the average course" : w.m_v < 0.95 ? ": wind matters less here than at the average course" : ": wind matters about as much as at the average course"}.`);
+  }
+  return out;
 }
 /** Cut-line shift rows worth showing: only events with a cut, only up to the cut round, and only rounds still to come when the event is in play. */
 export function cutLineRows(doc: ExplainDoc): Array<{ round: number; shift: number | null }> {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {DEFAULT_FILTERS, commonEventSlices, centeredValues, evidenceSlice, eventMetricValue, exploratoryStandouts, openingContext, distributionSummary, filterEvents, formatMetric, histogram, metricValue,
-  parseDeep, roundValues, shapePoints, sortEvents, humanCheckpoint} from '../app/player-deep-rules.ts';
+  parseDeep, roundValues, shapePoints, windowWords, sortEvents, humanCheckpoint} from '../app/player-deep-rules.ts';
 
 const event=(id,patch={})=>({id,tour:'pga',year:2026,name:`Event ${id}`,date:'2026-09-01',course:'North Course',major:false,
   difficulty:2,field_strength:1,sg_total:1,sg_basis:"source_adjusted",round_data:[{round:1,sg_total:2,sg_basis:"source_adjusted",difficulty:patch.difficulty===undefined?2:patch.difficulty,field_strength:patch.field_strength===undefined?1:patch.field_strength},{round:2,sg_total:-1,sg_basis:"source_adjusted",difficulty:patch.difficulty===undefined?2:patch.difficulty,field_strength:patch.field_strength===undefined?1:patch.field_strength},{round:3,sg_total:5,sg_basis:"source_adjusted"}],...patch});
@@ -39,7 +39,10 @@ test('histogram open tails preserve denominator and shares sum to one',()=>{
 test('unsupported or missing shot axes stay empty and zero is a real observed value',()=>{
   const metrics=[{key:'a',status:'available',value:0,reference_z:0},{key:'b',status:'insufficient_data',value:4,reference_z:2}];
   assert.equal(metricValue(metrics[0]),0);assert.equal(metricValue(metrics[1]),null);
-  assert.deepEqual(shapePoints(metrics,['a','b','absent']),{complete:false,radii:[.5,null,null]});
+  assert.deepEqual(shapePoints(metrics,['a','b','absent']),{complete:false,radii:[.5,null,null],drawable:[0],missing:['b','absent']});
+  // a missing axis is skipped, not zeroed: the area can still be drawn from the axes that have data
+  const three=[{key:'a',status:'available',value:1,reference_z:1},{key:'b',status:'available',value:1,reference_z:-1},{key:'c',status:'available',value:1,reference_z:0}];
+  const sp=shapePoints(three,['a','x','b','c']);assert.deepEqual(sp.drawable,[0,2,3]);assert.deepEqual(sp.missing,['x']);assert.equal(sp.complete,false);
   assert.equal(formatMetric(null,'fraction'),'—');assert.equal(formatMetric(0,'fraction'),'0.0%');
 });
 test('metric sorting puts missing values last and preserves original event order',()=>{
@@ -100,3 +103,5 @@ test('radar units format sensibly and standout strengths use plain labels, never
   assert.equal(text,'tee shot value · straightness');assert.ok(!/_/.test(text)&&!/\bsg\b/.test(text));
   assert.equal(standoutText([{key:'unknown_key'}]),'unknown_key');
 });
+
+test('window wording follows the published window',()=>{assert.equal(windowWords(1095),'three years');assert.equal(windowWords(2190),'six years');assert.equal(windowWords(undefined),'three years');});
