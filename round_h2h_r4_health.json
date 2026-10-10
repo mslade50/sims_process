@@ -1,185 +1,63 @@
 {
   "schema_version": 1,
-  "gate_version": "round-bet-health/v1",
+  "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-04 13:45:27 UTC",
+  "generated_at": "2026-10-10 22:46:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
-    "gate_version": "round-bet-health/v1",
-    "kind": "round_simulation",
+    "gate_version": "golfprice.board_seal/1",
+    "kind": "golfprice_live_simulation",
+    "producer": {
+      "name": "golfprice",
+      "run_id": "pga:527:2026-10-08/R3_20261010T224600Z",
+      "model_version": "v2.4+v2.6 in-play",
+      "after_round": 3,
+      "run_manifest_sha256": "529611cea0cd2f7b028e55607bb1e569d87a07fc9767ec32acfafba5f867be20",
+      "base_run_as_of": "2026-10-07 22:05:00 UTC"
+    },
     "event": {
-      "tourney": "utah",
-      "event_id": "554",
+      "event_id": "527",
+      "tourney": "baycurrent",
       "round": 4
     },
     "source": {
-      "generated_at": "2026-10-04 13:41:44 UTC",
-      "root_generated_at": "2026-10-04 13:41:44 UTC",
-      "expected_avg_authority": "sheet",
-      "prediction_artifact": {
-        "path": "model_predictions_r4.csv",
-        "exists": true,
-        "sha256": "800013d1fcb94f8d6e5e118e5107d6fccdbc7ae76e38962511e18927600db8b0",
-        "modified_at": "2026-10-04 13:41:37 UTC"
-      },
-      "parent_manifest_sha256": null,
-      "derivation": {}
-    },
-    "scoring": {
-      "expected_avg": 69.2,
-      "configured_course_averages": {
-        "field": 69.2
-      },
-      "implied_field_mean": 69.2,
-      "empirical_field_mean": 69.20087014285714,
-      "centering_delta": 0.0008701428571384895,
-      "centering_tolerance": 0.12,
-      "player_expected_means": {
-        "akina, kihei": 70.20211928,
-        "bauchou, zach": 68.77808489,
-        "bezuidenhout, christiaan": 68.99859212,
-        "blair, zac": 68.90355181,
-        "blanchet, chandler": 69.49958449,
-        "brennan, michael": 68.02197812,
-        "clanton, luke": 69.52713002,
-        "cole, eric": 68.44797477,
-        "crowe, trace": 69.65848501,
-        "dahmen, joel": 68.84004081,
-        "dou, zecheng": 68.68750828,
-        "dumont de chassart, adrien": 69.635417,
-        "dunlap, nick": 70.47914701,
-        "ewart, a.j.": 69.74764949,
-        "fishburn, patrick": 69.05212313,
-        "fisk, steven": 69.10790717,
-        "ford, david": 69.39857177,
-        "garnett, brice": 69.68472538,
-        "ghim, doug": 68.60907997,
-        "grillo, emiliano": 68.63993614,
-        "hall, harry": 68.56923829,
-        "higgs, harry": 69.88574537,
-        "hodges, lee": 68.85771782,
-        "hoey, rico": 68.85787014,
-        "homa, max": 68.95178794,
-        "horschel, billy": 69.03402887,
-        "hossler, beau": 68.63551135,
-        "hubbard, mark": 69.53061491,
-        "jaeger, stephan": 69.65951494,
-        "james, ben": 68.67184864,
-        "kanaya, takumi": 69.3493188,
-        "keefer, johnny": 68.8475153,
-        "kirk, chris": 68.99617786,
-        "kizzire, patton": 70.37680315,
-        "kohles, ben": 68.87742856,
-        "koivun, jackson": 67.45150038,
-        "li, haotong": 68.80199909,
-        "lipsky, david": 70.03900013,
-        "lower, justin": 69.65812689,
-        "mccarty, matt": 68.74256799,
-        "mcgreevy, max": 68.93280836,
-        "moore, taylor": 69.07801664,
-        "mouw, william": 68.88671926,
-        "parry, john": 68.65831979,
-        "pavon, matthieu": 69.09769352,
-        "penge, marco": 68.33649367,
-        "power, seamus": 69.21442425,
-        "ramey, chad": 69.42101855,
-        "riley, davis": 70.18356354,
-        "rodgers, patrick": 69.41717771,
-        "roy, kevin": 68.84451732,
-        "sargent, gordon": 69.58105629,
-        "shipley, neal": 68.90417706,
-        "smith, jordan": 68.59791445,
-        "smotherman, austin": 69.63309866,
-        "streelman, kevin": 70.25170832,
-        "suber, jackson": 68.43369933,
-        "svensson, adam": 69.6396409,
-        "svensson, jesper": 69.18366864,
-        "taylor, nick": 68.71298376,
-        "thompson, davis": 68.27650436,
-        "todd, brendon": 71.35315914,
-        "tosti, alejandro": 70.16629921,
-        "van rooyen, erik": 69.45576036,
-        "vanderlaan, john": 69.72970922,
-        "ventura, kristoffer": 68.89165527,
-        "walker, danny": 70.12278097,
-        "wu, dylan": 69.91579864,
-        "yellamaraju, sudarshan": 69.17341842,
-        "yu, kevin": 68.19229133
-      },
-      "player_expected_means_sha256": "a4386f7b0e7e731b4d439e549981163ebcd6e2659f632ad9eb0845565ca7c1f8",
-      "player_centering_rmse": 0.008250043641408123,
-      "player_centering_max_error": 0.02044091000000492,
-      "player_centering_rmse_tolerance": 0.08,
-      "player_centering_max_tolerance": 0.16
+      "generated_at": "2026-10-10 22:46:00 UTC",
+      "root_generated_at": "2026-10-10 22:46:00 UTC"
     },
     "simulation": {
-      "num_players": 70,
-      "num_model_players": 70,
-      "num_sims": 100000,
-      "field_coverage": 1.0,
-      "missing_players": [],
-      "extra_players": [],
-      "player_set_sha256": "2f3d50a24f749b583dc67209aeeaa92c85b6fada80e2171699a447170785c724",
-      "tape_sha256": "915f1e24060533d069cfe7663296ba18de913b1dcd2331ef4baeec1489c2ca89",
-      "score_min": 57.0,
-      "score_max": 83.0,
-      "empirical_field_score_mean": 69.20087014285714,
-      "player_probability_mass_min": 1.0,
-      "player_probability_mass_max": 1.0
-    },
-    "model": {
-      "selected": "category_first",
-      "skew_calibrated": true,
-      "shot_dispersion_overlay": {
-        "status": "active",
-        "required_current_event": true,
-        "configured_for_active_event": true,
-        "used_by_selected_tape": true,
-        "config_path": "shot_dispersion_config.json",
-        "config_sha256": "a4681d294d095ee223ed8713efe582ded05f6b08f9bfb2c4625ce90c81ade162",
-        "config_sha256_crlf_legacy": "b0d516cac6109f70b766c1ce239c5464e991553ad6be4f160fd0414c861f264b",
-        "feature_file": "shot_dispersion_features.csv",
-        "feature_sha256": "891306e4ba4e18b603b2db4dde32eb4663c7862fa24a8b997e3b15b2a9cf13d0",
-        "distribution_file": "this_week_dists_v2.csv",
-        "distribution_sha256": "1cf34fe29278492c88a6a5dc36975749dcb0952dc0148152c6754dc5b87f88c5",
-        "text_hash_mode": "sha256_lf_normalized_v1",
-        "configured_feature_sha256": "891306e4ba4e18b603b2db4dde32eb4663c7862fa24a8b997e3b15b2a9cf13d0",
-        "configured_distribution_sha256": "1cf34fe29278492c88a6a5dc36975749dcb0952dc0148152c6754dc5b87f88c5",
-        "weights": {
-          "sg_app": 0.9,
-          "sg_arg": 0.8,
-          "sg_ott": 0.9,
-          "sg_putt": 0.95
-        }
-      }
-    },
-    "checks": {
-      "errors": [],
-      "passed": true
+      "num_players": 72,
+      "num_sims": 150000,
+      "player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a",
+      "seeds": [
+        20250929,
+        20250930,
+        20250931,
+        20250932,
+        20250933
+      ]
     },
     "approval": {
       "status": "approved",
-      "mode": "automatic_sheet",
-      "approved_by": "round-bet-health/v1",
-      "approved_at": "2026-10-04 13:41:44 UTC"
+      "by": "golfprice.board_seal",
+      "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
+      "at": "2026-10-10 22:46:00 UTC"
     },
-    "manifest_sha256": "37f43b582f345857f1a1a730be2d037ba990e05edc051ceaff4dd0f3bd3f02c1"
+    "checks": {
+      "passed": true,
+      "n_checks": 9
+    },
+    "manifest_sha256": "a784d4c968140763d5c882c20dbbb0ba59da10c08dfcd4750b79ba5db39c12aa"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r4_meta.json",
-      "sha256": "742d56b2e97920939886239f4ed000b19b0201625f2f1b325a49ca248e7e66d7"
+      "sha256": "45b466c687de5f7f5cba2be81d868575065dcca493dda48b27561436d6226b37"
     },
     "h2h_parquet": {
       "path": "round_h2h_r4.parquet",
-      "sha256": "22a463991e6c75a88084df543d1bd1c8fdf23283f77a0cd62cd33b29a6700c5d"
+      "sha256": "6aa5d330109f33299d506db999caac5ee4a8dc12899af86922ce237b53a88a71"
     }
   },
-  "extra": {
-    "num_pairs": 2415,
-    "num_players": 70,
-    "num_sims": 100000,
-    "source_manifest_sha256": "37f43b582f345857f1a1a730be2d037ba990e05edc051ceaff4dd0f3bd3f02c1"
-  },
-  "manifest_sha256": "8629c2ae73218b3d189c9744382a2be481252f28633718cd99708cb1c4a070a9"
+  "extra": {},
+  "manifest_sha256": "e766fb9749e6f63853af5901808a4c8aedecfa419d5f329e0c319953f4aa8b21"
 }
