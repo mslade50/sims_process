@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, bandIndex, bandLabel, bandStats, compare, dispersionKey, headline, laterality, parseIndex, parsePayload,
-  parseReference, quantile, referenceBand, roundCount, selectPoints, tourSd, viewWindow, windowSpan, fmtDist, sideRange, depthRange, greenWindow, fairwayGuide, fmtFt} from '../app/player-dispersion-rules.ts';
+  parseReference, quantile, referenceBand, roundCount, selectPoints, tourSd, viewWindow, windowSpan, fmtDist, sideRange, depthRange, greenWindow, fairwayGuide, fmtFt,
+  availableDims, bucketCounts, displayName, inBucket, situationReadout, situationStat, SIT_HELP} from '../app/player-dispersion-rules.ts';
 
 const index = {schema_version: 'player_dispersion.index.v1', generation: 'g', prefix: 'golfprice/player_profiles/dispersion-abc/', reference_key: 'golfprice/player_profiles/dispersion-abc/reference.json', as_of: '2026-10-10', count: 2, player_ids: [7, 9]};
 // half-yard integers: tee shots (forward 600=300 yd, lateral 20=10 yd right), approach shots
@@ -112,4 +113,81 @@ test('fairway guide is one strip at the median published field extent', () => {
   assert.deepEqual(g, [{y0: 240, y1: 340, left: -14, right: 15}]);
   assert.deepEqual(fairwayGuide(null, DEFAULT_TEE_BANDS, 240, 340), []);
   assert.deepEqual(fairwayGuide(parseReference(ref), DEFAULT_TEE_BANDS, 240, 340), []);
+});
+
+// ---- v2 situations -------------------------------------------------------------------------------------------------------------
+const spec = (kind) => ({
+  tee: {dims: [
+    {key: 'dog', label: 'Dogleg', field: 'd', buckets: [{key: 'L', label: 'Dogleg left', codes: ['L']}, {key: 'S', label: 'Straight', codes: ['S']}, {key: 'R', label: 'Dogleg right', codes: ['R']}]},
+    {key: 'wat', label: 'Water / OB', field: 'w', buckets: [{key: '1', label: 'Left only', codes: ['1']}, {key: '0', label: 'None', codes: ['0']}]}],
+    stats: {dog: {L: {all: {n: 5000, n_players: 300, lat: {mean: -1, sd: 18, q10: -25, q90: 21, player_sd_p50: 17.5}, fwd: {mean: 290, sd: 20, q10: 260, q90: 320}},
+      bands: {'2': {n: 900, n_players: 200, lat: {mean: -2, sd: 18, q10: -26, q90: 20, player_sd_p50: 17}}, '3': {n: 900, n_players: 200, lat: {mean: 0, sd: 18, q10: -24, q90: 22}}}}}, wat: {'1': {all: {n: 900, n_players: 100, lat: {mean: 1.5, sd: 18, q10: -20, q90: 24}}, bands: {}}}}},
+  app: {dims: [
+    {key: 'pin', label: 'Pin side', field: 'p', buckets: [{key: 'L', label: 'Left', codes: ['0', '3', '6']}, {key: 'C', label: 'Centre', codes: ['1', '4', '7']}, {key: 'R', label: 'Right', codes: ['2', '5', '8']}]},
+    {key: 'dep', label: 'Pin depth', field: 'p', buckets: [{key: 'F', label: 'Front', codes: ['0', '1', '2']}, {key: 'B', label: 'Back', codes: ['6', '7', '8']}]}],
+    stats: {pin: {L: {all: {n: 5000, n_players: 300, lat: {mean: 3.4, sd: 9, q10: -8, q90: 15}, along: {mean: -7, sd: 10, q10: -20, q90: 6}}, bands: {'1': {n: 800, n_players: 100, lat: {mean: 3.0, sd: 8, q10: -7, q90: 13}, along: {mean: -6, sd: 9, q10: -18, q90: 5}}}}},
+      dep: {B: {all: {n: 4000, n_players: 300, lat: {mean: 0, sd: 9, q10: -10, q90: 10}, along: {mean: -9, sd: 10, q10: -21, q90: 4}}, bands: {}}}}},
+  min_shots: {tee: 60, app: 100}})[kind];
+const refV2 = {...ref, schema_version: 'player_dispersion.v2', situations: {tee: spec('tee'), app: spec('app')}};
+const payloadV2 = {...payload, schema_version: 'player_dispersion.v2',
+  tee: {...payload.tee, d: 'LLRS', w: '1?00', b: '0000', t: '????'}, app: {...payload.app, p: '0348', h: '0?f1'}};
+
+test('v2 payloads parse (v1 still does), codes must match the shot count', () => {
+  assert.ok(parsePayload(payloadV2, 7)); assert.ok(parseReference(refV2));
+  assert.equal(parsePayload({...payloadV2, tee: {...payloadV2.tee, d: 'LL'}}, 7), null);
+  assert.equal(parsePayload({...payloadV2, app: {...payloadV2.app, p: 123}}, 7), null);
+  const pts = selectPoints(parsePayload(payloadV2, 7), 'tee', 20, DEFAULT_TEE_BANDS);
+  assert.deepEqual(pts[0].c, {d: 'L', w: '1', b: '0', t: '?'});
+  assert.equal(selectPoints(payload, 'tee', 20, DEFAULT_TEE_BANDS)[0].c, undefined, 'v1 payloads carry no codes');
+  assert.deepEqual(selectPoints(payloadV2, 'app', 20, DEFAULT_APP_BANDS)[1].c, {p: '3', h: '?'});
+});
+
+test('dimensions are offered only when the payload has the code and the reference has buckets; unknown shots join no bucket', () => {
+  assert.deepEqual(availableDims(refV2, 'tee', payloadV2).map((d) => d.key), ['dog', 'wat']);
+  assert.deepEqual(availableDims(refV2, 'tee', payload), [], 'a v1 payload has no situation codes');
+  assert.deepEqual(availableDims(ref, 'tee', payloadV2), [], 'a v1 reference has no buckets');
+  const dims = availableDims(refV2, 'tee', payloadV2), pts = selectPoints(payloadV2, 'tee', 20, DEFAULT_TEE_BANDS);
+  assert.deepEqual(bucketCounts(pts, dims[0]), {L: 2, S: 1, R: 1});
+  assert.deepEqual(bucketCounts(pts, dims[1]), {'1': 1, '0': 2}, 'the "?" shot is in no bucket, never in "none"');
+  assert.equal(inBucket(pts[3], dims[0], dims[0].buckets[1]), true);
+  const a = availableDims(refV2, 'app', payloadV2), ap = selectPoints(payloadV2, 'app', 20, DEFAULT_APP_BANDS);
+  assert.deepEqual(bucketCounts(ap, a[0]), {L: 2, C: 1, R: 1}); assert.deepEqual(bucketCounts(ap, a[1]), {F: 1, B: 1});
+});
+
+test("bucket statistics match the PGA mean to the golfer's own yardage mix and gate the width", () => {
+  const dim = availableDims(refV2, 'tee', payloadV2)[0], bucket = dim.buckets[0];
+  const mk = (band, lat, n) => Array.from({length: n}, (_, i) => ({lat: lat + (i % 2 ? 1 : -1), y: 300, dist: 300, along: 0, band, round: 0, lie: 'F', start: 'T', c: {d: 'L'}}));
+  const pts = [...mk(2, -6, 30), ...mk(3, -6, 10)];
+  const r = situationStat(pts, 'tee', dim, bucket, refV2);
+  assert.equal(r.n, 40); assert.ok(Math.abs(r.meanLat + 6) < 1e-9);
+  assert.ok(Math.abs(r.pgaLat - (0.75 * -2 + 0.25 * 0)) < 1e-9, 'band cells weighted 30:10');
+  assert.equal(r.enough, false); assert.equal(r.showMean, true); assert.equal(r.gate, 60);
+  assert.equal(situationStat(pts, 'tee', dim, dim.buckets[2], refV2), null, 'empty bucket');
+  const big = situationStat([...mk(2, -6, 40), ...mk(3, -6, 30)], 'tee', dim, bucket, refV2);
+  assert.equal(big.enough, true);
+  const lone = situationStat(mk(0, -6, 4), 'tee', dim, bucket, refV2); // band 0 has no cell: falls back to the bucket's overall mean
+  assert.equal(lone.pgaLat, -1); assert.equal(lone.showMean, false);
+  assert.equal(situationStat(pts, 'tee', dim, bucket, null).pgaLat, null);
+});
+
+test('readout is one plain sentence, with a separate width clause that waits for enough shots', () => {
+  const dim = availableDims(refV2, 'tee', payloadV2)[0], bucket = dim.buckets[0];
+  const base = {n: 112, gate: 60, enough: true, showMean: true, meanLat: -6, meanAlong: 0, meanDist: 300, pgaLat: -2, pgaAlong: null, width: 40, pgaWidth: 46, sd: 17, pgaSd: 17};
+  const r = situationReadout('tee', 'Rory McIlroy', dim, bucket, base);
+  assert.equal(r.text, "On left doglegs, Rory McIlroy finishes 6 yd left of the field's landing line, 4 yd further left than a typical PGA player.");
+  assert.equal(r.width, 'Middle 80% is 40 yd wide (PGA 46 yd), from 112 shots.');
+  assert.match(situationReadout('tee', 'X', dim, bucket, {...base, enough: false, n: 40}).width, /not enough shots \(40; needs 60\)/);
+  assert.match(situationReadout('tee', 'X', dim, bucket, {...base, showMean: false, n: 9}).text, /Only 9 drives/);
+  assert.match(situationReadout('tee', 'X', dim, bucket, {...base, meanLat: -2.2}).text, /about the same as a typical PGA player/);
+  assert.match(situationReadout('tee', 'X', dim, bucket, {...base, meanLat: 3, pgaLat: -2}).text, /3 yd right of .* 5 yd further right/);
+  const ad = availableDims(refV2, 'app', payloadV2), pin = ad[0].buckets[0], dep = ad[1].buckets[1];
+  const app = {n: 150, gate: 100, enough: true, showMean: true, meanLat: 3.2, meanAlong: -9, meanDist: 150, pgaLat: 3.4, pgaAlong: -7, width: 20, pgaWidth: 22, sd: 9, pgaSd: 9};
+  assert.equal(situationReadout('app', 'Pat', ad[0], pin, app).text, 'With the pin in the left third of the green, Pat finishes 3 yd right of the pin, about the same as a typical PGA player.');
+  assert.equal(situationReadout('app', 'Pat', ad[1], dep, app).text, 'With the pin in the back third of the green, Pat finishes 9 yd short of the pin, 2 yd further short than a typical PGA player.');
+  assert.equal(situationReadout('app', 'Pat', ad[0], pin, {...app, n: 60, enough: false}).width, 'Width: not enough shots (60; needs 100).');
+  for (const k of ['dog', 'wat', 'bun', 'tre', 'pin', 'dep', 'wtr']) assert.ok(SIT_HELP[k].length > 80, `${k} has a plain-words explanation of how it is detected`);
+});
+
+test('names are shown first-name first', () => {
+  assert.equal(displayName('McIlroy, Rory'), 'Rory McIlroy'); assert.equal(displayName('Tiger Woods'), 'Tiger Woods'); assert.equal(displayName(''), 'this golfer'); assert.equal(displayName(undefined), 'this golfer');
 });

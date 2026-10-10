@@ -6,20 +6,32 @@
  * estimated fairway centre line (tee to the median landing spot of the field's fairway-finding drives on that hole and day);
  * approach shots against the straight line from the ball to the pin. One-character lies: F fairway, R rough, S sand, G green,
  * T tee, X other, ? unknown (rounds before the 2024 lie convention).
+ *
+ * v2 ("situational"): tee lateral is measured from the field's dogleg-aware landing line, and each shot may carry one-character
+ * situation codes (tee d dogleg L/S/R/x, w water/OB, b bunkers, t trees: 0 none, 1 left only, 2 right only, 3 both; approach p pin zone
+ * 0..8 = left/centre/right + 3 * front/middle/back, h hex bits of water/OB near the green: 1 left, 2 right, 4 short, 8 behind; ? unknown).
+ * The reference names the buckets (dimension -> codes) and holds the PGA mean and spread for each, overall and per yardage band.
+ * Everything situational is ESTIMATED from published shot coordinates; there is no official course geometry.
  */
 export type Kind = "tee" | "app";
 export type DispersionIndex = { schema_version: string; generation: string; prefix: string; reference_key: string; as_of: string; count: number; player_ids: number[] };
-export type TeeBlock = { r: number[]; f: number[]; l: number[]; z: string };
-export type AppBlock = { r: number[]; s: number[]; l: number[]; a: number[]; z: string; o: string };
+export type TeeBlock = { r: number[]; f: number[]; l: number[]; z: string; d?: string; w?: string; b?: string; t?: string };
+export type AppBlock = { r: number[]; s: number[]; l: number[]; a: number[]; z: string; o: string; p?: string; h?: string };
 export type DispersionPayload = { schema_version: string; dg_id: number; as_of: string; rounds: Array<[string, number, string]>; tee?: TeeBlock; app?: AppBlock };
 export type Spread = { n: number; mean: number; sd: number | null; q10: number; q90: number; player_sd?: { n_players: number; p10: number; p50: number; p90: number } };
 export type RefBand = { n_shots: number; n_players: number; lat: Spread; fwd?: Spread; along?: Spread; green_rate?: number; fairway_rate?: number; end_lie_known_n?: number;
   prox_med?: number; fairway_lat?: { n: number; q02: number; q98: number } };
+export type SitSpread = { mean: number; sd: number | null; q10: number; q90: number; player_sd_p50?: number; player_sd_n?: number };
+export type SitStat = { n: number; n_players: number; lat: SitSpread; fwd?: SitSpread; along?: SitSpread };
+export type SituationBucket = { key: string; label: string; codes: string[] };
+export type SituationDim = { key: string; label: string; field: string; buckets: SituationBucket[] };
+export type SituationRef = { dims: SituationDim[]; stats: Record<string, Record<string, { all: SitStat; bands: Record<string, SitStat> }>> };
+export type Situations = { tee: SituationRef; app: SituationRef; min_shots: { tee: number; app: number }; method?: string };
 export type Reference = {
   schema_version: string; as_of: string; max_rounds: number; n_players: number; min_player_shots: number;
-  tee_bands: number[][]; app_bands: number[][]; tee: Record<string, RefBand>; app: Record<string, Record<string, RefBand>>;
+  tee_bands: number[][]; app_bands: number[][]; tee: Record<string, RefBand>; app: Record<string, Record<string, RefBand>>; situations?: Situations;
 };
-export type Point = { lat: number; y: number; dist: number; along: number; band: number; round: number; lie: string; start: string };
+export type Point = { lat: number; y: number; dist: number; along: number; band: number; round: number; lie: string; start: string; c?: Record<string, string> };
 export type BandStat = {
   band: number; n: number; meanLat: number; sdLat: number | null; q10: number; q90: number; width: number;
   meanY: number; meanAlong: number; rate: number | null; rateN: number;
@@ -27,6 +39,7 @@ export type BandStat = {
 };
 export type Verdict = { text: string; tone: "narrower" | "similar" | "wider" | "unknown"; ratio: number | null };
 
+export const PAYLOAD_SCHEMAS = ["player_dispersion.v1", "player_dispersion.v2"];
 export const ROUND_CHOICES = [20, 50, 100] as const;
 export const MIN_BAND_SHOTS = 10;
 export const MIN_VERDICT_SHOTS = 30;
@@ -55,17 +68,19 @@ export function dispersionKey(index: DispersionIndex, dgId: number | null | unde
 export function parsePayload(raw: unknown, dgId: number): DispersionPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const d = raw as DispersionPayload;
-  if (d.schema_version !== "player_dispersion.v1" || d.dg_id !== dgId || !Array.isArray(d.rounds)) return null;
+  if (!PAYLOAD_SCHEMAS.includes(d.schema_version) || d.dg_id !== dgId || !Array.isArray(d.rounds)) return null;
   const t = d.tee, a = d.app;
   if (t && !(isInts(t.r) && isInts(t.f, t.r.length) && isInts(t.l, t.r.length) && typeof t.z === "string" && t.z.length === t.r.length)) return null;
   if (a && !(isInts(a.r) && isInts(a.s, a.r.length) && isInts(a.l, a.r.length) && isInts(a.a, a.r.length) && typeof a.z === "string" && typeof a.o === "string" && sameLength(a.z, a.r) && sameLength(a.o, a.r))) return null;
+  const codesOk = (blk: object | undefined, fields: string[], n: number) => !blk || fields.every((f) => { const v = (blk as Record<string, unknown>)[f]; return v === undefined || (typeof v === "string" && v.length === n); });
+  if (!codesOk(t, ["d", "w", "b", "t"], t?.r.length ?? 0) || !codesOk(a, ["p", "h"], a?.r.length ?? 0)) return null;
   return t || a ? d : null;
 }
 
 export function parseReference(raw: unknown): Reference | null {
   if (!raw || typeof raw !== "object") return null;
   const d = raw as Reference;
-  return d.schema_version === "player_dispersion.v1" && d.tee && d.app && Array.isArray(d.tee_bands) && Array.isArray(d.app_bands) ? d : null;
+  return PAYLOAD_SCHEMAS.includes(d.schema_version) && d.tee && d.app && Array.isArray(d.tee_bands) && Array.isArray(d.app_bands) ? d : null;
 }
 
 export function bandLabel(kind: Kind, bands: number[][], i: number): string {
@@ -104,7 +119,9 @@ export function selectPoints(p: DispersionPayload, kind: Kind, rounds: number, b
       const dist = t.f[i] / 2, lat = t.l[i] / 2;
       const band = bandIndex(dist, bands);
       if (band < 0) continue;
-      out.push({ lat, y: dist, dist, along: 0, band, round: t.r[i], lie: t.z[i], start: "T" });
+      const pt: Point = { lat, y: dist, dist, along: 0, band, round: t.r[i], lie: t.z[i], start: "T" };
+      if (t.d || t.w || t.b || t.t) pt.c = { d: t.d?.[i] ?? "?", w: t.w?.[i] ?? "?", b: t.b?.[i] ?? "?", t: t.t?.[i] ?? "?" };
+      out.push(pt);
     }
   } else if (kind === "app" && p.app) {
     const a = p.app;
@@ -114,7 +131,9 @@ export function selectPoints(p: DispersionPayload, kind: Kind, rounds: number, b
       const dist = a.s[i] / 2, along = a.a[i] / 2;
       const band = bandIndex(dist, bands);
       if (band < 0) continue;
-      out.push({ lat: a.l[i] / 2, y: dist + along, dist, along, band, round: a.r[i], lie: a.z[i], start: a.o[i] });
+      const pt: Point = { lat: a.l[i] / 2, y: dist + along, dist, along, band, round: a.r[i], lie: a.z[i], start: a.o[i] };
+      if (a.p || a.h) pt.c = { p: a.p?.[i] ?? "?", h: a.h?.[i] ?? "?" };
+      out.push(pt);
     }
   }
   return out;
@@ -262,4 +281,123 @@ export function fairwayGuide(ref: Reference | null, bands: number[][], yLo: numb
   });
   if (!lefts.length || yHi <= yLo) return [];
   return [{ y0: yLo, y1: yHi, left: quantile(lefts.sort((a, b) => a - b), 0.5), right: quantile(rights.sort((a, b) => a - b), 0.5) }];
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Situations (v2): one dimension at a time, never crossed with the yardage bands
+// ---------------------------------------------------------------------------------------------------------------------------------
+export const SIT_MIN_SHOTS = { tee: 60, app: 100 } as const; // width is shown only from this many shots
+export const SIT_MIN_MEAN = 15; // below this the average itself is not reported
+
+/** How each dimension is detected, in plain words. The data are estimates built from shot coordinates, not official course maps. */
+export const SIT_HELP: Record<string, string> = {
+  dog: "Dogleg: the angle between the line from the tee to where the field's drives land and the line from there to the pin. 20 degrees or more is a dogleg; under 10 is straight; 10 to 20 (slight bends) are left out. Estimated from shot coordinates, not an official course map.",
+  wat: "Water or out of bounds on a side: at least 1% of the field's drives on that hole have finished in water or out of bounds on that side of the landing line. Estimated from where shots ended, not from a course map.",
+  bun: "Bunkers on a side: at least 5% of the field's drives on that hole finish in a bunker on that side. Bunkers sit where the field misses, so this describes the hole, not a golfer steering away from them.",
+  tre: "Trees on a side: at least 2% of drives finish in trees on that side. The data provider only labels trees from 2024, so holes without 2024 or later rounds are left out.",
+  pin: "Pin side: the green's outline is estimated from where shots ended and putts began on that hole across tournaments, and each day's pin is placed in its left, centre or right third as the golfer faces the green. The outline is an estimate, not a surveyed green.",
+  dep: "Pin depth: the front, middle or back third of the same estimated green (front is the side the golfer approaches from).",
+  wtr: "Water or out of bounds near the green: at least 0.7% of approaches on that hole finish in water or out of bounds within 30 yards of the estimated green, on that side (short, left, right or behind).",
+};
+
+const PHRASES: Record<string, Record<string, string>> = {
+  dog: { L: "left doglegs", S: "straight holes", R: "right doglegs" },
+  wat: { "1": "holes with water or out of bounds on the left", "2": "holes with water or out of bounds on the right", "3": "holes with water or out of bounds on both sides", "0": "holes without water or out of bounds" },
+  bun: { "1": "holes with bunkers on the left", "2": "holes with bunkers on the right", "3": "holes with bunkers on both sides", "0": "holes without bunkers off the tee" },
+  tre: { "1": "holes with trees on the left", "2": "holes with trees on the right", "3": "holes with trees on both sides", "0": "holes without trees" },
+  pin: { L: "the pin in the left third of the green", C: "the pin in the middle third of the green", R: "the pin in the right third of the green" },
+  dep: { F: "the pin in the front third of the green", M: "the pin in the middle third of the green", B: "the pin in the back third of the green" },
+  wtr: { N: "no water or out of bounds near the green", A: "water or out of bounds near the green", L: "water or out of bounds left of the green", R: "water or out of bounds right of the green", S: "water or out of bounds short of the green", B: "water or out of bounds behind the green" },
+};
+
+export function situationRef(ref: Reference | null, kind: Kind): SituationRef | null {
+  const s = ref?.situations?.[kind];
+  return s && Array.isArray(s.dims) && s.stats ? s : null;
+}
+
+/** Dimensions worth offering: the payload carries the code and the reference knows at least one bucket for it. */
+export function availableDims(ref: Reference | null, kind: Kind, payload: DispersionPayload | null): SituationDim[] {
+  const sr = situationRef(ref, kind), block = payload ? (kind === "tee" ? payload.tee : payload.app) : undefined;
+  if (!sr || !block) return [];
+  return sr.dims.filter((d) => (block as unknown as Record<string, unknown>)[d.field] !== undefined && Object.keys(sr.stats[d.key] ?? {}).length > 0);
+}
+
+export function inBucket(p: Point, dim: SituationDim, bucket: SituationBucket): boolean {
+  const c = p.c?.[dim.field];
+  return c !== undefined && bucket.codes.includes(c);
+}
+
+export function bucketCounts(points: Point[], dim: SituationDim): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const b of dim.buckets) out[b.key] = 0;
+  for (const p of points) for (const b of dim.buckets) if (inBucket(p, dim, b)) out[b.key]++;
+  return out;
+}
+
+export type SitResult = {
+  n: number; gate: number; enough: boolean; showMean: boolean; meanLat: number; meanAlong: number; meanDist: number;
+  pgaLat: number | null; pgaAlong: number | null; width: number; pgaWidth: number | null; sd: number | null; pgaSd: number | null;
+};
+
+const wavg = (pairs: Array<[number, number | null | undefined]>): number | null => {
+  let w = 0, s = 0;
+  for (const [n, v] of pairs) if (typeof v === "number" && Number.isFinite(v)) { w += n; s += n * v; }
+  return w > 0 ? s / w : null;
+};
+
+/** Averages and spread of the shots in one bucket, with the PGA figures matched to this golfer's own yardage mix (band by band). */
+export function situationStat(points: Point[], kind: Kind, dim: SituationDim, bucket: SituationBucket, ref: Reference | null): SitResult | null {
+  const sr = situationRef(ref, kind);
+  const pts = points.filter((p) => inBucket(p, dim, bucket));
+  if (!pts.length) return null;
+  const lat = pts.map((p) => p.lat).sort((a, b) => a - b);
+  const n = pts.length, mean = lat.reduce((s, v) => s + v, 0) / n;
+  const sd = n > 1 ? Math.sqrt(lat.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1)) : null;
+  const cell = sr?.stats[dim.key]?.[bucket.key];
+  const perBand = new Map<number, number>();
+  for (const p of pts) perBand.set(p.band, (perBand.get(p.band) ?? 0) + 1);
+  const bands = [...perBand.entries()];
+  const val = (f: (s: SitStat) => number | null | undefined) => {
+    if (!cell) return null;
+    return wavg(bands.map(([b, c]): [number, number | null | undefined] => { const st = cell.bands[String(b)] ?? cell.all; return [c, st ? f(st) : null]; }));
+  };
+  const gate = SIT_MIN_SHOTS[kind];
+  return {
+    n, gate, enough: n >= gate, showMean: n >= SIT_MIN_MEAN, meanLat: mean, meanAlong: pts.reduce((s, p) => s + p.along, 0) / n, meanDist: pts.reduce((s, p) => s + p.y, 0) / n,
+    pgaLat: val((s) => s.lat.mean), pgaAlong: kind === "app" ? val((s) => s.along?.mean) : null,
+    width: quantile(lat, 0.9) - quantile(lat, 0.1), pgaWidth: val((s) => s.lat.q90 - s.lat.q10),
+    sd, pgaSd: val((s) => s.lat.player_sd_p50 ?? s.lat.sd),
+  };
+}
+
+const yd = (v: number) => `${Math.round(Math.abs(v))} yd`;
+
+/** One plain-English line for the chosen situation, and a separate width clause (shown only once there are enough shots). */
+export function situationReadout(kind: Kind, who: string, dim: SituationDim, bucket: SituationBucket, r: SitResult): { text: string; width: string } {
+  const what = PHRASES[dim.key]?.[bucket.key] ?? bucket.label.toLowerCase();
+  if (!r.showMean) return { text: `Only ${r.n} ${kind === "tee" ? "drives" : "approaches"} in this situation, too few to say anything.`, width: "" };
+  const alongFocus = kind === "app" && dim.key === "dep";
+  const val = alongFocus ? r.meanAlong : r.meanLat, pga = alongFocus ? r.pgaAlong : r.pgaLat;
+  const neg = alongFocus ? "short" : "left", pos = alongFocus ? "long" : "right";
+  const target = kind === "tee" ? "the field's landing line" : "the pin";
+  const where = Math.round(Math.abs(val)) < 1 ? `right on ${target}` : `${yd(val)} ${val < 0 ? neg : pos} of ${target}`;
+  let diff = "";
+  if (pga !== null) {
+    const shift = val - pga;
+    diff = Math.round(Math.abs(shift)) < 1 ? ", about the same as a typical PGA player" : `, ${yd(shift)} further ${shift < 0 ? neg : pos} than a typical PGA player`;
+  }
+  const lead = kind === "tee" ? `On ${what}, ` : `With ${what}, `;
+  const text = `${lead}${who} finishes ${where}${diff}.`;
+  const width = r.enough
+    ? `Middle 80% is ${Math.round(r.width)} yd wide${r.pgaWidth !== null ? ` (PGA ${Math.round(r.pgaWidth)} yd)` : ""}, from ${r.n} shots.`
+    : `Width: not enough shots (${r.n}; needs ${r.gate}).`;
+  return { text, width };
+}
+
+/** "McIlroy, Rory" -> "Rory McIlroy"; falls back to a neutral phrase. */
+export function displayName(name: string | null | undefined): string {
+  const n = (name ?? "").trim();
+  if (!n) return "this golfer";
+  const m = n.split(",");
+  return m.length === 2 && m[0].trim() && m[1].trim() ? `${m[1].trim()} ${m[0].trim()}` : n;
 }

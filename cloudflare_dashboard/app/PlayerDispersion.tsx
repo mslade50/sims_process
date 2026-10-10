@@ -5,22 +5,25 @@ import { Panel, LoadingState } from "./components";
 import { useDashboardData } from "./data";
 import "./player-dispersion.css";
 import {
-  DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, GREEN_HALF_DEPTH, GREEN_HALF_WIDTH, LIE_OPTIONS, ROUND_CHOICES, bandLabel, bandStats, compare, depthRange, dispersionKey,
-  fairwayGuide, fmt, fmtFt, greenWindow, headline, laterality, niceStep, parseIndex, parsePayload, parseReference, referenceBand, roundCount, selectPoints,
-  sideRange, ticks, viewWindow, windowSpan,
-  type BandStat, type Kind, type Point, type Reference,
+  DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, GREEN_HALF_DEPTH, GREEN_HALF_WIDTH, LIE_OPTIONS, ROUND_CHOICES, SIT_HELP, availableDims, bandLabel, bandStats, bucketCounts, compare,
+  depthRange, dispersionKey, displayName, fairwayGuide, fmt, fmtFt, greenWindow, headline, inBucket, laterality, niceStep, parseIndex, parsePayload, parseReference, referenceBand,
+  roundCount, selectPoints, sideRange, situationReadout, situationStat, ticks, viewWindow, windowSpan,
+  type BandStat, type Kind, type Point, type Reference, type SitResult, type SituationBucket, type SituationDim,
 } from "./player-dispersion-rules";
 
 const INDEX_KEY = "golfprice/player_profiles/dispersion/index.json";
 const BAND_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-6)", "var(--chart-4)", "var(--chart-3)"];
 const W = 360, H = 470, M = { l: 40, r: 12, t: 14, b: 30 };
 
+type Sit = { dim: SituationDim; bucket: SituationBucket; result: SitResult | null } | null;
+type SitChoice = { dim: string; bucket: string } | null;
+
 const shortDate = (iso: string) => {
   const d = new Date(`${iso}T12:00:00Z`);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 };
 
-function TeeChart({ points, stats, reference, bands }: { points: Point[]; stats: BandStat[]; reference: Reference | null; bands: number[][] }) {
+function TeeChart({ points, stats, reference, bands, sit }: { points: Point[]; stats: BandStat[]; reference: Reference | null; bands: number[][]; sit: Sit }) {
   const view = useMemo(() => viewWindow(points, "tee"), [points]);
   const { yLo, yHi, xMax } = view;
   const sx = (lat: number) => M.l + ((lat + xMax) / (2 * xMax)) * (W - M.l - M.r);
@@ -28,7 +31,7 @@ function TeeChart({ points, stats, reference, bands }: { points: Point[]; stats:
   const yStep = niceStep(yHi - yLo, 7), xStep = xMax > 40 ? 20 : 10;
   const guide = useMemo(() => fairwayGuide(reference, bands, yLo, yHi), [reference, bands, yLo, yHi]);
   const exaggeration = (((W - M.l - M.r) / (2 * xMax)) / ((H - M.t - M.b) / (yHi - yLo)));
-  const label = "Chart of tee shots on one straightened fairway, seen from above. The vertical line is the middle of the fairway and the golfer hits towards the top. Height is distance from the tee and the sideways position is yards left or right of the middle. A shaded strip shows how wide fairways typically are. The table next to the chart has the numbers.";
+  const label = "Chart of tee shots on one straightened fairway, seen from above. The vertical line is the middle of the fairway, following the bend on doglegs, and the golfer hits towards the top. Height is distance from the tee and the sideways position is yards left or right of the middle. A shaded strip shows how wide fairways typically are. When a situation is chosen, its shots are highlighted and an arrow runs from the PGA average to this golfer's average. The table next to the chart has the numbers.";
   return (
     <svg className="dsp-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
       <rect x={M.l} y={M.t} width={W - M.l - M.r} height={H - M.t - M.b} className="dsp-ground" />
@@ -49,10 +52,12 @@ function TeeChart({ points, stats, reference, bands }: { points: Point[]; stats:
       <text x={sx(0)} y={H - M.b + 24} textAnchor="middle" className="dsp-axis-title">Fairway centre · yards left / right</text>
       <text transform={`translate(9 ${(M.t + H - M.b) / 2}) rotate(-90)`} textAnchor="middle" className="dsp-axis-title">Yards from the tee</text>
       <text x={M.l + 5} y={M.t + 11} className="dsp-note">▲ toward the green</text>
-      {points.map((p, i) => {
+      {[false, true].map((pass) => points.map((p, i) => {
         if (Math.abs(p.lat) > xMax || p.y < yLo || p.y > yHi) return null;
-        return <circle key={i} cx={sx(p.lat)} cy={sy(p.y)} r={2} fill={BAND_COLORS[p.band % BAND_COLORS.length]} className="dsp-dot" />;
-      })}
+        const hit = !sit || inBucket(p, sit.dim, sit.bucket);
+        if (pass ? !(sit && hit) : !!(sit && hit)) return null;
+        return <circle key={`${pass}${i}`} cx={sx(p.lat)} cy={sy(p.y)} r={sit ? (hit ? 2.6 : 1.5) : 2} fill={BAND_COLORS[p.band % BAND_COLORS.length]} className={sit && !hit ? "dsp-dot dsp-dot-dim" : sit ? "dsp-dot dsp-dot-hit" : "dsp-dot"} />;
+      }))}
       {stats.map((s) => {
         const ref = referenceBand(reference, "tee", s.band);
         const y = sy(s.meanY);
@@ -66,18 +71,72 @@ function TeeChart({ points, stats, reference, bands }: { points: Point[]; stats:
           </g>
         );
       })}
+      {sit?.result?.showMean && sit.result.pgaLat !== null && (
+        <ShiftArrow id="dsp-ah-tee" x1={sx(sit.result.pgaLat)} y1={sy(sit.result.meanDist)} x2={sx(sit.result.meanLat)} y2={sy(sit.result.meanDist)}
+          title={`Average in this situation: PGA ${laterality(sit.result.pgaLat, 1)}, this golfer ${laterality(sit.result.meanLat, 1)} of the landing line`} />
+      )}
       <text x={W - M.r} y={M.t + 11} textAnchor="end" className="dsp-note">{exaggeration > 1.05 ? `sideways scale ×${exaggeration.toFixed(1)}` : ""}</text>
     </svg>
   );
 }
 
+/** Arrow from the PGA average (hollow dot) to this golfer's average (filled dot) for the chosen situation. */
+function ShiftArrow({ id, x1, y1, x2, y2, title }: { id: string; x1: number; y1: number; x2: number; y2: number; title: string }) {
+  const long = Math.hypot(x2 - x1, y2 - y1) > 7;
+  return (
+    <g className="dsp-shift">
+      <defs><marker id={id} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" /></marker></defs>
+      {long && <line x1={x1} y1={y1} x2={x2} y2={y2} markerEnd={`url(#${id})`} className="dsp-shift-line" />}
+      <circle cx={x1} cy={y1} r={4.2} className="dsp-shift-pga" />
+      <circle cx={x2} cy={y2} r={3.4} className="dsp-shift-you" />
+      <title>{title}</title>
+    </g>
+  );
+}
+
+function SituationPicker({ kind, dims, choice, counts, onDim, onBucket }: {
+  kind: Kind; dims: SituationDim[]; choice: SitChoice; counts: Record<string, Record<string, number>>; onDim: (key: string | null) => void; onBucket: (key: string) => void;
+}) {
+  const dim = dims.find((d) => d.key === choice?.dim) ?? null;
+  const gate = kind === "tee" ? 60 : 100;
+  return (
+    <div className="dsp-sit" role="group" aria-label="Situation">
+      <div className="dsp-sit-row">
+        <span className="dsp-sit-label">Situation</span>
+        <div className="segmented" role="group" aria-label="Situation type">
+          <button type="button" className={!dim ? "active" : ""} aria-pressed={!dim} onClick={() => onDim(null)}>All shots</button>
+          {dims.map((d) => (
+            <button key={d.key} type="button" className={dim?.key === d.key ? "active" : ""} aria-pressed={dim?.key === d.key} aria-label={d.label} title={SIT_HELP[d.key]} onClick={() => onDim(d.key)}>{d.label}</button>
+          ))}
+        </div>
+      </div>
+      {dim && (
+        <>
+          <div className="dsp-bands dsp-sit-buckets" role="group" aria-label={`${dim.label} choices`}>
+            {dim.buckets.map((b) => {
+              const n = counts[dim.key]?.[b.key] ?? 0;
+              return (
+                <button key={b.key} type="button" aria-pressed={choice?.bucket === b.key} disabled={n === 0} className={choice?.bucket === b.key ? "on" : n < gate ? "off" : ""}
+                  title={n < gate ? `Only ${n} shots: the width needs ${gate}` : `${n} shots`} onClick={() => onBucket(b.key)}>
+                  {b.label}<small>{n}</small>
+                </button>
+              );
+            })}
+          </div>
+          <p className="dsp-sit-help">{SIT_HELP[dim.key]}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 const G = 360, GC = G / 2;
 
-function GreenChart({ points, stats }: { points: Point[]; stats: BandStat[] }) {
+function GreenChart({ points, stats, sit }: { points: Point[]; stats: BandStat[]; sit: Sit }) {
   const { radius, rings, outside } = useMemo(() => greenWindow(points), [points]);
   const k = (GC - 26) / radius; // px per yard, same both ways so rings are true circles
   const cx = (lat: number) => GC + lat * k, cy = (along: number) => GC - along * k; // long is up
-  const label = "Top-down chart of approach shots around the pin, which sits in the middle. Shots that finished long are above the pin, short below, left and right as the golfer faced the flag. Circles mark distance from the pin. The cards next to the chart have the numbers.";
+  const label = "Top-down chart of approach shots around the pin, which sits in the middle. Shots that finished long are above the pin, short below, left and right as the golfer faced the flag. Circles mark distance from the pin. When a situation is chosen, its shots are highlighted and an arrow runs from the PGA average finish to this golfer's average. The cards next to the chart have the numbers.";
   const ringLabel = (r: number) => (r <= 5 ? "5 yd" : `${r} yd`);
   return (
     <svg className="dsp-chart dsp-green-chart" viewBox={`0 0 ${G} ${G}`} role="img" aria-label={label}>
@@ -94,14 +153,20 @@ function GreenChart({ points, stats }: { points: Point[]; stats: BandStat[] }) {
       <text x={8} y={GC - 4} className="dsp-axis-title">left</text>
       <text x={GC + 5} y={16} className="dsp-axis-title">long ▲</text>
       <text x={GC + 5} y={G - 8} className="dsp-axis-title">short ▼ (you hit from here)</text>
-      {points.map((p, i) => {
+      {[false, true].map((pass) => points.map((p, i) => {
         if (Math.abs(p.lat) > radius || Math.abs(p.along) > radius) return null;
-        return <circle key={i} cx={cx(p.lat)} cy={cy(p.along)} r={1.8} fill={BAND_COLORS[p.band % BAND_COLORS.length]} className="dsp-dot" />;
-      })}
+        const hit = !sit || inBucket(p, sit.dim, sit.bucket);
+        if (pass ? !(sit && hit) : !!(sit && hit)) return null;
+        return <circle key={`${pass}${i}`} cx={cx(p.lat)} cy={cy(p.along)} r={sit ? (hit ? 2.4 : 1.4) : 1.8} fill={BAND_COLORS[p.band % BAND_COLORS.length]} className={sit && !hit ? "dsp-dot dsp-dot-dim" : sit ? "dsp-dot dsp-dot-hit" : "dsp-dot"} />;
+      }))}
       {rings.map((r) => <text key={`rl${r}`} x={GC + r * k * 0.707 + 2} y={GC - r * k * 0.707 - 2} className="dsp-tick dsp-ringlabel">{ringLabel(r)}</text>)}
       {stats.filter((s) => s.proxMed <= radius).map((s) => (
         <circle key={`m${s.band}`} cx={GC} cy={GC} r={s.proxMed * k} stroke={BAND_COLORS[s.band % BAND_COLORS.length]} className="dsp-prox"><title>{`Half of these approaches finished inside ${fmtFt(s.proxMed)} of the pin`}</title></circle>
       ))}
+      {sit?.result?.showMean && sit.result.pgaLat !== null && sit.result.pgaAlong !== null && (
+        <ShiftArrow id="dsp-ah-app" x1={cx(sit.result.pgaLat)} y1={cy(sit.result.pgaAlong)} x2={cx(sit.result.meanLat)} y2={cy(sit.result.meanAlong)}
+          title={`Average finish in this situation: PGA ${laterality(sit.result.pgaLat, 1)} and ${fmt(Math.abs(sit.result.pgaAlong), 1)} yd ${sit.result.pgaAlong < 0 ? "short" : "long"}; this golfer ${laterality(sit.result.meanLat, 1)} and ${fmt(Math.abs(sit.result.meanAlong), 1)} yd ${sit.result.meanAlong < 0 ? "short" : "long"}`} />
+      )}
       <g transform={`translate(${GC} ${GC})`} className="dsp-flag"><line y1={-12} y2={2} /><path d="M0 -12 l9 4 l-9 4 z" /><circle r={2.2} /><title>Pin</title></g>
       <text x={G - 8} y={16} textAnchor="end" className="dsp-note">{outside ? `${outside} farther-out shots not shown` : ""}</text>
     </svg>
@@ -180,6 +245,7 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
   const [rounds, setRounds] = useState<number>(50);
   const [lie, setLie] = useState("all");
   const [off, setOff] = useState<Record<string, boolean>>({});
+  const [sitChoice, setSitChoice] = useState<Record<Kind, SitChoice>>({ tee: null, app: null });
 
   const bands = (kind === "tee" ? reference?.tee_bands : reference?.app_bands) ?? (kind === "tee" ? DEFAULT_TEE_BANDS : DEFAULT_APP_BANDS);
   const all = useMemo(() => (payload ? selectPoints(payload, kind, rounds, bands, kind === "app" ? lie : "all") : []), [payload, kind, rounds, bands, lie]);
@@ -187,6 +253,22 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
   const points = useMemo(() => all.filter((p) => !off[`${kind}${p.band}`]), [all, off, kind]);
   const stats = useMemo(() => bandStats(points, kind, bands), [points, kind, bands]);
   const present = useMemo(() => bandStats(all, kind, bands).map((s) => s.band), [all, kind, bands]);
+  const dims = useMemo(() => availableDims(reference, kind, payload), [reference, kind, payload]);
+  const counts = useMemo(() => Object.fromEntries(dims.map((d) => [d.key, bucketCounts(points, d)])), [dims, points]);
+  const choice = sitChoice[kind];
+  const sitDim = dims.find((d) => d.key === choice?.dim) ?? null;
+  const sitBucket = sitDim?.buckets.find((b) => b.key === choice?.bucket) ?? null;
+  const sitResult = useMemo(() => (sitDim && sitBucket ? situationStat(points, kind, sitDim, sitBucket, reference) : null), [points, kind, sitDim, sitBucket, reference]);
+  const sit: Sit = sitDim && sitBucket ? { dim: sitDim, bucket: sitBucket, result: sitResult } : null;
+  const pickDim = (key: string | null) => {
+    const d = dims.find((x) => x.key === key);
+    if (!d) return setSitChoice((c) => ({ ...c, [kind]: null }));
+    const gate = kind === "tee" ? 60 : 100; // first bucket with enough shots (left before right), else the largest
+    const best = d.buckets.find((b) => (counts[d.key]?.[b.key] ?? 0) >= gate) ?? [...d.buckets].sort((a, b) => (counts[d.key]?.[b.key] ?? 0) - (counts[d.key]?.[a.key] ?? 0))[0];
+    setSitChoice((c) => ({ ...c, [kind]: { dim: d.key, bucket: best.key } }));
+  };
+  const pickBucket = (key: string) => setSitChoice((c) => ({ ...c, [kind]: c[kind] ? { ...c[kind]!, bucket: key } : c[kind] }));
+  const readout = sitDim && sitBucket && sitResult ? situationReadout(kind, displayName(name), sitDim, sitBucket, sitResult) : null;
 
   if (index.loading) return null;
   if (index.error || !idx) return null; // not published yet: stay out of the way
@@ -213,6 +295,10 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
           </label>
         )}
       </div>
+      {dims.length > 0 && <SituationPicker kind={kind} dims={dims} choice={choice} counts={counts} onDim={pickDim} onBucket={pickBucket} />}
+      {readout && sitResult && (
+        <p className="dsp-readout" aria-live="polite"><b>{readout.text}</b>{readout.width && <span> {readout.width}</span>}<small> Situations are estimated from shot coordinates, not official course maps.</small></p>
+      )}
       <div className="dsp-bands" role="group" aria-label={kind === "tee" ? "Distance ranges to show" : "Starting yardages to show"}>
         {present.map((b) => (
           <button key={b} type="button" aria-pressed={!hidden(b)} className={hidden(b) ? "off" : ""} onClick={() => setOff((o) => ({ ...o, [`${kind}${b}`]: !hidden(b) }))}>
@@ -226,18 +312,20 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
           <p className="dsp-headline">{headline(kind, stats, bands, reference, kind === "app" ? lie : "all")}</p>
           <div className="dsp-body">
             <figure className="dsp-figure">
-              {kind === "tee" ? <TeeChart points={points} stats={stats} reference={reference} bands={bands} /> : <GreenChart points={points} stats={stats} />}
+              {kind === "tee" ? <TeeChart points={points} stats={stats} reference={reference} bands={bands} sit={sit} /> : <GreenChart points={points} stats={stats} sit={sit} />}
               <figcaption>
                 {kind === "tee" ? (
                   <>
                     <span><i className="dsp-key-bar" />Coloured bar: this golfer&apos;s middle 80% of shots</span>
                     <span><i className="dsp-key-pga" />Grey bar: typical PGA Tour middle 80%</span>
                     <span><i className="dsp-key-fw" />Shaded strip: typical fairway width</span>
+                    {sit && <span><i className="dsp-key-arrow" />Hollow dot to filled dot: PGA average to this golfer, in the chosen situation</span>}
                   </>
                 ) : (
                   <>
                     <span><i className="dsp-key-ring" />Coloured ring: half the shots finished inside it</span>
                     <span><i className="dsp-key-fw" />Green shape: stylised {GREEN_HALF_WIDTH * 2} by {GREEN_HALF_DEPTH * 2} yd green, for scale</span>
+                    {sit && <span><i className="dsp-key-arrow" />Hollow dot to filled dot: PGA average finish to this golfer, in the chosen situation</span>}
                   </>
                 )}
               </figcaption>
@@ -249,10 +337,11 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
       <details className="pp-details">
         <summary>How to read this, and what it cannot tell you</summary>
         {kind === "tee" ? (
-          <p>Every dot is one tee shot on a par 4 or 5. All holes are straightened onto one fairway: the vertical line is the estimated middle of the fairway (from the tee to where the field&apos;s fairway-finding drives landed that day on that hole), the golfer hits towards the top, height is how far the shot travelled, and the sideways position is how far left or right of the middle it finished. The shaded strip is how far from the middle the field&apos;s fairway-finding drives finished (2nd to 98th percentile), a proxy for fairway width rather than a measured one. This is not the target the golfer aimed at, and holes that bend are only approximated by a straight line.</p>
+          <p>Every dot is one tee shot on a par 4 or 5. All holes are straightened onto one fairway: the vertical line is the estimated middle of the fairway, the golfer hits towards the top, height is how far the shot travelled, and the sideways position is how far left or right of the middle it finished. The middle is the field&apos;s landing line: a smooth curve through where that day&apos;s fairway-finding drives landed at each distance on that hole, so on a dogleg it follows the bend instead of a straight line from the tee. The shaded strip is how far from the middle the field&apos;s fairway-finding drives finished (2nd to 98th percentile), a proxy for fairway width rather than a measured one. This is not the target the golfer aimed at.</p>
         ) : (
           <p>Every dot is one approach (including par-3 tee shots, 50 to 300 yards out), seen from above with the pin in the middle. Up is long (past the pin), down is short, and left and right are as the golfer faced the flag. Rings are distances from the pin, and the green outline is only a rough size guide: real greens differ in shape and size. Golfers often aim away from the pin, so this shows where shots finished relative to the flag, not ability alone.</p>
         )}
+        {dims.length > 0 && <p>Situations (dogleg, water, bunkers, trees, pin position) are estimates built from where shots were hit, ended and putted from; no official course or green maps are published. They are only worth reading when the shot count is shown to be large enough, and bunkers and water mostly describe the hole, not a golfer avoiding them. Water and bunker sides are where balls have ended, so they partly reflect where the field misses.</p>}
         <p>The grey bars and PGA figures use every PGA Tour golfer&apos;s shots over the same period; the comparison words compare this golfer&apos;s side-to-side spread with the typical PGA golfer at the same distances. Greens and fairways hit are counted only for rounds from 2024, when the data provider&apos;s ground-type labels settled. DP World Tour rounds are not included.</p>
       </details>
     </Panel>
