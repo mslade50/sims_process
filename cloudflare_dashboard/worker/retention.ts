@@ -5,5 +5,5 @@
  *   dry-run: lists, plans, writes jobs/retention/last_report.json (the full delete list), deletes nothing.
  *   apply:   same, then first writes jobs/retention/applied/<utc time>.json (what is about to go) and deletes at most MAX_DELETES_PER_RUN objects.
  */
-export { handleRetention, retentionDue, protectedJobIds } from "./retention-rules";
+export { handleRetention, retentionDue, protectedJobIds, bundleContext } from "./retention-rules";
 export type { RetentionEnv, RetentionOutcome } from "./retention-rules";

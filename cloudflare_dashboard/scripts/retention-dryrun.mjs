@@ -4,7 +4,7 @@
 import { writeFileSync } from "node:fs";
 import { getPlatformProxy } from "wrangler";
 import { classify, planRetention } from "../worker/retention-rules.ts";
-import { protectedJobIds } from "../worker/retention-rules.ts";
+import { protectedJobIds, bundleContext } from "../worker/retention-rules.ts";
 
 const [configPath, outPath, days = "7"] = process.argv.slice(2);
 if (!configPath || !outPath) throw new Error("usage: retention-dryrun.mjs <config> <out.json> [days]");
@@ -35,9 +35,10 @@ try {
     byDay[d].bytes += o.size;
   }
   const classified = all.filter((o) => classify(o.key));
-  const plan = planRetention(classified, await protectedJobIds(bucket), Date.now(), Number(days));
+  const plan = planRetention(classified, await protectedJobIds(bucket), Date.now(), Number(days),
+    await bundleContext(bucket, classified.filter((o) => classify(o.key).kind === "bundle")));
   writeFileSync(outPath, JSON.stringify({ read_only: true, listed_objects_under_jobs: all.length, inventory_by_prefix: inventory, classified_by_upload_day: byDay, ...plan, delete_keys: plan.delete.map((o) => o.key) }, null, 1));
-  console.log(JSON.stringify({ listed: all.length, inventory, summary: plan.summary, kinds: plan.kinds }, null, 1));
+  console.log(JSON.stringify({ listed: all.length, inventory, summary: plan.summary, kinds: plan.kinds, bundles: plan.bundles }, null, 1));
 } finally {
   await proxy.dispose();
 }
