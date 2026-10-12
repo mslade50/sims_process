@@ -66,16 +66,16 @@
   }
  },
  "pga_benchmark_reference": {
-  "adjusted_sg_mean": -0.132787,
+  "adjusted_sg_mean": -0.15155,
   "available_after": "2026-01-01T00:00:00+00:00",
-  "id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
-  "label": "2025 PGA starts · R1–2, equal round weights",
-  "method": "Equal-round mean of provider adjusted total SG; no regular-player qualification filter",
-  "n_events": 46,
-  "n_players": 697,
-  "n_rounds": 11089,
-  "note": "A frozen average PGA start, not an equal-player average, not zero on the provider scale and not the average current field. First two rounds limit made-cut selection bias.",
-  "population": "Average valid adjusted-SG round in PGA-tagged 2025 events, rounds 1 and 2; each round weighted equally",
+  "id": "pga_2017_2025_r12:431eb2b4d605985d2fc6",
+  "label": "Average PGA Tour round, 2017–2025 · R1–2, equal season weights",
+  "method": "Equal-season mean of the nine season means of provider adjusted total SG (each season an equal-round mean); no regular-player qualification filter",
+  "n_events": 392,
+  "n_players": 1909,
+  "n_rounds": 97937,
+  "note": "A frozen long-run average PGA Tour start (2017-2025), not an equal-player average, not zero on the provider scale and not the average current field. First two rounds limit made-cut selection bias. Display only: prices never read it.",
+  "population": "Average valid adjusted-SG round in PGA-tagged events, rounds 1 and 2, over the 9 complete seasons 2017–2025; each season's mean weighted equally",
   "rounds": [
    1,
    2
@@ -90,7 +90,19 @@
    "snapshot_id": "2026-10-05T23-02-17-359780Z"
   },
   "status": "available",
-  "year": 2025
+  "year": 2025,
+  "years": [
+   2017,
+   2018,
+   2019,
+   2020,
+   2021,
+   2022,
+   2023,
+   2024,
+   2025
+  ],
+  "span": "2017–2025"
  },
  "provenance": {
   "identity_sources": [
@@ -219,7 +231,7 @@
     "note": "Recent adjusted performance, not the pricing model's expected skill. Positive means better than the fixed 2025 PGA first-two-round start average, with each valid round weighted equally; this is not an equal-player average. History is exponentially weighted by recency without shrinkage; no calibrated forecast interval is implied. Provider historical adjustments may be revised retrospectively.",
     "observed_mean": 1.62012,
     "raw_adjusted_sg_mean": 1.487333,
-    "reference_id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
+    "reference_id": "pga_2017_2025_r12:431eb2b4d605985d2fc6",
     "schema_version": "player_benchmark.v1",
     "status": "available",
     "unit": "strokes/round",
@@ -325,7 +337,7 @@
     "note": "Recent adjusted performance, not the pricing model's expected skill. Positive means better than the fixed 2025 PGA first-two-round start average, with each valid round weighted equally; this is not an equal-player average. History is exponentially weighted by recency without shrinkage; no calibrated forecast interval is implied. Provider historical adjustments may be revised retrospectively.",
     "observed_mean": 0.728125,
     "raw_adjusted_sg_mean": 0.595338,
-    "reference_id": "pga_2025_r12:74b9dbd5ef9b8cedc861",
+    "reference_id": "pga_2017_2025_r12:431eb2b4d605985d2fc6",
     "schema_version": "player_benchmark.v1",
     "status": "available",
     "unit": "strokes/round",

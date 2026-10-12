@@ -12,11 +12,15 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, Waterfall, type FinishSeries } from "./ExplainCharts";
 import {
   EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
-  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, shapeOf, signed, sortWhy,
-  tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, waterfall, weatherStatus,
+  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
+  modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
   type Differ, type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
+import { WeatherThisRound } from "./ScoringView";
+import { CourseGeometry } from "./CourseGeometry";
+import { parseWeatherExtras } from "./scoring-rules";
+import { parseWeather } from "./weather-rules";
 import { LABELS } from "./labels";
 import { etTime } from "./lib";
 import { Badge, Delta } from "./ui";
@@ -46,9 +50,9 @@ function writeParams(next: Params) {
 }
 
 /* ------------------------------------------------------------------ shell: event picker, loading, empty states */
-type Shell = { doc: ExplainDoc; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
+type Shell = { doc: ExplainDoc; event: IndexEvent; latest: boolean; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
 
-function ExplainShell({ eyebrow, title, description, preEventFirst = false, children }: { eyebrow: string; title: string; description: string; preEventFirst?: boolean; children: (s: Shell) => React.ReactNode }) {
+function ExplainShell({ eyebrow, title, description, preEventFirst = false, defaultView = "pre", children }: { eyebrow: string; title: string; description: string; preEventFirst?: boolean; defaultView?: View; children: (s: Shell) => React.ReactNode }) {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
@@ -72,37 +76,38 @@ function ExplainShell({ eyebrow, title, description, preEventFirst = false, chil
             })}
           </div>
         ) : undefined} />
-      <ExplainBody key={current.event_uid} event={current} params={params} update={update} preEventFirst={preEventFirst}>{children}</ExplainBody>
+      <ExplainBody key={current.event_uid} event={current} params={params} update={update} preEventFirst={preEventFirst} defaultView={defaultView}>{children}</ExplainBody>
     </>
   );
 }
 
-function ExplainBody({ event, params, update, preEventFirst, children }: { event: IndexEvent; params: Params; update: (p: Partial<Params>) => void; preEventFirst: boolean; children: (s: Shell) => React.ReactNode }) {
+function ExplainBody({ event, params, update, preEventFirst, defaultView, children }: { event: IndexEvent; params: Params; update: (p: Partial<Params>) => void; preEventFirst: boolean; defaultView: View; children: (s: Shell) => React.ReactNode }) {
   const choices = useMemo(() => explainChoices(event), [event]);
-  // Pages that offer the choice start on the pre-tournament explanation and only show the toggle when a live one exists.
+  // Pages that offer the choice start on the chosen default (Why priced: pre-tournament; This week: the latest run) and only show the toggle when a live one exists.
   const offerToggle = preEventFirst && choices.hasLive && !!choices.preKey && !!choices.liveKey;
-  const view: View = offerToggle ? params.v ?? "pre" : "live";
+  const view: View = offerToggle ? params.v ?? defaultView : "live";
   const key = !preEventFirst || !choices.hasLive ? explainKeyFor(event) : view === "pre" && choices.preKey ? choices.preKey : choices.liveKey ?? explainKeyFor(event);
   const { data, loading, error } = useDashboardData<unknown>(key);
   const doc = useMemo(() => parseExplain(data), [data]);
-  if (loading) return <LoadingState label="Loading the pricing explanation" />;
+  const toggle = offerToggle && (
+    <div className="ex-viewbar">
+      <SegmentedControl label="Which pricing to explain" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
+        options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live (after round ${choices.liveRound})` : "Live" }]} />
+      <span className="ex-muted">{view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}</span>
+    </div>
+  );
+  if (loading) return <>{toggle}<LoadingState label="Loading the pricing explanation" /></>;
   const stale = !preEventFirst && event.explain_run && doc && `${doc.kind}_${doc.run}` !== event.explain_run;
-  if (error || !doc || stale) return <EmptyState title={`Nothing to show for ${event.name ?? event.event_uid} yet`} detail="Prices for this event have not been run since this page was updated. They will appear after the next pricing run." />;
+  if (error || !doc || stale) return <>{toggle}<EmptyState title={`Nothing to show for ${event.name ?? event.event_uid} yet`} detail="Prices for this event have not been run since this page was updated. They will appear after the next pricing run." /></>;
   const market = params.m ?? "win";
   const player = params.p ? doc.players.find((p) => p.id === params.p) ?? null : null;
-  const competitors = params.vs.length || !player ? params.vs : defaultCompetitors(doc, player.id);
+  const competitors = params.vs;
   return (
     <>
       <RunBanner doc={doc} />
-      {offerToggle && (
-        <div className="ex-viewbar">
-          <SegmentedControl label="Which pricing to explain" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
-            options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live (after round ${choices.liveRound})` : "Live" }]} />
-          <span className="ex-muted">{view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}</span>
-        </div>
-      )}
+      {toggle}
       {preEventFirst && choices.hasLive && !choices.preKey && <p className="ex-muted ex-notice">The pre-tournament explanation was not kept for this event, so this shows the live pricing.</p>}
-      {children({ doc, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
+      {children({ doc, event, latest: !!event.explain_run && `${doc.kind}_${doc.run}` === event.explain_run, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
       {player && <PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
         setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} />}
     </>
@@ -128,14 +133,18 @@ const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span clas
 /* ------------------------------------------------------------------ This week */
 export function ThisWeekView() {
   return (
-    <ExplainShell eyebrow="Event" title="This week" description="How we price the field: the course, where we differ from the sportsbook, and which kinds of players we favour or fade.">
+    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="How we price the field: the course, where we differ from the sportsbook, and which kinds of players we favour or fade.">
       {(s) => <ThisWeek {...s} />}
     </ExplainShell>
   );
 }
 
-function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
+function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) {
   const live = doc.kind === "live";
+  const weatherKey = event.weather_key || `golfprice/weather/${event.event_uid.replace(/:/g, "_")}/latest.json`;
+  const weatherSource = useDashboardData<unknown>(weatherKey);
+  const weatherDoc = useMemo(() => parseWeather(weatherSource.data), [weatherSource.data]);
+  const weatherExtras = useMemo(() => parseWeatherExtras(weatherSource.data), [weatherSource.data]);
   const fav = useMemo(() => favourites(doc, 10), [doc]);
   const differ = useMemo(() => differView(doc), [doc]);
   const markets = useMemo(() => availableMarkets(doc), [doc]);
@@ -164,10 +173,13 @@ function ThisWeek({ doc, market, setMarket, openPlayer }: Shell) {
           <HoleStrip holes={cc.holes} />
           {cc.hole_source && <p className="ex-muted">{plainHoleSource(cc.hole_source)} Values are for the average player in this field.</p>}
         </Panel>
-        <Panel title="Weather" eyebrow="Conditions" actions={<Link className="ex-link" href="/weather-effects">Weather effects <ChevronRight size={14} /></Link>}>
+        <Panel title="Weather" eyebrow="Conditions and course type" actions={<Link className="ex-link" href="/weather-effects">Weather effects <ChevronRight size={14} /></Link>}>
           <WeatherSnapshot doc={doc} />
         </Panel>
       </div>
+      <CourseGeometry eventUid={event.event_uid} eventName={doc.event.name ?? event.name} />
+      <WeatherEffects doc={doc} />
+      <WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} />
 
       {live ? (
         <p className="ex-muted ex-notice">While play is under way we do not compare our prices with the sportsbook: its prices are not live, so a gap would not mean anything. See Why priced for the comparison made before the event.</p>
@@ -211,12 +223,9 @@ const MARKET_HELP: Record<Market, string> = {
 function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows: Array<{ player: ExPlayer; shape: Shape }>; differ: Differ; openPlayer: (id: number) => void }) {
   const [sort, setSort] = useState<"price" | "gap">("price");
   const markets = availableMarkets(doc).filter((m) => rows.some((r) => r.shape.markets[m]));
-  const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(b.shape.spread_gap) - Math.abs(a.shape.skill_gap) - Math.abs(a.shape.spread_gap));
+  const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(spreadGapOf(b.shape)) - Math.abs(a.shape.skill_gap) - Math.abs(spreadGapOf(a.shape)));
   const sg = differ.spread_gap_median;
-  const places = markets.includes("make_cut") ? "top 20 and make cut" : "top 10 and top 20";
-  const fieldLine = sg === null || Math.abs(sg) < 0.04 ? null : sg < 0
-    ? `Across these players the sportsbook prices in more boom-or-bust than we do (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour ${places} over outright wins.`
-    : `Across these players we see more boom-or-bust than the sportsbook does (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour outright wins over ${places}.`;
+  const fieldLine = spreadLeanNote(sg, differ.spread_gap_centered === true);
   if (!rows.length) return <Panel title="Where we differ from the market" eyebrow="Players who matter"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
   return (
     <Panel title="Where we differ from the market" eyebrow="Players who matter" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
@@ -261,25 +270,61 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
   );
 }
 
+const WAVE_ORDER = ["AM", "PM"];
+const waveName = (w: string): string => (w === "AM" ? "Morning wave" : w === "PM" ? "Afternoon wave" : `${w} wave`);
 function WeatherSnapshot({ doc }: { doc: ExplainDoc }) {
   const w = doc.course_card.weather ?? {};
   const status = weatherStatus(doc);
-  if (!w || (!w.venue_class && !w.label && !status.long)) return <p className="ex-muted">No weather information in this run.</p>;
+  const venue = venueClassLines(w);
+  if (!w || (!w.venue_class && !w.label && !status.long && !venue.length)) return <p className="ex-muted">No weather information in this run.</p>;
   const cut = cutLineRows(doc);
+  const after = doc.kind === "live" ? doc.after_round ?? 0 : 0;
+  const waves = (w.waves ?? []).filter((x) => x.round > after);
+  const waveNames = [...new Set(waves.map((x) => x.wave))].sort((a, b) => (WAVE_ORDER.indexOf(a) < 0 ? 9 : WAVE_ORDER.indexOf(a)) - (WAVE_ORDER.indexOf(b) < 0 ? 9 : WAVE_ORDER.indexOf(b)) || a.localeCompare(b));
+  const fieldRows = (w.field ?? []).filter((f) => f.round > after);
+  const rounds = [...new Set([...waves.map((x) => x.round), ...fieldRows.map((f) => f.round)])].sort((a, b) => a - b);
+  const noTee = roundsWithoutTeeTimes(doc);
   return (
     <div className="ex-wx">
       <p>{status.long}{w.issued_at ? <> Forecast issued {etTime(w.issued_at)}.</> : null}</p>
-      {w.wind_slope !== null && w.wind_slope !== undefined && <p>Rule of thumb for this course: each extra mph of wind adds about {w.wind_slope.toFixed(1)} strokes to the average round.</p>}
-      {w.waves && w.waves.length > 0 && (
+      {venue.length > 0 && <ul className="ex-bullets">{venue.map((v) => <li key={v}>{v}</li>)}</ul>}
+      {rounds.length > 0 && (
         <>
-          <div className="table-scroll"><table className="ex-table"><thead><tr><th>Round</th><th>Tee time</th><th>Average wind</th><th title="Minus means easier than the field average, plus means harder.">Strokes vs field</th></tr></thead>
-            <tbody>{w.waves.map((x) => <tr key={`${x.round}${x.wave}`}><th scope="row">R{x.round}</th><td>{x.wave === "AM" ? "Morning" : x.wave === "PM" ? "Afternoon" : x.wave}</td><td>{x.mean_wind ?? "-"} mph</td><td className={(x.rel ?? 0) > 0 ? "neg" : "pos"}>{signed(x.rel)}</td></tr>)}</tbody></table></div>
-          <p className="ex-muted">Minus means easier than the field average, plus means harder.{doc.kind === "live" ? " Only the rounds still to play are listed." : ""}</p>
+          <div className="table-scroll"><table className="ex-table ex-wx-rounds">
+            <caption className="ex-muted">Expected effect on scores, strokes a round (minus means easier)</caption>
+            <thead><tr><th>Round</th><th title="How much the forecast changes scoring for the whole field compared with typical conditions.">Whole field</th>{waveNames.map((n) => <th key={n} title="Strokes this wave is expected to play easier (minus) or harder (plus) than the field average, from the wind and temperature its tee times face.">{waveName(n)}</th>)}{cut.length > 0 && <th title="How far the forecast is expected to move the cut line.">Cut line</th>}</tr></thead>
+            <tbody>{rounds.map((r) => {
+              const f = fieldRows.find((x) => x.round === r);
+              const c = cut.find((x) => x.round === r);
+              return <tr key={r}><th scope="row">Round {r}</th><td>{f?.common == null ? "-" : signed(f.common)}</td>
+                {waveNames.map((n) => { const x = waves.find((y) => y.round === r && y.wave === n); return <td key={n} className={x?.rel == null ? "" : x.rel > 0.004 ? "neg" : x.rel < -0.004 ? "pos" : ""}>{x?.rel == null ? (noTee.includes(r) ? <span className="ex-muted" title="No tee times yet for this round">no tee times</span> : "-") : <>{signed(x.rel, 3)}{x.mean_wind != null && <small className="ex-modal"> wind {x.mean_wind} mph</small>}</>}</td>; })}
+                {cut.length > 0 && <td>{c ? signed(c.shift) : "-"}</td>}</tr>;
+            })}</tbody></table></div>
+          <p className="ex-muted">Minus means easier than the typical or average, plus means harder.{doc.kind === "live" ? " Only the rounds still to play are listed." : ""} Wave columns appear once tee times are out; the whole-field effect comes from the forecast alone.</p>
         </>
       )}
-      {cut.length > 0 && <p className="ex-muted">Expected cut-line move from weather: {cut.map((f) => `round ${f.round} ${signed(f.shift)}`).join(" · ")} strokes (plus means a higher cut line).</p>}
-      {!w.waves?.length && w.label && !status.long && <p className="ex-muted">{plainText(w.label)}</p>}
+      {!waves.length && !fieldRows.length && w.label && !status.long && <p className="ex-muted">{plainText(w.label)}</p>}
     </div>
+  );
+}
+
+/** The weather effects behind the prices, one line each, with how far apart the field is on it. */
+function WeatherEffects({ doc }: { doc: ExplainDoc }) {
+  const lines = useMemo(() => weatherEffectLines(doc), [doc]);
+  if (!lines.length) return null;
+  const used = lines.filter((l) => l.spread >= 0.005);
+  return (
+    <Panel title="How weather enters the prices" eyebrow="Per-player effects, strokes a round">
+      <p className="ex-muted">{used.length ? "Each effect below adds to or takes from a player's expected score depending on their tee time and the weather their group faces." : "No player is separated by weather in this run yet, so every effect below is zero. It starts to matter once tee times are out."} Morning conditions such as firmness are covered by time of day; dew and humidity are not modelled as separate effects.</p>
+      <div className="table-scroll"><table className="ex-table ex-cards">
+        <thead><tr><th>Effect</th><th>What it is</th><th title="The biggest effect on any one player, in strokes a round.">Largest effect</th><th>Helped most</th><th>Hurt most</th></tr></thead>
+        <tbody>{lines.map((l) => (
+          <tr key={l.key}><th scope="row">{l.label}</th><td data-label="What it is" className="ex-why">{l.what}</td>
+            <td data-label="Largest effect">{l.spread < 0.005 ? <span className="ex-muted">none</span> : `${l.spread.toFixed(2)} strokes`}</td>
+            <td data-label="Helped most">{l.helped ? <span className="pos">{l.helped.name} {signed(l.helped.value)}</span> : <span className="ex-muted">-</span>}</td>
+            <td data-label="Hurt most">{l.hurt ? <span className="neg">{l.hurt.name} {signed(l.hurt.value)}</span> : <span className="ex-muted">-</span>}</td></tr>
+        ))}</tbody></table></div>
+    </Panel>
   );
 }
 
@@ -338,7 +383,7 @@ const COLUMN_HELP = {
   rel: "How far our chance is from the sportsbook's, as a share of the sportsbook's. Plus means we are higher than the sportsbook.",
   edge_sg: "Skill gap: how many strokes a round better (+) or worse (-) we rate them than the sportsbook prices imply, after allowing for how much their scores swing (spread). Blank when the sportsbook prices too few bet types to tell.",
   mu: "Our estimate of their skill: strokes per round better (+) or worse (-) than the average player in this field.",
-  sd: "How much their round scores typically bounce around, in strokes. Higher means a streakier, less predictable player.",
+  sd: "Std dev: the standard deviation of their round scores, in strokes. Higher means a streakier, less predictable player.",
 } as const;
 
 function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
@@ -392,7 +437,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
       </div>
       <div className="table-scroll">
         <table className="ex-table ex-why-table ex-cards">
-          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos", COLUMN_HELP.pos)}{hasModel && th("model", "Our chance", COLUMN_HELP.model)}{hasMarket && th("market", "Sportsbook", COLUMN_HELP.market)}{hasMarket && th("rel", "Gap (%)", COLUMN_HELP.rel)}{hasGap && hasMarket && th("edge_sg", "Gap (strokes)", COLUMN_HELP.edge_sg)}{th("mu", "Expected skill", COLUMN_HELP.mu)}{hasSd && th("sd", "Spread", COLUMN_HELP.sd)}<th title="The biggest reasons our price differs from the sportsbook.">Why</th></tr></thead>
+          <thead><tr>{th("name", "Player")}{live && th("pos", "Pos", COLUMN_HELP.pos)}{hasModel && th("model", "Our chance", COLUMN_HELP.model)}{hasMarket && th("market", "Sportsbook", COLUMN_HELP.market)}{hasMarket && th("rel", "Gap (%)", COLUMN_HELP.rel)}{hasGap && hasMarket && th("edge_sg", "Gap (strokes)", COLUMN_HELP.edge_sg)}{th("mu", "Expected skill", COLUMN_HELP.mu)}{hasSd && th("sd", "Std dev", COLUMN_HELP.sd)}<th title="The biggest reasons our price differs from the sportsbook.">Why</th></tr></thead>
           <tbody>
             {rows.map((p) => {
               const e = p.probs[market];
@@ -404,7 +449,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
                   {hasModel && <td data-label="Our chance">{pct(e.model)}</td>}{hasMarket && <td data-label="Sportsbook">{pct(e.market)}</td>}
                   {hasMarket && <td data-label="Gap (%)" className={b.tone === "positive" ? "pos" : b.tone === "negative" ? "neg" : ""}>{b.text}</td>}
                   {hasGap && hasMarket && <td data-label="Gap (strokes)" className={Math.abs(p.edge_sg ?? 0) < 0.005 ? "" : (p.edge_sg ?? 0) > 0 ? "pos" : "neg"}>{gapText(p.edge_sg)}</td>}
-                  <td data-label="Expected skill">{signed(p.mu_rel)}</td>{hasSd && <td data-label="Spread">{p.sd?.toFixed(2) ?? "-"}</td>}
+                  <td data-label="Expected skill">{signed(p.mu_rel)}</td>{hasSd && <td data-label="Std dev">{p.sd?.toFixed(2) ?? "-"}</td>}
                   <td data-label="Why" className="ex-why">{(hasMarket ? p.why_edge : null) ?? p.why}</td>
                 </tr>
               );
@@ -431,6 +476,8 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
   const [q, setQ] = useState("");
   const byId = useMemo(() => new Map(doc.players.map((p) => [p.id, p] as const)), [doc.players]);
   const wf = useMemo(() => waterfall(player, doc.components_legend), [player, doc.components_legend]);
+  const wfScale = useMemo(() => waterfallScale(doc.players), [doc.players]);
+  const wfScales = useMemo(() => waterfallRowScales(doc.players, doc.components_legend), [doc.players, doc.components_legend]);
   const shape = useMemo(() => (doc.kind === "live" || player.withdrawn ? null : shapeOf(player, shapeMap(doc), availableMarkets(doc))), [doc, player]);
   const chosen = [player, ...competitors.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p)];
   const withShape = chosen.filter((p) => p.finish);
@@ -465,8 +512,8 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <div className="ex-drawer-kpis">
           <Kpi label={`${MARKET_LABEL[market]} chance`} value={pct(player.probs[market].model)} detail={doc.kind === "live" ? "our chance now" : `sportsbook ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Round-to-round spread ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
-          {f && <Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" />}
+          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Std dev ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
+          {f && <div className="ex-kpi-wrap"><Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" /><small className="ex-modal">{modalFinishText(modalFinish(f, !!doc.event.cut_round))}</small></div>}
           {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
         </div>
         {shape && <p className="ex-callout"><strong>{shape.sentence}</strong> {shape.parts_sentence}{valueBets(shape).length > 0 ? ` Value against the sportsbook: ${valueBets(shape).join(", ")}.` : ""}</p>}
@@ -474,7 +521,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
         <section>
           <h3 className="ex-h3">Why this price</h3>
           <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. The skill rows add up to their expected skill{doc.kind === "live" ? "; the in-play rows are part of it" : ""}; weather is shown separately because it adjusts scores on top.</p>
-          <Waterfall {...wf} />
+          <Waterfall {...wf} scale={wfScale} scales={wfScales} />
           {shape && <p className="ex-muted">The sportsbook&rsquo;s prices imply skill {signed(shape.skill_market)} and spread {shape.spread_market.toFixed(2)}; ours are {signed(shape.skill_ours)} (including weather) and {shape.spread_ours.toFixed(2)}.</p>}
         </section>
 
@@ -489,7 +536,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
             <SegmentedControl label="Chart type" value={mode} onChange={setMode} options={[{ value: "probability", label: "Position" }, { value: "cumulative", label: "Cumulative" }]} /></div>
           {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">Finish odds are not available for this run.</p> : (
             <>
-              <FinishChart series={series} fieldSize={doc.players.filter((p) => !p.withdrawn).length} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
+              <FinishChart series={series} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
               <div className="ex-compare">
                 <h4>Compare with</h4>
                 <div className="chip-row">
@@ -504,11 +551,13 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
                 {hits.length > 0 && <ul className="ex-hits">{hits.map((p) => <li key={p.id}><button type="button" onClick={() => { setCompetitors(toggleCompetitor(competitors, p.id)); setQ(""); }}>{p.name}<small>{pct(p.probs.win.model)} win</small></button></li>)}</ul>}
               </div>
               <div className="table-scroll"><table className="ex-table ex-compare-table">
-                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 10</th><th title="The finish position that half of the simulations beat and half did not.">Median finish</th>{doc.event.cut_round ? <th>Misses cut</th> : null}</tr></thead>
+                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 20</th>{doc.event.cut_round ? <th title="Our chance to make the cut.">Make cut</th> : null}<th title="The finish position that half of the simulations beat and half did not. The smaller note is the single most likely finish.">Median finish</th></tr></thead>
                 <tbody>{withShape.map((p, i) => (
                   <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }} aria-hidden="true" />
                     {p.id === player.id ? p.name : <button type="button" className="ex-linkbtn" onClick={() => onSelect(p.id)}>{p.name}</button>}</th>
-                    <td>{signed(p.mu_rel)}</td><td>{pct(p.probs.win.model)}</td><td>{pct(p.probs.top_10.model)}</td><td>{p.finish!.median}</td>{doc.event.cut_round ? <td>{pct(p.finish!.p_miss_cut, 0)}</td> : null}</tr>
+                    <td data-label="Skill">{signed(p.mu_rel)}</td><td data-label="Win">{pct(p.probs.win.model)}</td><td data-label="Top 5">{pct(p.probs.top_5.model)}</td><td data-label="Top 10">{pct(p.probs.top_10.model)}</td><td data-label="Top 20">{pct(p.probs.top_20.model)}</td>
+                    {doc.event.cut_round ? <td data-label="Make cut">{pct(p.probs.make_cut.model ?? (p.finish ? 1 - p.finish.p_miss_cut : null), 0)}</td> : null}
+                    <td data-label="Median finish">{p.finish!.median}<small className="ex-modal" title="The single most likely finish position">{modalFinishText(modalFinish(p.finish, !!doc.event.cut_round)).replace("Most likely finish: ", "most likely ").replace("Most likely: ", "most likely: ")}</small></td></tr>
                 ))}</tbody></table></div>
               <p className="ex-muted">Finish chances come from {doc.finish.method === "exact_tapes" ? "the simulations themselves" : `${doc.finish.n_draws?.toLocaleString() ?? "many"} replayed tournaments`}{doc.finish.calibration?.top_20 ? `; on average they sit within ${pct(doc.finish.calibration.top_20.mean_abs, 1)} of the posted top-20 chances` : ""}.</p>
             </>

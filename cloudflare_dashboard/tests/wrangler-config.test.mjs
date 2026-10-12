@@ -1,0 +1,16 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { SCHEDULE_CRONS } from "../worker/cron-rules.ts";
+
+// wrangler.jsonc is the single source of truth for the deployed Worker (npm run deploy:cloudflare and the GitHub workflow).
+const strip = (s) => s.replace(/^\s*\/\/.*$/gm, "");
+const cfg = JSON.parse(strip(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")));
+
+test("cron triggers match SCHEDULE_CRONS", () => {
+  assert.deepEqual(cfg.triggers?.crons, [...SCHEDULE_CRONS]);
+});
+test("R2 binding and Access vars are declared", () => {
+  assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }]);
+  assert.ok(cfg.vars?.ACCESS_TEAM_DOMAIN && cfg.vars?.ACCESS_AUD);
+});

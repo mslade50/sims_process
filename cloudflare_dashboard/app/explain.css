@@ -65,7 +65,7 @@
 
 /* bars: waterfall and bias */
 .ex-wf { display: grid; gap: 2px; }
-.ex-wf-row { display: grid; grid-template-columns: minmax(104px, 34%) 1fr 54px; align-items: center; gap: 8px; min-height: 28px; font-size: 12.5px; }
+.ex-wf-row { display: grid; grid-template-columns: minmax(104px, 32%) 1fr 40px 54px; align-items: center; gap: 8px; min-height: 28px; font-size: 12.5px; }
 .ex-wf-label { color: var(--muted-strong); overflow-wrap: anywhere; }
 .ex-wf-row b { text-align: right; font-variant-numeric: tabular-nums; }
 .ex-wf-track { position: relative; display: block; height: 12px; background: var(--tint-1); border-radius: 6px; }
@@ -131,7 +131,7 @@
   .ex-drawer { width: 100%; padding: 14px 14px 40px; border-left: 0; }
   .ex-drawer-kpis { grid-template-columns: repeat(2, 1fr); }
   .ex-chart { height: 240px; }
-  .ex-wf-row { grid-template-columns: minmax(96px, 38%) 1fr 50px; }
+  .ex-wf-row { grid-template-columns: minmax(84px, 32%) 1fr 36px 46px; }
   .ex-bias button { grid-template-columns: minmax(110px, 44%) 1fr 56px; }
   .ex-fan-row { grid-template-columns: 62px 1fr 104px; }
   .ex-fan-axis { margin-left: 70px; width: calc(100% - 174px); }
@@ -199,3 +199,17 @@
   .ex-differ .ex-differ-why { min-width: 0; max-width: none; }
   .ex-cards td.ex-shape-cell { width: auto; }
 }
+
+.ex-wf-scale { display: grid; grid-template-columns: minmax(104px, 34%) 1fr 54px; gap: 8px; font-size: 10.5px; color: var(--muted); }
+.ex-wf-axis { display: flex; justify-content: space-between; }
+.ex-wf-axis em { font-style: normal; }
+.ex-wf-clip { position: absolute; top: -2px; bottom: -2px; display: flex; align-items: center; font-size: 13px; font-weight: 800; line-height: 1; }
+.ex-wf-clip.pos { right: 1px; color: var(--foreground); }
+.ex-wf-clip.neg { left: 1px; color: var(--foreground); }
+@media (max-width: 650px) { .ex-wf-scale { grid-template-columns: minmax(96px, 38%) 1fr 50px; } }
+.ex-modal { display: block; margin-top: 2px; font-size: 11px; opacity: .8; }
+.ex-kpi-wrap { display: flex; flex-direction: column; min-width: 0; }
+.ex-kpi-wrap .ex-modal { padding: 0 4px; color: var(--muted-strong); }
+
+.ex-wf-end { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ex-wf-note { max-width: 70ch; }

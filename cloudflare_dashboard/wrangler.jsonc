@@ -14,5 +14,19 @@
   },
   "observability": {
     "enabled": true
+  },
+  // Single source of truth for everything the deploy ships. `npm run deploy:cloudflare` and
+  // .github/workflows/deploy-cloudflare-dashboard.yml both build from this file (vite.config.ts no longer injects bindings).
+  // One cron every 15 minutes; must equal SCHEDULE_CRONS in worker/cron-rules.ts (tests/wrangler-config.test.mjs enforces it).
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "r2_buckets": [
+    { "binding": "DASHBOARD_DATA", "bucket_name": "golf-model-dashboard-data" }
+  ],
+  // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). Required by worker/access.ts.
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "denaliassetmanagement.cloudflareaccess.com",
+    "ACCESS_AUD": "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0"
   }
 }

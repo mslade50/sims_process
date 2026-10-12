@@ -119,10 +119,10 @@ test("hero renders the headline value, caveat rows 1 and 2, the zero sentence, s
   assert.match(html, /\+0\.73 <small/);
   assert.match(html, /title="\+0\.728 strokes per round"/);
   assert.match(html, /vs PGA avg/);
-  assert.match(html, /vs 2025 PGA avg round/);
+  assert.match(html, /vs average PGA Tour round, 2017–2025/);
   assert.ok(html.includes(CAVEAT_REFERENCE_ONLY));
   assert.match(html, /Raw average; not adjusted for small samples/);
-  assert.match(html, /Zero is the average round on the 2025 PGA Tour \(opening two rounds/);
+  assert.match(html, /Zero is the average PGA Tour round, 2017–2025 \(opening two rounds/);
   assert.match(html, /158 rounds/);
   assert.equal(html.includes("regular-tick"), false);
   assert.equal(html.includes("typical regular"), false);

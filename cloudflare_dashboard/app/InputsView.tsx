@@ -202,7 +202,7 @@ registerFamilyLabels(FAMILIES);
 const TABS = [
   { value: "players", label: "Players" },
   { value: "course", label: "Course" },
-  { value: "variance", label: "Round swings" },
+  { value: "variance", label: "Std devs" },
   { value: "weather", label: "Weather and waves" },
   { value: "odds", label: "Odds freshness" },
   { value: "config", label: "Run info" },
@@ -487,8 +487,8 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
         <div><span><Term k="mu">Rating vs this week&apos;s field</Term></span><strong>{signed(ch.mu)}</strong></div>
         {overridden && <div><span><Term k="mu_untouched">Rating before your override</Term></span><strong>{signed(ch.mu_untouched)}</strong></div>}
         {num(ch.mu_tour) !== null && <div title={`${LABELS.thisWeekPga.long}. Reference only; prices use the field-relative number.`}><span>{LABELS.thisWeekPga.short}</span><strong>{signed(ch.mu_tour)}</strong></div>}
-        <div><span><Term k="sd">Round swing</Term></span><strong>{fx(ch.sd, 2)}</strong></div>
-        {overridden && <div><span><Term k="sd_untouched">Swing before your override</Term></span><strong>{fx(ch.sd_untouched, 2)}</strong></div>}
+        <div><span><Term k="sd">Std dev</Term></span><strong>{fx(ch.sd, 2)}</strong></div>
+        {overridden && <div><span><Term k="sd_untouched">Std dev before your override</Term></span><strong>{fx(ch.sd_untouched, 2)}</strong></div>}
         {seKernel !== 0 && <div><span><Term k="se_kernel">Rating uncertainty (±)</Term></span><strong>{fx(seKernel, 2)}</strong></div>}
         <div><span><Term k="prior_rounds">Rounds of history</Term></span><strong>{fx(player.n_prior_rounds, 0)}{thin ? " (thin data)" : ""}</strong></div>
         {overridden && <div><span><Term k="override_total">Your override</Term></span><strong>{signed(obj(bd.override).total)}</strong></div>}
@@ -540,7 +540,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
               {num(cf.fit_rs_ddacc_lam1000) !== null && <div><span><Term k="fit_rs_ddacc">Venue fit (distance and accuracy)</Term></span><b>{signed(cf.fit_rs_ddacc_lam1000, 3)}</b></div>}
               {num(cf.course_history_resid_k80) !== null && <div><span><Term k="course_history">Course history</Term></span><b>{signed(cf.course_history_resid_k80, 3)}</b></div>}
               {num(cf.course_sd_mult_feature) !== null && <div><span><Term k="course_sd_mult">Course spread factor</Term></span><b>{fx(cf.course_sd_mult_feature, 3)}</b></div>}
-              {num(cf.sd_shrunk_feature) !== null && <div><span><Term k="sd_shrunk">Round swing before course adjustment</Term></span><b>{fx(cf.sd_shrunk_feature, 2)}</b></div>}
+              {num(cf.sd_shrunk_feature) !== null && <div><span><Term k="sd_shrunk">Std dev before course adjustment</Term></span><b>{fx(cf.sd_shrunk_feature, 2)}</b></div>}
               {num(hist.champion_mu_j2) !== null && <div><span><Term text="The previous (champion) model's rating for this player, kept for comparison.">Previous model&apos;s rating</Term></span><b>{signed(hist.champion_mu_j2)}</b></div>}
               {num(hist.se_mu) !== null && <div><span><Term text="How uncertain the previous model was about this player's skill, in strokes per round.">Rating uncertainty (±, previous model)</Term></span><b>{fx(hist.se_mu, 2)}{hist.se_mu_imputed ? " (estimated: little history)" : ""}</b></div>}
               {teeRows.map((row) => <div key={row.round}><span>Round {row.round} tee time</span><b>{row.text}</b></div>)}
@@ -559,7 +559,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
           <h3 className="inputs-h3">Model prices (before blending with the market)</h3>
           <div className="table-scroll">
             <table>
-              <thead><tr>{th("Version")}{th("Rating", "mu")}{th("Round swing", "sd")}{priceCells.map(([label, , key]) => <Fragment key={key}>{th(label, key)}</Fragment>)}</tr></thead>
+              <thead><tr>{th("Version")}{th("Rating", "mu")}{th("Std dev", "sd")}{priceCells.map(([label, , key]) => <Fragment key={key}>{th(label, key)}</Fragment>)}</tr></thead>
               <tbody>
                 {priceRows.map((row) => (
                   <tr key={row.label} className={row.active ? "active-row" : ""}>
@@ -607,17 +607,17 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust: (dgId
     <div className="stack-lg">
       <div className="kpi-grid">
         <Kpi label="Players" value={String(players.length)} detail={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "in the field"} tone="accent" />
-        <Tip text={GLOSSARY.mu}><Kpi label="Strongest player" value={signed(num(obj(best?.challenger).mu), 2)} detail={`${String(best?.name ?? "")}: strokes per round better than this week's field average (the average is 0)`} /></Tip>
+        <Tip text={GLOSSARY.mu}><Kpi label="Strongest player" value={signed(num(obj(best?.challenger).mu), 2)} detail={`${String(best?.name ?? "")}: strokes per round better than the average player in this week's field${fieldOffset !== null && num(obj(best?.challenger).mu) !== null ? ` (${signed((num(obj(best?.challenger).mu) as number) + fieldOffset, 2)} vs an average PGA Tour player)` : ""}`} /></Tip>
         {fieldOffset !== null && (
           <Tip text="How this field compares with a typical PGA Tour field, in strokes per round. Reference only: prices use the rating against this field.">
             <Kpi
               label="Field strength"
               value={signed(fieldOffset, 2)}
-              detail={`This field is ${gap} strokes per round ${fieldOffset < 0 ? "weaker" : "stronger"} than a typical PGA Tour field, so every PGA-scale rating is ${gap} ${fieldOffset < 0 ? "lower" : "higher"}. Prices are not affected.${ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}`}
+              detail={`The average player in this field is ${gap} strokes per round ${fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour player. Player ratings on this page are measured against this field, so add ${signed(fieldOffset, 2)} to put them on the PGA Tour scale. Prices are not affected.${ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}`}
             />
           </Tip>
         )}
-        <Tip text="The average of the players' round swing, in strokes, including any override."><Kpi label="Average round swing" value={sdMean.toFixed(2)} detail="strokes, after overrides" /></Tip>
+        <Tip text="The average of the players' std dev, in strokes, including any override."><Kpi label="Average std dev" value={sdMean.toFixed(2)} detail="strokes, after overrides" /></Tip>
         {withOverride > 0 && <Tip text="How many players have a manual override on them for this event."><Kpi label="Players with an override" value={String(withOverride)} detail="the original model numbers are kept alongside" tone="positive" /></Tip>}
       </div>
       <Panel eyebrow="Saved model inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row, or search below, for the breakdown. Hover a column header for what it means.</span>}>
@@ -843,14 +843,14 @@ function VarianceTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
         {noise !== null && <Tip text={GLOSSARY.seed_spread}><Kpi label="Win-odds precision" value={`±${(noise * 100).toFixed(1)} pts`} detail="win odds are accurate to about this many percentage points" /></Tip>}
       </div>
       <div className="two-column">
-        <Panel eyebrow="Spread" title="Rating against round swing">
-          <p className="inputs-muted">Each dot is a player: how good he is (rating) against how much his rounds swing. Hover a dot for the name.</p>
+        <Panel eyebrow="Std dev" title="Rating against std dev">
+          <p className="inputs-muted">Each dot is a player: how good they are (rating) against their std dev. Hover a dot for the name.</p>
           <div className="chart-medium">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 10, right: 16, bottom: 18, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" />
                 <XAxis type="number" dataKey="mu" name="Rating" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Rating (strokes per round vs field)", fill: "var(--muted)", fontSize: 10, position: "insideBottom", offset: -8 }} />
-                <YAxis type="number" dataKey="sd" name="Round swing" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Round swing", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+                <YAxis type="number" dataKey="sd" name="Std dev" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Std dev", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
                 <ZAxis range={[26, 26]} />
                 <Tooltip content={<ChartTip />} />
                 <Scatter data={points} fill={palette[0]} name="Player" isAnimationActive={false} />
@@ -1322,7 +1322,7 @@ const localInput = (ms: number) => {
 
 const FIELD_LABELS: Record<string, string> = {
   skill_delta: "Skill change (strokes per round)",
-  sd_mult: "Round swing multiplier (1.00 = no change)",
+  sd_mult: "Std dev multiplier (1.00 = no change)",
   withdraw: "Withdraw",
   scoring_avg_delta: "Course scoring average change",
   course_sd_mult: "Course spread factor (1.00 = no change)",
@@ -1335,7 +1335,7 @@ function specNote(spec: FieldSpec): string {
   const range = spec.kind === "number" ? ` (between ${spec.lo} and ${spec.hi})` : "";
   const known: Record<string, string> = {
     skill_delta: "Added to this player's rating, in strokes per round",
-    sd_mult: "Multiplies this player's round swing",
+    sd_mult: "Multiplies this player's std dev",
     scoring_avg_delta: "Shifts the course's scoring average, in strokes per round; this changes displayed scores, not win odds",
     course_sd_mult: "Widens or narrows scores at this course",
   };
@@ -1444,7 +1444,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
     const v = Number(value);
     if (!Number.isFinite(v) || value.trim() === "") return null;
     if (field === "skill_delta") return `Rating ${signed(ch.mu)} becomes about ${signed((num(ch.mu) ?? 0) + v)} (before the field is re-centred).`;
-    if (field === "sd_mult") return `Round swing ${fx(ch.sd, 2)} becomes about ${fx((num(ch.sd) ?? 0) * v, 2)}.`;
+    if (field === "sd_mult") return `Std dev ${fx(ch.sd, 2)} becomes about ${fx((num(ch.sd) ?? 0) * v, 2)}.`;
     return null;
   })();
 

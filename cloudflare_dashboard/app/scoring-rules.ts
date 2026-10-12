@@ -260,6 +260,71 @@ export function plainTeeTime(value: string | null | undefined): string | null {
   return `${day} ${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${h % 12 || 12}:${m[5]} ${h < 12 ? "AM" : "PM"} local`;
 }
 
+/** "A random player's round score": every valid player's score chances pooled with equal weight. This is a mixture of marginals, not a field-average distribution. */
+export function fieldMixturePmf(players: Array<{ pmf: PmfRow[] }>): PmfRow[] {
+  const merged = new Map<number, number>();
+  let n = 0;
+  for (const p of players) { const pmf = normalizePmf(p.pmf); if (!pmf.length) continue; n++; for (const [s, q] of pmf) merged.set(s, (merged.get(s) ?? 0) + q); }
+  return n ? [...merged].sort(([a], [b]) => a - b).map(([s, q]) => [s, q / n]) : [];
+}
+export function pmfMean(rows: PmfRow[]): number | null { const n = normalizePmf(rows); return n.length ? n.reduce((s, [x, p]) => s + x * p, 0) : null; }
+
+/** What the "Weather" line in the arithmetic is measured against. venueSeen comes from the weather document for the scored round (null when unknown). */
+export function weatherBaselineText(venueSeen: boolean | null): { label: string; hint: string } {
+  if (venueSeen === true) return { label: "Weather vs this course's typical conditions", hint: "Strokes the forecast adds (+) or takes off (−) compared with the usual weather the model has seen at this venue, the same for every player." };
+  if (venueSeen === false) return { label: "Weather vs typical tour conditions", hint: "This venue has no weather history in the model, so the reference is the average weather across the model's training rounds on tour. Strokes the forecast adds (+) or takes off (−), the same for every player." };
+  return { label: "Weather vs typical conditions", hint: "Strokes the forecast adds (+) or takes off (−) compared with typical conditions: this venue's usual weather where the model has seen it, otherwise the average across its training rounds. The same for every player." };
+}
+export const WEATHER_HISTORY_CAVEAT = "Course difficulty is learned from past rounds that already include whatever weather those rounds had, and those rounds are not individually weather-adjusted. The weather line is the forecast against the reference above, so it is not a fully weather-free split.";
+
+export type WeatherExtras = {
+  venue: { m_v: number | null; prior_source: string | null; slope_class: string | null; n_events: number | null; global_slope: number | null };
+  rounds: Record<number, { venueSeen: boolean | null; status: string | null; reason: string | null }>;
+};
+/** Fields of the weather document that the shared parser in weather-rules.ts does not keep. */
+export function parseWeatherExtras(raw: unknown): WeatherExtras {
+  const r = record(raw), v = record(r.venue), rounds: WeatherExtras["rounds"] = {};
+  for (const [k, val] of Object.entries(record(r.rounds))) { const o = record(val), n = Number(k); if (Number.isInteger(n)) rounds[n] = { venueSeen: typeof o.venue_seen === "boolean" ? o.venue_seen : null, status: stringValue(o.status), reason: stringValue(o.reason) }; }
+  return { venue: { m_v: numberValue(v.m_v), prior_source: stringValue(v.prior_source), slope_class: stringValue(v.slope_class), n_events: numberValue(v.n_events), global_slope: numberValue(v.global_slope) }, rounds };
+}
+
+export type WaveInput = { wave: string; window: [number, number] | null };
+export type WaveSplitPlayer = { teeHour: number | null; components: Record<string, number> };
+/** The wave whose first tee time is the latest one at or before this tee time; earliest wave if the player tees off before all of them. */
+export function assignWave(teeHour: number | null, waves: WaveInput[]): string | null {
+  const dated = waves.filter((w) => w.window).sort((a, b) => a.window![0] - b.window![0]);
+  if (teeHour == null || !dated.length) return null;
+  let pick = dated[0].wave;
+  for (const w of dated) if (w.window![0] <= teeHour + 1e-9) pick = w.wave;
+  return pick;
+}
+/** Mean of each published component by wave. */
+export function waveComponentMeans(players: WaveSplitPlayer[], waves: WaveInput[]): { keys: string[]; byWave: Record<string, Record<string, number>>; counts: Record<string, number> } {
+  const sums: Record<string, Record<string, number>> = {}, counts: Record<string, number> = {}, keys: string[] = [];
+  for (const p of players) {
+    const w = assignWave(p.teeHour, waves); if (!w) continue;
+    counts[w] = (counts[w] ?? 0) + 1; sums[w] ??= {};
+    for (const [k, v] of Object.entries(p.components)) { if (!keys.includes(k)) keys.push(k); sums[w][k] = (sums[w][k] ?? 0) + v; }
+  }
+  const byWave: Record<string, Record<string, number>> = {};
+  for (const [w, s] of Object.entries(sums)) { byWave[w] = {}; for (const [k, v] of Object.entries(s)) byWave[w][k] = v / counts[w]; }
+  return { keys, byWave, counts };
+}
+/** "The PM wave is expected to play 0.03 strokes harder than the AM wave" (null when either is missing). */
+export function waveGapText(a: { wave: string; rel: number | null }, b: { wave: string; rel: number | null }): string | null {
+  if (a.rel == null || b.rel == null) return null;
+  const gap = b.rel - a.rel, abs = Math.abs(gap);
+  if (abs < 0.005) return `The ${a.wave} and ${b.wave} waves are expected to play the same (under 0.01 strokes apart).`;
+  return `The ${b.wave} wave is expected to play ${abs.toFixed(2)} strokes ${gap > 0 ? "harder" : "easier"} than the ${a.wave} wave.`;
+}
+/** "Parkland venue, wind sensitivity ×1.31 from its own history (1 event)." */
+export function windSensitivityText(venueClass: string, x: WeatherExtras["venue"]): string | null {
+  if (x.m_v == null) return null;
+  const src = x.prior_source === "own history" ? "from its own history" : x.prior_source ? `from ${x.prior_source}` : "";
+  const ev = x.n_events != null ? ` (${x.n_events} event${x.n_events === 1 ? "" : "s"})` : "";
+  return `${venueClass ? `${venueClass.charAt(0).toUpperCase()}${venueClass.slice(1)} venue, w` : "W"}ind sensitivity ×${x.m_v.toFixed(2)}${src ? ` ${src}` : ""}${ev}.`;
+}
+
 /** Tick values every `step` strokes covering [lo, hi]. */
 export function wholeTicks(lo: number, hi: number, step = 2): number[] {
   const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out: number[] = [];

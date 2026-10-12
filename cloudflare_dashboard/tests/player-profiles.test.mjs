@@ -1,3 +1,4 @@
+import {readFileSync} from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {savedFieldSkill, benchmarkValue, checkpointBenchmarkValue, fieldBenchmark, relativeBenchmark, PROFILE_AXES, completeRadar, parseCatalog, parseProfile, profileHref, profileKey, profileMatches, radarExtent, radarRadius, reconciliation, sameReference, savedSkill, matchesExplainCheckpoint, matchesInputCheckpoint, matchingInputRun, sortProfiles, selectWeeklyEvent} from "../app/player-profile-rules.ts";
@@ -43,7 +44,7 @@ test("archived checkpoints withhold later observations and reference anchors",()
 
 test("profile headline is mounted and labels preserve descriptive vs saved-model meaning",async()=>{
   const {readFile}=await import("node:fs/promises");const view=(await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8"))+(await readFile(new URL("../app/WeeklyPlayersView.tsx",import.meta.url),"utf8"));
-  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("recent form vs the 2025 PGA average"));assert.ok(view.includes("not a price forecast"));assert.ok(view.includes("does not feed the simulations"));assert.ok(view.includes("rebuilt from the latest data"));
+  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("recent form vs the {RULER_NAME}"));assert.ok(view.includes("not a price forecast"));assert.ok(view.includes("does not feed the simulations"));assert.ok(view.includes("rebuilt from the latest data"));
   assert.equal(view.includes("Absolute model"),false);assert.equal(view.includes("Absolute pre-event"),false);assert.equal(view.includes("known before this checkpoint"),false);assert.equal(view.includes(String.fromCharCode(65533)),false);
 });
 
@@ -89,4 +90,16 @@ test("BenchmarkCard secondary card: mu_tour headline with label and offset, vs f
   assert.match(lv,/Live skill plus the pre-event field offset/);assert.match(lv,/\+0\.70/);assert.match(lv,/The pre-event value was \+0\.851/);
   const fb=card({pgaSkill:null});
   assert.match(fb,/vs field · saved model/);assert.match(fb,/\+0\.75/);assert.doesNotMatch(fb,/This week \(PGA scale\)/);
+});
+
+test("profile radar draws its area through axes with data and marks a missing spoke", async () => {
+  const rules = await import("../app/player-profile-rules.ts");
+  const mk = (zs) => ({ radar: rules.PROFILE_AXES.map((key, i) => ({ key, z: zs[i] })) });
+  assert.deepEqual(rules.radarDrawable(mk([1, 0.5, null, -1])), [0, 1, 3]);
+  assert.equal(rules.completeRadar(mk([1, 0.5, null, -1])), false);
+  assert.equal(rules.referenceSpan({ span: "2017–2025", year: 2025 }), "2017–2025");
+  assert.equal(rules.referenceSpan({ years: [2018, 2020], year: 2025 }), "2018–2020");
+  assert.equal(rules.referenceSpan({ year: 2025 }), "2025");
+  const view = readFileSync(new URL("../app/PlayerProfilesView.tsx", import.meta.url), "utf8");
+  assert.ok(view.includes("radarDrawable") && view.includes("no data") && !view.includes("partial; points only"));
 });

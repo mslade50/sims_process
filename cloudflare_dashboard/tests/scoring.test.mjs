@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { betEv, breakEvenDecimal, curveRows, evBreakEvenShift, expectationBridge, marketNoVig, overUnder, parseScoring, resolvedOverShare, shiftedOverUnder, scoringEvidence } from "../app/scoring-rules.ts";
+import { betEv, breakEvenDecimal, curveRows, evBreakEvenShift, expectationBridge, marketNoVig, overUnder, parseScoring, resolvedOverShare, shiftedOverUnder, scoringEvidence, fieldMixturePmf, weatherBaselineText, parseWeatherExtras, assignWave, waveComponentMeans, waveGapText, windSensitivityText } from "../app/scoring-rules.ts";
 
 test("integer lines preserve pushes and exclude them from profit and loss", () => {
   const p = overUnder([[69, 0.2], [70, 0.3], [71, 0.25], [72, 0.25]], 70);
@@ -102,6 +102,7 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "./scoring-rules") return scoringRules;
     if (id === "./lib") return libRules;
     if (id === "./weather-rules") return weatherRules;
+    if (id === "next/link") return { __esModule: true, default: ({ href, children, className }) => React.createElement("a", { href, className }, children) };
     if (id === "./glossary") return glossaryRules;
     if (id === "./explain-rules" || id === "./distributions-rules" || id.endsWith(".css")) return {};
     if (id === "react") return { ...React, useState: (initial) => { const slot = state++; return [slot === 2 && player ? false : typeof initial === "function" ? initial() : initial, () => {}]; } };
@@ -198,5 +199,33 @@ test("rendered field/player distributions and data failures retain explicit mean
   assert.match(renderedScoring({ payload: { scoring: fixture }, expectedRun: "different" }), /Scoring run does not match/);
   assert.match(renderedScoring({ payload: { scoring: { schema: "wrong" } } }), /Scoring expectation unavailable/);
   delete fixture.field.quantile_curve;
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Field chart unavailable/);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Every player/);
+});
+
+test("field mixture pools player marginals with equal weight", () => {
+  assert.deepEqual(fieldMixturePmf([{ pmf: [[68, 0.5], [70, 0.5]] }, { pmf: [[70, 1]] }]), [[68, 0.25], [70, 0.75]]);
+  assert.deepEqual(fieldMixturePmf([]), []);
+});
+
+test("weather baseline wording follows venue_seen", () => {
+  assert.match(weatherBaselineText(false).label, /tour/);
+  assert.match(weatherBaselineText(true).label, /this course/);
+  assert.match(weatherBaselineText(null).hint, /training rounds/);
+});
+
+test("weather extras, wave assignment and component means", () => {
+  const x = parseWeatherExtras({ venue: { m_v: 1.314, prior_source: "own history", slope_class: "parkland/other", n_events: 1 }, rounds: { 1: { venue_seen: false, status: "ok" } } });
+  assert.equal(x.rounds[1].venueSeen, false);
+  assert.equal(windSensitivityText("parkland", x.venue), "Parkland venue, wind sensitivity ×1.31 from its own history (1 event).");
+  assert.equal(parseWeatherExtras(null).venue.m_v, null);
+  const waves = [{ wave: "PM", window: [9.85, 15] }, { wave: "AM", window: [8.75, 14] }];
+  assert.equal(assignWave(9, waves), "AM");
+  assert.equal(assignWave(10.5, waves), "PM");
+  assert.equal(assignWave(null, waves), null);
+  const r = waveComponentMeans([{ teeHour: 9, components: { wind: 0.1, tod: -0.02 } }, { teeHour: 9.1, components: { wind: 0.3, tod: -0.02 } }, { teeHour: 11, components: { wind: 0, tod: 0.03 } }], waves);
+  assert.ok(Math.abs(r.byWave.AM.wind - 0.2) < 1e-9);
+  assert.equal(r.byWave.PM.tod, 0.03);
+  assert.equal(r.counts.AM, 2);
+  assert.equal(waveGapText({ wave: "AM", rel: -0.006 }, { wave: "PM", rel: 0.03 }), "The PM wave is expected to play 0.04 strokes harder than the AM wave.");
+  assert.match(waveGapText({ wave: "AM", rel: 0 }, { wave: "PM", rel: 0.001 }), /same/);
 });
