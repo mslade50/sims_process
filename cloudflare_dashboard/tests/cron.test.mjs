@@ -98,6 +98,7 @@ test("the weekly table at New York times (EDT, October 2026)", () => {
   assert.deepEqual(slotTypes(et("2026-10-09T05:00:00Z")), ["after_round"]); // Fri 01:00
   assert.deepEqual(slotTypes(et("2026-10-10T18:30:00Z")), ["after_round"]); // Sat 14:30
   assert.deepEqual(slotTypes(et("2026-10-11T18:30:00Z")), ["after_round"]); // Sun 14:30
+  assert.deepEqual(slotTypes(et("2026-10-19T00:00:00Z")), ["sunday_week"]); // Sun 20:00 EDT: Sunday-night pricing (owner 2026-10-12)
   assert.deepEqual(slotTypes(et("2026-10-08T05:00:00Z")), []); // Thu 01:00: no round slot on Thursday 01:00
 });
 

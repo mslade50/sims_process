@@ -25,6 +25,7 @@ export type Window = { type: string; days: Day[]; from: string; to: string; minu
 /** Fixed Eastern-time slots (HH:MM, 24 h). Order = enqueue order inside one tick. */
 export const SLOTS: Slot[] = [
   { type: "monday_settle", days: ["Mon"], times: ["08:30", "11:30", "13:30"], note: "Settle last week at 08:30 (before production grading); later slots retry while the event is not final (a pending settle writes nothing)." },
+  { type: "sunday_week", days: ["Sun"], times: ["20:00"], note: "Sunday-night pricing (owner 2026-10-12): the next event from the PGA TOUR field (released Friday 5 pm ET), so prices are ready when markets open Monday. Refuses (no-op failure) when the just-finished event's rounds are not in the data yet; Monday 15:30 stays the full run." },
   { type: "monday_week", days: ["Mon"], times: ["15:30"], note: "Price the new week once the settle has finished." },
   { type: "tuesday", days: ["Tue"], times: ["12:00"], note: "Tuesday refresh on the first full day of market data." },
   { type: "wednesday", days: ["Wed"], times: ["18:00", "22:30"], note: "Reprice with the tee-time gate; the 22:30 slot catches late tee sheets and the early European tee." },

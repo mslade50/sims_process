@@ -10,7 +10,7 @@ const job = (over = {}) => ({ id: "j-20261005T130000-aaaaaa", type: "tuesday", p
 test("the allow-list is exactly the owner-approved moments plus publish, the cross-tour base refresh and publish, the odds check and the input watch", () => {
   assert.deepEqual(
     JOB_TYPES.map((s) => s.type),
-    ["monday_settle", "monday_week", "tuesday", "wednesday", "thursday", "thursday_close", "after_round", "daily_health", "xtour", "xtour_publish", "publish", "odds_reprice", "watch"],
+    ["monday_settle", "sunday_week", "monday_week", "tuesday", "wednesday", "thursday", "thursday_close", "after_round", "daily_health", "xtour", "xtour_publish", "publish", "odds_reprice", "watch"],
   );
 });
 

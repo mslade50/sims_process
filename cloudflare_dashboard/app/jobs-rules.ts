@@ -60,6 +60,7 @@ export type JobSpec = {
 
 export const JOB_TYPES: JobSpec[] = [
   { type: "monday_settle", group: "Monday", label: "Settle last week", does: "Pulls the finished event, grades last week's prices and bets, then runs a health check.", when: "Monday morning, once the event is final.", no_pull: true, supersede: false, after_round: false },
+  { type: "sunday_week", group: "Monday", label: "Sunday-night price", does: "Prices next week's event from the PGA TOUR field so prices are ready for Monday's markets, then updates the edges, report and dashboard. Refuses if last week's rounds are not in the data yet.", when: "Sunday night; runs by itself at 20:00 ET.", no_pull: true, supersede: true, after_round: false },
   { type: "monday_week", group: "Monday", label: "Price the new week", does: "Prices the upcoming event, then updates the edges, report and dashboard.", when: "Monday, after settling and once the field is known.", no_pull: true, supersede: true, after_round: false },
   { type: "tuesday", group: "Tuesday", label: "Tuesday refresh", does: "Prices the week again on Tuesday's data, then updates the edges, report and dashboard.", when: "Tuesday, after the market has moved.", no_pull: true, supersede: true, after_round: false },
   { type: "wednesday", group: "Wednesday", label: "Wednesday reprice", does: "Prices the week again once tee times are known, then updates the edges, report and dashboard.", when: "Wednesday, once tee times are out.", no_pull: true, supersede: true, after_round: false },
