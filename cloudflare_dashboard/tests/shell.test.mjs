@@ -202,7 +202,7 @@ test("the header search loads the catalog lazily and navigates with a full page 
   assert.match(search, /armed \? PLAYER_CATALOG_KEY : null/, "no request until the box is focused");
   assert.match(search, /window\.location\.assign\(playerHref/);
   const rules = await readFile(new URL("../app/shell-rules.ts", import.meta.url), "utf8");
-  assert.match(rules, /golfprice\/player_profiles\/dossier-review\.json/);
+  assert.match(rules, /golfprice\/player_profiles\/index\.json/);
   const html = await (await render("/this-week")).text();
   assert.match(html, /aria-label="Search golfers"/);
 });

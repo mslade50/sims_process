@@ -110,7 +110,7 @@ export function decideFallback(outcome: FetchOutcome): FallbackDecision {
 }
 
 /* ------------------------------------------------------------------ player search (B6) */
-export const PLAYER_CATALOG_KEY = "golfprice/player_profiles/dossier-review.json";
+export const PLAYER_CATALOG_KEY = "golfprice/player_profiles/index.json";   // runner-owned, regression-gated pointer (site audit D3 end state); dossier-review.json stays frozen as last-known-good
 const profileId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);   // same rule as player-profile-rules.playerId (kept local so this file has no value imports)
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const matches = (p: ProfileEntry, query: string) => {

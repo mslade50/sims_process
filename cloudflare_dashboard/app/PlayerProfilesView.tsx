@@ -23,6 +23,7 @@ import { PlayerMethod } from "./PlayerMethod";
 import { LABELS as VOCAB, ZERO_SENTENCE, RULER_NAME } from "./labels";
 import { etTime } from "./lib";
 import { CATALOG_UNAVAILABLE_HINT, RADAR_LABEL, describeFilters } from "./player-hero-rules";
+import { PLAYER_CATALOG_KEY } from "./shell-rules";
 
 /** Plain wording for the publisher's strokes-gained coverage status. */
 export function coverageWords(status:string|undefined):string{return status==="complete" ? "Full strokes-gained data" : status==="partial" ? "Partial strokes-gained data" : status==="unavailable" ? "No strokes-gained data" : "Strokes-gained data unknown";}
@@ -146,7 +147,7 @@ function NextProfile({entry,catalog,p,deep,deepLoading,deepError,selectedEvent,u
 export function PlayersView() {
   const {params,update}=useParams();
   const generation=params.get("generation");
-  const catalogKey=generation && /^[a-f0-9]{20}$/.test(generation) ? `golfprice/player_profiles/${generation}/catalog.json` : "golfprice/player_profiles/dossier-review.json";
+  const catalogKey=generation && /^[a-f0-9]{20}$/.test(generation) ? `golfprice/player_profiles/${generation}/catalog.json` : PLAYER_CATALOG_KEY;
   const load=useDashboardData<unknown>(catalogKey); const catalog=useMemo(()=>parseCatalog(load.data),[load.data]); const [query,setQuery]=useState("");const [tour,setTour]=useState("");const [coverage,setCoverage]=useState("");const [catalogPage,setCatalogPage]=useState(0);const [browse,setBrowse]=useState(false);
   const selected=catalog?.players.find(p=>playerId(p)===params.get("player"));
   const filtered=sortProfiles(catalog?.players ?? []).filter(p=>profileMatches(p,query) && (!tour || p.tours?.includes(tour)) && (!coverage || p.status===coverage));

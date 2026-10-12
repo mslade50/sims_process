@@ -42,7 +42,7 @@ export function useDashboardData<T>(name: string | null): LoadState<T> {
     const readFrom = async (url: string): Promise<{ decision: FallbackDecision; json: unknown }> => {
       let response: Response;
       try {
-        response = await fetch(url, { headers: { accept: "application/json" }, cache: name === "golfprice/player_profiles/dossier-review.json" ? "no-cache" : "default" });
+        response = await fetch(url, { headers: { accept: "application/json" }, cache: name === "golfprice/player_profiles/dossier-review.json" || name === "golfprice/player_profiles/index.json" ? "no-cache" : "default" });
       } catch {
         return { decision: decideFallback({ kind: "network" }), json: undefined };
       }

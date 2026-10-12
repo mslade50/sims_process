@@ -7,7 +7,7 @@ const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/player_pro
 const catalog = fixture("catalog.json");
 const batch = fixture("batch_0000.json");
 const data = {
-  "golfprice/player_profiles/dossier-review.json": catalog,
+  "golfprice/player_profiles/index.json": catalog,
   "golfprice/player_profiles/fixture/batch_0000.json": batch,
 };
 
@@ -36,10 +36,10 @@ test("/players with the catalog missing shows the not-published empty state, not
 
 test("/players: an old catalog as_of carries the amber stale badge, a recent one does not", () => {
   const old = { ...catalog, as_of: "2026-09-01T00:00:00Z" };
-  const stale = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/dossier-review.json": old }, pathname: "/players" });
+  const stale = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/index.json": old }, pathname: "/players" });
   assert.match(stale, /Player list as of Aug 31, 8:00 PM ET/);
   assert.doesNotMatch(stale, /fresh-aging/);
-  const fresh = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/dossier-review.json": { ...catalog, as_of: new Date().toISOString() } }, pathname: "/players" });
+  const fresh = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/index.json": { ...catalog, as_of: new Date().toISOString() } }, pathname: "/players" });
   assert.match(fresh, /Player list as of /);
   assert.doesNotMatch(fresh, /fresh-aging/);
 });
@@ -93,7 +93,7 @@ test("/players?layout=next headlines the shrunk estimate when published and keep
 
 test("/players?layout=next stores the typical-regular tick only when the catalog has one", () => {
   assert.equal(next().includes("regular-tick"), false);
-  const html = next("?player=17639&layout=next", { ...data, "golfprice/player_profiles/dossier-review.json": { ...catalog, regular_tick: { value: 0.39, as_of: "2026-10-08" } } });
+  const html = next("?player=17639&layout=next", { ...data, "golfprice/player_profiles/index.json": { ...catalog, regular_tick: { value: 0.39, as_of: "2026-10-08" } } });
   assert.match(html, /data-testid="regular-tick"/);
 });
 

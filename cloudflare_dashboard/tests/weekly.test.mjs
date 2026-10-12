@@ -154,7 +154,7 @@ test("/weekly-players renders the table through DataTable with the Method senten
   const index = JSON.parse(readFileSync(publicPath("golfprice/index.json"), "utf8"));
   const data = (key) => {
     if (key === "golfprice/index.json") return index;
-    if (key === "golfprice/player_profiles/dossier-review.json") return profileCatalog;
+    if (key === "golfprice/player_profiles/index.json") return profileCatalog;
     if (key === "golfprice/player_profiles/fields.json") return undefined;
     const file = publicPath(key);
     return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
