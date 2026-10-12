@@ -669,11 +669,23 @@ export type MarketEdge = { model: number; market: number; rel: number; side: "ye
 export type ShapePart = { key: string; label: string; value: number };
 export type Shape = {
   skill_ours: number; skill_market: number; skill_gap: number; spread_ours: number; spread_market: number; spread_gap: number;
+  /** spread_gap minus the contenders' median spread gap (documents from October 12, 2026); the steady / boom-or-bust wording reads this. Absent on older documents. */
+  spread_gap_rel?: number;
   markets: Partial<Record<Market, MarketEdge>>; higher: Market[]; lower: Market[]; pattern: string; reason: string; sentence: string;
   parts: ShapePart[]; base_gap: number; parts_sentence: string;
 };
 export type DifferGroup = { key: string; label: string; n: number; win_ours: number; win_market: number; win_rel: number; top20_ours: number | null; top20_market: number | null; top20_rel: number | null; skill_gap: number; spread_gap: number };
-export type Differ = { rule: string; ids: number[]; groups: DifferGroup[]; spread_gap_median: number | null; skill_gap_median: number | null; source: "export" | "page" };
+export type Differ = { rule: string; ids: number[]; groups: DifferGroup[]; spread_gap_median: number | null; skill_gap_median: number | null; spread_gap_centered?: boolean; source: "export" | "page" };
+
+/** The spread gap the steady / boom-or-bust wording reads: relative to this week's contenders when the document carries it, the raw gap on older documents. */
+export const spreadGapOf = (s: Pick<Shape, "spread_gap" | "spread_gap_rel">): number => (typeof s.spread_gap_rel === "number" && Number.isFinite(s.spread_gap_rel) ? s.spread_gap_rel : s.spread_gap);
+
+/** The line above the contenders table: the typical spread gap is small and moves from event to event, so it is not read as a lean; labels are relative to it. */
+export function spreadLeanNote(median: number | null, centered: boolean): string | null {
+  if (median === null || !Number.isFinite(median)) return null;
+  const lead = `The typical spread gap across these players is small and moves from week to week (${signed(median)} strokes a round this week), so it is not read as a lean toward wins or toward top 20 and make cut.`;
+  return centered ? `${lead} Steadier and more boom-or-bust labels are relative to this week's contenders.` : lead;
+}
 type Row = { player: ExPlayer; shape: Shape };
 
 const SHAPE_P_LO = 0.002;
@@ -742,7 +754,7 @@ const WEEK_PARTS: Array<{ key: string; label: string; match: (k: string) => bool
 ];
 
 /** Bet-by-bet comparison, the pattern sentence and the additive split of the skill gap for one player (week documents with sportsbook chances only). */
-export function playerShape(p: ExPlayer, map: ShapeMap, markets: readonly Market[] = MARKETS): Shape | null {
+export function playerShape(p: ExPlayer, map: ShapeMap, markets: readonly Market[] = MARKETS, center: number | null = null): Shape | null {
   const skill = effectiveSkill(p);
   if (skill === null || typeof p.sd !== "number") return null;
   const pm: Partial<Record<Market, number>> = {}, pk: Partial<Record<Market, number>> = {};
@@ -773,10 +785,11 @@ export function playerShape(p: ExPlayer, map: ShapeMap, markets: readonly Market
   else if (!lower.length) pattern = higher.length === avail.length ? "Higher across the board" : `Higher on ${words(higher)}, in line on ${words(rest)}`;
   else if (!higher.length) pattern = lower.length === avail.length ? "Lower across the board" : `Lower on ${words(lower)}, in line on ${words(rest)}`;
   else pattern = `Higher on ${words(higher)}, lower on ${words(lower)}`;
-  const sk = Math.abs(skillGap) >= SKILL_MIN, sp = Math.abs(spreadGap) >= SPREAD_MIN;
+  const relGap = center === null ? spreadGap : spreadGap - center; // the gap the wording reads
+  const sk = Math.abs(skillGap) >= SKILL_MIN, sp = Math.abs(relGap) >= SPREAD_MIN;
   const spreadMarket = p.sd - spreadGap;
-  const spreadTxt = `spread ${p.sd.toFixed(2)} vs the market's ${spreadMarket.toFixed(2)}`;
-  const steady = spreadGap < 0;
+  const spreadTxt = `spread ${p.sd.toFixed(2)} vs the market's ${spreadMarket.toFixed(2)}${center === null ? "" : `, ${signed(relGap)} against this week's contenders`}`;
+  const steady = relGap < 0;
   // the "so it shows more in ..." clause only when the bet-by-bet pattern itself shows it (win side weaker or stronger than the top 20 / make cut side)
   const rank = (m: Market) => (edges[m] ? { neg: -1, flat: 0, pos: 1 }[edges[m]!.tone] : null);
   const winSide = rank("win");
@@ -793,7 +806,7 @@ export function playerShape(p: ExPlayer, map: ShapeMap, markets: readonly Market
   // additive split of the skill gap: our week-specific adjustments, then whatever is left over (a different base rating)
   const parts: ShapePart[] = WEEK_PARTS.map((w) => ({ key: w.key, label: w.label, value: Object.entries(p.components).reduce((a, [k, v]) => a + (w.match(k) && typeof v === "number" ? v : 0), 0) }));
   return { skill_ours: skill, skill_market: skill - skillGap, skill_gap: skillGap, spread_ours: p.sd, spread_market: spreadMarket, spread_gap: spreadGap,
-    markets: edges, higher, lower, pattern, reason, sentence, parts, ...partsSplit(skillGap, parts) };
+    ...(center === null ? {} : { spread_gap_rel: relGap }), markets: edges, higher, lower, pattern, reason, sentence, parts, ...partsSplit(skillGap, parts) };
 }
 
 /** "Skill gap +0.10 a round: course fit and history +0.04 and weather +0.02 come from our week-specific adjustments; the other +0.04 is ..." (the pieces add up to the gap). */
@@ -874,11 +887,11 @@ export function differView(doc: ExplainDoc): { rows: Row[]; differ: Differ } {
     const rows = ex.ids.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p).flatMap((p) => { const s = shapeOf(p, map, markets); return s ? [{ player: p, shape: s }] : []; });
     const groups = Array.isArray(ex.groups) ? ex.groups.map((g) => ({ ...g, label: tagLabel(g.key) })) : differGroups(rows);
     return { rows, differ: { rule: typeof ex.rule === "string" ? ex.rule : CONTENDER_RULE, ids: ex.ids, groups, spread_gap_median: ex.spread_gap_median ?? median(rows.map((r) => r.shape.spread_gap)),
-      skill_gap_median: ex.skill_gap_median ?? median(rows.map((r) => r.shape.skill_gap)), source: "export" } };
+      skill_gap_median: ex.skill_gap_median ?? median(rows.map((r) => r.shape.skill_gap)), spread_gap_centered: ex.spread_gap_centered === true && rows.every((r) => typeof r.shape.spread_gap_rel === "number"), source: "export" } };
   }
   const rows = contenders(doc, map);
   return { rows, differ: { rule: CONTENDER_RULE, ids: rows.map((r) => r.player.id), groups: differGroups(rows), spread_gap_median: median(rows.map((r) => r.shape.spread_gap)),
-    skill_gap_median: median(rows.map((r) => r.shape.skill_gap)), source: "page" } };
+    skill_gap_median: median(rows.map((r) => r.shape.skill_gap)), spread_gap_centered: false, source: "page" } };
 }
 
 /** Text for one bet-type cell: how far our chance is from the no-margin sportsbook chance, and on make cut the miss-cut side when that is where the value is. */

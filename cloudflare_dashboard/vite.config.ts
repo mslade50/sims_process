@@ -3,7 +3,6 @@ import { defineConfig } from "vite";
 import { cloudflare, getLocalWorkerdCompatibilityDate } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
-import { SCHEDULE_CRONS } from "./worker/cron-rules";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -31,9 +30,8 @@ function excludePackagedGolfprice(): Plugin {
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
-const DASHBOARD_R2_BUCKET = "golf-model-dashboard-data";
 
-const { d1, r2 } = hostingConfig;
+const { d1 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -51,17 +49,7 @@ const localBindingConfig = {
         },
       ]
     : [],
-  r2_buckets: r2
-    ? [{ binding: r2, bucket_name: DASHBOARD_R2_BUCKET }]
-    : [],
-  // One trigger every 15 minutes; worker/cron.ts enqueues what the America/New_York schedule in worker/cron-rules.ts says is due (Monday settle, weekly moments, odds reprice, watch).
-  triggers: { crons: [...SCHEDULE_CRONS] },
-  // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). With both set, the Worker verifies the
-  // Cf-Access-Jwt-Assertion signature, audience, issuer and expiry before accepting override writes (worker/access.ts).
-  vars: {
-    ACCESS_TEAM_DOMAIN: "denaliassetmanagement.cloudflareaccess.com",
-    ACCESS_AUD: "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0",
-  },
+  // r2_buckets, triggers (cron) and vars live in wrangler.jsonc, the single source of truth shared with CI.
 };
 
 export default defineConfig(({ command }) => {

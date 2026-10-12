@@ -12,12 +12,13 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, Waterfall, type FinishSeries } from "./ExplainCharts";
 import {
   EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
-  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
+  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
   type Differ, type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
 import { WeatherThisRound } from "./ScoringView";
+import { CourseGeometry } from "./CourseGeometry";
 import { parseWeatherExtras } from "./scoring-rules";
 import { parseWeather } from "./weather-rules";
 import { LABELS } from "./labels";
@@ -176,6 +177,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
           <WeatherSnapshot doc={doc} />
         </Panel>
       </div>
+      <CourseGeometry eventUid={event.event_uid} eventName={doc.event.name ?? event.name} />
       <WeatherEffects doc={doc} />
       <WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} />
 
@@ -221,12 +223,9 @@ const MARKET_HELP: Record<Market, string> = {
 function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows: Array<{ player: ExPlayer; shape: Shape }>; differ: Differ; openPlayer: (id: number) => void }) {
   const [sort, setSort] = useState<"price" | "gap">("price");
   const markets = availableMarkets(doc).filter((m) => rows.some((r) => r.shape.markets[m]));
-  const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(b.shape.spread_gap) - Math.abs(a.shape.skill_gap) - Math.abs(a.shape.spread_gap));
+  const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(spreadGapOf(b.shape)) - Math.abs(a.shape.skill_gap) - Math.abs(spreadGapOf(a.shape)));
   const sg = differ.spread_gap_median;
-  const places = markets.includes("make_cut") ? "top 20 and make cut" : "top 10 and top 20";
-  const fieldLine = sg === null || Math.abs(sg) < 0.04 ? null : sg < 0
-    ? `Across these players the sportsbook prices in more boom-or-bust than we do (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour ${places} over outright wins.`
-    : `Across these players we see more boom-or-bust than the sportsbook does (typical spread gap ${signed(sg)} strokes a round), so where we disagree it tends to favour outright wins over ${places}.`;
+  const fieldLine = spreadLeanNote(sg, differ.spread_gap_centered === true);
   if (!rows.length) return <Panel title="Where we differ from the market" eyebrow="Players who matter"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
   return (
     <Panel title="Where we differ from the market" eyebrow="Players who matter" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>

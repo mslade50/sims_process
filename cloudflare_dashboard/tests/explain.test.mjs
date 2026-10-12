@@ -276,3 +276,35 @@ test("weather status follows the published flag and the field-wide shift, not on
   assert.deepEqual(venueClassLines({ venue_class: "desert", wind_slope: 0.199, m_v: 0.9, wind_prior_source: "own history" }).length, 2);
   assert.match(venueClassLines({ venue_class: "desert", wind_slope: 0.199, m_v: 0.9 })[1], /matters less here/);
 });
+
+test("spread label reads the gap relative to this week's contenders; older documents fall back to the raw gap", async () => {
+  const R = await import("../app/explain-rules.ts");
+  const map = R.shapeMap(week);
+  const markets = R.availableMarkets(week);
+  const p = week.players.find((q) => R.playerShape(q, map, markets)?.higher.length);
+  assert.ok(p, "fixture has a player with a bet-level difference");
+  const old = R.playerShape(p, map, markets);
+  assert.equal(old.spread_gap_rel, undefined, "no centre: old behaviour, no new field");
+  const g = old.spread_gap;
+  const flat = R.playerShape(p, map, markets, g);            // rel 0
+  const steady = R.playerShape(p, map, markets, g + 0.3);    // rel -0.3
+  const volatile = R.playerShape(p, map, markets, g - 0.3);  // rel +0.3
+  for (const k of ["skill_gap", "spread_gap", "spread_ours", "spread_market", "pattern", "base_gap"]) assert.deepEqual(flat[k], old[k], `${k} unchanged`);
+  assert.ok(Math.abs(flat.spread_gap_rel) < 1e-12 && Math.abs(steady.spread_gap_rel + 0.3) < 1e-12 && Math.abs(volatile.spread_gap_rel - 0.3) < 1e-12);
+  assert.ok(!/steadier|boom-or-bust/.test(flat.sentence));
+  assert.match(steady.sentence, /steadier.*[-−]0\.30 against this week's contenders/);
+  assert.match(volatile.sentence, /boom-or-bust.*\+0\.30 against this week's contenders/);
+  assert.equal(R.spreadGapOf(steady), steady.spread_gap_rel);
+  assert.equal(R.spreadGapOf(old), old.spread_gap);          // older document: fall back
+  // differ view: page-side documents are not centred; the exported flag is honoured only when every row carries spread_gap_rel
+  assert.equal(R.differView(week).differ.spread_gap_centered, false);
+  const exp = { ...week, differ: { rule: "r", ids: [p.id], groups: [], spread_gap_median: g, spread_gap_centered: true }, players: week.players.map((q) => (q.id === p.id ? { ...q, shape: steady } : q)) };
+  assert.equal(R.differView(exp).differ.spread_gap_centered, true);
+  const expOld = { ...exp, players: week.players.map((q) => (q.id === p.id ? { ...q, shape: old } : q)) };
+  assert.equal(R.differView(expOld).differ.spread_gap_centered, false);
+  // notes sentence: small, relative to this week's contenders, no "market generally implies" lean claim
+  const n = R.spreadLeanNote(-0.0849, true);
+  assert.match(n, /small/); assert.match(n, /relative to this week's contenders/); assert.ok(!/tends to favour/.test(n));
+  assert.ok(!/relative to this week/.test(R.spreadLeanNote(0.02, false)));
+  assert.equal(R.spreadLeanNote(null, true), null);
+});
