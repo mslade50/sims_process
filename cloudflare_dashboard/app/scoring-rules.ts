@@ -210,7 +210,7 @@ export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { r
   const tourModel = 'similar courses on tour';
   const tourDetail = fitBits ? ` The tour-wide comparison uses ${fitBits}.` : '';
   const venueObs = hist?.observations ?? (p ? null : doc.baseline.median_hole_observations);
-  if (venueObs === 0) rows.push({ label: "Hole difficulty", value: `No earlier rounds recorded on this course, so hole difficulty comes from ${tourModel}.`, detail: `With no earlier rounds recorded here, each hole's expected score is estimated from holes of similar par and yardage across the tour.${tourDetail}` });
+  if (venueObs === 0) rows.push({ label: "Hole difficulty", value: `No hole-by-hole history for this course, so hole difficulty comes from ${tourModel}.`, detail: `With no hole-by-hole history here, each hole's expected score is estimated from holes of similar par and yardage across the tour.${tourDetail}` });
   else if (venueObs != null && venueObs > 0) {
     const span = hist && yearSpan(hist.year_min, hist.year_max);
     rows.push({ label: "Hole difficulty", value: hist?.observations != null ? `Uses ${venueObs.toLocaleString("en-US")} holes played here${span ? ` (${span})` : ""}, blended with ${tourModel}.` : `Uses earlier rounds played here, blended with ${tourModel}.`, detail: `How hard each hole plays comes from the scores players actually made on this course, anchored by similar courses.${tourDetail}` });
@@ -236,7 +236,7 @@ export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { r
   const noHoles = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0;
   const lvl = p?.course_level ?? null;
   const warning = noHoles && lvl ? levelWords(lvl)
-    : noHoles ? "No earlier rounds are recorded on this course (neither hole-by-hole nor round scores), so course difficulty leans on similar courses and the earlier layout. Treat it as less certain than at a course with history."
+    : noHoles ? "No hole-by-hole history for this course, and this run did not take the course's overall difficulty from earlier round scores here, so it leans on similar courses and the earlier layout. Treat it as less certain than at a course with history."
     : p && p.layout.current_event_confirmed !== true ? "This year's hole layout is not confirmed, so course difficulty uses an earlier layout. Check it before relying on the number."
     : !p ? "This older run does not record where its course difficulty came from. The stored expectation has not been recalculated with a later release."
     : doc.confidence.reasons[0] ?? null;

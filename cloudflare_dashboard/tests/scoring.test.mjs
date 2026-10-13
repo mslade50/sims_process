@@ -182,21 +182,21 @@ test("no hole history but round-level venue history: the warning says the course
   fixture.baseline.course_provenance = { ...prov, venue_history: { observations: 0, editions: [] },
     course_level: { source: "venue round history (1 edition, 401 rounds)", expected_score: 70.88, general_fit_expected_score: 69.84, editions: ["euro:2025141:2025-10-16"], rounds: 401 } };
   const w = scoringEvidence(parseScoring(fixture)).warning;
-  assert.doesNotMatch(w, /no earlier rounds are recorded/i);
+  assert.doesNotMatch(w, /did not take/i);
   assert.match(w, /401 rounds from 1 earlier edition/);
   assert.match(w, /1\.04 strokes per round harder/);
 });
 test("zero history outranks layout warning and malformed optional metadata is empty-safe", () => {
   const fixture = scoringFixture();
   fixture.baseline.median_hole_observations = 0;
-  assert.match(scoringEvidence(parseScoring(fixture)).warning, /no earlier rounds are recorded/i);
+  assert.match(scoringEvidence(parseScoring(fixture)).warning, /no hole-by-hole history.*did not take the course.s overall difficulty from earlier round scores/i);
   fixture.baseline.course_provenance = "broken";
   fixture.round_update = [];
   const parsed = parseScoring(fixture);
   assert.ok(parsed);
   assert.equal(parsed.baseline.course_provenance, null);
   assert.equal(parsed.round_update, null);
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /no earlier rounds are recorded/i);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /no hole-by-hole history for this course/i);
 });
 test("rendered field/player distributions and data failures retain explicit meanings", () => {
   const fixture = scoringFixture();
