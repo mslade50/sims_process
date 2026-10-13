@@ -44,7 +44,7 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Week",
     items: [
-      { key: "this-week", href: "/this-week", label: "This week", description: "Course, model vs market, who we favour and why" },
+      { key: "this-week", href: "/this-week", label: "This week", description: "Course, model vs market, who we favor and why" },
       { key: "weather-effects", href: "/weather-effects", label: "Weather", description: "How the weather changes scoring and who it helps or hurts" },
       {
         key: "weekly-players", href: "/weekly-players", label: "Players", description: "Everyone in the field, or one golfer's profile",

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { decideFallback, type FallbackDecision } from "./shell-rules";
+import { americanizeDeep } from "./spelling";
 
 type LoadState<T> = { data: T | null; loading: boolean; error: string | null };
 
@@ -65,7 +66,8 @@ export function useDashboardData<T>(name: string | null): LoadState<T> {
       throw new Error(packaged.decision.action === "surface" ? packaged.decision.message : "Data request failed (no response)");
     };
     readJson()
-      .then((payload) => {
+      .then((raw) => {
+        const payload = americanizeDeep(raw);   // published prose in American spelling (keys and one-word codes untouched)
         cache.set(name, payload);
         if (active) setState({ data: payload, loading: false, error: null });
       })

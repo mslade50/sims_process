@@ -12,7 +12,7 @@ export const LABELS = {
   vsPgaAvg: { short: "vs PGA avg", long: "Strokes per round better (+) or worse (-) than the average PGA Tour round of 2017–2025, judged from recent form in rounds 1 and 2. Players with few rounds are pulled toward the typical level of their main tour, so a small hot streak is not overstated", unit: "strokes per round" },
   /** Saved event model skill re-expressed on the tour scale: mu + field_offset (F02 field mean). */
   thisWeekPga: { short: "This week (PGA scale)", long: "The model's skill estimate for this week on the PGA Tour scale: its saved skill number plus how this field compares with a normal PGA field, including course location and weather", unit: "strokes per round" },
-  /** Saved event model skill centred on the active field (mean exactly 0). */
+  /** Saved event model skill centered on the active field (mean exactly 0). */
   vsField: { short: "vs field", long: "The model's skill estimate for this week minus the average of this week's field; positive means stronger than the field's average", unit: "strokes per round" },
   /** Method-only name for the unshrunk value now that the headline is shrunk. */
   unshrunkForm: { short: "unshrunk form", long: "The same recent-form figure before it is pulled toward the player's main-tour level", unit: "strokes per round" },

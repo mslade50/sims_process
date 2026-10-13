@@ -107,7 +107,7 @@ export type JobStatus = {
 export const specFor = (type: unknown): JobSpec | undefined => JOB_TYPES.find((spec) => spec.type === type);
 
 /** Plain words for a job state. */
-const STATE_LABELS: Record<string, string> = { queued: "Waiting", claimed: "Starting", running: "Running", done: "Done", failed: "Failed", cancelled: "Cancelled", expired: "Expired" };
+const STATE_LABELS: Record<string, string> = { queued: "Waiting", claimed: "Starting", running: "Running", done: "Done", failed: "Failed", cancelled: "Canceled", expired: "Expired" };
 export const stateLabel = (state: string): string => STATE_LABELS[state] ?? state;
 
 /** Who asked for a job: the automatic schedule, or the person's email. */
@@ -214,9 +214,9 @@ export function rateLimitProblem(type: string, jobs: JobRecord[], statuses: Reco
 /** Cancel is allowed only while the runner has not claimed the job. */
 export function cancelProblem(job: JobRecord | undefined, status: JobStatus | null | undefined): string | null {
   if (!job) return "no such job";
-  if (job.cancelled_at) return "job is already cancelled";
+  if (job.cancelled_at) return "job is already canceled";
   const state = effectiveState(job, status);
-  if (state !== "queued") return `job is already ${state}; only a queued job can be cancelled`;
+  if (state !== "queued") return `job is already ${state}; only a queued job can be canceled`;
   return null;
 }
 

@@ -183,7 +183,7 @@ export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, s
   );
 }
 
-/* ------------------------------------------------------------------ bias chart (player types we favour / fade) */
+/* ------------------------------------------------------------------ bias chart (player types we favor / fade) */
 export function BiasChart({ rows, onPick, active }: { rows: BiasRow[]; onPick?: (r: BiasRow) => void; active?: string | null }) {
   if (!rows.length) return <p className="ex-muted">No player type stands out from the rest of the field in this run.</p>;
   const max = Math.max(0.1, ...rows.map((r) => Math.abs(r.edge_sg ?? 0)));
@@ -276,23 +276,34 @@ export function LegendGroups({ legend }: { legend: Record<string, LegendEntry> }
 /* ------------------------------------------------------------------ shape: our chance vs the sportsbook's, bet by bet, for one player */
 const SHAPE_SHORT: Record<Market, string> = { win: "W", top_5: "5", top_10: "10", top_20: "20", make_cut: "MC" };
 const SHAPE_NAME: Record<Market, string> = { win: "win", top_5: "top 5", top_10: "top 10", top_20: "top 20", make_cut: "make cut" };
-/** Five small bars, one per bet type: up = our chance is higher than the sportsbook's (no-margin) chance, down = lower; grey = within 5% (in line). Capped at 50%. */
-export function ShapeBars({ shape, markets, cap = 0.5 }: { shape: Shape; markets: readonly Market[]; cap?: number }) {
+/** Bar scale for a set of shapes: the 75th percentile of the gaps shown, between 6% and 50%. Shared by a table so rows compare. */
+export function shapeCap(shapes: readonly Shape[], markets: readonly Market[]): number {
+  const v = shapes.flatMap((s) => markets.map((m) => s.markets[m]?.rel)).filter((x): x is number => typeof x === "number" && Number.isFinite(x)).map(Math.abs).sort((a, b) => a - b);
+  if (!v.length) return 0.5;
+  return Math.min(0.5, Math.max(0.06, v[Math.min(v.length - 1, Math.floor(v.length * 0.75))]));
+}
+/** Five small bars, one per bet type: up = our chance is higher than the sportsbook's (no-margin) chance, down = lower; gray = within 5% (in line).
+ *  `cap` is the gap that fills a bar (larger gaps are clipped and drawn with a notch); pass shapeCap(...) so the bars use the room. Square-root scale:
+ *  small gaps stay visible next to big ones. */
+export function ShapeBars({ shape, markets, cap }: { shape: Shape; markets: readonly Market[]; cap?: number }) {
   const ms = markets.filter((m) => shape.markets[m]);
-  const w = 22, h = 34, mid = 15;
+  const w = 22, h = 44, mid = 20;
+  const c = cap ?? shapeCap([shape], ms);
   const label = ms.map((m) => `${SHAPE_NAME[m]} ${edgeCellText(shape.markets[m])}`).join(", ");
   return (
     <svg className="ex-shape" viewBox={`0 0 ${ms.length * w} ${h + 10}`} width={ms.length * w} height={h + 10} role="img" aria-label={`Our chance against the sportsbook's: ${label}`}>
       <line x1="0" x2={ms.length * w} y1={mid} y2={mid} stroke="var(--line-strong)" strokeWidth="1" />
       {ms.map((m, i) => {
         const e = shape.markets[m]!;
-        const v = Math.max(-cap, Math.min(cap, e.rel));
-        const len = Math.max(1.5, (Math.abs(v) / cap) * (mid - 1));
+        const v = Math.max(-c, Math.min(c, e.rel));
+        const len = Math.max(e.tone === "flat" ? 1.5 : 3, Math.sqrt(Math.abs(v) / c) * (mid - 1));
+        const clipped = Math.abs(e.rel) > c;
         const cls = e.tone === "pos" ? "pos" : e.tone === "neg" ? "neg" : "flat";
         return (
           <g key={m}>
             <title>{`${SHAPE_NAME[m]}: ours ${pct(e.model)} vs sportsbook ${pct(e.market)} (${edgeCellText(e)})`}</title>
             <rect className={`ex-shape-bar ${cls}`} x={i * w + 5} width={w - 10} y={v >= 0 ? mid - len : mid} height={len} rx="2" />
+            {clipped && <line className="ex-shape-clip" x1={i * w + 4} x2={i * w + w - 4} y1={v >= 0 ? mid - len + 2.5 : mid + len - 2.5} y2={v >= 0 ? mid - len + 2.5 : mid + len - 2.5} />}
             <text x={i * w + w / 2} y={h + 8} textAnchor="middle" className="ex-shape-lab">{SHAPE_SHORT[m]}</text>
           </g>
         );

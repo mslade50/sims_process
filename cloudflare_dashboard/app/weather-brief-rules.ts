@@ -127,19 +127,19 @@ export function helpWords(v: number | null, d = 2): string {
   if (Math.abs(v) < TINY) return "no real effect";
   return `${v < 0 ? "helps" : "hurts"} by ${fix(v, d)} ${unit(v, d)}`;
 }
-/** Wave split is PM minus AM expected strokes for the same player: positive means the afternoon wave plays harder, so the morning wave is favoured. */
+/** Wave split is PM minus AM expected strokes for the same player: positive means the afternoon wave plays harder, so the morning wave is favored. */
 export function waveWords(v: number | null, d = 2): string {
   if (v === null) return "no tee sheet yet";
   if (Math.abs(v) < 0.02) return "the waves are about even";
-  return `${v > 0 ? "Morning" : "Afternoon"} wave favoured by ${fix(v, d)} ${unit(v, d)}`;
+  return `${v > 0 ? "Morning" : "Afternoon"} wave favored by ${fix(v, d)} ${unit(v, d)}`;
 }
-/** Which wave is favoured, as a tone for colouring: "am", "pm" or "even". */
+/** Which wave is favored, as a tone for coloring: "am", "pm" or "even". */
 export const waveSide = (v: number | null): "am" | "pm" | "even" | "none" => (v === null ? "none" : Math.abs(v) < 0.02 ? "even" : v > 0 ? "am" : "pm");
 export function spreadWords(m: number | null): string {
   if (m === null) return "not available";
   const pct = (m - 1) * 100;
   if (Math.abs(pct) < 0.3) return "scores spread out as usual";
-  return pct > 0 ? `scores spread wider (${pct.toFixed(1)}% more), which helps long shots` : `scores bunch up (${Math.abs(pct).toFixed(1)}% less spread), which helps the favourites`;
+  return pct > 0 ? `scores spread wider (${pct.toFixed(1)}% more), which helps long shots` : `scores bunch up (${Math.abs(pct).toFixed(1)}% less spread), which helps the favorites`;
 }
 /** Probability change in points, with a direction word. */
 export function pointsWords(p: number | null): string {

@@ -45,7 +45,7 @@ test("100 and 200-round SMAs use exact trailing windows; default shown line is t
  assert.equal(recentVsLonger(p[209],[50]),null);assert.equal(recentVsLonger(p[209],[100,200]),null);
  assert.deepEqual(recentVsLonger(p[209],[50,20]),{window:20,diff:15});
 });
-test("majors are flagged from the event and coloured gold; other rounds use the Total diverging scale",()=>{
+test("majors are flagged from the event and colored gold; other rounds use the Total diverging scale",()=>{
  const rd=(round,sg)=>({round,date:`2026-01-0${round}`,sg_total:sg,sg_basis:"source_adjusted"});
  const p=performanceSeries([{id:"m",major:true,round_data:[rd(1,0)]},{id:"n",round_data:[rd(1,0)]}],0);
  assert.deepEqual(p.map(v=>v.major),[true,false]);

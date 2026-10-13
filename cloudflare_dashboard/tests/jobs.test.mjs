@@ -63,7 +63,7 @@ test("rate limit: one non-terminal job per type, unless older than 6 h", () => {
   assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "running" } }, NOW), /already running/);
   assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "claimed" } }, NOW), /already starting/);
   for (const state of ["done", "failed", "expired", "cancelled"]) assert.equal(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state } }, NOW), null, state);
-  assert.equal(rateLimitProblem("tuesday", [job({ cancelled_at: "2026-10-05T13:30:00Z" })], none, NOW), null, "cancelled in the queue is terminal");
+  assert.equal(rateLimitProblem("tuesday", [job({ cancelled_at: "2026-10-05T13:30:00Z" })], none, NOW), null, "canceled in the queue is terminal");
   assert.equal(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T07:59:00Z" })], none, NOW), null, "older than 6 h no longer blocks");
   assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already waiting/);
   assert.equal(rateLimitProblem("tuesday", [], none, NOW), null);
@@ -72,7 +72,7 @@ test("rate limit: one non-terminal job per type, unless older than 6 h", () => {
 test("cancel applies only to a job the runner has not claimed", () => {
   assert.equal(cancelProblem(job(), null), null);
   assert.match(cancelProblem(undefined, null), /no such job/);
-  assert.match(cancelProblem(job({ cancelled_at: "2026-10-05T13:30:00Z" }), null), /already cancelled/);
+  assert.match(cancelProblem(job({ cancelled_at: "2026-10-05T13:30:00Z" }), null), /already canceled/);
   assert.match(cancelProblem(job(), { id: "x", state: "claimed" }), /already claimed/);
   assert.match(cancelProblem(job(), { id: "x", state: "done" }), /already done/);
   assert.equal(effectiveState(job({ cancelled_at: "2026-10-05T13:30:00Z" }), null), "cancelled");
@@ -235,7 +235,7 @@ test("POST /api/jobs/<id>/cancel marks a queued job; claimed or unknown jobs are
   assert.equal(queue.jobs[0].cancelled_by, "owner@example.com");
   assert.ok(queue.jobs[0].cancelled_at);
   assert.equal(queue.jobs[1].cancelled_at, undefined);
-  assert.equal((await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} })).status, 409, "already cancelled");
+  assert.equal((await call(worker, bucket, `/api/jobs/${a.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} })).status, 409, "already canceled");
   assert.equal((await call(worker, bucket, `/api/jobs/${b.id}/cancel`, { method: "POST", headers: signedHeaders(), body: {} })).status, 409, "claimed");
   assert.equal((await call(worker, bucket, "/api/jobs/j-20261005T110000-cccccc/cancel", { method: "POST", headers: signedHeaders(), body: {} })).status, 404);
 });
@@ -284,7 +284,7 @@ test("waitingFor: only queued jobs addressed to a machine; says why", () => {
   assert.equal(waitingFor(job({ target_machine: "mckinley_home" }), "running", beats, NOW), null);
 });
 
-test("a queued job addressed to an offline machine can be cancelled and is not blocked by the target", () => {
+test("a queued job addressed to an offline machine can be canceled and is not blocked by the target", () => {
   const j = job({ target_machine: "mckinley_home" });
   assert.equal(cancelProblem(j, null), null);
   assert.equal(effectiveState({ ...j, cancelled_at: "2026-10-05T13:30:00Z" }, null), "cancelled");

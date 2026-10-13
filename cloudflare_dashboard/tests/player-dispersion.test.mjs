@@ -123,7 +123,7 @@ const spec = (kind) => ({
     stats: {dog: {L: {all: {n: 5000, n_players: 300, lat: {mean: -1, sd: 18, q10: -25, q90: 21, player_sd_p50: 17.5}, fwd: {mean: 290, sd: 20, q10: 260, q90: 320}},
       bands: {'2': {n: 900, n_players: 200, lat: {mean: -2, sd: 18, q10: -26, q90: 20, player_sd_p50: 17}}, '3': {n: 900, n_players: 200, lat: {mean: 0, sd: 18, q10: -24, q90: 22}}}}}, wat: {'1': {all: {n: 900, n_players: 100, lat: {mean: 1.5, sd: 18, q10: -20, q90: 24}}, bands: {}}}}},
   app: {dims: [
-    {key: 'pin', label: 'Pin side', field: 'p', buckets: [{key: 'L', label: 'Left', codes: ['0', '3', '6']}, {key: 'C', label: 'Centre', codes: ['1', '4', '7']}, {key: 'R', label: 'Right', codes: ['2', '5', '8']}]},
+    {key: 'pin', label: 'Pin side', field: 'p', buckets: [{key: 'L', label: 'Left', codes: ['0', '3', '6']}, {key: 'C', label: 'Center', codes: ['1', '4', '7']}, {key: 'R', label: 'Right', codes: ['2', '5', '8']}]},
     {key: 'dep', label: 'Pin depth', field: 'p', buckets: [{key: 'F', label: 'Front', codes: ['0', '1', '2']}, {key: 'B', label: 'Back', codes: ['6', '7', '8']}]}],
     stats: {pin: {L: {all: {n: 5000, n_players: 300, lat: {mean: 3.4, sd: 9, q10: -8, q90: 15}, along: {mean: -7, sd: 10, q10: -20, q90: 6}}, bands: {'1': {n: 800, n_players: 100, lat: {mean: 3.0, sd: 8, q10: -7, q90: 13}, along: {mean: -6, sd: 9, q10: -18, q90: 5}}}}},
       dep: {B: {all: {n: 4000, n_players: 300, lat: {mean: 0, sd: 9, q10: -10, q90: 10}, along: {mean: -9, sd: 10, q10: -21, q90: 4}}, bands: {}}}}},

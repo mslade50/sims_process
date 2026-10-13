@@ -110,7 +110,7 @@ export function matchingInputRun(event:{event_uid:string;explain_run?:string|nul
   return row && row.as_of ? {...row,as_of:row.as_of,event_uid:event.event_uid} : null;
 }
 
-/** Saved model skill on the PGA scale (challenger.mu_tour = mu + field_offset) for one player, read from a checkpoint-matched model_inputs document. Live checkpoints use mu_live + the pre-event field offset (no active-field recompute yet); the pre-event value is kept. Null when the document lacks the needed numbers, so callers fall back to the field-centred display. */
+/** Saved model skill on the PGA scale (challenger.mu_tour = mu + field_offset) for one player, read from a checkpoint-matched model_inputs document. Live checkpoints use mu_live + the pre-event field offset (no active-field recompute yet); the pre-event value is kept. Null when the document lacks the needed numbers, so callers fall back to the field-centered display. */
 export type PgaSkill = {value:number;offset:number|null;live:boolean;preEvent:number|null};
 export function savedPgaSkill(inputs:unknown,id:number|null):PgaSkill|null {
   const d=record(inputs);if(id===null || !Array.isArray(d.players)) return null;

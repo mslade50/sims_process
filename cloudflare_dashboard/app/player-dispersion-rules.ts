@@ -3,13 +3,13 @@
  * per-band width statistics and the PGA comparison. Pure functions only; the component draws what these return.
  *
  * Payload (golfprice/player_dispersion.py): integers are half-yards. Lateral is right-positive. Tee shots are measured against the
- * estimated fairway centre line (tee to the median landing spot of the field's fairway-finding drives on that hole and day);
+ * estimated fairway center line (tee to the median landing spot of the field's fairway-finding drives on that hole and day);
  * approach shots against the straight line from the ball to the pin. One-character lies: F fairway, R rough, S sand, G green,
  * T tee, X other, ? unknown (rounds before the 2024 lie convention).
  *
  * v2 ("situational"): tee lateral is measured from the field's dogleg-aware landing line, and each shot may carry one-character
  * situation codes (tee d dogleg L/S/R/x, w water/OB, b bunkers, t trees: 0 none, 1 left only, 2 right only, 3 both; approach p pin zone
- * 0..8 = left/centre/right + 3 * front/middle/back, h hex bits of water/OB near the green: 1 left, 2 right, 4 short, 8 behind; ? unknown).
+ * 0..8 = left/center/right + 3 * front/middle/back, h hex bits of water/OB near the green: 1 left, 2 right, 4 short, 8 behind; ? unknown).
  * The reference names the buckets (dimension -> codes) and holds the PGA mean and spread for each, overall and per yardage band.
  * Everything situational is ESTIMATED from published shot coordinates; there is no official course geometry.
  */
@@ -341,7 +341,7 @@ export const SIT_HELP: Record<string, string> = {
   wat: "Water or out of bounds on a side: at least 1% of the field's drives on that hole have finished in water or out of bounds on that side of the landing line. Estimated from where shots ended, not from a course map.",
   bun: "Bunkers on a side: at least 5% of the field's drives on that hole finish in a bunker on that side. Bunkers sit where the field misses, so this describes the hole, not a golfer steering away from them.",
   tre: "Trees on a side: at least 2% of drives finish in trees on that side. The data provider only labels trees from 2024, so holes without 2024 or later rounds are left out.",
-  pin: "Pin side: the green's outline is estimated from where shots ended and putts began on that hole across tournaments, and each day's pin is placed in its left, centre or right third as the golfer faces the green. The outline is an estimate, not a surveyed green.",
+  pin: "Pin side: the green's outline is estimated from where shots ended and putts began on that hole across tournaments, and each day's pin is placed in its left, center or right third as the golfer faces the green. The outline is an estimate, not a surveyed green.",
   dep: "Pin depth: the front, middle or back third of the same estimated green (front is the side the golfer approaches from).",
   wtr: "Water or out of bounds near the green: at least 0.7% of approaches on that hole finish in water or out of bounds within 30 yards of the estimated green, on that side (short, left, right or behind).",
 };

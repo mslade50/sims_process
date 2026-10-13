@@ -39,14 +39,14 @@ test("wording never shows a raw sign: helps/hurts, easier/harder, morning/aftern
   assert.equal(helpWords(-0.12), "helps by 0.12 strokes");
   assert.equal(helpWords(0.12), "hurts by 0.12 strokes");
   assert.equal(helpWords(null), "not available");
-  assert.equal(waveWords(0.45), "Morning wave favoured by 0.45 strokes");
-  assert.equal(waveWords(-0.45), "Afternoon wave favoured by 0.45 strokes");
+  assert.equal(waveWords(0.45), "Morning wave favored by 0.45 strokes");
+  assert.equal(waveWords(-0.45), "Afternoon wave favored by 0.45 strokes");
   assert.equal(waveWords(null), "no tee sheet yet");
   assert.equal(waveSide(0.45), "am");
   assert.equal(waveSide(-0.3), "pm");
   assert.equal(waveSide(0.01), "even");
   assert.match(spreadWords(1.02), /wider.*long shots/);
-  assert.match(spreadWords(0.98), /bunch up.*favourites/);
+  assert.match(spreadWords(0.98), /bunch up.*favorites/);
   assert.equal(pointsWords(0.0025), "up 0.25 pts");
   assert.equal(pointsWords(-0.031), "down 3.1 pts");
   assert.equal(tone(-0.2), "good");
@@ -99,7 +99,7 @@ test("what-if: neutral sliders reproduce the base; wind and temperature interpol
   assert.ok(model.evaluate({ ...NEUTRAL_SLIDERS, wind: 10 }).rounds[1].field > base.rounds[1].field, "more wind makes everyone's scoring harder");
   assert.ok(Math.abs(model.evaluate({ ...NEUTRAL_SLIDERS, wind: 40 }).rounds[0].field - w10.rounds[0].field) < 1e-9, "held at the last published point");
 
-  // PM-only wind widens the wave split in favour of the morning wave.
+  // PM-only wind widens the wave split in favor of the morning wave.
   assert.ok(model.evaluate({ ...NEUTRAL_SLIDERS, pm: 10 }).rounds[0].wave > base.rounds[0].wave);
   // Wet is a toggle.
   const wet = model.evaluate({ ...NEUTRAL_SLIDERS, wet: true });
@@ -160,7 +160,7 @@ test("the page renders the brief top to bottom with plain words", () => {
   const html = renderView("WeatherEffectsView.tsx", "WeatherEffectsView", { data: { "golfprice/index.json": index, [KEY]: fixture }, pathname: "/weather-effects" });
   for (const text of ["Weather headline", "This course and weather", "More wind-sensitive than average", "1.3x the tour average", "Round by round", "Who it helps and hurts", "What if the forecast changes", "How it has moved this week", "What the words mean", "Field effect", "Wave split", "Tee times not out", "model v2.7", "Wind, all day", "Extra afternoon wind", "Wet weather", "Search player"]) assert.ok(html.includes(text), text);
   assert.ok(html.includes("by skill only"), "top-30 filter");
-  assert.match(html, /Morning wave favoured by|Afternoon wave favoured by/);
+  assert.match(html, /Morning wave favored by|Afternoon wave favored by/);
   assert.match(html, /helps by|hurts by/);
   assert.match(html, /easier by|harder by/);
   assert.doesNotMatch(html, /\[object Object\]|undefined|NaN|challenger/);

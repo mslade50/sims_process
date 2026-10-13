@@ -167,7 +167,7 @@ export function RunView() {
 
   const cancel = async (id: string) => {
     const result = await api<unknown>(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
-    setNotice(result.ok ? { tone: "ok", text: "Cancelled." } : { tone: "error", text: errorText(result) });
+    setNotice(result.ok ? { tone: "ok", text: "Canceled." } : { tone: "error", text: errorText(result) });
     void reload();
   };
 

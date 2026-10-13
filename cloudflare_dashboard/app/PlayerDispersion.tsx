@@ -34,7 +34,7 @@ function TeeChart({ points, stats, reference, bands, sit }: { points: Point[]; s
   const yStep = niceStep(yHi - yLo, 7), xStep = xMax > 40 ? 20 : 10;
   const guide = useMemo(() => fairwayGuide(reference, bands, yLo, yHi), [reference, bands, yLo, yHi]);
   const exaggeration = (((W - M.l - M.r) / (2 * xMax)) / ((H - M.t - M.b) / (yHi - yLo)));
-  const label = "Chart of tee shots on one straightened fairway, seen from above. The vertical line is the middle of the fairway, following the bend on doglegs, and the golfer hits towards the top. Height is distance from the tee and the sideways position is yards left or right of the middle. A shaded strip shows how wide fairways typically are. When a situation is chosen, its shots are highlighted and an arrow runs from the PGA average to this golfer's average. The table next to the chart has the numbers.";
+  const label = "Chart of tee shots on one straightened fairway, seen from above. The vertical line is the middle of the fairway, following the bend on doglegs, and the golfer hits toward the top. Height is distance from the tee and the sideways position is yards left or right of the middle. A shaded strip shows how wide fairways typically are. When a situation is chosen, its shots are highlighted and an arrow runs from the PGA average to this golfer's average. The table next to the chart has the numbers.";
   return (
     <svg className="dsp-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
       <rect x={M.l} y={M.t} width={W - M.l - M.r} height={H - M.t - M.b} className="dsp-ground" />
@@ -52,7 +52,7 @@ function TeeChart({ points, stats, reference, bands, sit }: { points: Point[]; s
         </g>
       ))}
       <line x1={sx(0)} x2={sx(0)} y1={M.t} y2={H - M.b} className="dsp-centre" />
-      <text x={sx(0)} y={H - M.b + 24} textAnchor="middle" className="dsp-axis-title">Fairway centre · yards left / right</text>
+      <text x={sx(0)} y={H - M.b + 24} textAnchor="middle" className="dsp-axis-title">Fairway center · yards left / right</text>
       <text transform={`translate(9 ${(M.t + H - M.b) / 2}) rotate(-90)`} textAnchor="middle" className="dsp-axis-title">Yards from the tee</text>
       <text x={M.l + 5} y={M.t + 11} className="dsp-note">▲ toward the green</text>
       {[false, true].map((pass) => points.map((p, i) => {
@@ -204,7 +204,7 @@ function BandTable({ kind, stats, bands, reference, lie }: { kind: Kind; stats: 
   return (
     <div className="dsp-table-wrap">
       <table className="dsp-table">
-        <caption>Side-to-side spread by {kind === "tee" ? "distance travelled" : "starting yardage"}. “Middle 80%” is the width that holds the central 80% of shots.</caption>
+        <caption>Side-to-side spread by {kind === "tee" ? "distance traveled" : "starting yardage"}. “Middle 80%” is the width that holds the central 80% of shots.</caption>
         <thead>
           <tr><th scope="col">{kind === "tee" ? "Distance" : "Yardage"}</th><th scope="col">Shots</th><th scope="col">Middle 80%</th><th scope="col">{kind === "tee" ? "Fairway" : "Green"}</th></tr>
         </thead>
@@ -229,7 +229,7 @@ function BandTable({ kind, stats, bands, reference, lie }: { kind: Kind; stats: 
 }
 
 function leanText(s: BandStat, kind: Kind): string {
-  const side = Math.abs(s.meanLat) < 0.75 ? "centred side to side" : `leans ${laterality(s.meanLat)}`;
+  const side = Math.abs(s.meanLat) < 0.75 ? "centered side to side" : `leans ${laterality(s.meanLat)}`;
   if (kind === "tee") return side;
   const along = Math.abs(s.meanAlong) < 1 ? "" : `, ${Math.abs(s.meanAlong).toFixed(0)} yd ${s.meanAlong < 0 ? "short" : "long"} on average`;
   return side + along;
@@ -345,14 +345,14 @@ export function PlayerDispersion({ dgId, name, deep, filters }: { dgId: number |
               <figcaption>
                 {kind === "tee" ? (
                   <>
-                    <span><i className="dsp-key-bar" />Coloured bar: this golfer&apos;s middle 80% of shots</span>
-                    <span><i className="dsp-key-pga" />Grey bar: typical PGA Tour middle 80%</span>
+                    <span><i className="dsp-key-bar" />Colored bar: this golfer&apos;s middle 80% of shots</span>
+                    <span><i className="dsp-key-pga" />Gray bar: typical PGA Tour middle 80%</span>
                     <span><i className="dsp-key-fw" />Shaded strip: typical fairway width</span>
                     {sit && <span><i className="dsp-key-arrow" />Hollow dot to filled dot: PGA average to this golfer, in the chosen situation</span>}
                   </>
                 ) : (
                   <>
-                    <span><i className="dsp-key-ring" />Coloured ring: half the shots finished inside it</span>
+                    <span><i className="dsp-key-ring" />Colored ring: half the shots finished inside it</span>
                     <span><i className="dsp-key-fw" />Green shape: stylised {GREEN_HALF_WIDTH * 2} by {GREEN_HALF_DEPTH * 2} yd green, for scale</span>
                     {sit && <span><i className="dsp-key-arrow" />Hollow dot to filled dot: PGA average finish to this golfer, in the chosen situation</span>}
                   </>
@@ -366,12 +366,12 @@ export function PlayerDispersion({ dgId, name, deep, filters }: { dgId: number |
       <details className="pp-details">
         <summary>How to read this, and what it cannot tell you</summary>
         {kind === "tee" ? (
-          <p>Every dot is one tee shot on a par 4 or 5. All holes are straightened onto one fairway: the vertical line is the estimated middle of the fairway, the golfer hits towards the top, height is how far the shot travelled, and the sideways position is how far left or right of the middle it finished. The middle is the field&apos;s landing line: a smooth curve through where that day&apos;s fairway-finding drives landed at each distance on that hole, so on a dogleg it follows the bend instead of a straight line from the tee. The shaded strip is how far from the middle the field&apos;s fairway-finding drives finished (2nd to 98th percentile), a proxy for fairway width rather than a measured one. This is not the target the golfer aimed at.</p>
+          <p>Every dot is one tee shot on a par 4 or 5. All holes are straightened onto one fairway: the vertical line is the estimated middle of the fairway, the golfer hits toward the top, height is how far the shot traveled, and the sideways position is how far left or right of the middle it finished. The middle is the field&apos;s landing line: a smooth curve through where that day&apos;s fairway-finding drives landed at each distance on that hole, so on a dogleg it follows the bend instead of a straight line from the tee. The shaded strip is how far from the middle the field&apos;s fairway-finding drives finished (2nd to 98th percentile), a proxy for fairway width rather than a measured one. This is not the target the golfer aimed at.</p>
         ) : (
           <p>Every dot is one approach (including par-3 tee shots, 50 to 300 yards out), seen from above with the pin in the middle. Up is long (past the pin), down is short, and left and right are as the golfer faced the flag. Rings are distances from the pin, and the green outline is only a rough size guide: real greens differ in shape and size. Golfers often aim away from the pin, so this shows where shots finished relative to the flag, not ability alone.</p>
         )}
         {dims.length > 0 && <p>Situations (dogleg, water, bunkers, trees, pin position) are estimates built from where shots were hit, ended and putted from; no official course or green maps are published. They are only worth reading when the shot count is shown to be large enough, and bunkers and water mostly describe the hole, not a golfer avoiding them. Water and bunker sides are where balls have ended, so they partly reflect where the field misses.</p>}
-        <p>The grey bars and PGA figures use every PGA Tour golfer&apos;s shots over the same period; the comparison words compare this golfer&apos;s side-to-side spread with the typical PGA golfer at the same distances. Greens and fairways hit are counted only for rounds from 2024, when the data provider&apos;s ground-type labels settled. DP World Tour rounds are not included.</p>
+        <p>The gray bars and PGA figures use every PGA Tour golfer&apos;s shots over the same period; the comparison words compare this golfer&apos;s side-to-side spread with the typical PGA golfer at the same distances. Greens and fairways hit are counted only for rounds from 2024, when the data provider&apos;s ground-type labels settled. DP World Tour rounds are not included.</p>
       </details>
     </Panel>
   );

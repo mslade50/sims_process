@@ -213,3 +213,14 @@
 
 .ex-wf-end { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ex-wf-note { max-width: 70ch; }
+
+/* This week: five KPI tiles (field, field strength, skill gap, scoring average by round, winning score) */
+@media (min-width: 1100px) { .kpi-grid.ex-kpi-5 { grid-template-columns: 0.8fr 1fr 1fr 1.35fr 1.1fr; } }
+.ex-kpi-rounds { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 6px; }
+.ex-kpi-rounds > div { display: flex; flex-direction: column; gap: 1px; }
+.ex-kpi-rounds em { font-style: normal; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.ex-kpi-rounds strong { font-size: 19px; letter-spacing: -.03em; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.ex-kpi-rounds small { font-size: 10px; color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.ex-kpi-rounds .is-actual strong { color: var(--muted-strong); }
+.ex-kpi-two strong { font-size: 22px; }
+.ex-shape-clip { stroke: var(--surface); stroke-width: 1.5; }

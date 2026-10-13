@@ -956,7 +956,7 @@ function WeatherTab({ doc, runAsOf, extra }: { doc: Obj; runAsOf: string; extra?
         <strong>{w.applied_in_prices ? "Weather is in the prices" : "Weather is NOT in the prices"}</strong>
         <span>
           {w.applied_in_prices
-            ? "Each player gets a small adjustment per round from his wave (early or late tee time) and the forecast wind. Realised weather is never used."
+            ? "Each player gets a small adjustment per round from his wave (early or late tee time) and the forecast wind. Realized weather is never used."
             : "Tee times, waves and the forecast are shown for review only."}
           {reason ? ` ${reason}.` : ""}
         </span>
@@ -1221,7 +1221,7 @@ function FeaturesTab() {
           ))}
         </div>
         <details className="config-file">
-          <summary><b>Standardisation and how the weights are fitted</b><span>walk-forward ridge, per season</span></summary>
+          <summary><b>Standardization and how the weights are fitted</b><span>walk-forward ridge, per season</span></summary>
           <div className="glossary-prose">
             <p className="inputs-note">{glossary.standardisation}</p>
             <ul>{glossary.fit.map((line) => <li key={line}>{plain(line)}</li>)}</ul>
@@ -1238,7 +1238,7 @@ function FeaturesTab() {
           <Select label="Order" value={sort} onChange={(v) => setSort(v as SortMode)} options={[{ value: "model", label: "Model order" }, { value: "weight", label: "Largest weight first" }]} />
           <SegmentedControl label="Weights from" value={model} onChange={setModel} options={[{ value: "chl", label: "Skill model alone" }, { value: "v21", label: "Refit with location" }]} />
         </div>
-        <p className="inputs-muted">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardised coefficients ({model === "chl" ? "the skill model on its own" : "the skill model refit together with the location inputs"}).</p>
+        <p className="inputs-muted">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardized coefficients ({model === "chl" ? "the skill model on its own" : "the skill model refit together with the location inputs"}).</p>
       </Panel>
       {visibleFamilies.map((fam) => (
         <Panel key={fam.key} eyebrow={`${fam.n_features} features · ${(share(fam) * 100).toFixed(1)}% of total absolute weight`} title={plain(fam.label)}>
@@ -1435,7 +1435,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
     const ch = obj(player.challenger);
     const v = Number(value);
     if (!Number.isFinite(v) || value.trim() === "") return null;
-    if (field === "skill_delta") return `Rating ${signed(ch.mu)} becomes about ${signed((num(ch.mu) ?? 0) + v)} (before the field is re-centred).`;
+    if (field === "skill_delta") return `Rating ${signed(ch.mu)} becomes about ${signed((num(ch.mu) ?? 0) + v)} (before the field is re-centered).`;
     if (field === "sd_mult") return `Std dev ${fx(ch.sd, 2)} becomes about ${fx((num(ch.sd) ?? 0) * v, 2)}.`;
     return null;
   })();

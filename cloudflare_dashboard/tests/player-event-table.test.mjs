@@ -32,7 +32,7 @@ test('rows are shaded against the PGA single-event population when published, el
   assert.equal(fb.z,1);assert.equal(fb.basis,'player');
   const none=aggregateShots('1',[1],rows,{}).tee_distance;assert.equal(none.z,null);assert.equal(none.basis,null);
 });
-test('diverging scale: green positive, red negative, centred on 0, saturating, null-safe',()=>{
+test('diverging scale: green positive, red negative, centered on 0, saturating, null-safe',()=>{
   assert.equal(divergingBackground(0,1),undefined);assert.equal(divergingBackground(null,1),undefined);
   assert.match(divergingBackground(1,1),/--positive\) 40%/);assert.match(divergingBackground(-5,1),/--negative\) 40%/);
   assert.match(divergingBackground(.5,1),/--positive\) 20%/);
@@ -91,7 +91,7 @@ test('hole-based measures say holes, shot-based say shots',async()=>{
   assert.equal(sampleNoun('app_gir'),'holes');assert.equal(sampleNoun('short_updown'),'holes');assert.equal(sampleNoun('tee_penalty'),'shots');assert.equal(sampleNoun('radar_spin'),'shots');
 });
 
-test('categories use the PGA-average baseline when published and fall back to the field, labelled by basis',()=>{
+test('categories use the PGA-average baseline when published and fall back to the field, labeled by basis',()=>{
   const [a,b]=buildRows([ev('1','2026-01-01',{sg_ott_pga:.3,sg_app_pga:.2,sg_arg_pga:0,sg_putt_pga:-.1,sg_t2g_pga:.5}),ev('2','2026-01-02')],.5,undefined,{});
   assert.equal(a.sg.sg_ott,.3);assert.equal(a.sg.t2g,.5);assert.equal(a.sg.sg_putt,-.1);assert.equal(a.sgBasis.sg_putt,'pga');assert.equal(a.sgBasis.t2g,'pga');
   assert.equal(b.sg.sg_ott,.5);assert.equal(b.sgBasis.sg_ott,'field');assert.ok(Math.abs(b.sg.t2g-1)<1e-9);assert.equal(b.sgBasis.t2g,'field');

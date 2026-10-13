@@ -40,13 +40,21 @@ export type CourseCard = {
     /** Per round: whether tee times were available ("ok") or only the wave-free field-wide shift applies ("common_only"). Published from explain v8 on. */
     rounds?: Array<{ round: number; status: string | null; tee_coverage: number | null; reason: string | null; venue_seen: boolean | null }>; m_v?: number | null; wind_prior_source?: string | null; layer?: string | null };
 };
+export type FieldScores = {
+  rounds: Array<{ round: number; mean_strokes: number; mean_vs_par: number; players: number; basis: "simulated" | "actual" }>;
+  winning: { mode: number; mode_share: number; median: number; mean: number; p10: number; p90: number; n_draws: number } | null;
+};
 export type ExplainDoc = {
   schema: string; kind: "week" | "live"; event_uid: string; run: string; as_of: string | null; after_round: number | null;
-  event: { name: string; tour: string | null; course: string | null; date_start: string | null; rounds: number | null; field_size: number | null; par_per_round: number[]; cut_round: number | null; cut_top_n: number | null; cut_rule: string | null };
+  event: { name: string; tour: string | null; course: string | null; date_start: string | null; rounds: number | null; field_size: number | null; par_per_round: number[]; cut_round: number | null; cut_top_n: number | null; cut_rule: string | null;
+    /** Field mean skill, strokes a round vs an average PGA Tour player (+ = stronger). */
+    field_strength?: number | null; field_strength_detail?: { field_offset?: number | null; n_field?: number | null; n_imputed?: number | null; typical_ours_minus_dg?: { mean?: number | null } | null } | null };
   model: { weather_layer: string | null; overrides_applied: string[]; n_sims: number | null };
   components_legend: Record<string, LegendEntry>; component_field_mean: Record<string, number | null>;
   course_card: CourseCard;
   finish: { method: string; n_draws?: number; reason: string | null; calibration?: Record<string, { mean_abs: number; max_abs: number }> };
+  /** Field-level view of the same simulation draws (explain export from October 13, 2026): scoring average per round and the winning score. */
+  field_scores?: FieldScores | null;
   edge_model: { ridge_r2: number | null; strokes_per_logit: Record<string, number>; note: string };
   bias: BiasRow[]; top_edges: number[]; players: ExPlayer[]; since_last: { prev_run: string; prev_as_of: string | null; prev_after_round: number | null } | null;
 };
@@ -92,7 +100,28 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
   });
   return { ...d, players, bias: Array.isArray(d.bias) ? plainBias(d.bias) : [], top_edges: Array.isArray(d.top_edges) ? d.top_edges : [], components_legend: neutralLegend(d.components_legend),
     finish: isObject(d.finish) ? d.finish : { method: "unavailable", reason: null }, course_card: (isObject(d.course_card) ? d.course_card : { holes: [], what_drives_scoring: [], by_par: {}, weather: {} }) as CourseCard,
-    edge_model: isObject(d.edge_model) ? d.edge_model : { ridge_r2: null, strokes_per_logit: {}, note: "" }, since_last: isObject(d.since_last) ? d.since_last : null };
+    edge_model: isObject(d.edge_model) ? d.edge_model : { ridge_r2: null, strokes_per_logit: {}, note: "" }, since_last: isObject(d.since_last) ? d.since_last : null,
+    field_scores: parseFieldScores(d.field_scores) };
+}
+
+function parseFieldScores(raw: unknown): FieldScores | null {
+  if (!isObject(raw)) return null;
+  const rounds = (Array.isArray(raw.rounds) ? raw.rounds : []).filter((r): r is Record<string, unknown> => isObject(r) && num(r.round) !== null && num(r.mean_strokes) !== null && num(r.mean_vs_par) !== null)
+    .map((r) => ({ round: r.round as number, mean_strokes: r.mean_strokes as number, mean_vs_par: r.mean_vs_par as number, players: num(r.players) ?? 0, basis: r.basis === "actual" ? "actual" as const : "simulated" as const }));
+  const w = isObject(raw.winning) && num(raw.winning.mode) !== null && num(raw.winning.median) !== null ? raw.winning as FieldScores["winning"] : null;
+  return rounds.length || w ? { rounds, winning: w } : null;
+}
+
+/** Score vs par as golfers write it: -25, E, +3. */
+export const toPar = (v: number, d = 0): string => {
+  const r = Number(v.toFixed(d));
+  return r === 0 ? "E" : `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(d)}`;
+};
+/** The field's skill against an average PGA Tour player, in words. */
+export function fieldStrengthText(v: number): string {
+  const a = Math.abs(v);
+  if (a < 0.1) return "about the same as an average PGA Tour field";
+  return `${a.toFixed(2)} strokes a round ${v < 0 ? "weaker" : "stronger"} than an average PGA Tour player`;
 }
 
 /* ------------------------------------------------------------------ index / event selection */
@@ -328,7 +357,7 @@ export function topEdges(doc: ExplainDoc, n = 6): { above: ExPlayer[]; below: Ex
   return { above, below };
 }
 export function favourites(doc: ExplainDoc, n = 12): ExPlayer[] {
-  // In play the favourite is whoever has the best current chance; before the event it is the shortest-priced player in the market.
+  // In play the favorite is whoever has the best current chance; before the event it is the shortest-priced player in the market.
   const live = doc.kind === "live";
   const score = (p: ExPlayer) => (live ? p.probs.win.model ?? p.probs.win.market : p.probs.win.market ?? p.probs.win.model) ?? 0;
   return [...doc.players].filter((p) => !p.withdrawn).sort((a, b) => score(b) - score(a)).slice(0, n);
@@ -385,7 +414,7 @@ export const DIMENSION_HELP: Record<string, string> = {
   xtour: "Whether a player's rating leans on results from other tours (feeder, Asian and so on) rather than PGA or European Tour rounds.",
   price: "Players grouped by how short they are in the betting market.",
   wave: "Players grouped by whether they tee off early or late in round 1.",
-  travel: "Whether a player travelled from another continent to play this week.",
+  travel: "Whether a player traveled from another continent to play this week.",
   region: "Where the player is from.",
 };
 
@@ -425,7 +454,7 @@ export function modalFinish(finish: { pos: number[]; p_miss_cut?: number } | nul
 export function modalFinishText(m: ModalFinish): string {
   return !m ? "" : m.kind === "miss" ? "Most likely: misses cut" : `Most likely finish: ${m.pos}`;
 }
-/** Preselected comparison: the player's same-odds neighbours (as exported), restricted to players that have a finish shape. */
+/** Preselected comparison: the player's same-odds neighbors (as exported), restricted to players that have a finish shape. */
 export function defaultCompetitors(doc: ExplainDoc, id: number, n = 3): number[] {
   const p = doc.players.find((x) => x.id === id);
   if (!p) return [];
@@ -508,7 +537,7 @@ const BUCKET_LABEL: Array<[RegExp, string]> = [
   [/^thin data \(<15 rounds\)$/i, "Thin data (under 15 rounds)"], [/^light data \(15-49\)$/i, "Light data (15-49 rounds)"], [/^deep data \(50\+\)$/i, "Deep data (50+ rounds)"],
   [/^cross-tour dependent$/i, "Rely on other-tour results"], [/^core-tour records$/i, "Mostly PGA or European records"],
   [/^early wave r(\d)$/i, "Early tee times, round $1"], [/^late wave r(\d)$/i, "Late tee times, round $1"],
-  [/^favourites \(top 10 by market\)$/i, "Favourites (ten shortest prices)"], [/^no travel$/i, "No travel"], [/^changed continent$/i, "Flew in from another continent"],
+  [/^favorites \(top 10 by market\)$/i, "Favorites (ten shortest prices)"], [/^no travel$/i, "No travel"], [/^changed continent$/i, "Flew in from another continent"],
   [/^usa$/i, "American players"], [/^international$/i, "Non-American players"],
 ];
 function plainBias(rows: BiasRow[]): BiasRow[] {
@@ -646,6 +675,8 @@ export function venueClassLines(w: CourseCard["weather"] | undefined): string[] 
     const src = w.wind_prior_source === "own history" ? "this course's own past events" : "courses of the same type";
     out.push(`The model scales every wind effect by ×${w.m_v.toFixed(2)} for this course, learned from ${src}${w.m_v > 1.05 ? ": wind matters more here than at the average course" : w.m_v < 0.95 ? ": wind matters less here than at the average course" : ": wind matters about as much as at the average course"}.`);
   }
+  const seen = (w.rounds ?? []).find((r) => r.venue_seen != null)?.venue_seen;
+  if (w.field?.length) out.push(`The whole-field number combines wind, gusts, temperature, rain and time of day. ${seen === true ? "It is measured against this course's usual weather in the model's history." : seen === false ? "This course is new to the weather model, so it is measured against the average weather across all events in the model's history." : "It is measured against typical conditions."}`);
   return out;
 }
 /** Cut-line shift rows worth showing: only events with a cut, only up to the cut round, and only rounds still to come when the event is in play. */

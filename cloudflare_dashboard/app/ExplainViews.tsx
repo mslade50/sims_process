@@ -9,12 +9,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
-import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, Waterfall, type FinishSeries } from "./ExplainCharts";
+import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, shapeCap, Waterfall, type FinishSeries } from "./ExplainCharts";
 import {
   EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
-  explainChoices, explainKeyFor, favourites, filterWhy, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
+  explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
-  type Differ, type ExPlayer, type ExplainDoc, type IndexEvent, type Market, type Shape, type SortKey,
+  type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
 import { WeatherThisRound } from "./ScoringView";
@@ -134,7 +134,7 @@ const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span clas
 /* ------------------------------------------------------------------ This week */
 export function ThisWeekView() {
   return (
-    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="How we price the field: the course, where we differ from the sportsbook, and which kinds of players we favour or fade.">
+    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="How we price the field: the course, where we differ from the sportsbook, and which kinds of players we favor or fade.">
       {(s) => <ThisWeek {...s} />}
     </ExplainShell>
   );
@@ -150,20 +150,22 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   const differ = useMemo(() => differView(doc), [doc]);
   const markets = useMemo(() => availableMarkets(doc), [doc]);
   const shownMarket: Market = markets.includes(market) ? market : "win";
-  const top = fav[0];
   const cc = doc.course_card;
   const ee = [...differ.rows].sort((a, b) => Math.abs(b.shape.skill_gap) - Math.abs(a.shape.skill_gap))[0];
   const field = doc.players.filter((p) => !p.withdrawn).length;
-  const avgRound = cc.scoring_avg_vs_par === null || cc.scoring_avg_vs_par === undefined || !cc.par_per_round?.[0] ? null : cc.par_per_round[0] + cc.scoring_avg_vs_par;
+  const fs = doc.event.field_strength ?? doc.event.field_strength_detail?.field_offset ?? null;
+  const dgGap = doc.event.field_strength_detail?.typical_ours_minus_dg?.mean ?? null;
+  const fsc = doc.field_scores ?? null;
   const bullets = plainCourseBullets(cc.what_drives_scoring);
   const tech = [live ? "" : SHAPE_METHOD, cc.weather?.venue_class ? `Venue class (publisher): ${cc.weather.venue_class}` : "", cc.weather?.wind_slope_source ?? "", cc.weather?.label ?? "", cc.hole_source ? `Hole table: ${cc.hole_source}` : ""].filter(Boolean);
   return (
     <>
-      <div className="kpi-grid">
+      <div className={`kpi-grid${!live && ee ? " ex-kpi-5" : ""}`}>
         <Kpi label="Field" value={`${field} players`} detail={doc.event.cut_rule ?? "no cut"} tone="neutral" />
-        {top && <Kpi label={live ? "Best chance to win" : "Favourite"} value={pct(top.probs.win.model)} detail={live ? `${top.name} · our win chance now` : `${top.name} · our win chance, sportsbook ${pct(top.probs.win.market)}`} tone="model" />}
+        <Kpi label="Field strength" value={fs == null ? "-" : `${signed(fs)} strokes`} hint="The field's average skill in strokes a round against an average PGA Tour player, on the same scale DataGolf uses. Plus means a stronger field." detail={fs == null ? "no field strength in this run" : `${fieldStrengthText(fs)}${dgGap != null && Math.abs(dgGap) >= 0.05 ? ` · about ${signed(fs - dgGap)} on DataGolf's numbers` : ""}`} tone={fs != null && fs >= 0 ? "positive" : "neutral"} />
         {!live && ee && <Kpi label="Biggest skill gap to the market" value={`${signed(ee.shape.skill_gap)} strokes a round`} detail={`${ee.player.name} · ${ee.shape.pattern.toLowerCase()} (contenders only)`} tone={ee.shape.skill_gap >= 0 ? "positive" : "negative"} />}
-        <Kpi label="Expected average round" value={avgRound === null ? "-" : avgRound.toFixed(1)} detail={`${signed(cc.scoring_avg_vs_par, 1)} to par · par ${cc.par_per_round?.[0] ?? "-"} · ${cc.yardage ? `${Math.round(cc.yardage).toLocaleString()} yd` : "yardage n/a"}`} tone="accent" />
+        <RoundAveragesTile fsc={fsc} cc={cc} />
+        <WinningScoreTile fsc={fsc} />
       </div>
 
       <WeatherLinkCard event={event} />
@@ -217,6 +219,44 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   );
 }
 
+/** Expected field scoring average for each round from the simulation draws (rounds 3-4: the players who made the cut); played rounds show the actual average. */
+function RoundAveragesTile({ fsc, cc }: { fsc: FieldScores | null; cc: ExplainDoc["course_card"] }) {
+  const rounds = fsc?.rounds ?? [];
+  const foot = `par ${cc.par_per_round?.[0] ?? "-"} · ${cc.yardage ? `${Math.round(cc.yardage).toLocaleString()} yd` : "yardage n/a"}${rounds.some((r) => r.round > 2) ? " · rounds 3-4: players who made the cut" : ""}`;
+  return (
+    <div className="kpi kpi-accent ex-kpi-wide">
+      <span title="The field's average score in each round across the simulations, including the weather forecast. A round already played shows the real average.">Expected scoring average</span>
+      {rounds.length ? (
+        <div className="ex-kpi-rounds">{rounds.map((r) => (
+          <div key={r.round} className={r.basis === "actual" ? "is-actual" : ""} title={`${r.basis === "actual" ? "Actual" : "Simulated"} round ${r.round} average over ${Math.round(r.players)} players: ${r.mean_strokes.toFixed(2)} (${toPar(r.mean_vs_par, 2)})`}>
+            <em>R{r.round}{r.basis === "actual" ? " ✓" : ""}</em><strong>{r.mean_strokes.toFixed(1)}</strong><small>{toPar(r.mean_vs_par, 1)}</small>
+          </div>
+        ))}</div>
+      ) : (
+        <div className="kpi-row"><strong>{cc.scoring_avg_vs_par == null || !cc.par_per_round?.[0] ? "-" : (cc.par_per_round[0] + cc.scoring_avg_vs_par).toFixed(1)}</strong></div>
+      )}
+      <div className="kpi-foot"><small>{rounds.length ? foot : `course table only (no simulation draws in this run) · ${foot}`}</small></div>
+    </div>
+  );
+}
+
+/** The winning 72-hole score across the simulation draws: the most likely value, the median and the middle 80%. */
+function WinningScoreTile({ fsc }: { fsc: FieldScores | null }) {
+  const w = fsc?.winning;
+  return (
+    <div className="kpi kpi-model ex-kpi-wide">
+      <span title="The lowest total of each simulated tournament, to par. Most likely = the single score that wins most often; median = half the simulations are won with a lower score.">Winning score</span>
+      {w ? (
+        <div className="ex-kpi-rounds ex-kpi-two">
+          <div><em>Most likely</em><strong>{toPar(w.mode)}</strong><small>{Math.round(w.mode_share * 100)}% of sims</small></div>
+          <div><em>Median</em><strong>{toPar(w.median, Number.isInteger(w.median) ? 0 : 1)}</strong><small>mean {toPar(w.mean, 1)}</small></div>
+        </div>
+      ) : <div className="kpi-row"><strong>-</strong></div>}
+      <div className="kpi-foot"><small>{w ? `8 in 10 sims won between ${toPar(w.p10)} and ${toPar(w.p90)}` : "no simulation draws in this run"}</small></div>
+    </div>
+  );
+}
+
 const SORT_DIFFER = [{ value: "price", label: "Shortest price first" }, { value: "gap", label: "Biggest difference first" }] as const;
 const MARKET_HELP: Record<Market, string> = {
   win: "Win outright.", top_5: "Finish in the top 5 (ties share the payout).", top_10: "Finish in the top 10 (ties share the payout).", top_20: "Finish in the top 20 (ties share the payout).",
@@ -229,6 +269,7 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
   const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(spreadGapOf(b.shape)) - Math.abs(a.shape.skill_gap) - Math.abs(spreadGapOf(a.shape)));
   const sg = differ.spread_gap_median;
   const fieldLine = spreadLeanNote(sg, differ.spread_gap_centered === true);
+  const cap = useMemo(() => shapeCap(rows.map((r) => r.shape), markets), [rows, markets]);
   if (!rows.length) return <Panel title="Where we differ from the market" eyebrow="Players who matter"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
   return (
     <Panel title="Where we differ from the market" eyebrow="Players who matter" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
@@ -236,7 +277,7 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
       {fieldLine && <p className="ex-differ-field">{fieldLine}</p>}
       <div className="table-scroll"><table className="ex-table ex-cards ex-differ">
         <thead><tr><th>Player</th>
-          <th title="One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, grey means within 5% (in line).">Shape</th>
+          <th title={`One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, gray means within 5% (in line). Bar height grows with the square root of the gap; a full bar is a ${Math.round(cap * 100)}% gap (bigger gaps are cut off with a notch).`}>Shape</th>
           {markets.map((m) => <th key={m} title={`${MARKET_HELP[m]} The % is how much higher (+) or lower (−) our chance is than the sportsbook's with its margin removed; under ${Math.round(EDGE_MIN * 100)}% counts as in line.`}>{MARKET_LABEL[m]}</th>)}
           <th title="The pattern across bet types in words, with the skill and the spread (how much their scores swing round to round) that the sportsbook's prices imply, compared with ours.">What we see</th></tr></thead>
         <tbody>{shown.map(({ player: p, shape: s }) => {
@@ -244,7 +285,7 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
           return (
             <tr key={p.id} className="clickable-row" onClick={() => openPlayer(p.id)}>
               <th scope="row"><button type="button" className="ex-linkbtn" onClick={(ev) => { ev.stopPropagation(); openPlayer(p.id); }}>{p.name}</button></th>
-              <td data-label="Shape" className="ex-shape-cell"><ShapeBars shape={s} markets={markets} /></td>
+              <td data-label="Shape" className="ex-shape-cell"><ShapeBars shape={s} markets={markets} cap={cap} /></td>
               {markets.map((m) => {
                 const e = s.markets[m];
                 return <td key={m} data-label={MARKET_LABEL[m]} title={e ? `Ours ${pct(e.model)}, sportsbook ${pct(e.market)} (margin removed)` : "No sportsbook price"}>
@@ -318,7 +359,7 @@ function WeatherEffects({ doc }: { doc: ExplainDoc }) {
   const used = lines.filter((l) => l.spread >= 0.005);
   return (
     <Panel title="How weather enters the prices" eyebrow="Per-player effects, strokes a round">
-      <p className="ex-muted">{used.length ? "Each effect below adds to or takes from a player's expected score depending on their tee time and the weather their group faces." : "No player is separated by weather in this run yet, so every effect below is zero. It starts to matter once tee times are out."} Morning conditions such as firmness are covered by time of day; dew and humidity are not modelled as separate effects.</p>
+      <p className="ex-muted">{used.length ? "Each effect below adds to or takes from a player's expected score depending on their tee time and the weather their group faces." : "No player is separated by weather in this run yet, so every effect below is zero. It starts to matter once tee times are out."} Morning conditions such as firmness are covered by time of day; dew and humidity are not modeled as separate effects.</p>
       <div className="table-scroll"><table className="ex-table ex-cards">
         <thead><tr><th>Effect</th><th>What it is</th><th title="The biggest effect on any one player, in strokes a round.">Largest effect</th><th>Helped most</th><th>Hurt most</th></tr></thead>
         <tbody>{lines.map((l) => (
@@ -530,7 +571,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
 
         <section>
           <h3 className="ex-h3">Our chance vs the sportsbook</h3>
-          {shape && <div className="ex-shape-wrap"><ShapeBars shape={shape} markets={availableMarkets(doc)} /><span className="ex-muted">Up: our chance is higher than the sportsbook&rsquo;s. Down: lower. Grey: within {Math.round(EDGE_MIN * 100)}%.</span></div>}
+          {shape && <div className="ex-shape-wrap"><ShapeBars shape={shape} markets={availableMarkets(doc)} /><span className="ex-muted">Up: our chance is higher than the sportsbook&rsquo;s. Down: lower. Gray: within {Math.round(EDGE_MIN * 100)}%.</span></div>}
           <MarketRows player={player} hasCut={!!doc.event.cut_round} />
         </section>
 
@@ -547,7 +588,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
                   {competitors.length === 0 && <span className="ex-muted">nobody selected</span>}
                 </div>
                 <div className="ex-compare-actions">
-                  <button type="button" onClick={() => setCompetitors(defaultCompetitors(doc, player.id, 3))}>Same-odds neighbours</button>
+                  <button type="button" onClick={() => setCompetitors(defaultCompetitors(doc, player.id, 3))}>Same-odds neighbors</button>
                   <button type="button" onClick={() => setCompetitors([])}>Clear</button>
                 </div>
                 <label className="search-box"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={competitors.length >= MAX_OVERLAY - 1 ? "Maximum reached" : "Add a competitor"} disabled={competitors.length >= MAX_OVERLAY - 1} aria-label="Add competitor" /></label>

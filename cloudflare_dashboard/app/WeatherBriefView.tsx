@@ -20,9 +20,9 @@ import {
 import "./weather-brief.css";
 
 const DEFAULT_GLOSSARY: Record<string, string> = {
-  field_effect: "Field effect: how much the weather makes scoring easier or harder for everyone at once. It moves the scores and the cut line, but not who is favoured.",
+  field_effect: "Field effect: how much the weather makes scoring easier or harder for everyone at once. It moves the scores and the cut line, but not who is favored.",
   wave_split: "Wave split: how much better one tee wave has it than the other for the same player. It only moves the odds between players who tee off in different waves.",
-  spread: "Spread: how much the weather widens or narrows the range of scores. Wider helps long shots, narrower helps the favourites.",
+  spread: "Spread: how much the weather widens or narrows the range of scores. Wider helps long shots, narrower helps the favorites.",
   relative_effect: "Relative effect: a player's own weather effect compared with the average player in the field. It is what moves a player's skill for the week.",
 };
 const GLOSSARY_ORDER = ["field_effect", "wave_split", "spread", "relative_effect"];

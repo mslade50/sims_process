@@ -56,7 +56,7 @@ export function parseUtc(value: unknown): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
-/** Normalised UTC form used for stored records: 2026-10-05T14:00:00Z */
+/** Normalized UTC form used for stored records: 2026-10-05T14:00:00Z */
 export function isoSeconds(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }

@@ -1,6 +1,6 @@
 import {finite, type HistoryEvent} from "./player-deep-rules.ts";
 
-/** Event-by-event table: columns, colour scale, shot aggregation and sorting (pure, tested). */
+/** Event-by-event table: columns, color scale, shot aggregation and sorting (pure, tested). */
 export type ShotRoundRow={event_id:string;round:number;date?:string;metrics:Record<string,{total:number;n_shots:number}|undefined>};
 /** mean/sd: PGA golfers' multi-year averages (spread between golfers). eventMean/eventSd: PGA golfers' single-event results (what one table row is), preferred for shading when published. */
 export type ShotRef=Record<string,{mean?:number|null;sd?:number|null;higher?:boolean;eventMean?:number|null;eventSd?:number|null}>;
@@ -82,7 +82,7 @@ export function finishRank(f:string|undefined|null):number|null{
   if(!f)return null;const m=/^T?(\d+)$/i.exec(f.trim());if(m)return Number(m[1]);
   return /^(cut|mc|wd|dq|w\/d|dnf)/i.test(f.trim())?10000:null;
 }
-/** Diverging background: green for good, red for bad, centred on 0, saturating at ±range. Alpha-only so it works on any theme. */
+/** Diverging background: green for good, red for bad, centered on 0, saturating at ±range. Alpha-only so it works on any theme. */
 export function divergingBackground(v:number|null|undefined,range:number,max=40):string|undefined{
   if(!finite(v)||!finite(range)||range<=0)return undefined;
   const pct=Math.round(Math.min(1,Math.abs(v)/range)*max);if(pct<1)return undefined;

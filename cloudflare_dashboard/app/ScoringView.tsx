@@ -72,7 +72,7 @@ export function Snapshot({ runKey, expectedRun, latest, weatherKey }: { runKey: 
   const validPlayers = scoring.players.filter((p) => p.pmf.length && p.pmf.every(([, prob]) => Number.isFinite(prob)));
   const activePlayers = fieldSelected ? [] : (selectedIds.length ? selectedIds.map((id) => validPlayers.find((p) => p.id === id)).filter((p): p is ScoringPlayer => !!p) : validPlayers.slice(0, 1));
   const chosen = activePlayers[0] ?? null;
-  // Field moments are published, but no joint field-average PMF is, so none is built. The field chart is a different, labelled thing: every player's round score pooled (a mixture of marginals).
+  // Field moments are published, but no joint field-average PMF is, so none is built. The field chart is a different, labeled thing: every player's round score pooled (a mixture of marginals).
   const selectedRows = chosen?.pmf ?? [];
   const selectedLabel = chosen ? prettyName(chosen.name) : "Active field average";
   const probs = selectedRows.length ? (scenarioShift ? shiftedOverUnder(selectedRows, line, scenarioShift) : overUnder(selectedRows, line)) : null;
