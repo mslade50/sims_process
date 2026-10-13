@@ -175,6 +175,17 @@ test("applied update requires matching round, explicit status, flag and finite a
     assert.doesNotMatch(renderedScoring({ payload: { scoring: { ...fixture, round_update: { ...fixture.round_update, ...patch } } } }), /moved the round \d course difficulty/);
   }
 });
+test("no hole history but round-level venue history: the warning says the course's own round scores set its difficulty", () => {
+  const fixture = scoringFixture();
+  fixture.baseline.median_hole_observations = 0;
+  const prov = typeof fixture.baseline.course_provenance === "object" && fixture.baseline.course_provenance ? fixture.baseline.course_provenance : {};
+  fixture.baseline.course_provenance = { ...prov, venue_history: { observations: 0, editions: [] },
+    course_level: { source: "venue round history (1 edition, 401 rounds)", expected_score: 70.88, general_fit_expected_score: 69.84, editions: ["euro:2025141:2025-10-16"], rounds: 401 } };
+  const w = scoringEvidence(parseScoring(fixture)).warning;
+  assert.doesNotMatch(w, /no earlier rounds are recorded/i);
+  assert.match(w, /401 rounds from 1 earlier edition/);
+  assert.match(w, /1\.04 strokes per round harder/);
+});
 test("zero history outranks layout warning and malformed optional metadata is empty-safe", () => {
   const fixture = scoringFixture();
   fixture.baseline.median_hole_observations = 0;

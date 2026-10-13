@@ -13,6 +13,8 @@ export type CourseProvenance = {
   venue_history: { observations: number | null; editions: string[]; cutoff: string | null; year_min: number | null; year_max: number | null };
   historical_weather: { reference: string | null; field_adjustment: string | null; status: string | null; method: string | null; note: string | null };
   field_strength: { status: string | null; detail: string | null; method: string | null };
+  /** Round-level anchor: the course's overall difficulty from its own earlier editions' round scores (absent when not applied). */
+  course_level: { expected_score: number | null; general_fit_expected_score: number | null; editions: string[]; rounds: number | null } | null;
 };
 export type RoundUpdate = {
   status: string | null; applied: boolean | null; target_round: number | null; source_rounds: number[];
@@ -142,6 +144,7 @@ const record = (v: unknown): Record<string, unknown> => obj(v) ? v : {};
 function parseCourseProvenance(raw: unknown): CourseProvenance | null {
   if (!obj(raw)) return null;
   const layout = record(raw.layout), fit = record(raw.general_fit), history = record(raw.venue_history), weather = record(raw.historical_weather), strength = record(raw.field_strength);
+  const level = obj(raw.course_level) ? raw.course_level : null;
   return {
     model_version: stringValue(raw.model_version),
     layout: { status: stringValue(layout.status), source: stringValue(layout.source), year: numberValue(layout.year), current_event_confirmed: typeof layout.current_event_confirmed === "boolean" ? layout.current_event_confirmed : null },
@@ -149,7 +152,14 @@ function parseCourseProvenance(raw: unknown): CourseProvenance | null {
     venue_history: { observations: numberValue(history.observations), editions: Array.isArray(history.editions) ? history.editions.flatMap((e) => stringValue(e) === null ? [] : [stringValue(e)!]) : [], cutoff: stringValue(history.cutoff), year_min: numberValue(history.year_min), year_max: numberValue(history.year_max) },
     historical_weather: { reference: stringValue(weather.reference), field_adjustment: stringValue(weather.field_adjustment), status: stringValue(weather.status), method: stringValue(weather.method), note: stringValue(weather.note) },
     field_strength: { status: stringValue(strength.status), detail: stringValue(strength.detail), method: stringValue(strength.method) },
+    course_level: level ? { expected_score: numberValue(level.expected_score), general_fit_expected_score: numberValue(level.general_fit_expected_score), editions: Array.isArray(level.editions) ? level.editions.flatMap((e) => stringValue(e) === null ? [] : [stringValue(e)!]) : [], rounds: numberValue(level.rounds) } : null,
   };
+}
+/** Hole-by-hole history is missing but the course's own round scores set its overall difficulty. */
+export function levelWords(l: NonNullable<CourseProvenance["course_level"]>): string {
+  const n = l.editions.length, d = l.expected_score !== null && l.general_fit_expected_score !== null ? l.expected_score - l.general_fit_expected_score : null;
+  const how = d === null ? "" : Math.abs(d) < 0.05 ? ", which match the tour-wide fit" : `, which make it play ${Math.abs(d).toFixed(2)} strokes per round ${d > 0 ? "harder" : "easier"} than the tour-wide fit`;
+  return `No hole-by-hole history for this course (the published shot data has no earlier edition here), so each hole's scoring pattern comes from the tour-wide fit. The course's overall difficulty does use its own history: ${l.rounds ?? "the"} rounds from ${n} earlier edition${n === 1 ? "" : "s"}${how}.${n === 1 ? " One edition is a thin sample, so treat it as somewhat less certain." : ""}`;
 }
 function parseRoundUpdate(raw: unknown): RoundUpdate | null {
   if (!obj(raw)) return null;
@@ -223,7 +233,10 @@ export function scoringEvidence(doc: ScoringDoc, ctx: EvidenceContext = {}): { r
     rows.push({ label: "Effect on next round", value: text, detail: "Whether what happened in earlier rounds was fed back into the course difficulty for the next round." });
   }
 
-  const warning = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0 ? "No earlier rounds are recorded on this course, so course difficulty leans on similar courses and the earlier layout. Treat it as less certain than at a course with history."
+  const noHoles = p?.venue_history.observations === 0 || doc.baseline.median_hole_observations === 0;
+  const lvl = p?.course_level ?? null;
+  const warning = noHoles && lvl ? levelWords(lvl)
+    : noHoles ? "No earlier rounds are recorded on this course (neither hole-by-hole nor round scores), so course difficulty leans on similar courses and the earlier layout. Treat it as less certain than at a course with history."
     : p && p.layout.current_event_confirmed !== true ? "This year's hole layout is not confirmed, so course difficulty uses an earlier layout. Check it before relying on the number."
     : !p ? "This older run does not record where its course difficulty came from. The stored expectation has not been recalculated with a later release."
     : doc.confidence.reasons[0] ?? null;
