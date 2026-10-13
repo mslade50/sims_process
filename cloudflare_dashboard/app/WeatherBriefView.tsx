@@ -73,7 +73,7 @@ export function CoursePanel({ brief }: { brief: Brief }) {
           {c.tourSlope !== null && bar("Tour average", c.tourSlope, "tour")}
         </div>
       )}
-      <p className="wb-muted">Long-run cost of each extra mph of average wind at this course, from past events (the sentence above re-runs the model on this week's forecast, so it can differ).{c.basis ? ` Based on: ${c.basis}.` : ""}{c.cls ? ` Course type: ${c.cls}.` : ""}</p>
+      <p className="wb-muted">Long-run cost of each extra mph of average wind at this course, from past events.{brief.whatIf ? " The sentence above re-runs the model on this week's forecast, so it can differ." : ""}{c.basis ? ` Based on: ${c.basis}.` : ""}{c.cls ? ` Course type: ${c.cls}.` : ""}</p>
     </Panel>
   );
 }
