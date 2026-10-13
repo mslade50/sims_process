@@ -131,7 +131,7 @@ export function RoundStrip({ rounds, live, sliders }: { rounds: BriefRound[]; li
               </div>
               <div className="wb-effect flat"><span>Spread of scores</span><strong>{spreadWords(out.spread)}</strong></div>
             </div>
-            {r.plain && <p className="wb-muted wb-round-plain">{r.plain}</p>}
+            {r.plain && <p className="wb-muted wb-round-plain">{changed ? `With the actual forecast: ${r.plain}` : r.plain}</p>}
           </article>
         );
       })}
