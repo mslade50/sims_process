@@ -31,7 +31,7 @@ test('PGA comparator uses matching PGA events and exact round/position/course se
 });
 test('reference decoder enforces publication identity and selectively decodes matching events',()=>{
  const raw={schema_version:'player_round_reference.v1',as_of:'2026-10-08T12:00:00Z',columns:['round','sg_total','sg_basis'],events:[{...event(),round_data:[[3,2,'source_adjusted']]},event('other',{round_data:[]})]};
- assert.deepEqual(decodeReference(raw,'other'),[]);const out=decodeReference(raw,'2026-10-08T16:27:00Z',new Set(['pga:2026:1']));assert.equal(out.length,1);assert.equal(out[0].round_data[0].sg_total,2);assert.deepEqual(decodeReference(raw,'2026-10-08T10:00:00Z'),[]);assert.deepEqual(decodeReference(raw,'2026-10-09T12:00:00Z'),[]);
+ assert.deepEqual(decodeReference(raw,'other'),[]);const out=decodeReference(raw,'2026-10-08T16:27:00Z',new Set(['pga:2026:1']));assert.equal(out.length,1);assert.equal(out[0].round_data[0].sg_total,2);assert.equal(decodeReference(raw,'2026-10-08T10:00:00Z').length,2,'same UTC day: the noon-normalised reference holds no later data (daily midnight publication)');assert.deepEqual(decodeReference(raw,'2026-10-09T12:00:00Z'),[]);
 });
 test('filtered shot metrics weight individual opportunities, preserve zeros and orient low-is-good against fixed reference',()=>{
  const es=sliceHistory([event()],f());
