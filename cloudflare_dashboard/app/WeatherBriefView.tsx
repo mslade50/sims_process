@@ -46,7 +46,8 @@ export function HeadlineCard({ brief, version }: { brief: Brief; version: string
       </div>
       {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}
       {brief.headline.length ? (
-        <ul className="wb-sentences">{brief.headline.map((h, i) => <li key={i} className={i === 0 ? "first" : undefined}>{h}</li>)}</ul>
+        // The status line above already says whether tee times are out; a headline sentence opening the same way only repeats it.
+        <ul className="wb-sentences">{brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24)).map((h, i) => <li key={i} className={i === 0 ? "first" : undefined}>{h}</li>)}</ul>
       ) : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
     </section>
   );
