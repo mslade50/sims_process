@@ -1,17 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
+import { WeatherBriefBody } from "./WeatherBriefView";
+import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
 import { etTime } from "./lib";
 import {
   COMPONENT_HINTS, COMPONENT_LABELS, filterPlayers, forecastAgeText, modelName, windSourceText, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour, weatherCheckpoint,
   type HourlyPoint, type PlayerRow, type SortKey, type Wave, type WeatherDoc,
 } from "./weather-rules";
 
-type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_run?: string | null; weather_as_of?: string | null; explain_run?: string | null };
+type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_brief_key?: string | null; weather_run?: string | null; weather_as_of?: string | null; explain_run?: string | null };
 type PublishIndex = { events?: IndexEvent[] };
 
 const WIND = "var(--wx-wind)";
@@ -165,13 +167,13 @@ function WaveCards({ waves, scale }: { waves: Wave[]; scale: number }) {
         {waves.map((w, i) => (
           <div className="wx-wave" key={`${w.wave}-${i}`}>
             <span className="eyebrow">{waveName(w.wave, i)}{w.window ? `, tee times ${hhmm(w.window[0])} to ${hhmm(w.window[1])}` : w.windowText ? `, tee times ${w.windowText}` : ""}</span>
-            <strong className={w.rel === null ? "" : w.rel > 0 ? "negative" : "positive"} title="Expected strokes per round compared with the field average. Positive means a harder draw.">{signedFixed(w.rel)} strokes</strong>
+            <strong className={w.rel === null ? "" : w.rel > 0 ? "negative" : "positive"} title="Expected strokes per round compared with the field average: the draw helps or hurts.">{helpWords(w.rel)} (this wave)</strong>
             <small>{w.rel_p10 !== null && w.rel_p90 !== null ? `Likely range ${signedFixed(w.rel_p10)} to ${signedFixed(w.rel_p90)}. ` : ""}{w.mean_wind !== null ? `Wind ${w.mean_wind.toFixed(1)} mph` : ""}{w.mean_temp !== null ? `${w.mean_wind !== null ? ", " : ""}${w.mean_temp.toFixed(0)}°F` : ""}</small>
             <RangeBar rel={w.rel} lo={w.rel_p10} hi={w.rel_p90} scale={scale} />
           </div>
         ))}
       </div>
-      {diff !== null && <p className="inputs-note">Difference between the waves ({waveName(waves[1].wave, 1)} minus {waveName(waves[0].wave, 0)}): <b>{signedFixed(diff)}</b> strokes per round. Positive means the second wave plays harder.</p>}
+      {diff !== null && <p className="inputs-note">Difference between the waves: the {waveName(waves[1].wave, 1).toLowerCase()} plays <b>{Math.abs(diff).toFixed(2)}</b> strokes per round {diff > 0 ? "harder" : "easier"} than the {waveName(waves[0].wave, 0).toLowerCase()}.</p>}
     </div>
   );
 }
@@ -286,7 +288,7 @@ function PlayerRows({ p, rounds, teeRounds, effectRounds, showSd, cols, open, on
                 </tbody>
               </table>
             </div>
-            <p className="inputs-muted">Strokes per round; positive means more strokes (worse for the player). The columns on the right are the pieces that add up to the total.</p>
+            <p className="inputs-muted">Strokes per round. A negative number helps the player (fewer strokes) and a positive one hurts. The columns on the right are the pieces that add up to the total.</p>
           </td>
         </tr>
       )}
@@ -339,8 +341,8 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
       <Panel eyebrow={`Round ${round}`} title="Wave comparison and field effect">
         <WaveCards waves={waves} scale={scale} />
         <div className="kpi-grid wx-field">
-          {field && field.common_strokes !== null && <Kpi label="Whole-field shift" value={`${signedFixed(field.common_strokes)} strokes`} detail="How much weather moves scoring for everyone" hint="The change in the average score for the whole field because of the weather. Positive means scores run higher." />}
-          {field && field.cut_line_shift !== null && <Kpi label="Cut-line shift" value={`${signedFixed(field.cut_line_shift)} strokes`} detail="Expected move of the projected cut" hint="How far the weather is expected to move the projected cut score." />}
+          {field && field.common_strokes !== null && <Kpi label="Whole-field shift" value={fieldWords(field.common_strokes)} detail="How much weather moves scoring for everyone" hint="The change in the average score for the whole field because of the weather." />}
+          {field && field.cut_line_shift !== null && <Kpi label="Cut-line shift" value={fieldWords(field.cut_line_shift)} detail="Expected move of the projected cut" hint="How far the weather is expected to move the projected cut score." />}
         </div>
         {field && field.cut_line_shift === null && <p className="inputs-muted">No cut-line shift for this round: the cut is only projected once round 2 is in view.</p>}
       </Panel>
@@ -358,15 +360,24 @@ export function WeatherEffectsView() {
   const events = useMemo(() => index?.events ?? [], [index]);
   const [pick, setPick] = useState("");
   const [now] = useState(() => Date.now());
-  const event = events.find((e) => e.event_uid === pick) ?? events.find((e) => e.weather_key) ?? events[0];
-  const { data, loading: docLoading, error } = useDashboardData<unknown>(event ? weatherKey(event) : "golfprice/none.json");
+  // A deep link (?e=<event_uid>) opens that event; read after mount so the server render matches.
+  useEffect(() => {
+    queueMicrotask(() => setPick((current) => current || new URLSearchParams(window.location.search).get("e") || ""));
+  }, []);
+  const event = events.find((e) => e.event_uid === pick) ?? events.find((e) => e.weather_brief_key) ?? events.find((e) => e.weather_key) ?? events[0];
+  const briefKey = briefKeyFor(event);
+  const briefLoad = useDashboardData<unknown>(briefKey);
+  const brief = useMemo(() => parseBrief(briefLoad.data), [briefLoad.data]);
+  // The older weather file is only fetched when the event has no brief (or the brief could not be read).
+  const needLegacy = !briefKey || (!briefLoad.loading && !brief);
+  const { data, loading: docLoading, error } = useDashboardData<unknown>(event && needLegacy ? weatherKey(event) : null);
   const doc = useMemo(() => parseWeather(data), [data]);
 
   const intro = (
     <PageIntro
-      eyebrow="Course conditions"
-      title="Weather effects"
-      description="What the forecast says hour by hour, and how much it helps or hurts each player given the course and tee time."
+      eyebrow="This week's conditions"
+      title="Weather"
+      description="How the weather changes scoring at this course this week, who it helps and hurts, and what would change if the forecast moves."
       controls={events.length > 0 ? (
         <label className="select-control">
           <span>Event</span>
@@ -378,7 +389,9 @@ export function WeatherEffectsView() {
     />
   );
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;
-  if (!event) return <div>{intro}<EmptyState title="No golfprice run is published yet" detail="Weather appears here once a run has been published with a forecast." /></div>;
+  if (!event) return <div>{intro}<EmptyState title="No run is published yet" detail="Weather appears here once a run has been published with a forecast." /></div>;
+  if (briefKey && briefLoad.loading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
+  if (brief) return <div>{intro}<WeatherBriefBody key={event.event_uid} brief={brief} /></div>;
   if (docLoading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
   if (!doc) {
     return (

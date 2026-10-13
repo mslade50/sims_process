@@ -19,6 +19,7 @@ import {
 import { useDashboardData } from "./data";
 import { WeatherThisRound } from "./ScoringView";
 import { CourseGeometry } from "./CourseGeometry";
+import { WeatherLinkCard } from "./WeatherBriefView";
 import { parseWeatherExtras } from "./scoring-rules";
 import { parseWeather } from "./weather-rules";
 import { LABELS } from "./labels";
@@ -165,6 +166,8 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         <Kpi label="Expected average round" value={avgRound === null ? "-" : avgRound.toFixed(1)} detail={`${signed(cc.scoring_avg_vs_par, 1)} to par · par ${cc.par_per_round?.[0] ?? "-"} · ${cc.yardage ? `${Math.round(cc.yardage).toLocaleString()} yd` : "yardage n/a"}`} tone="accent" />
       </div>
 
+      <WeatherLinkCard event={event} />
+
       {live && <LiveSection doc={doc} openPlayer={openPlayer} />}
 
       <div className="two-column">
@@ -173,7 +176,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
           <HoleStrip holes={cc.holes} />
           {cc.hole_source && <p className="ex-muted">{plainHoleSource(cc.hole_source)} Values are for the average player in this field.</p>}
         </Panel>
-        <Panel title="Weather" eyebrow="Conditions and course type" actions={<Link className="ex-link" href="/weather-effects">Weather effects <ChevronRight size={14} /></Link>}>
+        <Panel title="Weather" eyebrow="Conditions and course type" actions={<Link className="ex-link" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`}>Weather page <ChevronRight size={14} /></Link>}>
           <WeatherSnapshot doc={doc} />
         </Panel>
       </div>
@@ -583,7 +586,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
               <tbody>{availableMarkets(doc).map((m) => <tr key={m}><th scope="row">{MARKET_LABEL[m]}</th><td>{pct(live.pre_event[m])}</td><td>{pct(player.probs[m].model)}</td><td><Delta value={(live.since_last[m] ?? 0) * 100} digits={1} suffix="pp" /></td></tr>)}</tbody></table></div>
           </section>
         )}
-        <p className="ex-muted ex-foot"><CloudSun size={13} /> Wave, time-of-day and wind effects are in the waterfall (weather rows) and in <Link className="ex-link" href="/weather-effects">Weather effects</Link>.</p>
+        <p className="ex-muted ex-foot"><CloudSun size={13} /> Wave, time-of-day and wind effects are in the waterfall (weather rows) and on the <Link className="ex-link" href="/weather-effects">Weather page</Link>.</p>
       </aside>
     </div>
   );

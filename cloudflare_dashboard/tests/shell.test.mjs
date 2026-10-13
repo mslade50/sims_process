@@ -58,7 +58,7 @@ test("a redirect route renders a moved notice with a link (the browser then repl
 /* ------------------------------------------------------------------ navigation */
 test("navigation groups: Week, Model, Operate, Review, then a collapsed Archive", () => {
   assert.deepEqual(NAVIGATION.map((g) => g.label), ["Week", "Model", "Operate", "Review", "Archive"]);
-  assert.deepEqual(NAVIGATION[0].items.map((i) => i.label), ["This week", "Players", "Why priced", "Distributions", "Scoring"]);
+  assert.deepEqual(NAVIGATION[0].items.map((i) => i.label), ["This week", "Weather", "Players", "Why priced", "Distributions", "Scoring"]);
   assert.deepEqual(NAVIGATION.at(-1).items.map((i) => i.label), ["History", "Diagnostics"]);
   assert.equal(NAVIGATION.at(-1).collapsed, true);
   assert.equal(NAVIGATION.filter((g) => g.collapsed).length, 1);
@@ -73,14 +73,14 @@ test("one Players entry toggles Field and Player; the active entry resolves for 
   assert.equal(players.href, "/weekly-players");
   assert.equal(navEntryFor("players").item, players);
   assert.equal(navEntryFor("weekly-players").item, players);
-  assert.equal(navEntryFor("weather-effects").item.label, "Scoring");
+  assert.equal(navEntryFor("weather-effects").item.label, "Weather");
   assert.equal(navEntryFor("nope"), null);
   for (const item of NAV_ITEMS) for (const key of [item.key, ...(item.toggle ?? []).map((t) => t.key)]) assert.ok(registered.includes(key), key);
 });
 
 test("the rendered nav shows the groups and keeps the Archive group closed", async () => {
   const html = await (await render("/this-week")).text();
-  for (const label of ["Week", "Model", "Operate", "Review", "Archive", "Scoring", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
+  for (const label of ["Week", "Model", "Operate", "Review", "Archive", "Weather", "Scoring", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
   assert.match(html, /<details class="nav-group nav-archive"/);
   assert.doesNotMatch(html, /<details class="nav-group nav-archive" open/);
 });

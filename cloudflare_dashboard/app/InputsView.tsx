@@ -176,10 +176,6 @@ function Technical({ children, label = "Technical details" }: { children: ReactN
   );
 }
 
-function armLabel(name: string): string {
-  const known: Record<string, string> = { champion: "previous model", comparison: "alternative version", shadow: "alternative version" };
-  return known[name] ?? name.replaceAll("_", " ");
-}
 type IndexRun = { kind: string; run: string; as_of: string | null; after_round: number | null; key: string; hole_table_key: string | null; sha256: string; bytes: number; n_players: number; overrides_applied: string[]; overrides_rejected: string[] };
 type IndexEvent = { event_uid: string; name: string; tour: string; date_start: string; date_end: string; course: string; runs: IndexRun[]; latest_key: string | null };
 type PublishIndex = { schema: string; events: IndexEvent[] };
@@ -435,7 +431,6 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
   const bd = obj(ch.breakdown);
   const overridden = playerHasOverride(player);
   const { steps, parts } = useMemo(() => waterfall(player, overridden), [player, overridden]);
-  const arms = Object.entries(obj(player.arms)).filter(([name]) => name !== "challenger" && name !== "challenger_untouched");
   const prob = obj(ch.probabilities);
   const probU = obj(ch.probabilities_untouched);
   const cf = obj(player.course_fit);
@@ -451,7 +446,6 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
   const priceRows: Array<{ label: string; active?: boolean; mu: unknown; sd: unknown; p: Obj }> = [
     { label: overridden ? "With your override" : "Model price", active: true, mu: ch.mu, sd: ch.sd, p: prob },
     ...(overridden && Object.keys(probU).length > 0 ? [{ label: "Before your override", mu: ch.mu_untouched, sd: ch.sd_untouched, p: probU }] : []),
-    ...arms.map(([name, value]) => ({ label: armLabel(name), mu: obj(value).mu, sd: obj(value).sd, p: { p_win: obj(value).p_win, p_top_5: obj(value).p_top_5, p_top_10: obj(value).p_top_10, p_top_20: obj(value).p_top_20, p_make_cut: obj(value).p_make_cut } as Obj })),
   ];
   const showCut = priceRows.some((row) => num(row.p.p_make_cut) !== null);
   const th = (label: string, key?: string) => <th><span className="th-text"><Term k={key}>{label}</Term></span></th>;
@@ -467,7 +461,6 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
     num(cf.course_history_resid_k80) !== null,
     num(cf.course_sd_mult_feature) !== null,
     num(cf.sd_shrunk_feature) !== null,
-    num(hist.champion_mu_j2) !== null,
     num(hist.se_mu) !== null,
     teeRows.length > 0,
   ].some(Boolean);
@@ -541,8 +534,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
               {num(cf.course_history_resid_k80) !== null && <div><span><Term k="course_history">Course history</Term></span><b>{signed(cf.course_history_resid_k80, 3)}</b></div>}
               {num(cf.course_sd_mult_feature) !== null && <div><span><Term k="course_sd_mult">Course spread factor</Term></span><b>{fx(cf.course_sd_mult_feature, 3)}</b></div>}
               {num(cf.sd_shrunk_feature) !== null && <div><span><Term k="sd_shrunk">Std dev before course adjustment</Term></span><b>{fx(cf.sd_shrunk_feature, 2)}</b></div>}
-              {num(hist.champion_mu_j2) !== null && <div><span><Term text="The previous (champion) model's rating for this player, kept for comparison.">Previous model&apos;s rating</Term></span><b>{signed(hist.champion_mu_j2)}</b></div>}
-              {num(hist.se_mu) !== null && <div><span><Term text="How uncertain the previous model was about this player's skill, in strokes per round.">Rating uncertainty (±, previous model)</Term></span><b>{fx(hist.se_mu, 2)}{hist.se_mu_imputed ? " (estimated: little history)" : ""}</b></div>}
+              {num(hist.se_mu) !== null && <div><span><Term text="How uncertain the model is about this player's skill, in strokes per round.">Rating uncertainty (±)</Term></span><b>{fx(hist.se_mu, 2)}{hist.se_mu_imputed ? " (estimated: little history)" : ""}</b></div>}
               {teeRows.map((row) => <div key={row.round}><span>Round {row.round} tee time</span><b>{row.text}</b></div>)}
             </div>
           </div>
@@ -1057,8 +1049,8 @@ function OddsTab({ doc, runAsOf }: { doc: Obj; runAsOf: string }) {
         <Tip text="The most recent time any book's prices were pulled. A live run can reuse earlier odds."><Kpi label="Odds last pulled" value={etTime(pulled)} detail={runAsOf ? `model run built ${etTime(runAsOf)}` : undefined} tone="accent" /></Tip>
         <Tip text={GLOSSARY.odds_age}><Kpi label="Books" value={String(books.length)} detail={stale ? `${stale} with prices older than 6 hours` : "all prices under 6 hours old when the run was built"} tone={stale ? "negative" : "positive"} /></Tip>
         {excluded.length > 0 && (
-          <Tip text="Prices from these sources are compared against, never treated as a sportsbook price.">
-            <Kpi label="Comparison only" value={excluded.map(bookName).join(", ")} detail="used as a model comparison, not as a sportsbook price" />
+          <Tip text="Prices from these sources are shown for reference and never treated as a sportsbook price.">
+            <Kpi label="Reference only" value={excluded.map(bookName).join(", ")} detail="shown for reference, not treated as a sportsbook price" />
           </Tip>
         )}
       </div>
@@ -1339,7 +1331,7 @@ function specNote(spec: FieldSpec): string {
     scoring_avg_delta: "Shifts the course's scoring average, in strokes per round; this changes displayed scores, not win odds",
     course_sd_mult: "Widens or narrows scores at this course",
   };
-  const base = known[spec.field] ?? spec.what.replace(/\bchallenger\s+/gi, "").replace(/\.$/, "");
+  const base = known[spec.field] ?? spec.what.replace(/\.$/, "");
   return `${base}${range}.`;
 }
 const fieldLabel = (field: string) => FIELD_LABELS[field] ?? titleCase(field);

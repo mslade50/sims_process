@@ -25,8 +25,7 @@ function verdictLine(event: ScorecardEvent): string | null {
   if (!current) return null;
   const parts: string[] = [];
   if (current.rmse !== null && current.rmse !== undefined) {
-    const d = current.rmse_vs_champion;
-    parts.push(`Skill error was ${fmt(current.rmse, 2)} strokes a round${d !== null && d !== undefined && d !== 0 ? `, ${fmt(Math.abs(d), 3)} ${d < 0 ? "better" : "worse"} than the old model` : ""}.`);
+    parts.push(`Skill error was ${fmt(current.rmse, 2)} strokes a round.`);
   }
   if (current.markets_scored_vs_close) parts.push(`It beat the market's closing prices in ${current.markets_better_vs_close ?? 0} of ${current.markets_scored_vs_close} markets.`);
   return parts.length ? parts.join(" ") : null;
@@ -105,8 +104,7 @@ export function GolfpriceScorecardSection() {
           ) : (
             <div className="kpi-grid">
               <Kpi label="Events counted" value={`${card.forward.events_counted} of ${card.forward.futility_check_at}`} detail={`First checkpoint; full test is ${card.forward.horizon_events} events`} tone="accent" hint="PGA events graded since the forward test started. At the checkpoint we decide whether the model is worth continuing with." />
-              <Kpi label="Skill error vs previous model" value={intervalText(card.forward.by_arm.challenger?.rmse_vs_champion)} detail="Strokes a round; negative is better" hint={`${SKILL_HINT} The brackets show the likely range.`} />
-              <Kpi label="Price error vs previous model" value={intervalText(card.forward.by_arm.challenger?.logloss_vs_champion_mean, 4)} detail="Average over markets; negative is better" hint="How far the model's finish-position probabilities were from what happened, compared with the previous model. Negative means closer." />
+              <Kpi label="Price error vs the market close" value={intervalText(card.forward.by_arm.challenger?.logloss_vs_close_mean, 4)} detail="Average over markets; negative is better" hint="How far the model's finish-position probabilities were from what happened, compared with the market's closing prices. Negative means closer than the market." />
               {card.forward.bets.live?.n > 0 && <Kpi label="Live bets" value={`${signedFmt(card.forward.bets.live.pnl_units ?? 0, 2)}u`} detail={card.forward.bets.shadow?.n ? `Paper bets ${signedFmt(card.forward.bets.shadow.pnl_units ?? 0, 2)}u` : undefined} hint="Profit or loss in betting units on bets actually placed. Paper bets are tracked but not placed." />}
             </div>
           )}

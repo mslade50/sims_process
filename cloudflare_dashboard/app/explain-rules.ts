@@ -98,7 +98,7 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
 /* ------------------------------------------------------------------ index / event selection */
 export type DistributionRun = { key?: string | null; kind?: string | null; run?: string | null; as_of?: string | null; after_round?: number | null; validated?: boolean | null };
 export type IndexEvent = {
-  event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null; weather_key?: string | null;
+  event_uid: string; name?: string; tour?: string; date_start?: string; course?: string; explain_key?: string | null; explain_run?: string | null; weather_key?: string | null; weather_brief_key?: string | null;
   distribution_runs?: DistributionRun[] | null;
 };
 export const explainKeyFor = (e: IndexEvent): string => e.explain_key || `golfprice/explain/${e.event_uid.replace(/:/g, "_")}/latest.json`;

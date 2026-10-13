@@ -17,9 +17,9 @@ export type FieldSpec =
   | { scope: Scope; field: string; kind: "cut_rule"; unit: string; what: string };
 
 export const ALLOWED: FieldSpec[] = [
-  { scope: "player", field: "skill_delta", kind: "number", lo: -1.0, hi: 1.0, unit: "strokes gained per round", what: "added to the player's challenger mean" },
+  { scope: "player", field: "skill_delta", kind: "number", lo: -1.0, hi: 1.0, unit: "strokes gained per round", what: "added to the player's skill rating" },
   { scope: "player", field: "sd_mult", kind: "number", lo: 0.7, hi: 1.5, unit: "x", what: "multiplies the player's per-round SD (the V1 SD the hole engine pins)" },
-  { scope: "player", field: "withdraw", kind: "bool", unit: "flag", what: "player removed from the challenger field (zero prices; the rest is re-simulated without him)" },
+  { scope: "player", field: "withdraw", kind: "bool", unit: "flag", what: "player removed from the field (zero prices; the rest is re-simulated without him)" },
   { scope: "course", field: "scoring_avg_delta", kind: "number", lo: -3.0, hi: 3.0, unit: "strokes per round", what: "shifts every hole's expected score so the course average moves by this much (level only)" },
   { scope: "course", field: "sd_mult", kind: "number", lo: 0.8, hi: 1.25, unit: "x", what: "multiplies every player's per-round SD" },
   { scope: "engine", field: "cut_rule", kind: "cut_rule", unit: "rule", what: "replaces fields of the event's cut rule (cut_round, top_n, within, mdf_trigger, mdf_top_n, mdf_round)" },

@@ -45,16 +45,14 @@ export const NAVIGATION: NavGroup[] = [
     label: "Week",
     items: [
       { key: "this-week", href: "/this-week", label: "This week", description: "Course, model vs market, who we favour and why" },
+      { key: "weather-effects", href: "/weather-effects", label: "Weather", description: "How the weather changes scoring and who it helps or hurts" },
       {
         key: "weekly-players", href: "/weekly-players", label: "Players", description: "Everyone in the field, or one golfer's profile",
         toggle: [{ key: "weekly-players", href: "/weekly-players", label: "Whole field" }, { key: "players", href: "/players", label: "One golfer" }],
       },
       { key: "why-priced", href: "/why-priced", label: "Why priced", description: "Every player's price, shape and drivers" },
       { key: "distributions", href: "/distributions", label: "Distributions", description: "Finish-position probability curves" },
-      {
-        key: "round-scores", href: "/round-scores", label: "Scoring", description: "Expected score, how wide it could swing, and tee-time weather",
-        toggle: [{ key: "round-scores", href: "/round-scores", label: "Scores" }, { key: "weather-effects", href: "/weather-effects", label: "Weather" }],
-      },
+      { key: "round-scores", href: "/round-scores", label: "Scoring", description: "Expected score and how wide it could swing" },
     ],
   },
   { label: "Model", items: [{ key: "inputs", href: "/inputs", label: "Model inputs", description: "Skill, course fit, variance, adjustments" }] },
@@ -64,8 +62,8 @@ export const NAVIGATION: NavGroup[] = [
     label: "Archive",
     collapsed: true,
     items: [
-      { key: "history", href: "/history", label: "History", description: "Past tournaments from the old model" },
-      { key: "diagnostics", href: "/diagnostics", label: "Diagnostics", description: "How accurate the old model was" },
+      { key: "history", href: "/history", label: "History", description: "Past tournaments (archived pipeline)" },
+      { key: "diagnostics", href: "/diagnostics", label: "Diagnostics", description: "Skill accuracy checks (archived pipeline)" },
     ],
   },
 ];

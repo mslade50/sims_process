@@ -28,14 +28,14 @@ export function dayLabel(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
 
-/** Models worth showing: the one in production and the old champion it replaced. The trial variants are retired and stay out of the tables. */
-export const SHOWN_ROLES = ["production", "retired_champion"];
+/** Only the model in production is shown; the scorecard document may still carry retired comparison rows under their old keys, which are ignored here. */
+export const SHOWN_ROLES = ["production"];
 export const shownArms = (arms: ScorecardArm[]): ScorecardArm[] => {
   const chosen = arms.filter((arm) => arm.role !== undefined && SHOWN_ROLES.includes(arm.role));
-  return chosen.length ? chosen : arms.filter((arm) => arm.arm === "challenger" || arm.arm === "champion");
+  return chosen.length ? chosen : arms.filter((arm) => arm.arm === "challenger");
 };
-/** Plain model names: the rows say what the model is, not which internal arm it is. */
-export const armName = (arm: ScorecardArm): string => (arm.role === "production" || arm.arm === "challenger" ? "Current model" : arm.role === "retired_champion" || arm.arm === "champion" ? "Old model (retired)" : arm.label);
+/** The one model, by its plain name. */
+export const armName = (arm: ScorecardArm): string => (arm.role === "production" || arm.arm === "challenger" ? "The model" : arm.label);
 
 export type Interval = { n: number; mean: number | null; lo: number | null; hi: number | null };
 export type ScorecardArm = {

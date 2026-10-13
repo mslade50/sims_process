@@ -89,7 +89,7 @@ test("the Weather effects page renders its empty state when nothing is published
   const response = await worker.fetch(new Request("https://golf.example/weather-effects", { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("nf", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Weather effects/);
+  assert.match(html, /s conditions/);
   assert.doesNotMatch(html, /Application error|Internal Server Error/);
 });
 
@@ -107,6 +107,16 @@ test("the Worker serves golfprice/weather/<event>/latest.json read-only with no-
   assert.equal(missing.status, 404);
   const write = await worker.fetch(new Request(`https://golf.example/api/${key}`, { method: "PUT", body: "{}" }), env, ctx);
   assert.equal(write.status, 405);
+});
+
+test("the Worker serves the weather brief (brief_latest.json) with no-cache so the page never shows a stale forecast", async () => {
+  const worker = await loadWorker();
+  const key = "golfprice/weather/pga_554_2026-10-01/brief_latest.json";
+  const bucket = { get: async (k) => (k === key ? { httpEtag: '"b1"', body: JSON.stringify({ schema: "golfprice.weather_brief.v1" }), writeHttpMetadata() {} } : null) };
+  const env = { ASSETS: { fetch: async () => new Response("nf", { status: 404 }) }, DASHBOARD_DATA: bucket };
+  const ok = await worker.fetch(new Request(`https://golf.example/api/${key}`), env, { waitUntil() {}, passThroughOnException() {} });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("cache-control"), "no-cache");
 });
 import { weatherCheckpoint } from "../app/weather-rules.ts";
 test("D6: weather run is compared with the price checkpoint; a different run or a stale document warns", () => {
