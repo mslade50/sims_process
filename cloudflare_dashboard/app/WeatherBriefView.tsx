@@ -73,7 +73,7 @@ export function CoursePanel({ brief }: { brief: Brief }) {
           {c.tourSlope !== null && bar("Tour average", c.tourSlope, "tour")}
         </div>
       )}
-      <p className="wb-muted">Each extra mph of average wind makes scoring harder by this many strokes per round.{c.basis ? ` Based on: ${c.basis}.` : ""}{c.cls ? ` Course type: ${c.cls}.` : ""}</p>
+      <p className="wb-muted">Long-run cost of each extra mph of average wind at this course, from past events (the sentence above re-runs the model on this week's forecast, so it can differ).{c.basis ? ` Based on: ${c.basis}.` : ""}{c.cls ? ` Course type: ${c.cls}.` : ""}</p>
     </Panel>
   );
 }
@@ -127,7 +127,7 @@ export function RoundStrip({ rounds, live, sliders }: { rounds: BriefRound[]; li
               <div className={`wb-effect wave-${side}`}>
                 <span>Morning vs afternoon wave</span>
                 <strong>{out.wave === null ? "Tee sheet not out yet" : changed ? <Faint now={waveWords(out.wave)} base={waveWords(r.wave)} render /> : waveWords(out.wave)}</strong>
-                <small>{out.wave === null ? "Wave effects arrive with the tee sheet." : "For the same player, the other wave is that much worse."}</small>
+                <small>{out.wave === null ? "Wave effects arrive with the tee sheet." : (Math.abs(out.wave) < 0.02 ? "Tee times make no real difference this round." : "For the same player, the other wave plays that much harder.")}</small>
               </div>
               <div className="wb-effect flat"><span>Spread of scores</span><strong>{spreadWords(out.spread)}</strong></div>
             </div>
@@ -242,6 +242,8 @@ function sliderWords(s: Sliders): string {
 export function WhatIfPanel({ model, sliders, onChange }: { model: WhatIfModel | null; sliders: Sliders; onChange: (s: Sliders) => void }) {
   if (!model) return <Panel eyebrow="What if the forecast changes" title="Try a different forecast"><p className="wb-muted">What-if numbers are not published for this run yet.</p></Panel>;
   const set = (patch: Partial<Sliders>) => onChange({ ...sliders, ...patch });
+  // The ≈ note only when some player is actually scaled (briefs with player_totals give everyone an exact number).
+  const approxNote = model.evaluate({ wind: model.ranges.wind[1], pm: model.ranges.pm[1], temp: model.ranges.temp[1], wet: model.axes.wet }).approx.size > 0;
   const slide = (id: string, label: string, min: number, max: number, value: number, unitText: string, key: "wind" | "pm" | "temp", enabled: boolean) => (
     <label className={`wb-slider${enabled ? "" : " off"}`} htmlFor={id}>
       <span>{label}</span>
@@ -258,7 +260,7 @@ export function WhatIfPanel({ model, sliders, onChange }: { model: WhatIfModel |
         {slide("wb-temp", "Temperature", -10, 10, sliders.temp, "°F", "temp", model.axes.temp)}
         <label className={`wb-check wb-wet${model.axes.wet ? "" : " off"}`}><input type="checkbox" checked={sliders.wet} disabled={!model.axes.wet} onChange={(e) => set({ wet: e.target.checked })} /> Wet weather</label>
       </div>
-      <p className="wb-muted">The round cards above and the player bars update as you move these. The faint text and the faint tick marks show the current forecast. Between the published what-if runs the page blends them; players outside the biggest movers are scaled from their current effect (shown with ≈).</p>
+      <p className="wb-muted">The round cards above and the player bars update as you move these. The faint text and the faint tick marks show the current forecast. Between the published what-if runs the page blends them.{approxNote ? " Players outside the biggest movers are scaled from their current effect (shown with ≈)." : ""}</p>
     </Panel>
   );
 }
@@ -309,7 +311,7 @@ export function GlossaryPanel({ brief }: { brief: Brief }) {
     <Panel eyebrow="In plain English" title="What the words mean">
       <dl className="wb-gloss">
         {GLOSSARY_ORDER.map((k) => (
-          <div key={k}><dt>{k === "field_effect" ? "Field effect" : k === "wave_split" ? "Wave split" : k === "spread" ? "Spread" : "Relative effect"}</dt><dd>{DEFAULT_GLOSSARY[k].replace(/^[^:]+: /, "")}{brief.glossary[k] && brief.glossary[k] !== DEFAULT_GLOSSARY[k] ? ` ${brief.glossary[k]}` : ""}</dd></div>
+          <div key={k}><dt>{k === "field_effect" ? "Field effect" : k === "wave_split" ? "Wave split" : k === "spread" ? "Spread" : "Relative effect"}</dt><dd>{DEFAULT_GLOSSARY[k].replace(/^[^:]+: /, "")}</dd></div>
         ))}
       </dl>
     </Panel>
