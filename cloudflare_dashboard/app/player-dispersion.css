@@ -87,3 +87,8 @@
 .dsp-shift-you{fill:var(--foreground);stroke:var(--surface);stroke-width:1}
 .dsp-key-arrow{display:inline-block;width:18px;height:8px;border-radius:4px;border:1.6px solid var(--foreground);background:linear-gradient(90deg,var(--surface) 0 40%,var(--foreground) 40%)}
 @media(max-width:480px){.dsp-sit .segmented button{padding:0 9px;font-size:12px}.dsp-sit-buckets button{padding:0 10px}}
+
+.dsp-slice-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted-strong); cursor: pointer; }
+.dsp-slice-toggle input { accent-color: var(--accent, currentColor); }
+.dsp-slice-caption b { font-weight: 600; }
+.dsp-empty { padding: 12px 0; }

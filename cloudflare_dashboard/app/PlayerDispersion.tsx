@@ -3,11 +3,14 @@
 import { useMemo, useState } from "react";
 import { Panel, LoadingState } from "./components";
 import { useDashboardData } from "./data";
+import { playerDisplayName } from "./player-name";
+import { sliceHistory, type HistoryFilters } from "./player-history-filters";
+import type { DeepProfile } from "./player-deep-rules";
 import "./player-dispersion.css";
 import {
   DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, GREEN_HALF_DEPTH, GREEN_HALF_WIDTH, LIE_OPTIONS, ROUND_CHOICES, SIT_HELP, availableDims, bandLabel, bandStats, bucketCounts, compare,
-  depthRange, dispersionKey, displayName, fairwayGuide, fmt, fmtFt, greenWindow, headline, inBucket, laterality, niceStep, parseIndex, parsePayload, parseReference, referenceBand,
-  roundCount, selectPoints, sideRange, situationReadout, situationStat, ticks, viewWindow, windowSpan,
+  depthRange, dispersionKey, fairwayGuide, fmt, fmtFt, greenWindow, hasEventIds, headline, inBucket, laterality, niceStep, parseIndex, parsePayload, parseReference, referenceBand,
+  roundCount, selectPoints, sideRange, situationReadout, situationStat, sliceKeys, sliceLabel, sliceRounds, sliceSpan, ticks, viewWindow, windowSpan,
   type BandStat, type Kind, type Point, type Reference, type SitResult, type SituationBucket, type SituationDim,
 } from "./player-dispersion-rules";
 
@@ -232,7 +235,7 @@ function leanText(s: BandStat, kind: Kind): string {
   return side + along;
 }
 
-export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefined; name?: string }) {
+export function PlayerDispersion({ dgId, name, deep, filters }: { dgId: number | null | undefined; name?: string; deep?: DeepProfile | null; filters?: HistoryFilters }) {
   const index = useDashboardData<unknown>(INDEX_KEY);
   const idx = useMemo(() => parseIndex(index.data), [index.data]);
   const pKey = idx ? dispersionKey(idx, dgId) : null;
@@ -243,12 +246,19 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
 
   const [kind, setKind] = useState<Kind>("tee");
   const [rounds, setRounds] = useState<number>(50);
+  const [useSlice, setUseSlice] = useState(false);
+  const canSlice = !!(deep?.history?.events?.length && filters);
+  const sliceOn = useSlice && canSlice;
+  const sliceEvents = useMemo(() => (sliceOn && deep && filters ? sliceHistory(deep.history?.events ?? [], { ...filters, asOf: deep.as_of }) : []), [sliceOn, deep, filters]);
+  const keys = useMemo(() => sliceKeys(sliceEvents), [sliceEvents]);
+  const allowed = useMemo(() => (sliceOn && payload ? sliceRounds(payload, keys) : undefined), [sliceOn, payload, keys]);
+  const who = playerDisplayName(name) || "this golfer";
   const [lie, setLie] = useState("all");
   const [off, setOff] = useState<Record<string, boolean>>({});
   const [sitChoice, setSitChoice] = useState<Record<Kind, SitChoice>>({ tee: null, app: null });
 
   const bands = (kind === "tee" ? reference?.tee_bands : reference?.app_bands) ?? (kind === "tee" ? DEFAULT_TEE_BANDS : DEFAULT_APP_BANDS);
-  const all = useMemo(() => (payload ? selectPoints(payload, kind, rounds, bands, kind === "app" ? lie : "all") : []), [payload, kind, rounds, bands, lie]);
+  const all = useMemo(() => (payload ? selectPoints(payload, kind, rounds, bands, kind === "app" ? lie : "all", allowed) : []), [payload, kind, rounds, bands, lie, allowed]);
   const hidden = (b: number) => off[`${kind}${b}`] === true;
   const points = useMemo(() => all.filter((p) => !off[`${kind}${p.band}`]), [all, off, kind]);
   const stats = useMemo(() => bandStats(points, kind, bands), [points, kind, bands]);
@@ -268,16 +278,23 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
     setSitChoice((c) => ({ ...c, [kind]: { dim: d.key, bucket: best.key } }));
   };
   const pickBucket = (key: string) => setSitChoice((c) => ({ ...c, [kind]: c[kind] ? { ...c[kind]!, bucket: key } : c[kind] }));
-  const readout = sitDim && sitBucket && sitResult ? situationReadout(kind, displayName(name), sitDim, sitBucket, sitResult) : null;
+  const readout = sitDim && sitBucket && sitResult ? situationReadout(kind, who, sitDim, sitBucket, sitResult) : null;
 
   if (index.loading) return null;
   if (index.error || !idx) return null; // not published yet: stay out of the way
-  if (!pKey) return <Panel title="Shot dispersion" eyebrow="Fairway and green views"><p className="pp-muted">No published shot-by-shot data for {name ?? "this golfer"} (PGA Tour rounds only).</p></Panel>;
+  if (!pKey) return <Panel title="Shot dispersion" eyebrow="Fairway and green views"><p className="pp-muted">No published shot-by-shot data for {who} (PGA Tour rounds only).</p></Panel>;
   if (payloadLoad.loading || refLoad.loading) return <LoadingState label="Loading shot dispersion" />;
-  if (payloadLoad.error || !payload) return <Panel title="Shot dispersion" eyebrow="Fairway and green views"><p className="pp-muted">Shot dispersion did not load for {name ?? "this golfer"}.</p></Panel>;
+  if (payloadLoad.error || !payload) return <Panel title="Shot dispersion" eyebrow="Fairway and green views"><p className="pp-muted">Shot dispersion did not load for {who}.</p></Panel>;
 
   const available = roundCount(payload, kind);
-  const span = windowSpan(payload, rounds);
+  const span = sliceOn ? null : windowSpan(payload, rounds);
+  const sSpan = sliceOn && allowed ? sliceSpan(payload, kind, allowed) : null;
+  const sliceName = filters?.event ? deep?.history?.events.find((e) => e.id === filters.event)?.name : undefined;
+  const kindWord = kind === "tee" ? "tee-shot" : "approach";
+  const sliceEmpty = !hasEventIds(payload)
+    ? "This shot data was published before it could be matched to the slice filters. It will work after the next profile publish."
+    : keys.size === 0 ? "No rounds match the slice filters above, so there are no shots to show. Loosen a filter."
+    : `None of the ${keys.size} rounds in this slice has PGA Tour ${kindWord} data. Shot detail exists only for PGA Tour events (not other tours) over roughly the last three years.`;
   const hasKind = (k: Kind) => !!(k === "tee" ? payload.tee : payload.app);
 
   return (
@@ -286,9 +303,16 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
         <div className="segmented" role="group" aria-label="Shot type">
           {(["tee", "app"] as Kind[]).map((k) => <button key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} disabled={!hasKind(k)} onClick={() => setKind(k)}>{k === "tee" ? "Tee shots" : "Approach"}</button>)}
         </div>
-        <div className="segmented" role="group" aria-label="Number of recent rounds">
-          {ROUND_CHOICES.map((n) => <button key={n} type="button" className={rounds === n ? "active" : ""} aria-pressed={rounds === n} onClick={() => setRounds(n)}>Last {n}</button>)}
-        </div>
+        {!sliceOn && (
+          <div className="segmented" role="group" aria-label="Number of recent rounds">
+            {ROUND_CHOICES.map((n) => <button key={n} type="button" className={rounds === n ? "active" : ""} aria-pressed={rounds === n} onClick={() => setRounds(n)}>Last {n}</button>)}
+          </div>
+        )}
+        {canSlice && (
+          <label className="dsp-slice-toggle" title="Show only the rounds picked by “Explore a slice of their golf” above (history window, season, tour, events, courses, conditions, rounds R1–R4).">
+            <input type="checkbox" checked={useSlice} onChange={(e) => setUseSlice(e.target.checked)} />Use the slice filters above
+          </label>
+        )}
         {kind === "app" && (
           <label className="dsp-lie">Starting lie
             <select value={lie} onChange={(e) => setLie(e.target.value)}>{LIE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}</select>
@@ -306,8 +330,13 @@ export function PlayerDispersion({ dgId, name }: { dgId: number | null | undefin
           </button>
         ))}
       </div>
+      {sliceOn && (
+        <p className="dsp-sample dsp-slice-caption">
+          Slice: <b>{sliceLabel(filters ?? {}, sliceName)}</b>{sSpan ? <> · <b>{sSpan.n}</b> rounds with {kindWord} data, {shortDate(sSpan.first)} to {shortDate(sSpan.last)} · <b>{points.length.toLocaleString("en-US")}</b> shots shown</> : null}
+        </p>
+      )}
       {span && <p className="dsp-sample">Last <b>{Math.min(rounds, payload.rounds.length)}</b> rounds with shot data{available < rounds ? ` (all ${available} with ${kind === "tee" ? "tee-shot" : "approach"} data)` : ""}, {shortDate(span.first)} to {shortDate(span.last)} · <b>{points.length.toLocaleString("en-US")}</b> shots shown</p>}
-      {points.length === 0 ? <p className="pp-muted">No shots match this view.</p> : (
+      {points.length === 0 ? <p className="pp-muted dsp-empty" role="status">{sliceOn && all.length === 0 ? sliceEmpty : "No shots match this view."}</p> : (
         <>
           <p className="dsp-headline">{headline(kind, stats, bands, reference, kind === "app" ? lie : "all")}</p>
           <div className="dsp-body">

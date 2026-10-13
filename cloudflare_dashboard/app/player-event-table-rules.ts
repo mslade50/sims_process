@@ -13,12 +13,12 @@ export function shotReferenceOf(metrics?:Array<{key:string;reference_mean?:numbe
 }
 export type SgKey="sg_total"|"sg_ott"|"sg_app"|"sg_arg"|"sg_putt"|"t2g";
 export const SG_COLUMNS:Array<{key:SgKey;label:string;help:string;range:number}>=[
-  {key:"sg_total",label:"Total",range:3,help:"Total strokes gained per round against the PGA average (0 = average), adjusted for field strength. Blank when the source has no adjusted total (mostly feeder tours)."},
-  {key:"sg_ott",label:"OTT",range:1.5,help:"Off the tee: strokes gained per round on tee shots, compared with that week's field."},
-  {key:"sg_app",label:"APP",range:1.5,help:"Approach: strokes gained per round on approach shots, compared with that week's field."},
-  {key:"sg_arg",label:"ARG",range:1,help:"Around the green: strokes gained per round on chips, pitches and bunker shots, compared with that week's field."},
-  {key:"sg_putt",label:"PUTT",range:1.5,help:"Putting: strokes gained per round on the greens, compared with that week's field."},
-  {key:"t2g",label:"T2G",range:2.5,help:"Tee to green: off the tee + approach + around the green, per round, compared with that week's field."},
+  {key:"sg_total",label:"Total",range:3,help:"Total strokes gained per round against the PGA average round (0 = average), adjusted for field strength; the four categories use the same baseline. Blank when the source has no adjusted total (mostly feeder tours)."},
+  {key:"sg_ott",label:"OTT",range:1.5,help:"Off the tee: strokes gained per round on tee shots against the PGA average round (2017–2025), same baseline as Total. Tour events without that baseline show the week's-field figure in italics."},
+  {key:"sg_app",label:"APP",range:1.5,help:"Approach: strokes gained per round on approach shots against the PGA average round (2017–2025). Italic = compared with that week's field instead (older or non-PGA data)."},
+  {key:"sg_arg",label:"ARG",range:1,help:"Around the green: strokes gained per round on chips, pitches and bunker shots against the PGA average round (2017–2025). Italic = compared with that week's field instead."},
+  {key:"sg_putt",label:"PUTT",range:1.5,help:"Putting: strokes gained per round on the greens against the PGA average round (2017–2025). Italic = compared with that week's field instead."},
+  {key:"t2g",label:"T2G",range:2.5,help:"Tee to green: off the tee + approach + around the green, per round, against the PGA average round (2017–2025). Italic = compared with that week's field instead."},
 ];
 export type ShotKey="tee_distance"|"tee_accuracy"|"app_great"|"app_poor"|"prox_fairway"|"putt_short_make"|"app_gir"|"short_scramble"|"score_birdie"|"tee_penalty"|"radar_club_speed"|"radar_ball_speed"|"radar_smash"|"radar_launch"|"radar_spin"|"radar_apex";
 export type ShotUnit="yd"|"pct"|"ft"|"mph"|"deg"|"rpm"|"ratio";
@@ -42,8 +42,16 @@ export const SHOT_COLUMNS:Array<{key:ShotKey;label:string;unit:ShotUnit;help:str
   {key:"radar_apex",label:"Apex ft",unit:"ft",min:5,descriptive:true,help:"Average peak height of the flight in feet on par 4/5 tee shots."},
 ];
 export type EventRow={id:string;date:string;name:string;course?:string;tour:string;major:boolean;finish?:string;rounds:number;score_to_par:number|null;
-  sg:Record<SgKey,number|null>;shots:Record<ShotKey,{value:number|null;n:number;z:number|null;avg:number|null;basis:"event"|"player"|null}>;event:HistoryEvent};
+  sg:Record<SgKey,number|null>;/** Per category: "pga" = against the fixed PGA average round (same as Total); "field" = fallback, relative to that week's field. */sgBasis:Partial<Record<SgKey,"pga"|"field">>;shots:Record<ShotKey,{value:number|null;n:number;z:number|null;avg:number|null;basis:"event"|"player"|null}>;event:HistoryEvent};
 const sum3=(a:number|null|undefined,b:number|null|undefined,c:number|null|undefined)=>finite(a)&&finite(b)&&finite(c)?a+b+c:null;
+type CatSource=Partial<Record<"sg_ott"|"sg_app"|"sg_arg"|"sg_putt"|"sg_t2g"|"sg_ott_pga"|"sg_app_pga"|"sg_arg_pga"|"sg_putt_pga"|"sg_t2g_pga",number|null>>;
+/** A category value on the PGA-average baseline when published, else the field-relative number (basis says which). T2G falls back to OTT+APP+ARG. */
+export function categoryValue(src:CatSource,key:"sg_ott"|"sg_app"|"sg_arg"|"sg_putt"|"t2g"):{value:number|null;basis:"pga"|"field"|null}{
+  if(key==="t2g"){const p=src.sg_t2g_pga;if(finite(p))return {value:p,basis:"pga"};
+    const f=sum3(src.sg_ott,src.sg_app,src.sg_arg);return {value:f,basis:f===null?null:"field"};}
+  const p=src[`${key}_pga` as const];if(finite(p))return {value:p,basis:"pga"};
+  const f=src[key];return finite(f)?{value:f,basis:"field"}:{value:null,basis:null};
+}
 export function aggregateShots(eventId:string,rounds:number[],rows:ShotRoundRow[]|undefined,ref:ShotRef):EventRow["shots"]{
   const want=new Set(rounds),mine=(rows??[]).filter(r=>r.event_id===eventId&&want.has(r.round));
   const out={} as EventRow["shots"];
@@ -60,10 +68,12 @@ export function aggregateShots(eventId:string,rounds:number[],rows:ShotRoundRow[
 export function buildRows(events:HistoryEvent[],anchor:number|null|undefined,shotRows:ShotRoundRow[]|undefined,ref:ShotRef):EventRow[]{
   return events.map(e=>{
     const total=e.sg_basis==="source_adjusted"&&finite(e.sg_total)&&finite(anchor)?e.sg_total-anchor:null;
+    const cat={sg_ott:categoryValue(e,"sg_ott"),sg_app:categoryValue(e,"sg_app"),sg_arg:categoryValue(e,"sg_arg"),sg_putt:categoryValue(e,"sg_putt"),t2g:categoryValue(e,"t2g")};
     const rounds=(e.round_data??[]).map(r=>r.round??r.round_num).filter(finite);
     return {id:e.id,date:e.date,name:e.name,course:e.course,tour:e.tour,major:e.major===true,finish:e.finish,rounds:e.round_data?.length??e.rounds??0,
       score_to_par:finite(e.score_to_par)?e.score_to_par:null,
-      sg:{sg_total:total,sg_ott:finite(e.sg_ott)?e.sg_ott:null,sg_app:finite(e.sg_app)?e.sg_app:null,sg_arg:finite(e.sg_arg)?e.sg_arg:null,sg_putt:finite(e.sg_putt)?e.sg_putt:null,t2g:sum3(e.sg_ott,e.sg_app,e.sg_arg)},
+      sg:{sg_total:total,sg_ott:cat.sg_ott.value,sg_app:cat.sg_app.value,sg_arg:cat.sg_arg.value,sg_putt:cat.sg_putt.value,t2g:cat.t2g.value},
+      sgBasis:Object.fromEntries(Object.entries(cat).flatMap(([k,c])=>c.basis?[[k,c.basis]]:[])) as EventRow["sgBasis"],
       shots:aggregateShots(e.id,rounds,shotRows,ref),event:e};
   });
 }

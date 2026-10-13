@@ -1,0 +1,15 @@
+.ps-story{font-size:15px;line-height:1.65;max-width:78ch;margin:6px 0 16px}
+.ps-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0}
+.ps-group{margin:18px 0 0;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-strong)}
+.ps-card{padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-raised);display:flex;flex-direction:column;gap:6px}
+.ps-card.ps-headline{border-color:var(--chart-1)}
+.ps-card.ps-typical{opacity:.85}
+.ps-card header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ps-card header em{font-style:normal;font-size:10px;color:var(--muted-strong)}
+.ps-card strong{font-size:19px}
+.ps-card p{font-size:12px;line-height:1.6;margin:0}
+.ps-strip{position:relative;height:6px;border-radius:3px;background:var(--line);margin-top:6px}
+.ps-strip i{position:absolute;top:-3px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--chart-1)}
+.ps-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted-strong)}
+@media (max-width:900px){.ps-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:600px){.ps-grid{grid-template-columns:1fr}}

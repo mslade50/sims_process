@@ -17,7 +17,7 @@ export type Kind = "tee" | "app";
 export type DispersionIndex = { schema_version: string; generation: string; prefix: string; reference_key: string; as_of: string; count: number; player_ids: number[] };
 export type TeeBlock = { r: number[]; f: number[]; l: number[]; z: string; d?: string; w?: string; b?: string; t?: string };
 export type AppBlock = { r: number[]; s: number[]; l: number[]; a: number[]; z: string; o: string; p?: string; h?: string };
-export type DispersionPayload = { schema_version: string; dg_id: number; as_of: string; rounds: Array<[string, number, string]>; tee?: TeeBlock; app?: AppBlock };
+export type DispersionPayload = { schema_version: string; dg_id: number; as_of: string; rounds: Array<[string, number, string, string?]>; /* [date, round, event name, deep-history event id] */ tee?: TeeBlock; app?: AppBlock };
 export type Spread = { n: number; mean: number; sd: number | null; q10: number; q90: number; player_sd?: { n_players: number; p10: number; p50: number; p90: number } };
 export type RefBand = { n_shots: number; n_players: number; lat: Spread; fwd?: Spread; along?: Spread; green_rate?: number; fairway_rate?: number; end_lie_known_n?: number;
   prox_med?: number; fairway_lat?: { n: number; q02: number; q98: number } };
@@ -110,12 +110,58 @@ export function windowSpan(p: DispersionPayload, rounds: number): { first: strin
   return { first: p.rounds[n - 1][0], last: p.rounds[0][0], n };
 }
 
-export function selectPoints(p: DispersionPayload, kind: Kind, rounds: number, bands: number[][], lie = "all"): Point[] {
+/** `event id|round` keys of a sliced history (same keys FilteredPlayerShapes uses); structural type so this file stays import-light. */
+export function sliceKeys(events: Array<{ id: string; round_data: Array<{ round?: number; round_num?: number }> }>): Set<string> {
+  return new Set(events.flatMap((e) => e.round_data.map((r) => `${e.id}|${r.round ?? r.round_num}`)));
+}
+
+/** Payload round indexes (0 = newest) whose history event id + round number are in the slice. */
+export function sliceRounds(p: DispersionPayload, keys: Set<string>): Set<number> {
+  const out = new Set<number>();
+  p.rounds.forEach((r, i) => { if (r[3] && keys.has(`${r[3]}|${r[1]}`)) out.add(i); });
+  return out;
+}
+
+/** True when the payload was published with history event ids (older publishes have only the name). */
+export const hasEventIds = (p: DispersionPayload) => p.rounds.some((r) => !!r[3]);
+
+/** Rounds of the slice that have shots of this type, and their date span. */
+export function sliceSpan(p: DispersionPayload, kind: Kind, allowed: Set<number>): { n: number; first: string; last: string } | null {
+  const block = kind === "tee" ? p.tee : p.app;
+  if (!block) return null;
+  const have = [...new Set(block.r)].filter((i) => allowed.has(i));
+  if (!have.length) return null;
+  const dates = have.map((i) => p.rounds[i][0]).sort();
+  return { n: have.length, first: dates[0], last: dates[dates.length - 1] };
+}
+
+type SliceFilters = { window?: string; season?: string; tour?: string; major?: boolean; event?: string; course?: string; rounds?: number[]; contention?: string; difficulty?: string; strength?: string; search?: string };
+
+/** The slice in plain words for the caption, e.g. "last 2 years · PGA · majors only · rounds 1, 2". */
+export function sliceLabel(f: SliceFilters, eventName?: string): string {
+  const out: string[] = [f.window === "recent2y" ? "last 2 years" : "all history"];
+  if (f.season) out.push(`${f.season} season`);
+  if (f.tour) out.push(f.tour.toUpperCase());
+  if (f.major) out.push("majors only");
+  if (f.event) out.push(eventName || "one event");
+  if (f.course) out.push(f.course);
+  if (f.rounds && f.rounds.length && f.rounds.length < 4) out.push(`round${f.rounds.length > 1 ? "s" : ""} ${[...f.rounds].sort().join(", ")}`);
+  if (f.contention === "near") out.push("within 2 shots of the lead");
+  if (f.contention === "outside") out.push("more than 2 shots back");
+  if (f.difficulty) out.push(`${f.difficulty} scoring conditions`);
+  if (f.strength) out.push(`${f.strength} fields`);
+  if (f.search) out.push(`“${f.search}”`);
+  return out.join(" · ");
+}
+
+/** `allowed` (payload round indexes) replaces the last-`rounds` cut when given: the history-filter slice. */
+export function selectPoints(p: DispersionPayload, kind: Kind, rounds: number, bands: number[][], lie = "all", allowed?: Set<number>): Point[] {
   const out: Point[] = [];
+  const skip = (r: number) => (allowed ? !allowed.has(r) : r >= rounds);
   if (kind === "tee" && p.tee) {
     const t = p.tee;
     for (let i = 0; i < t.r.length; i++) {
-      if (t.r[i] >= rounds) continue;
+      if (skip(t.r[i])) continue;
       const dist = t.f[i] / 2, lat = t.l[i] / 2;
       const band = bandIndex(dist, bands);
       if (band < 0) continue;
@@ -126,7 +172,7 @@ export function selectPoints(p: DispersionPayload, kind: Kind, rounds: number, b
   } else if (kind === "app" && p.app) {
     const a = p.app;
     for (let i = 0; i < a.r.length; i++) {
-      if (a.r[i] >= rounds) continue;
+      if (skip(a.r[i])) continue;
       if (lie !== "all" && a.o[i] !== lie) continue;
       const dist = a.s[i] / 2, along = a.a[i] / 2;
       const band = bandIndex(dist, bands);

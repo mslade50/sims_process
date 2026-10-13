@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {SHOT_COLUMNS,aggregateShots,buildRows,divergingBackground,finishRank,formatShot,shotReferenceOf,sortRows} from '../app/player-event-table-rules.ts';
+import {SHOT_COLUMNS,SG_COLUMNS,aggregateShots,buildRows,categoryValue,divergingBackground,finishRank,formatShot,shotReferenceOf,sortRows} from '../app/player-event-table-rules.ts';
 import {FINGERPRINT_GROUPS,DESCRIPTIVE_GROUPS,AXIS_LABEL,AXIS_HELP,labelPlacement,valueLabel,radarCoverageLine} from '../app/player-fingerprint-rules.ts';
 import {histogram} from '../app/player-deep-rules.ts';
 import {stepPath} from '../app/player-histogram-rules.ts';
@@ -89,4 +89,13 @@ test('fingerprint: radar group is descriptive, covers the measured ball-flight s
 test('hole-based measures say holes, shot-based say shots',async()=>{
   const {sampleNoun}=await import('../app/player-fingerprint-rules.ts');
   assert.equal(sampleNoun('app_gir'),'holes');assert.equal(sampleNoun('short_updown'),'holes');assert.equal(sampleNoun('tee_penalty'),'shots');assert.equal(sampleNoun('radar_spin'),'shots');
+});
+
+test('categories use the PGA-average baseline when published and fall back to the field, labelled by basis',()=>{
+  const [a,b]=buildRows([ev('1','2026-01-01',{sg_ott_pga:.3,sg_app_pga:.2,sg_arg_pga:0,sg_putt_pga:-.1,sg_t2g_pga:.5}),ev('2','2026-01-02')],.5,undefined,{});
+  assert.equal(a.sg.sg_ott,.3);assert.equal(a.sg.t2g,.5);assert.equal(a.sg.sg_putt,-.1);assert.equal(a.sgBasis.sg_putt,'pga');assert.equal(a.sgBasis.t2g,'pga');
+  assert.equal(b.sg.sg_ott,.5);assert.equal(b.sgBasis.sg_ott,'field');assert.ok(Math.abs(b.sg.t2g-1)<1e-9);assert.equal(b.sgBasis.t2g,'field');
+  assert.deepEqual(categoryValue({sg_putt_pga:null,sg_putt:null},'sg_putt'),{value:null,basis:null});
+  assert.deepEqual(categoryValue({sg_ott:1,sg_app:1,sg_arg:null},'t2g'),{value:null,basis:null});
+  assert.ok(SG_COLUMNS.filter(c=>c.key!=='sg_total').every(c=>!/that week's field\.$/.test(c.help)));
 });

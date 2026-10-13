@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
+import { playerDisplayName } from "./player-name";
 import { playerId, profileMatches, sortProfiles, type ProfileEntry } from "./player-profile-rules";
 
 export function SearchablePlayerPicker({ players, excludedIds, disabled, onSelect }: {
@@ -52,7 +53,7 @@ export function SearchablePlayerPicker({ players, excludedIds, disabled, onSelec
       <div id={`${id}-list`} role="listbox" aria-label="Players" ref={list}>
         {visible.map((p,index)=><div key={playerId(p)} id={`${id}-option-${index}`} role="option" tabIndex={-1} aria-selected={index===current} onKeyDown={event=>{if(event.key==="Enter" || event.key===" "){event.preventDefault();choose(p);}}}
           onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(p)}>
-          <strong>{p.name}</strong>{(p.tours ?? []).length>0 && <small>{(p.tours ?? []).join(" · ").toUpperCase()}</small>}
+          <strong>{playerDisplayName(p.display_name ?? p.name)}</strong>{(p.tours ?? []).length>0 && <small>{(p.tours ?? []).join(" · ").toUpperCase()}</small>}
         </div>)}
         {!matches.length && <p className="pp-player-empty">No players match “{query}”. Try a different spelling.</p>}
       </div>

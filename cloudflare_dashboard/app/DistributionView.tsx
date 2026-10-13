@@ -7,12 +7,13 @@ import { EmptyState, LoadingState, PageIntro, Panel, SegmentedControl } from "./
 import { american, MARKETS, MARKET_LABEL, nameMatches, orderEvents, parseExplain, pct, tourName, type ExPlayer } from "./explain-rules";
 import { FINISH_CHART_CAPTION, checkpoints, cutReference, marker, markerLabel, matchup, runLabel, type DistributionDoc, type DistributionEvent } from "./distributions-rules";
 import { etTime } from "./lib";
+import { playerDisplayName } from "./player-name";
 import { PositionChart, type PositionChartSeries } from "./ExplainCharts";
 import "./explain.css";
 import "./distributions.css";
 
 const COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-2)", "var(--chart-4)"];
-const name = (p: ExPlayer) => p.name.includes(",") ? p.name.split(",").reverse().join(" ").trim() : p.name;
+const name = (p: ExPlayer) => playerDisplayName(p.name);
 const MARKET_HELP: Record<string, string> = { win: "Chance of winning outright.", top_5: "Chance of finishing in the top 5, counting ties (a player tied for 5th counts).", top_10: "Chance of finishing in the top 10, counting ties (a player tied for 10th counts).", top_20: "Chance of finishing in the top 20, counting ties (a player tied for 20th counts).", make_cut: "Chance of playing the weekend." };
 const delta = (a: number | null | undefined, b: number | null | undefined) => a == null || b == null ? null : `${a - b >= 0 ? "+" : ""}${((a - b) * 100).toFixed(2)} pp`;
 

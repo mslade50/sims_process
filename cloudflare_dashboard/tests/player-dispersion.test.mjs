@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {DEFAULT_APP_BANDS, DEFAULT_TEE_BANDS, bandIndex, bandLabel, bandStats, compare, dispersionKey, headline, laterality, parseIndex, parsePayload,
   parseReference, quantile, referenceBand, roundCount, selectPoints, tourSd, viewWindow, windowSpan, fmtDist, sideRange, depthRange, greenWindow, fairwayGuide, fmtFt,
-  availableDims, bucketCounts, displayName, inBucket, situationReadout, situationStat, SIT_HELP} from '../app/player-dispersion-rules.ts';
+  availableDims, hasEventIds, sliceKeys, sliceLabel, sliceRounds, sliceSpan, bucketCounts, displayName, inBucket, situationReadout, situationStat, SIT_HELP} from '../app/player-dispersion-rules.ts';
 
 const index = {schema_version: 'player_dispersion.index.v1', generation: 'g', prefix: 'golfprice/player_profiles/dispersion-abc/', reference_key: 'golfprice/player_profiles/dispersion-abc/reference.json', as_of: '2026-10-10', count: 2, player_ids: [7, 9]};
 // half-yard integers: tee shots (forward 600=300 yd, lateral 20=10 yd right), approach shots
@@ -190,4 +190,25 @@ test('readout is one plain sentence, with a separate width clause that waits for
 
 test('names are shown first-name first', () => {
   assert.equal(displayName('McIlroy, Rory'), 'Rory McIlroy'); assert.equal(displayName('Tiger Woods'), 'Tiger Woods'); assert.equal(displayName(''), 'this golfer'); assert.equal(displayName(undefined), 'this golfer');
+});
+
+test('slice filters: shots join history rounds by event id + round, replacing the last-N cut', () => {
+  const p = {...payload, rounds: [['2026-09-01', 4, 'E', 'pga:2026:5'], ['2026-08-31', 3, 'E', 'pga:2026:5'], ['2026-08-30', 2, 'F', 'pga:2026:6']]};
+  assert.equal(hasEventIds(p), true); assert.equal(hasEventIds(payload), false, 'older publishes carry no event ids');
+  const events = [{id: 'pga:2026:5', round_data: [{round: 4}, {round_num: 3}]}, {id: 'euro:2026:9', round_data: [{round: 1}]}];
+  const keys = sliceKeys(events);
+  assert.deepEqual([...keys].sort(), ['euro:2026:9|1', 'pga:2026:5|3', 'pga:2026:5|4']);
+  const allowed = sliceRounds(p, keys);
+  assert.deepEqual([...allowed].sort(), [0, 1]);
+  assert.equal(selectPoints(p, 'tee', 1, DEFAULT_TEE_BANDS, 'all', allowed).length, 3, 'rounds 0 and 1, not limited by last-N');
+  assert.equal(selectPoints(p, 'tee', 20, DEFAULT_TEE_BANDS, 'all', new Set()).length, 0);
+  assert.deepEqual(sliceSpan(p, 'tee', allowed), {n: 2, first: '2026-08-31', last: '2026-09-01'});
+  assert.equal(sliceSpan(p, 'tee', new Set([2]))?.n, 1); assert.equal(sliceSpan(p, 'tee', new Set([5])), null);
+  assert.equal(sliceRounds(payload, keys).size, 0, 'no ids -> empty slice');
+});
+
+test('slice caption states the filters in plain words', () => {
+  assert.equal(sliceLabel({window: 'recent2y', rounds: [1, 2, 3, 4]}), 'last 2 years');
+  assert.equal(sliceLabel({window: 'all', season: '2024', tour: 'pga', major: true, rounds: [2, 1]}), 'all history · 2024 season · PGA · majors only · rounds 1, 2');
+  assert.match(sliceLabel({window: 'all', event: 'pga:2026:5', contention: 'near'}, 'The Masters'), /The Masters · within 2 shots of the lead/);
 });

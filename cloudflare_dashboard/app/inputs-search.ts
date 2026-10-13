@@ -1,5 +1,6 @@
 /** Pure text-matching helpers for the Model inputs area (player type-ahead and the Features filter). No React, no DOM: unit-tested in tests/inputs-search.test.mjs. */
 
+import { playerDisplayName } from "./player-name.ts";
 const EXTRA: Record<string, string> = { ø: "o", æ: "ae", œ: "oe", ß: "ss", đ: "d", ð: "d", ł: "l", þ: "th", ı: "i" };
 
 /** Lower-case, strip accents and apostrophes, keep letters and digits, collapse everything else to single spaces. */
@@ -15,11 +16,8 @@ export function fold(text: string): string {
 const tokens = (text: string): string[] => fold(text).split(" ").filter(Boolean);
 const compact = (text: string): string => fold(text).replaceAll(" ", "");
 
-/** "Scheffler, Scottie" -> "Scottie Scheffler"; names without a comma are returned unchanged. */
-export function firstLast(name: string): string {
-  const parts = name.split(",");
-  return parts.length === 2 ? `${parts[1].trim()} ${parts[0].trim()}` : name;
-}
+/** "Scheffler, Scottie" -> "Scottie Scheffler"; "(Am)" tags dropped; names without a comma are returned unchanged. */
+export const firstLast = (name: string): string => playerDisplayName(name) || name;
 
 /** Rank of a match (lower is better) or null: every typed word must start a word of the name ("sch scot", "scottie scheffler", "scheffler, scottie");
  *  a typed string with the spaces removed may also sit inside the name ("o neill" for "O'Neill", "scottiesch"). */

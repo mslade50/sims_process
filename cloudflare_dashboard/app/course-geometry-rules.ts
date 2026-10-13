@@ -1,10 +1,11 @@
 /**
  * Course geometry and player fit ("course_geometry.v1" / "course_fit.v1", published by golfprice/course_geometry.py + course_fit_traits.py).
- * Pure functions only (no imports) so node's strip-types test loader can run them; CourseGeometry.tsx draws what these return.
+ * Pure functions only (imports only the dependency-free player-name.ts) so node's strip-types test loader can run them; CourseGeometry.tsx draws what these return.
  *
  * The publisher writes every label, sentence and badge text; this file never rewrites them, never recomputes a percentile or a threshold,
  * and never prices anything. Everything is descriptive. A missing pointer or a payload that fails validation yields null: the card stays hidden.
  */
+import { playerDisplayName } from "./player-name.ts";
 export const GEOMETRY_INDEX_KEY = "golfprice/course_geometry/index.json";
 export const PREFIX_ROOT = "golfprice/course_geometry/geometry-";
 export const DESCRIPTIVE_FALLBACK = "Descriptive, not priced: nothing here moves a price or a bet.";
@@ -218,11 +219,7 @@ export function cardView(card: Card): { fallback: boolean; main: BarRow[]; more:
 }
 
 /* ------------------------------------------------------------------ fit badges */
-export function displayName(name: string | null | undefined): string {
-  if (!name) return "Unknown golfer";
-  const i = name.indexOf(",");
-  return i < 0 ? name.trim() : `${name.slice(i + 1).trim()} ${name.slice(0, i).trim()}`.trim();
-}
+export function displayName(name: string | null | undefined): string { return playerDisplayName(name) || "Unknown golfer"; }
 
 /** Grade C is noisy: it is never shown without the toggle, even if the publisher listed it among the visible badges. */
 export function visibleBadges(p: FitPlayer, showNoisy: boolean): Badge[] {

@@ -1,4 +1,5 @@
 /** Strict, presentation-ready helpers for golfprice's scoring expectation block. */
+import { playerDisplayName } from "./player-name.ts";
 export const SCORING_SCHEMA = "golfprice.scoring.v1";
 export type PmfRow = [number, number];
 export type ScoreComponent = { key: string; label: string; strokes: number; note: string | null };
@@ -95,7 +96,7 @@ function parseWeather(raw: unknown): ScoringDoc["weather"] {
   if (!obj(raw)) return { source: null, freshness: null, status: null, applied_in_prices: null, label: null, relative_offsets_status: null, relative_offsets_reason: null };
   return { source: text(raw.source) ? raw.source : null, freshness: text(raw.freshness) ? raw.freshness : null, status: text(raw.status) ? raw.status : null, applied_in_prices: typeof raw.applied_in_prices === "boolean" ? raw.applied_in_prices : null, label: text(raw.label) ? raw.label : null, relative_offsets_status: text(raw.relative_offsets_status) ? raw.relative_offsets_status : null, relative_offsets_reason: text(raw.relative_offsets_reason) ? raw.relative_offsets_reason : null };
 }
-export function prettyName(name: string): string { return name.includes(",") ? name.split(",").reverse().join(" ").trim() : name; }
+export const prettyName = playerDisplayName;
 export function normalizePmf(rows: PmfRow[]): PmfRow[] { const merged = new Map<number, number>(); for (const [score, p] of rows) if (Number.isInteger(score) && finite(p) && p >= 0) merged.set(score, (merged.get(score) ?? 0) + p); const total = [...merged.values()].reduce((a, b) => a + b, 0); return total > 0 ? [...merged].sort(([a], [b]) => a - b).map(([s, p]) => [s, p / total]) : []; }
 export function overUnder(rows: PmfRow[], line: number): { over: number; under: number; push: number } { if (!finite(line)) return { over: 0, under: 0, push: 0 }; return normalizePmf(rows).reduce((a, [score, p]) => { if (score > line) a.over += p; else if (score < line) a.under += p; else a.push += p; return a; }, { over: 0, under: 0, push: 0 }); }
 /** EV per unit stake. Exact integer lines retain push probability at zero profit/loss. */

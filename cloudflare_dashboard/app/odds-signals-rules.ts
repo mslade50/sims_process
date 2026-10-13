@@ -2,6 +2,7 @@
  * Pure parsing for the published odds-move signals (golfprice/odds_signals/latest.json, schema golfprice.odds_signals.v1, written by
  * golfprice/ops/oddsmove.py). No runtime APIs: shared by the Run page panel and tests/odds-signals.test.mjs.
  */
+import { playerDisplayName } from "./player-name.ts";
 export const ODDS_SIGNALS_KEY = "golfprice/odds_signals/latest.json";
 export const ODDS_STALE_MS = 3 * 3_600_000;
 
@@ -67,10 +68,7 @@ const MARKET_NAMES: Record<string, string> = { win: "Win", top_5: "Top 5", top_1
 export const marketName = (family: string): string => MARKET_NAMES[family] ?? (family ? family.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase()) : "");
 
 /** "Helligkilde, Marcus" as "Marcus Helligkilde". */
-export const firstLast = (name: string): string => {
-  const parts = name.split(",").map((p) => p.trim());
-  return parts.length === 2 && parts[0] && parts[1] ? `${parts[1]} ${parts[0]}` : name;
-};
+export const firstLast = (name: string): string => playerDisplayName(name) || name;
 
 /** "skybet" as "Skybet". */
 export const bookName = (book: string): string => (book ? book.replace(/^./, (c) => c.toUpperCase()) : "");

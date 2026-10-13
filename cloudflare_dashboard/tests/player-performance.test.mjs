@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {nearestPerformanceIndex,roundSma,performanceSeries,visiblePerformance} from "../app/player-performance-rules.ts";
+import {nearestPerformanceIndex,roundSma,performanceSeries,visiblePerformance,normalizeSmas,recentVsLonger,roundBarFill,smaOf,TOTAL_RANGE,MAJOR_FILL,DEFAULT_SMA} from "../app/player-performance-rules.ts";
 test("SMA uses equal weights, expires old rounds exactly, and withholds partial windows",()=>{
  assert.deepEqual(roundSma([1,3,5,7,11],3),[null,null,3,5,23/3]);
  assert.deepEqual(roundSma([10,0,0,0],2),[null,5,0,0]);
@@ -12,7 +12,7 @@ test("SMA uses equal weights, expires old rounds exactly, and withholds partial 
 test("performance requires adjusted basis, exact dates, finite anchor; sorts rounds and removes duplicates",()=>{
  const event={id:"pga:1",name:"Test Championship",course:"North Course",tour:"pga",round_data:[{round:2,date:"2026-01-02",sg_total:1,sg_basis:"source_adjusted"},{round:1,date:"2026-01-01",sg_total:0,sg_basis:"source_adjusted"},{round:3,date:"2026-01-03",sg_total:3,sg_basis:"source_adjusted"},{round:4,date:"bad",sg_total:9,sg_basis:"source_adjusted"}]};
  const unknown={id:"x",round_data:[{round:1,date:"2026-01-01",sg_total:100}]};
- const p=performanceSeries([event,unknown,event],-.1);assert.equal(p.length,2);assert.equal(p[0].eventName,"Test Championship");assert.equal(p[0].course,"North Course");assert.equal(p[0].tour,"pga");assert.deepEqual(p.map(v=>v.value),[.1,1.1]);assert.equal(performanceSeries([event],null).length,0);assert.equal(performanceSeries([event],0,true).length,3);
+ const p=performanceSeries([event,unknown,event],-.1,false);assert.equal(p.length,2);assert.equal(performanceSeries([event],-.1).length,3,"R3/R4 included by default");assert.equal(p[0].eventName,"Test Championship");assert.equal(p[0].course,"North Course");assert.equal(p[0].tour,"pga");assert.deepEqual(p.map(v=>v.value),[.1,1.1]);assert.equal(performanceSeries([event],null).length,0);assert.equal(performanceSeries([event],0,true).length,3);
 });
 test("visible range preserves trailing SMA history and never reweights inactivity",()=>{
  const events=Array.from({length:60},(_,i)=>({id:`e${i}`,round_data:[{round:1,date:new Date(Date.UTC(2020,0,i+1)).toISOString(),sg_total:i,sg_basis:"source_adjusted"}]}));
@@ -34,4 +34,24 @@ test("hover snaps to real observation dates across gaps, bounds and ties",()=>{
  for(const [time,index] of [[0,0],[100,0],[150,0],[151,1],[200,1],[600,1],[601,2],[1000,2],[1200,2]])assert.equal(nearestPerformanceIndex(p,time),index);
  assert.equal(nearestPerformanceIndex([{time:1}],999),0);
  assert.equal(nearestPerformanceIndex([{time:1},{time:1},{time:2}],1),0);
+});
+
+test("100 and 200-round SMAs use exact trailing windows; default shown line is the 50",()=>{
+ const events=Array.from({length:210},(_,i)=>({id:`e${i}`,round_data:[{round:1,date:new Date(Date.UTC(2020,0,i+1)).toISOString(),sg_total:i,sg_basis:"source_adjusted"}]}));
+ const p=performanceSeries(events,0);
+ assert.equal(p[98].sma100,null);assert.equal(p[99].sma100,49.5);assert.equal(p[198].sma200,null);assert.equal(p[199].sma200,99.5);assert.equal(p[209].sma100,159.5);assert.equal(p[209].sma200,109.5);
+ assert.equal(smaOf(p[209],100),159.5);assert.deepEqual(DEFAULT_SMA,[50]);
+ assert.deepEqual(normalizeSmas(undefined),[50]);assert.deepEqual(normalizeSmas([]),[50]);assert.deepEqual(normalizeSmas([200,20,7]),[20,200]);
+ assert.equal(recentVsLonger(p[209],[50]),null);assert.equal(recentVsLonger(p[209],[100,200]),null);
+ assert.deepEqual(recentVsLonger(p[209],[50,20]),{window:20,diff:15});
+});
+test("majors are flagged from the event and coloured gold; other rounds use the Total diverging scale",()=>{
+ const rd=(round,sg)=>({round,date:`2026-01-0${round}`,sg_total:sg,sg_basis:"source_adjusted"});
+ const p=performanceSeries([{id:"m",major:true,round_data:[rd(1,0)]},{id:"n",round_data:[rd(1,0)]}],0);
+ assert.deepEqual(p.map(v=>v.major),[true,false]);
+ const m=performanceSeries([{id:"m",major:true,round_data:[rd(3,-3)]}],0)[0],n=performanceSeries([{id:"n",round_data:[rd(1,-3)]}],0)[0];
+ assert.equal(m.major,true);assert.equal(n.major,false);
+ assert.equal(roundBarFill(m),MAJOR_FILL);
+ assert.match(roundBarFill(n),/--negative/);assert.match(roundBarFill({value:TOTAL_RANGE*2,major:false}),/--positive\) 85%/);
+ assert.equal(TOTAL_RANGE,3);assert.doesNotMatch(roundBarFill({value:0,major:false}),/--positive|--negative/);
 });

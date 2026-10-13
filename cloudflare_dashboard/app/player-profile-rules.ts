@@ -1,10 +1,13 @@
+import { playerDisplayName } from "./player-name.ts";
+/** The name to show for a catalog entry or profile identity: published display_name, else the cleaned raw name. */
+export const entryName = (e: {name: string; display_name?: string}): string => playerDisplayName(e.display_name || e.name);
 /** Published historical profiles. Null metrics remain unknown, never population average. */
 export const PROFILE_AXES = ["sg_ott", "sg_app", "sg_arg", "sg_putt"] as const;
 export type ProfileAxis = typeof PROFILE_AXES[number];
 export type Photo = { url: string | null; source: string | null; source_name?:string; status?: string };
 export type PgaBenchmark = {schema_version:string;status:string;value:number|null;shrunk_value?:number|null;shrink_stale?:boolean|null;shrink_weight_on_data?:number|null;shrink_prior_tour?:string|null;observed_mean?:number|null;raw_adjusted_sg_mean?:number|null;decomposition?:{tour_weights?:Array<{tour:string;n_rounds:number;weight_fraction:number}>;historical_mean_interval?:{lower:number;upper:number;level?:number;note?:string}};n_rounds:number;n_events:number;n_eff:number;effective_sample_size?:number;weight_on_data:number;last_observation:string|null;as_of:string;reference_id:string|null;unit:string;note?:string;method:{window_days:number;half_life_days:number;prior_rounds:number;min_rounds:number;min_events:number;min_n_eff:number}};
-export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;years?:number[];span?:string;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;method?:unknown;regular_tick?:{unshrunk?:number|null;shrunk?:number|null;as_of?:string}};
-export type ProfileEntry = {pga_benchmark?:PgaBenchmark; profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
+export type PgaBenchmarkReference = {id:string;status:string;label:string;population:string;year:number;years?:number[];span?:string;rounds:number[];adjusted_sg_mean:number|null;n_rounds:number;n_players:number;n_events:number;available_after?:string;/** Sample-matched PGA R1/R2 category means (strokes/round) that put OTT/APP/ARG/PUTT/T2G on the Total baseline; total = their sum. */category_anchors?:{ott?:number|null;app?:number|null;arg?:number|null;putt?:number|null;t2g?:number|null;total?:number|null;note?:string}|null;method?:unknown;regular_tick?:{unshrunk?:number|null;shrunk?:number|null;as_of?:string}};
+export type ProfileEntry = {display_name?:string; pga_benchmark?:PgaBenchmark; profile_id?: string; dg_id: number | null; name: string; aliases?: string[]; tours?: string[]; country?: string; country_code?: string; amateur?: boolean; last_observation?: string; n_rounds?: number; status: string; available_axes?: number | string[]; photo?: Photo; profile_key: string; search?: string };
 export const playerId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);
 export type Reference = { id: string; population: string; n_players: number; min_rounds: number; mean: number | null; sd: number | null; as_of: string; higher_is_better: boolean };
 export type Metric = { key: ProfileAxis; label: string; unit: string; value: number | null; estimate: number | null; z: number | null; n: number | null; n_eff: number | null; reference: string; shrinkage: { prior_rounds: number; weight_on_data: number } | null; last_observation: string | null; status: string };
@@ -33,7 +36,7 @@ export function parseProfile(raw: unknown, id: string | number): PlayerProfile |
 }
 export function profileMatches(p: ProfileEntry, query: string): boolean {
   const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const haystack = fold([p.name, ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" "));
+  const haystack = fold([p.name, entryName(p), ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" "));
   return fold(query).split(/\s+/).every(word => haystack.includes(word));
 }
 /** Coverage first, then recent observation and alphabetic identity; do not mutate source order. */

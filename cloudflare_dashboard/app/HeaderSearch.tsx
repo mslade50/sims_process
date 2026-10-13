@@ -3,6 +3,7 @@
 /** Header type-ahead for golfers. The catalog loads lazily, only after the box is first focused or typed in, then navigates to /players?player=<id>. */
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { playerDisplayName } from "./player-name";
 import { useDashboardData } from "./data";
 import { parseCatalog, type ProfileEntry } from "./player-profile-rules";
 import { PLAYER_CATALOG_KEY, playerHref, searchPlayers } from "./shell-rules";
@@ -17,7 +18,7 @@ function Results({ query, active, hits, loading, available, onNavigate }: { quer
       {hits.map((p, i) => (
         <li key={p.profile_key} role="option" aria-selected={i === active}>
           <a className={i === active ? "hit-active" : ""} href={playerHref(p)} onClick={(event) => onNavigate(event, playerHref(p))}>
-            <strong>{p.name}</strong><small>{(p.tours ?? []).join(" · ").toUpperCase() || "Tour unavailable"}{p.country ? ` · ${p.country}` : ""}</small>
+            <strong>{playerDisplayName(p.display_name ?? p.name)}</strong><small>{(p.tours ?? []).join(" · ").toUpperCase() || "Tour unavailable"}{p.country ? ` · ${p.country}` : ""}</small>
           </a>
         </li>
       ))}

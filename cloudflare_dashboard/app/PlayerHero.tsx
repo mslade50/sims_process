@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Badge, Skeleton } from "./ui";
 import { LABELS, ZERO_SENTENCE } from "./labels";
 import { etTime } from "./lib";
-import { pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
+import { entryName, pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
 import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
@@ -96,7 +96,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
         {photo}
         <div className="ph-id-text">
           <span className="eyebrow">Player</span>
-          <h2>{entry.name}</h2>
+          <h2>{entryName(entry)}</h2>
           <p>{entry.country ?? entry.country_code ?? "Country unavailable"}{(entry.tours ?? []).length > 0 && <> · {(entry.tours ?? []).map(t => t.toUpperCase()).join(" / ")}</>}</p>
         </div>
         <dl className="ph-facts">

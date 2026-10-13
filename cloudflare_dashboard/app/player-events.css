@@ -18,3 +18,5 @@
   .pe-table thead th{font-size:10px}
 }
 .pe-table td.pe-radar,.pe-table th.pe-radar{border-left:1px dashed var(--line)}.pe-table th.pe-radar+th.pe-radar,.pe-table td.pe-radar+td.pe-radar{border-left:0}.pe-radar-toggle{display:inline-flex;gap:8px;align-items:center;margin:8px 0 2px;font-size:12px;color:var(--muted-strong)}
+
+.pe-table td.pe-field,.pd-table td.pe-field{font-style:italic;color:var(--muted-strong)}

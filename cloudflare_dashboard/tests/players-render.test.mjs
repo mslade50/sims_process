@@ -13,8 +13,8 @@ const data = {
 
 test("/players fixture: catalog lists Hideki and Blair and shows the catalog as-of date", () => {
   const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, pathname: "/players" });
-  assert.match(html, /Matsuyama, Hideki/);
-  assert.match(html, /Blair, Zac/);
+  assert.match(html, /Hideki Matsuyama/);
+  assert.match(html, /Zac Blair/);
   assert.match(html, /Player list as of Oct 8, 12:27 PM ET/);
   assert.doesNotMatch(html, /freshness-badge/, "the freshness pill was removed from the catalog line; the date stays");
 });

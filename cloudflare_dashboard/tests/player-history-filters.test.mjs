@@ -74,3 +74,15 @@ test('A4: the ?layout=next default is R1-R2 and is not a situational filter; the
  assert.deepEqual(playerBaselineFilters({...NEXT_HISTORY_DEFAULTS,rounds:[3,4],major:true}).rounds,[1,2]);
  assert.deepEqual(playerBaselineFilters({...HISTORY_DEFAULTS,rounds:[3,4]}).rounds,[1,2,3,4]);
 });
+
+test('sliceHistory averages the PGA-baseline category fields and the skill profile prefers them',()=>{
+  const e={id:'e',tour:'pga',year:2026,name:'E',date:'2026-01-01',sg_basis:'source_adjusted',round_data:[
+    {round:1,sg_basis:'source_adjusted',sg_total:1,sg_ott:.5,sg_ott_pga:.2,sg_t2g_pga:.4},{round:2,sg_basis:'source_adjusted',sg_total:1,sg_ott:.7,sg_ott_pga:.4,sg_t2g_pga:.6}]};
+  const [s]=sliceHistory([e],{...HISTORY_DEFAULTS,window:'all'});
+  assert.ok(Math.abs(s.sg_ott_pga-.3)<1e-9&&Math.abs(s.sg_t2g_pga-.5)<1e-9&&s.sg_putt_pga===null);
+  const profile={radar:[{key:'sg_ott',label:'OTT'}]};
+  const ev3=[{...e,round_data:[...e.round_data,{round:3,sg_ott:.9,sg_ott_pga:.6}]}];
+  assert.ok(Math.abs(filteredSkillProfile(profile,ev3,undefined).radar[0].value-.4)<1e-9);
+  const raw=[{...e,round_data:e.round_data.map(r=>{const c={...r};delete c.sg_ott_pga;return c;})}];
+  assert.ok(Math.abs(filteredSkillProfile(profile,raw,undefined).radar[0].value-.6)<1e-9);
+});

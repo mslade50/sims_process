@@ -17,6 +17,10 @@ export const INTERVAL_CLAUSE = "does not include future-round variability or unc
 export const CROSS_TOUR_BAND = "comparisons across tours are only good to about 0.2 strokes";
 export const NO_CATEGORY_DATA = "No strokes-gained breakdown for this tour";
 export const RADAR_LABEL = "playing style, PGA and LIV rounds only";
+/** Why the headline uses Thursday/Friday rounds only (plain words; shown in the "how this is calculated" disclosures). */
+export const WHY_FIRST_TWO_ROUNDS = "Weekend rounds are left out because only players who made the cut play them, which would tilt the average upward for anyone who usually makes cuts; the PGA zero point is built the same way.";
+/** "139 Thursday/Friday rounds in 70 events" */
+export const sampleWords = (rounds: number | null | undefined, events: number | null | undefined): string => `${rounds ?? 0} Thursday/Friday ${rounds === 1 ? "round" : "rounds"} in ${events ?? 0} ${events === 1 ? "event" : "events"}`;
 export const WEEKEND_ROUNDS_NOTE = "includes weekend rounds (only players who made the cut play them)";
 
 /** The catalog stores one "typical PGA regular" tick (A3), either at the top level or inside the PGA reference. Never computed client side. The shrunk form is used when published, to match the headline. */
