@@ -1,15 +1,16 @@
 /**
  * Worker endpoints for the owner's hour-by-hour weather edits (see app/weather-overrides-rules.ts for the contract with golfprice).
  *
- *   GET /api/weather-overrides/<event_safe>   {ok, doc: <saved object or null>, etag}
- *   PUT /api/weather-overrides/<event_safe>   body {hours, note, etag}: validate, write the history copy, then replace the main object with an etag guard (409 on conflict)
+ *   GET /api/weather-overrides/<event_safe>   {ok, doc: <saved object as v2, or null>, etag}  (a stored v1 object is returned as {pre: ...})
+ *   PUT /api/weather-overrides/<event_safe>   body {phase: "pre"|"live", hours, note, etag, after_round (live only)}: validate, replace only that phase's section,
+ *                                              write the whole v2 doc to history, then replace the main object with an etag guard (409 on conflict)
  *
  * event_safe is the event uid with ":" replaced by "_" (for example euro_2026140_2026-10-15). Writes need a signature-verified Cloudflare Access identity,
  * the same as the Model inputs overrides. The server sets schema, event_uid, updated_at and updated_by; the client never does.
  */
 import { accessIdentity } from "./access";
 import type { ApiEnv } from "./overrides-api";
-import { EVENT_SAFE_RE, WEATHER_OVERRIDE_PREFIX, WEATHER_OVERRIDE_SCHEMA, historyKey, validateWeatherOverride, type WeatherOverrideDoc } from "../app/weather-overrides-rules";
+import { EVENT_SAFE_RE, WEATHER_OVERRIDE_PREFIX, historyKey, mergeSection, normalizeStored, validatePhase, validateWeatherOverride } from "../app/weather-overrides-rules";
 
 const PREFIX = "/api/weather-overrides/";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -47,7 +48,7 @@ export async function handleWeatherOverridesApi(request: Request, env: ApiEnv, n
     if (!object) return json({ ok: true, doc: null, etag: null });
     let doc: unknown;
     try {
-      doc = JSON.parse(await object.text());
+      doc = normalizeStored(JSON.parse(await object.text()), eventUid);
     } catch {
       return fail(500, "The saved weather edits are not valid JSON; refusing to show them");
     }
@@ -70,6 +71,8 @@ export async function handleWeatherOverridesApi(request: Request, env: ApiEnv, n
     return fail(400, "The request body is not valid JSON.");
   }
   const raw = body as Record<string, unknown> | null;
+  const phase = validatePhase(body);
+  if (phase.problems.length || !phase.phase) return fail(400, phase.problems[0], phase.problems);
   const checked = validateWeatherOverride(body);
   if (checked.problems.length) return fail(400, checked.problems[0], checked.problems);
   const etag = raw && "etag" in raw ? raw.etag : undefined;
@@ -79,7 +82,16 @@ export async function handleWeatherOverridesApi(request: Request, env: ApiEnv, n
     // Check the guard before writing history, so a conflict leaves no history copy of an edit that never went live.
     const current = await bucket.get(key);
     if ((current?.etag ?? null) !== etag) return fail(409, "The saved edits changed since you opened this page. Reload the page, then make your changes again.");
-    const doc: WeatherOverrideDoc = { schema: WEATHER_OVERRIDE_SCHEMA, event_uid: eventUid, updated_at: new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z"), updated_by: identity.email, note: checked.note, hours: checked.hours };
+    let stored: unknown = null;
+    if (current) {
+      try {
+        stored = JSON.parse(await current.text());
+      } catch {
+        return fail(500, "The saved weather edits are not valid JSON; refusing to overwrite them");
+      }
+    }
+    const stamp = { hours: checked.hours, note: checked.note, updated_at: new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z"), updated_by: identity.email };
+    const doc = mergeSection(normalizeStored(stored, eventUid), phase.phase, stamp, phase.after_round, eventUid);
     const payload = JSON.stringify(doc, null, 1);
     const history = await bucket.put(historyKey(now, safe), payload, { httpMetadata: R2_JSON, onlyIf: { etagDoesNotMatch: "*" } });
     if (history === null) return fail(409, "Another save happened in the same second. Try again.");

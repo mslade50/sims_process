@@ -2,7 +2,7 @@
 
 import { Pencil } from "lucide-react";
 import { etTime } from "./lib";
-import { compassLetters } from "./weather-overrides-rules";
+import { compassLetters, ownerEditKind } from "./weather-overrides-rules";
 import { hhmm, type HourlyPoint, type OwnerOverrideSummary } from "./weather-rules";
 import "./weather-edits.css";
 
@@ -22,9 +22,10 @@ export function editTitle(point: HourlyPoint, field: Field): string | undefined 
 /** The "Includes your weather edits" note shown above the charts when the published forecast carries owner edits. */
 export function OwnerEditNote({ summary, eventUid }: { summary: OwnerOverrideSummary | null; eventUid: string }) {
   if (!summary) return null;
+  if (summary.expired || summary.count === 0) return <p className="inputs-muted wx-edit-note">Earlier in-event edits have expired.</p>;
   return (
     <p className="inputs-note accent wx-edit-note" role="status">
-      <Pencil size={13} /> Includes your weather edits: {summary.count} {summary.count === 1 ? "hour" : "hours"}
+      <Pencil size={13} /> Includes your {ownerEditKind(summary)}: {summary.count} {summary.count === 1 ? "hour" : "hours"}
       {summary.updated_at || summary.updated_by ? ` (saved ${summary.updated_at ? etTime(summary.updated_at) : "earlier"}${summary.updated_by ? ` by ${summary.updated_by}` : ""})` : ""}. The forecast values are in the tooltips.{" "}
       <a className="ex-link" href={`/weather-edits?e=${encodeURIComponent(eventUid)}`}>Change them</a>
     </p>

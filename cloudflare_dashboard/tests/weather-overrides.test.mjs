@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { BOUNDS, EVENT_SAFE_RE, checkHourFields, chooseRepriceJob, etDate, eventSafe, historyKey, validateWeatherOverride } from "../app/weather-overrides-rules.ts";
+import { BOUNDS, EVENT_SAFE_RE, checkHourFields, chooseRepriceJob, completedRounds, etDate, eventSafe, eventStarted, historyKey, liveStatus, normalizeStored, ownerEditKind, repriceForMode, validatePhase, validateWeatherOverride } from "../app/weather-overrides-rules.ts";
 import { parseWeather } from "../app/weather-rules.ts";
 
 const T = "2026-10-15T08:00";
@@ -73,7 +73,7 @@ test("parseWeather reads owner edits, p_wet and tee coverage, and tolerates thei
       { round: 1, time_local: "2026-10-15T09:00", wind: 4 },
     ] },
   });
-  assert.deepEqual(doc.forecast.owner_overrides, { count: 2, updated_at: "2026-10-13T20:00:00Z", updated_by: "o@x.com", note: "n" });
+  assert.deepEqual(doc.forecast.owner_overrides, { count: 2, updated_at: "2026-10-13T20:00:00Z", updated_by: "o@x.com", note: "n", phase: "pre", after_round: null, expired: false });
   assert.deepEqual(doc.forecast.hourly[0].owner_override, { wind: { forecast: 3.1, override: 12 } });
   assert.equal(doc.forecast.hourly[0].p_wet, 0.03);
   assert.equal(doc.forecast.hourly[1].owner_override, null);
@@ -146,7 +146,7 @@ async function call(worker, bucket, path, { method = "GET", headers = {}, body }
 const SAFE = "euro_2026140_2026-10-15";
 const PATH = `/api/weather-overrides/${SAFE}`;
 const KEY = `overrides/weather/${SAFE}.json`;
-const put = (worker, bucket, body, headers = accessHeaders()) => call(worker, bucket, PATH, { method: "PUT", headers, body });
+const put = (worker, bucket, body, headers = accessHeaders()) => call(worker, bucket, PATH, { method: "PUT", headers, body: body && typeof body === "object" && !("phase" in body) ? { phase: "pre", ...body } : body });
 
 test("GET returns null before the first save, then the saved object and its etag", async () => {
   const worker = await loadWorker();
@@ -156,11 +156,12 @@ test("GET returns null before the first save, then the saved object and its etag
   const saved = await put(worker, bucket, { hours: [{ time_local: T, wind: 12, dir: 360 }], note: "n", etag: null });
   assert.equal(saved.status, 200);
   const body = await saved.json();
-  assert.equal(body.doc.schema, "golfprice.weather_override.v1");
+  assert.equal(body.doc.schema, "golfprice.weather_override.v2");
   assert.equal(body.doc.event_uid, "euro:2026140:2026-10-15");
-  assert.equal(body.doc.updated_by, "owner@example.com");
-  assert.match(body.doc.updated_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-  assert.deepEqual(body.doc.hours, [{ time_local: T, wind: 12, gust: null, temp: null, rain: null, dir: 0 }]);
+  assert.equal(body.doc.pre.updated_by, "owner@example.com");
+  assert.equal(body.doc.live, null);
+  assert.match(body.doc.pre.updated_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  assert.deepEqual(body.doc.pre.hours, [{ time_local: T, wind: 12, gust: null, temp: null, rain: null, dir: 0 }]);
   const again = await (await call(worker, bucket, PATH)).json();
   assert.deepEqual(again.doc, body.doc);
   assert.equal(again.etag, body.etag);
@@ -177,12 +178,12 @@ test("each save writes a history copy first and the main object is etag guarded 
   const stale = await put(worker, bucket, { hours: [], etag: null });
   assert.equal(stale.status, 409);
   assert.match((await stale.json()).error, /Reload/);
-  assert.equal(JSON.parse(bucket.store.get(KEY).body).hours.length, 1, "a rejected save changes nothing");
+  assert.equal(JSON.parse(bucket.store.get(KEY).body).pre.hours.length, 1, "a rejected save changes nothing");
   assert.equal(histKeys().length, 1, "a rejected save leaves no history copy");
   await new Promise((r) => setTimeout(r, 1100));   // history keys are per second
   const cleared = await put(worker, bucket, { hours: [], note: "", etag: first.etag });
   assert.equal(cleared.status, 200);
-  assert.deepEqual(JSON.parse(bucket.store.get(KEY).body).hours, []);
+  assert.deepEqual(JSON.parse(bucket.store.get(KEY).body).pre.hours, []);
   assert.equal(histKeys().length, 2);
 });
 
@@ -211,4 +212,96 @@ test("event_safe must match the pattern", async () => {
     assert.equal((await call(worker, bucket, `/api/weather-overrides/${bad}`)).status, 400, bad);
   }
   assert.equal((await put(worker, bucket, { hours: [], etag: null }, accessHeaders())).status, 200);
+});
+
+/* ------------------------------------------------------------------ v2: pre-tournament and in-event sections */
+const V1 = { schema: "golfprice.weather_override.v1", event_uid: "euro:2026140:2026-10-15", updated_at: "2026-10-13T20:00:00Z", updated_by: "o@x.com", note: "old", hours: [{ time_local: T, wind: 12, gust: null, temp: null, rain: null, dir: null }] };
+
+test("a v1 object reads as v2 with only a pre section", () => {
+  const doc = normalizeStored(V1);
+  assert.equal(doc.schema, "golfprice.weather_override.v2");
+  assert.deepEqual(doc.pre, { hours: V1.hours, note: "old", updated_at: V1.updated_at, updated_by: "o@x.com" });
+  assert.equal(doc.live, null);
+  assert.deepEqual(normalizeStored(null, "e"), { schema: "golfprice.weather_override.v2", event_uid: "e", pre: null, live: null });
+  const v2 = normalizeStored({ schema: "golfprice.weather_override.v2", event_uid: "e", pre: null, live: { after_round: 2, hours: V1.hours, note: "", updated_at: "x", updated_by: "y" } });
+  assert.equal(v2.live.after_round, 2);
+  assert.equal(normalizeStored({ live: { after_round: 0, hours: V1.hours } }).live, null, "a live section needs a valid after_round");
+});
+
+test("phase validation: live requires an integer after_round from 1 to 9", () => {
+  assert.equal(validatePhase({ phase: "pre" }).phase, "pre");
+  assert.deepEqual(validatePhase({ phase: "live", after_round: 2 }), { problems: [], phase: "live", after_round: 2 });
+  for (const bad of [undefined, 0, 10, 1.5, "2", null]) assert.ok(validatePhase({ phase: "live", after_round: bad }).problems.length, String(bad));
+  assert.ok(validatePhase({ phase: "both" }).problems.length);
+  assert.ok(validatePhase({}).problems.length);
+});
+
+test("PUT replaces only its own section and keeps the other; a v1 object is upgraded on write", async () => {
+  const worker = await loadWorker();
+  const bucket = fakeBucket({ [KEY]: V1 });
+  const got = await (await call(worker, bucket, PATH)).json();
+  assert.equal(got.doc.schema, "golfprice.weather_override.v2");
+  assert.equal(got.doc.pre.hours.length, 1);
+  const live = await put(worker, bucket, { phase: "live", after_round: 2, hours: [{ time_local: "2026-10-17T10:00", gust: 30 }], note: "after R2", etag: got.etag });
+  assert.equal(live.status, 200);
+  const stored = JSON.parse(bucket.store.get(KEY).body);
+  assert.equal(stored.schema, "golfprice.weather_override.v2");
+  assert.deepEqual(stored.pre.hours, V1.hours, "pre section untouched");
+  assert.equal(stored.pre.updated_by, "o@x.com");
+  assert.equal(stored.live.after_round, 2);
+  assert.equal(stored.live.updated_by, "owner@example.com");
+  assert.equal(stored.live.hours[0].gust, 30);
+  await new Promise((r) => setTimeout(r, 1100));
+  const etag = (await live.json()).etag;
+  const pre = await put(worker, bucket, { phase: "pre", hours: [], note: "", etag });
+  assert.equal(pre.status, 200);
+  const after = JSON.parse(bucket.store.get(KEY).body);
+  assert.deepEqual(after.pre.hours, []);
+  assert.equal(after.live.after_round, 2, "live section kept when pre is cleared");
+  const hist = [...bucket.store.keys()].filter((k) => k.startsWith("overrides/weather/history/"));
+  assert.equal(hist.length, 2);
+  assert.equal(JSON.parse(bucket.store.get(hist.sort()[0]).body).schema, "golfprice.weather_override.v2");
+});
+
+test("PUT: live without a valid after_round and a bad phase are refused", async () => {
+  const worker = await loadWorker();
+  const bucket = fakeBucket();
+  assert.equal((await put(worker, bucket, { phase: "live", hours: [], etag: null })).status, 400);
+  assert.equal((await put(worker, bucket, { phase: "live", after_round: 10, hours: [], etag: null })).status, 400);
+  assert.equal((await put(worker, bucket, { phase: "other", hours: [], etag: null })).status, 400);
+  assert.equal(bucket.store.size, 0);
+});
+
+test("current round, event started, expiry display and mode-specific job choice", () => {
+  const runs = [{ kind: "week", after_round: null }, { kind: "live", after_round: 1 }, { kind: "live", after_round: 2 }, { kind: "live", after_round: 3, validated: false }];
+  assert.equal(completedRounds(runs), 2);
+  assert.equal(completedRounds([{ kind: "week" }]), 0);
+  assert.equal(completedRounds(undefined), 0);
+  const noon = (d) => Date.parse(`${d}T16:00:00Z`);
+  assert.equal(eventStarted("2026-10-15", [], noon("2026-10-14")), false);
+  assert.equal(eventStarted("2026-10-15", [], noon("2026-10-15")), true);
+  assert.equal(eventStarted("2026-10-15", [{ kind: "live", after_round: 1 }], noon("2026-10-14")), true);
+  const live = (after) => ({ hours: V1.hours, note: "", updated_at: "", updated_by: "", after_round: after });
+  assert.deepEqual(liveStatus(live(2), 0), { open: false, expiredFrom: null, prefill: null });
+  assert.equal(liveStatus(live(2), 2).prefill.after_round, 2);
+  assert.equal(liveStatus(live(2), 2).expiredFrom, null);
+  assert.deepEqual(liveStatus(live(2), 3), { open: true, expiredFrom: 2, prefill: null });
+  assert.deepEqual(liveStatus(null, 3), { open: true, expiredFrom: null, prefill: null });
+  assert.equal(liveStatus({ ...live(2), hours: [] }, 3).expiredFrom, null, "an empty expired section is not worth a notice");
+  const full = { 1: 1, 2: 1 };
+  assert.equal(repriceForMode("pre", full, "2026-10-15", [], noon("2026-10-13")).type, "wednesday");
+  assert.equal(repriceForMode("pre", {}, "2026-10-15", [], noon("2026-10-13")).type, "tuesday");
+  assert.equal(repriceForMode("pre", full, "2026-10-15", [], noon("2026-10-15")), null, "pre edits no longer apply once started");
+  assert.equal(repriceForMode("pre", full, "2026-10-15", runs, noon("2026-10-13")), null);
+  assert.deepEqual(repriceForMode("live", full, "2026-10-15", runs, noon("2026-10-16")).params, { supersede: true });
+  assert.equal(repriceForMode("live", full, "2026-10-15", runs, noon("2026-10-16")).type, "after_round");
+  assert.equal(ownerEditKind({ count: 2, phase: "live", after_round: 2 }), "in-event edits made after round 2");
+  assert.equal(ownerEditKind({ count: 2, phase: "pre" }), "pre-tournament edits");
+});
+
+test("Weather note: an expired live summary parses with count 0", () => {
+  const doc = parseWeather({ schema: "golfprice.weather.v1", forecast: { owner_overrides: { count: 0, status: "expired", phase: "live", after_round: 1 }, hourly: [] } });
+  assert.equal(doc.forecast.owner_overrides.expired, true);
+  assert.equal(doc.forecast.owner_overrides.count, 0);
+  assert.equal(parseWeather({ schema: "golfprice.weather.v1", forecast: { owner_overrides: { count: 0 }, hourly: [] } }).forecast.owner_overrides, null);
 });

@@ -5,11 +5,11 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
 import { weatherKey } from "./WeatherEffectsView";
-import { BOUNDS, FIELDS, MAX_NOTE, checkHourFields, chooseRepriceJob, compassLetters, eventSafe, validateWeatherOverride, type WeatherField, type WeatherOverrideDoc } from "./weather-overrides-rules";
+import { BOUNDS, FIELDS, MAX_NOTE, checkHourFields, compassLetters, completedRounds, eventSafe, eventStarted, liveStatus, repriceForMode, validateWeatherOverride, type Phase, type RunLike, type Section, type WeatherField, type WeatherOverrideDocV2 } from "./weather-overrides-rules";
 import { hhmm, parseWeather, type HourlyPoint, type WeatherDoc } from "./weather-rules";
 import "./weather-edits.css";
 
-type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; weather_key?: string | null; weather_brief_key?: string | null };
+type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; weather_key?: string | null; weather_brief_key?: string | null; distribution_runs?: RunLike[] | null };
 type Drafts = Record<string, Partial<Record<WeatherField, string>>>;
 type Loaded = { state: "loading" } | { state: "error"; message: string } | { state: "ready" };
 type Notice = { tone: "ok" | "error"; text: string; link?: { href: string; label: string } } | null;
@@ -31,7 +31,7 @@ function forecastValue(point: HourlyPoint, field: WeatherField): number | null {
 }
 const show = (field: WeatherField, v: number | null) => (v === null ? "n/a" : field === "dir" ? `${compassLetters(v)} ${Math.round(v)}°` : String(Number(v.toFixed(1))));
 
-function draftsFromSaved(doc: WeatherOverrideDoc | null): Drafts {
+function draftsFromSaved(doc: Section | null): Drafts {
   const out: Drafts = {};
   for (const h of doc?.hours ?? []) {
     const row: Partial<Record<WeatherField, string>> = {};
@@ -66,45 +66,74 @@ async function api<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   }
 }
 
+type SavedState = { doc: WeatherOverrideDocV2 | null; etag: string | null };
+
 function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
   const safe = eventSafe(event.event_uid);
-  const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
-  const [drafts, setDrafts] = useState<Drafts>({});
-  const [note, setNote] = useState("");
-  const [saved, setSaved] = useState<{ doc: WeatherOverrideDoc | null; etag: string | null }>({ doc: null, etag: null });
-  const [roundPick, setRound] = useState<number | null>(null);
-  const [busy, setBusy] = useState<"save" | "clear" | "reprice" | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
   const [now] = useState(() => Date.now());
+  const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
+  const [saved, setSaved] = useState<SavedState>({ doc: null, etag: null });
+  const completed = completedRounds(event.distribution_runs);
+  const started = eventStarted(event.date_start, event.distribution_runs, now);
+  const [mode, setMode] = useState<Phase>(completed >= 1 ? "live" : "pre");
 
   useEffect(() => {
     let active = true;
-    api<{ doc?: WeatherOverrideDoc | null; etag?: string | null }>(`/api/weather-overrides/${encodeURIComponent(safe)}`).then((result) => {
+    api<{ doc?: WeatherOverrideDocV2 | null; etag?: string | null }>(`/api/weather-overrides/${encodeURIComponent(safe)}`).then((result) => {
       if (!active) return;
       if (!result.ok) { setLoaded({ state: "error", message: result.body.error ?? "The saved edits could not be loaded." }); return; }
-      const savedDoc = result.body.doc ?? null;
-      setSaved({ doc: savedDoc, etag: result.body.etag ?? null });
-      setDrafts(draftsFromSaved(savedDoc));
-      setNote(savedDoc?.note ?? "");
+      setSaved({ doc: result.body.doc ?? null, etag: result.body.etag ?? null });
       setLoaded({ state: "ready" });
     });
     return () => { active = false; };
   }, [safe]);
 
-  const rounds = useMemo(() => [...new Set(doc.forecast.hourly.map((h) => h.round))].sort((a, b) => a - b), [doc]);
+  return (
+    <div className="wx-body">
+      <Panel eyebrow="How this works" title="Replace the forecast for chosen hours">
+        <ul className="wx-edit-help">
+          <li>An edit replaces the forecast for that hour only. Leave a box blank to keep the forecast.</li>
+          <li>The weather model still adds its usual uncertainty around your number, so a single edit does not make the hour certain.</li>
+          <li>Prices change only after a reprice finishes (about 12 minutes). Saving alone changes nothing.</li>
+          <li>Edits stay in place for later runs until you clear them (in-event edits also end by themselves, see below). The original forecast is kept beside each edit.</li>
+        </ul>
+      </Panel>
+      <SegmentedControl label="Kind of edit" value={mode} onChange={setMode} options={[{ value: "pre", label: "Before the event" }, { value: "live", label: "During the event" }]} />
+      {loaded.state === "loading" && <LoadingState label="Loading your saved edits" />}
+      {loaded.state === "error" && <div className="inputs-banner warn" role="alert"><strong>Your saved edits could not be loaded.</strong>{loaded.message} Saving is turned off until they load, so nothing can be overwritten by mistake. Reload the page to try again.</div>}
+      <SectionEditor key={`${mode}-${completed}-${loaded.state}`} event={event} doc={doc} mode={mode} completed={completed} started={started} now={now} saved={saved} setSaved={setSaved} ready={loaded.state === "ready"} />
+    </div>
+  );
+}
+
+function SectionEditor({ event, doc, mode, completed, started, now, saved, setSaved, ready }: { event: IndexEvent; doc: WeatherDoc; mode: Phase; completed: number; started: boolean; now: number; saved: SavedState; setSaved: (s: SavedState) => void; ready: boolean }) {
+  const safe = eventSafe(event.event_uid);
+  const live = mode === "live";
+  const status = liveStatus(saved.doc?.live ?? null, completed);
+  const section: Section | null = live ? status.prefill : saved.doc?.pre ?? null;
+  // Keyed on the load state in the parent, so the boxes fill from the saved edits once they arrive.
+  const [drafts, setDrafts] = useState<Drafts>(() => draftsFromSaved(section));
+  const [note, setNote] = useState(section?.note ?? "");
+  const [roundPick, setRound] = useState<number | null>(null);
+  const [busy, setBusy] = useState<"save" | "clear" | "reprice" | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const rounds = useMemo(() => [...new Set(doc.forecast.hourly.map((h) => h.round))].filter((r) => !live || r > completed).sort((a, b) => a - b), [doc, live, completed]);
   const round = roundPick !== null && rounds.includes(roundPick) ? roundPick : rounds[0];
   const points = doc.forecast.hourly.filter((h) => h.round === round);
   const timeOf = (p: HourlyPoint) => (p.time.length >= 13 ? `${p.time.slice(0, 13)}:00` : p.time);
 
   const checked = useMemo(() => validateWeatherOverride(bodyFrom(drafts, note)), [drafts, note]);
-  const savedChecked = useMemo(() => validateWeatherOverride({ hours: saved.doc?.hours ?? [], note: saved.doc?.note ?? "" }), [saved]);
+  const savedChecked = useMemo(() => validateWeatherOverride({ hours: section?.hours ?? [], note: section?.note ?? "" }), [section]);
   const dirty = JSON.stringify([checked.hours, checked.note]) !== JSON.stringify([savedChecked.hours, savedChecked.note]) || checked.problems.length > 0;
   const editedCount = checked.hours.length;
   const savedCount = savedChecked.hours.length;
   const known = new Set(doc.forecast.hourly.map(timeOf));
   const orphaned = checked.hours.filter((h) => !known.has(h.time_local)).length;
-  const ready = loaded.state === "ready";
-  const choice = chooseRepriceJob(doc.teeCoverage, event.date_start, now);
+  const choice = repriceForMode(mode, doc.teeCoverage, event.date_start, event.distribution_runs, now);
+  const preDead = !live && started;
+  const locked = live && !status.open;
 
   const setField = (time: string, field: WeatherField, value: string) => {
     setNotice(null);
@@ -114,25 +143,26 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
   const write = async (hours: unknown[], text: string, kind: "save" | "clear") => {
     setBusy(kind);
     setNotice(null);
-    const result = await api<{ doc?: WeatherOverrideDoc; etag?: string | null }>(`/api/weather-overrides/${encodeURIComponent(safe)}`, { method: "PUT", body: JSON.stringify({ hours, note: text, etag: saved.etag }) });
+    const result = await api<{ doc?: WeatherOverrideDocV2; etag?: string | null }>(`/api/weather-overrides/${encodeURIComponent(safe)}`, { method: "PUT", body: JSON.stringify({ phase: mode, hours, note: text, etag: saved.etag, ...(live ? { after_round: completed } : {}) }) });
     setBusy(null);
     if (result.ok && result.body.doc) {
-      setSaved({ doc: result.body.doc, etag: result.body.etag ?? null });
-      setDrafts(draftsFromSaved(result.body.doc));
-      setNote(result.body.doc.note);
-      const n = result.body.doc.hours.length;
-      setNotice({ tone: "ok", text: n ? `Saved ${n} edited ${n === 1 ? "hour" : "hours"}. Prices have not changed yet: press Reprice with these edits.` : "All edits cleared. Prices have not changed yet: press Reprice to price on the plain forecast." });
+      const next = result.body.doc;
+      setSaved({ doc: next, etag: result.body.etag ?? null });
+      const sec = live ? next.live : next.pre;
+      setDrafts(draftsFromSaved(sec));
+      setNote(sec?.note ?? "");
+      const n = sec?.hours.length ?? 0;
+      const tail = preDead ? " The event has started, so pre-tournament edits have no effect on prices now." : n ? " Prices have not changed yet: press Reprice with these edits." : " Prices have not changed yet: press Reprice to price on the plain forecast.";
+      setNotice({ tone: "ok", text: (n ? `Saved ${n} edited ${n === 1 ? "hour" : "hours"}.` : "All edits cleared.") + tail });
     } else {
       setNotice({ tone: "error", text: result.status === 409 ? `${result.body.error ?? "The saved edits changed."} Nothing was saved.` : [result.body.error ?? "The edits could not be saved.", ...(result.body.problems ?? []).slice(1, 4)].join(" ") });
     }
   };
 
   const save = () => { if (!checked.problems.length) void write(checked.hours, checked.note, "save"); };
-  const clearAll = () => {
-    if (!window.confirm("Clear every saved weather edit for this event? The model goes back to the plain forecast on the next run.")) return;
-    void write([], "", "clear");
-  };
+  const clearAll = () => { setConfirmClear(false); void write([], "", "clear"); };
   const reprice = async () => {
+    if (!choice) return;
     setBusy("reprice");
     setNotice(null);
     const result = await api<{ job?: { id: string } }>("/api/jobs", { method: "POST", body: JSON.stringify({ type: choice.type, params: choice.params }) });
@@ -141,26 +171,28 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
     else setNotice({ tone: "error", text: [result.body.error ?? "The reprice could not be queued.", ...(result.body.problems ?? [])].join(" ") });
   };
 
-  const stamp = saved.doc ? `Last saved ${etTime(saved.doc.updated_at)}${saved.doc.updated_by ? ` by ${saved.doc.updated_by}` : ""}.` : "Nothing has been saved for this event yet.";
+  const sec = live ? saved.doc?.live : saved.doc?.pre;
+  const stamp = sec && sec.hours.length ? `Last saved ${etTime(sec.updated_at)}${sec.updated_by ? ` by ${sec.updated_by}` : ""}.` : "Nothing has been saved for this kind of edit yet.";
   const hasEdit = (r: number) => checked.hours.some((h) => doc.forecast.hourly.some((p) => p.round === r && timeOf(p) === h.time_local));
-  return (
-    <div className="wx-body">
-      <Panel eyebrow="How this works" title="Replace the forecast for chosen hours">
-        <ul className="wx-edit-help">
-          <li>An edit replaces the forecast for that hour only. Leave a box blank to keep the forecast.</li>
-          <li>The weather model still adds its usual uncertainty around your number, so a single edit does not make the hour certain.</li>
-          <li>Prices change only after a reprice finishes (about 12 minutes). Saving alone changes nothing.</li>
-          <li>Edits stay in place for later runs until you clear them. The original forecast is kept beside each edit.</li>
-        </ul>
-        <div className="kpi-grid">
-          <Kpi label="Saved edits" value={String(savedCount)} detail={stamp} hint="Hours with at least one number of yours, as last saved." tone={savedCount ? "accent" : "neutral"} />
-          <Kpi label="On this page" value={String(editedCount)} detail={dirty ? "Unsaved changes" : "Matches what is saved"} hint="Hours with at least one number on this page right now." tone={dirty ? "negative" : "neutral"} />
-          <Kpi label="Reprice runs as" value={choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"} detail={choice.reason} hint="Chosen from the event start date and how many tee times are known." />
-        </div>
-      </Panel>
+  const off = !ready || busy !== null || locked;
 
-      {loaded.state === "loading" && <LoadingState label="Loading your saved edits" />}
-      {loaded.state === "error" && <div className="inputs-banner warn" role="alert"><strong>Your saved edits could not be loaded.</strong>{loaded.message} Saving is turned off until they load, so nothing can be overwritten by mistake. Reload the page to try again.</div>}
+  if (locked) {
+    return <Panel eyebrow="During the event" title="In-event edits"><EmptyState title="In-event edits open after round 1 is complete" detail="Before then, use Before the event. Once a round finishes, you can edit the hours still to play and reprice the in-play prices." /></Panel>;
+  }
+  return (
+    <>
+      {live ? (
+        <p className="inputs-note accent">These edits apply to in-play prices after round {completed} (tonight and during round {completed + 1}) and are cleared automatically once round {completed + 1} is complete.</p>
+      ) : (
+        <p className="inputs-note">These edits change only the pricing runs before the event starts.</p>
+      )}
+      {live && status.expiredFrom !== null && <div className="inputs-banner" role="status"><strong>Your in-event edits from after round {status.expiredFrom} have expired.</strong>They no longer affect prices. The boxes below start empty.</div>}
+      {preDead && <div className="inputs-banner warn" role="status"><strong>The event has started.</strong>Pre-tournament edits no longer affect any prices. You can still save or clear them, but Reprice is turned off here. Use During the event for in-play weather.</div>}
+      <div className="kpi-grid">
+        <Kpi label="Saved edits" value={String(savedCount)} detail={stamp} hint="Hours with at least one number of yours, as last saved." tone={savedCount ? "accent" : "neutral"} />
+        <Kpi label="On this page" value={String(editedCount)} detail={dirty ? "Unsaved changes" : "Matches what is saved"} hint="Hours with at least one number on this page right now." tone={dirty ? "negative" : "neutral"} />
+        <Kpi label="Reprice runs as" value={!choice ? "Not available" : choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"} detail={choice ? choice.reason : "Pre-tournament edits no longer apply."} hint="Chosen from the kind of edit, the event start date and how many tee times are known." />
+      </div>
       {orphaned > 0 && <p className="inputs-note accent">{orphaned} saved {orphaned === 1 ? "edit is" : "edits are"} for hours that are not in the current forecast. They are kept and saved with the rest.</p>}
 
       {rounds.length > 1 && <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}${hasEdit(r) ? " •" : ""}` }))} />}
@@ -190,7 +222,7 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
                         <td key={c.field} className={value.trim() !== "" ? "wx-edited" : undefined}>
                           <span className="wx-fc" title="The published forecast, before any edit">Forecast {show(c.field, fc)}</span>
                           <input
-                            className={`wx-input${problem ? " bad" : ""}`} type="text" inputMode="decimal" autoComplete="off" disabled={!ready || busy !== null}
+                            className={`wx-input${problem ? " bad" : ""}`} type="text" inputMode="decimal" autoComplete="off" disabled={off}
                             value={value} placeholder={fc === null ? "" : String(Number(fc.toFixed(1)))} onChange={(e) => setField(time, c.field, e.target.value)}
                             aria-label={`${c.head} at ${hhmm(p.hour)}`} aria-invalid={problem ? true : undefined} title={c.hint}
                           />
@@ -204,21 +236,27 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
             </tbody>
           </table>
         </div>
-        {points.length === 0 && <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." />}
+        {points.length === 0 && <EmptyState title="No hourly forecast for this round" detail={live ? "There are no hours left to play in the published forecast." : "This round is too far away for the forecast to reach yet."} />}
       </Panel>
 
       <Panel eyebrow="Save and reprice" title="Note and actions">
         <label className="wx-note-field">
           <span>Note for the record (optional)</span>
-          <textarea value={note} maxLength={MAX_NOTE} rows={2} disabled={!ready || busy !== null} onChange={(e) => { setNotice(null); setNote(e.target.value); }} placeholder="For example: local radar shows the front arriving two hours early" />
+          <textarea value={note} maxLength={MAX_NOTE} rows={2} disabled={off} onChange={(e) => { setNotice(null); setNote(e.target.value); }} placeholder="For example: local radar shows the front arriving two hours early" />
           <small>{note.length} of {MAX_NOTE} characters</small>
         </label>
         {checked.problems.length > 0 && <div className="inputs-banner warn" role="alert"><strong>Fix these before saving</strong>{checked.problems.slice(0, 4).join(" ")}</div>}
         <div className="wx-actions">
-          <button type="button" className="inputs-button primary" onClick={save} disabled={!ready || busy !== null || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
-          <button type="button" className="inputs-button danger" onClick={clearAll} disabled={!ready || busy !== null || (savedCount === 0 && editedCount === 0)} title="Remove every edit for this event">{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
-          <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={!ready || busy !== null || dirty} title={dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
+          <button type="button" className="inputs-button primary" onClick={save} disabled={off || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
+          <button type="button" className="inputs-button danger" onClick={() => setConfirmClear(true)} disabled={off || confirmClear || (savedCount === 0 && editedCount === 0)} title={live ? "Remove the in-event edits for this event" : "Remove the pre-tournament edits for this event"}>{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
+          <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={off || dirty || !choice} title={!choice ? "Pre-tournament edits no longer affect prices" : dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
         </div>
+        {confirmClear && (
+          <div className="inputs-banner warn" role="alertdialog" aria-label="Confirm clearing edits">
+            <strong>Clear every {live ? "in-event" : "pre-tournament"} edit for this event?</strong>The model goes back to the plain forecast for these hours on the next run. The other kind of edit is not touched.
+            <span className="wx-actions"><button type="button" className="inputs-button danger" onClick={clearAll}>Yes, clear them</button><button type="button" className="inputs-button" onClick={() => setConfirmClear(false)}>Keep them</button></span>
+          </div>
+        )}
         {dirty && ready && <p className="inputs-muted">You have unsaved changes. Save them before repricing.</p>}
         {notice && (
           <div className={`inputs-banner ${notice.tone === "error" ? "warn" : ""}`} role="status">
@@ -228,7 +266,7 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
         )}
       </Panel>
       <p className="inputs-muted">Allowed values: wind {BOUNDS.wind.lo} to {BOUNDS.wind.hi} mph, gusts {BOUNDS.gust.lo} to {BOUNDS.gust.hi} mph (not below the wind), temperature {BOUNDS.temp.lo} to {BOUNDS.temp.hi} °F, rain {BOUNDS.rain.lo} to {BOUNDS.rain.hi} mm per hour, direction {BOUNDS.dir.lo} to {BOUNDS.dir.hi}°.</p>
-    </div>
+    </>
   );
 }
 
