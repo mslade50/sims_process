@@ -26,6 +26,7 @@ import { InputsView } from "./InputsView";
 import { ResearchView } from "./ResearchView";
 import { RunView } from "./RunView";
 import { WeatherEffectsView } from "./WeatherEffectsView";
+import { WeatherEditsView } from "./WeatherEditsView";
 import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData } from "./data";
@@ -42,7 +43,7 @@ import {
 } from "./views";
 import "./shell.css";
 
-export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "this-week" | "why-priced";
+export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced";
 
 type Manifest = {
   generated_at: string;
@@ -56,7 +57,7 @@ type Manifest = {
 
 /** Icons by view key; the labels, groups and order live in shell-rules.ts (NAVIGATION) so tests can read them. */
 const NAV_ICONS: Record<string, typeof CircleGauge> = {
-  "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun,
+  "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
   inputs: SlidersHorizontal, run: Play, performance: TrendingUp, history: Archive, diagnostics: Microscope,
 };
 
@@ -74,6 +75,7 @@ const views: Record<ViewKey, React.ComponentType> = {
   diagnostics: DiagnosticsView,
   weather: WeatherView,
   "weather-effects": WeatherEffectsView,
+  "weather-edits": WeatherEditsView,
   "this-week": ThisWeekView,
   "why-priced": WhyPricedView,
 };

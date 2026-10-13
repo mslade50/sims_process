@@ -10,7 +10,12 @@ export type HourlyPoint = {
   round: number; hour: number; time: string;
   wind: number | null; wind_p10: number | null; wind_p90: number | null; gust: number | null;
   temp: number | null; temp_p10: number | null; temp_p90: number | null; rain: number | null; dir: number | null;
+  /** Chance of rain that hour (0-1); null in older documents. */
+  p_wet: number | null;
+  /** Only the fields the owner edited: the forecast value and the edit. Absent in older documents. The top-level value is already the edited one. */
+  owner_override: Partial<Record<"wind" | "gust" | "temp" | "rain" | "dir", { forecast: number | null; override: number | null }>> | null;
 };
+export type OwnerOverrideSummary = { count: number; updated_at: string; updated_by: string; note: string };
 export type Wave = { round: number; wave: string; window: [number, number] | null; windowText: string; mean_wind: number | null; mean_temp: number | null; rel: number | null; rel_p10: number | null; rel_p90: number | null };
 export type PlayerRound = { tee_time: string; start_hole: number | null; mean_off_strokes: number | null; mean_off_rel: number | null; tod_strokes: number | null; sd_mult: number | null; components: Record<string, number> };
 export type PlayerRow = { dg_id: number; name: string; rounds: Record<number, PlayerRound>; total12: number | null; sdMax: number | null };
@@ -18,7 +23,9 @@ export type FieldRound = { round: number; common_strokes: number | null; cut_lin
 export type WeatherDoc = {
   schema: string; event_uid: string; as_of: string; synthetic: boolean; label: string;
   venue: Venue;
-  forecast: { issued_at: string; models: string[]; hourly: HourlyPoint[] };
+  forecast: { issued_at: string; models: string[]; hourly: HourlyPoint[]; owner_overrides: OwnerOverrideSummary | null };
+  /** Tee-sheet coverage by round (0-1) from the document's `rounds` object; used to choose the reprice job. */
+  teeCoverage: Record<number, number | null>;
   waves: Wave[]; players: PlayerRow[]; field: FieldRound[]; notes: string[]; rounds: number[];
 };
 
@@ -67,7 +74,24 @@ function parseHourly(value: unknown): HourlyPoint | null {
     round, hour, time: text(value.time_local),
     wind: numOrNull(value.wind), wind_p10: numOrNull(value.wind_p10), wind_p90: numOrNull(value.wind_p90), gust: numOrNull(value.gust),
     temp: numOrNull(value.temp), temp_p10: numOrNull(value.temp_p10), temp_p90: numOrNull(value.temp_p90), rain: numOrNull(value.rain), dir: numOrNull(value.dir),
+    p_wet: numOrNull(value.p_wet), owner_override: parseOwnerEdits(value.owner_override),
   };
+}
+
+function parseOwnerEdits(value: unknown): HourlyPoint["owner_override"] {
+  if (!isObject(value)) return null;
+  const out: NonNullable<HourlyPoint["owner_override"]> = {};
+  for (const key of ["wind", "gust", "temp", "rain", "dir"] as const) {
+    const entry = value[key];
+    if (isObject(entry) && numOrNull(entry.override) !== null) out[key] = { forecast: numOrNull(entry.forecast), override: numOrNull(entry.override) };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function parseOwnerSummary(value: unknown): OwnerOverrideSummary | null {
+  if (!isObject(value)) return null;
+  const count = numOrNull(value.count);
+  return count !== null && count > 0 ? { count, updated_at: text(value.updated_at), updated_by: text(value.updated_by), note: text(value.note) } : null;
 }
 
 function parseWave(value: unknown): Wave | null {
@@ -123,7 +147,8 @@ export function parseWeather(value: unknown): WeatherDoc | null {
   return {
     schema: WEATHER_SCHEMA, event_uid: text(value.event_uid), as_of: text(value.as_of), synthetic: value.synthetic === true || label.toLowerCase().includes("synthetic"), label,
     venue: { name: text(venue.name), lat: numOrNull(venue.lat), lon: numOrNull(venue.lon), class: text(venue.class), wind_slope: numOrNull(venue.wind_slope), wind_slope_source: text(venue.wind_slope_source) },
-    forecast: { issued_at: text(forecast.issued_at), models: list(forecast.models).filter((m): m is string => typeof m === "string"), hourly },
+    forecast: { issued_at: text(forecast.issued_at), models: list(forecast.models).filter((m): m is string => typeof m === "string"), hourly, owner_overrides: parseOwnerSummary(forecast.owner_overrides) },
+    teeCoverage: Object.fromEntries(Object.entries(isObject(value.rounds) ? value.rounds : {}).filter(([k]) => /^\d+$/.test(k)).map(([k, v]) => [Number(k), isObject(v) ? numOrNull(v.tee_coverage) : null])),
     waves, players, field, notes: list(value.notes).filter((n): n is string => typeof n === "string"), rounds,
   };
 }

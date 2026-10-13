@@ -55,7 +55,13 @@ export const NAVIGATION: NavGroup[] = [
       { key: "round-scores", href: "/round-scores", label: "Scoring", description: "Expected score and how wide it could swing" },
     ],
   },
-  { label: "Model", items: [{ key: "inputs", href: "/inputs", label: "Model inputs", description: "Skill, course fit, variance, adjustments" }] },
+  {
+    label: "Model",
+    items: [
+      { key: "inputs", href: "/inputs", label: "Model inputs", description: "Skill, course fit, variance, adjustments" },
+      { key: "weather-edits", href: "/weather-edits", label: "Weather edits", description: "Replace forecast hours with your own numbers, then reprice" },
+    ],
+  },
   { label: "Operate", items: [{ key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
   { label: "Review", items: [{ key: "performance", href: "/performance", label: "Scorecard and P&L", description: "Model scorecard and bet results" }] },
   {

@@ -1,0 +1,27 @@
+/* Hour-by-hour weather table (Weather page) and the Weather edits page. Tokens only, so light and dark both work. */
+.wx-hour-table, .wx-edit-table { overflow-x: auto; }
+.wx-hour-table table, .wx-edit-table table { font-size: 12px; }
+.wx-hour-table th.wx-h, .wx-edit-table th.wx-h { padding: 8px 10px; color: var(--muted); font-size: 10px; font-weight: 780; letter-spacing: .05em; text-transform: uppercase; }
+.wx-hour-table td, .wx-edit-table td { vertical-align: top; white-space: nowrap; }
+.wx-hour-table td small, .wx-edit-table td small { display: block; color: var(--muted); font-size: 10px; }
+.wx-hour { color: var(--foreground); font-weight: 700; }
+.wx-dir { display: inline-flex; align-items: center; gap: 6px; }
+.wx-dir-arrow { display: inline-block; color: var(--wx-wind); font-size: 16px; font-weight: 800; line-height: 1; }
+.wx-edited { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.wx-edited-tip { color: var(--accent); }
+.wx-edit-note { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.wx-table-title { margin-top: 16px; }
+.wx-edit-help { margin: 0 0 14px; padding-left: 18px; color: var(--muted-strong); font-size: 13px; line-height: 1.6; }
+.wx-fc { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
+.wx-input { width: 84px; min-height: 36px; padding: 0 8px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
+.wx-input::placeholder { color: var(--muted); opacity: .7; }
+.wx-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wx-input.bad { border-color: var(--negative); }
+.wx-input:disabled { opacity: .5; }
+.wx-problem { max-width: 150px; color: var(--negative); white-space: normal; }
+.wx-note-field { display: grid; gap: 6px; margin-bottom: 12px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.wx-note-field textarea { width: 100%; padding: 8px 10px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 10px; font: inherit; font-size: 13px; resize: vertical; }
+.wx-note-field small { font-weight: 400; }
+.wx-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.wx-actions .inputs-button { min-height: 40px; padding: 0 16px; }
+@media (max-width: 600px) { .wx-input { width: 72px; } }

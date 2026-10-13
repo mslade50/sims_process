@@ -6,6 +6,7 @@ import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, Responsiv
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import { WeatherBriefBody } from "./WeatherBriefView";
+import { OwnerEditNote, WeatherHourTable, editTitle } from "./WeatherHourTable";
 import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
 import { etTime } from "./lib";
 import {
@@ -64,6 +65,7 @@ function WxTooltip({ active, payload, unit }: { active?: boolean; payload?: Arra
       )}
       {unit === "temp" && <span>Temperature {p.temp?.toFixed(1) ?? "n/a"}°F{p.temp_p10 !== null && p.temp_p90 !== null ? ` (likely range ${p.temp_p10.toFixed(1)} to ${p.temp_p90.toFixed(1)})` : ""}</span>}
       {unit === "rain" && <span>Rain {p.rain?.toFixed(2) ?? "n/a"} mm</span>}
+      {(unit === "wind" ? (["wind", "gust", "dir"] as const) : unit === "temp" ? (["temp"] as const) : (["rain"] as const)).map((f) => { const t = editTitle(p, f); return t ? <span key={f} className="wx-edited-tip">{t}</span> : null; })}
     </div>
   );
 }
@@ -334,8 +336,9 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
         <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={doc.rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
       )}
 
-      <Panel eyebrow={`Round ${round}`} title="Forecast by hour">
-        {points.length ? <HourlyCharts points={points} waves={waves} /> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." />}
+      <Panel eyebrow={`Round ${round}`} title="Forecast by hour" actions={<a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a>}>
+        <OwnerEditNote summary={doc.forecast.owner_overrides} eventUid={doc.event_uid} />
+        {points.length ? <><HourlyCharts points={points} waves={waves} /><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." />}
       </Panel>
 
       <Panel eyebrow={`Round ${round}`} title="Wave comparison and field effect">
@@ -354,6 +357,19 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
   );
 }
 
+/** Under the weather brief: the hour-by-hour numbers for one round, plus the way into the edit page. */
+function BriefHourly({ doc }: { doc: WeatherDoc }) {
+  const rounds = [...new Set(doc.forecast.hourly.map((h) => h.round))].sort((a, b) => a - b);
+  const [pick, setPick] = useState<number | null>(null);
+  const round = pick !== null && rounds.includes(pick) ? pick : rounds[0];
+  return (
+    <Panel eyebrow="Hour by hour" title="Forecast numbers by round" actions={<a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a>}>
+      <SegmentedControl label="Round" value={String(round)} onChange={(x) => setPick(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
+      <WeatherHourTable points={doc.forecast.hourly.filter((h) => h.round === round)} />
+    </Panel>
+  );
+}
+
 /* ------------------------------------------------------------------ page */
 export function WeatherEffectsView() {
   const { data: index, loading } = useDashboardData<PublishIndex>("golfprice/index.json");
@@ -368,9 +384,8 @@ export function WeatherEffectsView() {
   const briefKey = briefKeyFor(event);
   const briefLoad = useDashboardData<unknown>(briefKey);
   const brief = useMemo(() => parseBrief(briefLoad.data), [briefLoad.data]);
-  // The older weather file is only fetched when the event has no brief (or the brief could not be read).
-  const needLegacy = !briefKey || (!briefLoad.loading && !brief);
-  const { data, loading: docLoading, error } = useDashboardData<unknown>(event && needLegacy ? weatherKey(event) : null);
+  // The weather document is fetched for every event: it feeds the full page when there is no brief, and the hour-by-hour table and owner-edit note under a brief.
+  const { data, loading: docLoading, error } = useDashboardData<unknown>(event ? weatherKey(event) : null);
   const doc = useMemo(() => parseWeather(data), [data]);
 
   const intro = (
@@ -391,7 +406,7 @@ export function WeatherEffectsView() {
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;
   if (!event) return <div>{intro}<EmptyState title="No run is published yet" detail="Weather appears here once a run has been published with a forecast." /></div>;
   if (briefKey && briefLoad.loading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
-  if (brief) return <div>{intro}<WeatherBriefBody key={event.event_uid} brief={brief} /></div>;
+  if (brief) return <div>{intro}<OwnerEditNote summary={doc?.forecast.owner_overrides ?? null} eventUid={event.event_uid} /><WeatherBriefBody key={event.event_uid} brief={brief} />{doc && doc.forecast.hourly.length > 0 && <BriefHourly key={event.event_uid} doc={doc} />}</div>;
   if (docLoading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
   if (!doc) {
     return (

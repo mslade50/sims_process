@@ -18,6 +18,7 @@ const VIEWS = [
   ["diagnostics", "views.tsx", "DiagnosticsView"],
   ["weather", "views.tsx", "WeatherView"],
   ["weather-effects", "WeatherEffectsView.tsx", "WeatherEffectsView"],
+  ["weather-edits", "WeatherEditsView.tsx", "WeatherEditsView"],
   ["this-week", "ExplainViews.tsx", "ThisWeekView"],
   ["why-priced", "ExplainViews.tsx", "WhyPricedView"],
 ];

@@ -6,6 +6,7 @@ import { handleScheduled } from "./cron";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
 import { handleOverridesApi } from "./overrides-api";
+import { handleWeatherOverridesApi } from "./weather-overrides-api";
 
 interface Env {
   ASSETS: Fetcher;
@@ -86,6 +87,8 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
 
   const apiResponse = await handleOverridesApi(request, env);
   if (apiResponse) return apiResponse;
+  const weatherEditsResponse = await handleWeatherOverridesApi(request, env);
+  if (weatherEditsResponse) return weatherEditsResponse;
   const jobsResponse = await handleJobsApi(request, env);
   if (jobsResponse) return jobsResponse;
 
