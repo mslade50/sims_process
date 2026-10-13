@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {parseSeries,seriesValues,seriesShotCount,shotMovingAverage,shotWindows,defaultShotWindow,shotTrendSummary,nearestByTime} from '../app/shot-series-rules.ts';
+import {parseSeries,seriesValues,seriesShotCount,shotMovingAverage,shotWindows,defaultShotWindow,shotTrendSummary,nearestByTime,indexTicks,tickDate} from '../app/shot-series-rules.ts';
 
 const series={schema_version:'player_shot_series.v1',rounds:[['2026-01-01','pga:2026:1',1],['2026-01-02','pga:2026:1',2],['2026-02-01','pga:2026:2',1]],
   metrics:{tee_sg:{n:6,rc:[0,2,1,1,2,3],v:[1,2,3,4,5,6]},tee_accuracy:{n:4,rc:[0,1,2,3],b:'1011'}}};
@@ -36,4 +36,12 @@ test('nearestByTime snaps to the closest dated point',()=>{
 });
 test('malformed series are rejected so the round view stays the fallback',()=>{
   assert.equal(parseSeries(null),null);assert.equal(parseSeries({rounds:[]}),null);assert.ok(parseSeries(series));
+});
+test('indexTicks spaces markers evenly by position, first and last included',()=>{
+  assert.deepEqual(indexTicks(0),[]);assert.deepEqual(indexTicks(1),[0]);assert.deepEqual(indexTicks(2,4),[0,1]);
+  assert.deepEqual(indexTicks(10,4),[0,3,6,9]);assert.deepEqual(indexTicks(3,4),[0,1,2]);
+});
+test('tickDate picks month+year for long spans and month/day for short ones',()=>{
+  const a=Date.UTC(2023,0,15),b=Date.UTC(2026,5,1);
+  assert.equal(tickDate(a,a,b),'Jan 2023');assert.equal(tickDate(a,a,a+30*864e5),'Jan 15, 23');
 });

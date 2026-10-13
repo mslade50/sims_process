@@ -65,8 +65,14 @@ export function nearestByTime(points:Array<{time:number}>,t:number):number{
   while(lo<hi){const mid=(lo+hi)>>1;if(points[mid].time<t)lo=mid+1;else hi=mid;}
   return lo>0&&Math.abs(points[lo-1].time-t)<=Math.abs(points[lo].time-t)?lo-1:lo;
 }
-/** Evenly spaced date ticks (first of month / year labels chosen by span). */
-export function dateTicks(left:number,right:number,max=5):number[]{
-  if(!(right>left))return [left];
-  return Array.from({length:max},(_,i)=>left+(right-left)*i/(max-1));
+/** Evenly spaced positions (0-based) along an index axis of `count` points, always including the first and last. */
+export function indexTicks(count:number,max=5):number[]{
+  if(count<=0)return [];if(count===1)return [0];
+  const k=Math.max(2,Math.min(max,count));
+  return [...new Set(Array.from({length:k},(_,i)=>Math.round((count-1)*i/(k-1))))];
+}
+/** Short date label for an index-axis marker; month + year when the chart spans more than ~18 months, else month, day and short year. */
+export function tickDate(t:number,first:number,last:number):string{
+  const long=Math.abs(last-first)>548*864e5;
+  return new Date(t).toLocaleDateString("en-US",long?{month:"short",year:"numeric",timeZone:"UTC"}:{month:"short",day:"numeric",year:"2-digit",timeZone:"UTC"});
 }
