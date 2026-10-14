@@ -77,9 +77,9 @@ function HourlyCharts({ points, waves }: { points: HourlyPoint[]; waves: Wave[] 
   const windows = waves.filter((w) => w.window);
   const shading = windows.map((w, i) => (
     <ReferenceArea key={`${w.wave}-${i}`} x1={w.window![0]} x2={w.window![1]} fill={WAVE_SHADES[i % 2]} stroke="none" ifOverflow="hidden"
-      label={{ value: waveName(w.wave, i), position: "insideTop", fill: "var(--muted)", fontSize: 10 }} />
+      label={{ value: waveName(w.wave, i), position: i % 2 ? "insideTopRight" : "insideTopLeft", fill: "var(--muted)", fontSize: 10 }} />
   ));
-  const axis = <XAxis type="number" dataKey="hour" domain={domain} allowDecimals={false} stroke="var(--muted)" tickFormatter={(v) => `${String(v).padStart(2, "0")}:00`} />;
+  const axis = <XAxis type="number" dataKey="hour" domain={domain} allowDecimals={false} padding={{ left: 10 }} stroke="var(--muted)" tickFormatter={(v) => `${String(v).padStart(2, "0")}:00`} />;
   const margin = { top: 14, right: 12, bottom: 4, left: 0 };
   const hasWind = rows.some((r) => r.wind !== null);
   const hasTemp = rows.some((r) => r.temp !== null);

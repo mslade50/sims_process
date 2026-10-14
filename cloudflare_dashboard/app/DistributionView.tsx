@@ -9,6 +9,7 @@ import { FINISH_CHART_CAPTION, checkpoints, cutReference, marker, markerLabel, m
 import { etTime } from "./lib";
 import { playerDisplayName } from "./player-name";
 import { PositionChart, type PositionChartSeries } from "./ExplainCharts";
+import { ShapeExplorer } from "./ShapeViews";
 import "./explain.css";
 import "./distributions.css";
 
@@ -74,6 +75,9 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
   const drawCount = doc.finish?.n_draws;
   return <div className="dist-explorer">
     <div className="dist-context"><span className="dist-status">{latest ? "Latest simulation" : "Earlier simulation"}</span><span>{doc.kind === "week" ? "Before the event" : `After round ${doc.after_round}`} · {etTime(doc.as_of, "time unknown")}</span>{drawCount ? <span title="How many times the tournament was simulated to get these probabilities.">{drawCount.toLocaleString()} simulated tournaments</span> : null}</div>
+    <Panel title="Same chance to win, different weeks" eyebrow="Finish shapes of the top 30">
+      <ShapeExplorer doc={doc} onPick={(picked) => { setIds(picked.slice(-4)); setQuery(""); }} />
+    </Panel>
     <Panel title="Compare players" eyebrow="Up to four on the same axes">
       <div className="dist-pickers"><div className="dist-player-chips">{players.map((p, i) => <span key={p.id} className="dist-chip" style={{ borderColor: COLORS[i] }}><i style={{ background: COLORS[i] }} />{name(p)}<button type="button" aria-label={`Remove ${name(p)}`} disabled={active.length <= 1} onClick={() => remove(p.id)}><X size={14} /></button></span>)}</div><div className="dist-search"><label><Search size={16} /><input aria-label="Find a player to overlay" placeholder={active.length >= 4 ? "Search to replace the first player…" : "Add a player…"} value={query} onChange={(e) => setQuery(e.target.value)} /></label>{query && <div className="dist-results" role="group" aria-label="Matching players">{matches.map((p) => <button key={p.id} type="button" onClick={() => changePlayer(p.id)}>{name(p)}<span>{pct(p.probs.win.model)} win</span></button>)}{!matches.length && <p>No other players match.</p>}</div>}</div></div>
     </Panel>

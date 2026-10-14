@@ -12,6 +12,7 @@
  */
 import { accessIdentity, type AccessEnv, type Identity } from "./access";
 import { cacheControlFor, respondWithObject } from "./data-http";
+import { CHANGES_PATH, handleChanges } from "./changes-api.ts";
 import { BENCHMARKS_PATH, SEARCH_INDEX_PATH, handleBenchmarks, handleSearchIndex } from "./player-search";
 import { HISTORY_PREFIX, OVERRIDES_KEY, buildRecord, isoSeconds, isExpired, parseUtc, type OverrideRecord } from "../app/overrides-rules";
 
@@ -139,6 +140,7 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
     if (!env.DASHBOARD_DATA) return fail(503, "dashboard bucket is not bound");
     // A storage error is an outage (503, retried by the browser), not "internal error" and never "not published".
     try {
+      if (requested === CHANGES_PATH) return await handleChanges(request, env.DASHBOARD_DATA);
       if (requested === SEARCH_INDEX_PATH) return await handleSearchIndex(request, env.DASHBOARD_DATA);
       if (requested === BENCHMARKS_PATH) return await handleBenchmarks(request, env.DASHBOARD_DATA);
       const object = await env.DASHBOARD_DATA.get(`golfprice/${requested}`);

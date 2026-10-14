@@ -59,3 +59,6 @@ yarn-error.log*
 
 # Untracked hand-copied golfprice snapshot used only by the no-Worker local preview (RESEARCH_LOCAL_PREVIEW=1); the production build excludes it (vite.config.ts)
 /public/golfprice/
+
+# Visual-check harness output (scripts/visual-check.mjs)
+/dist-visual/

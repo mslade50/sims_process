@@ -53,3 +53,9 @@
     linear-gradient(to left, color-mix(in srgb, var(--foreground) 18%, transparent), transparent) right center / 22px 100% no-repeat scroll;
 }
 .scroll-x:focus-visible, .table-scroll:focus-visible { border-radius: 10px; }
+
+/* Touch: expanders and sort headers get a 40 px tap target (visual-check harness, 2026-10-14). Inline glossary terms inside sentences are exempt. */
+@media (pointer: coarse) {
+  details > summary { min-height: 40px; display: flex; align-items: center; gap: 6px; }
+  .th-sort { min-height: 40px; }
+}

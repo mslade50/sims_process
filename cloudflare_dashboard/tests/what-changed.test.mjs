@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
-  ageText, biggestGaps, eventLede, heroFacts, lastSeenRunRef, parseExplain, plainName, previousRunRef, ptsText, relText, runsBefore, spanText, whatChanged,
+  ageText, biggestGaps, eventLede, heroFacts, lastSeenRunRef, parseExplain, plainName, previousRunRef, ptsText, relText, runsBefore, spanText,
 } from "../app/explain-rules.ts";
+import {
+  BOOK_GAP_CHANGE_MIN, BOOK_MOVE_REL_MIN, CAUSE_CHIPS, CAUSE_SHARE_MIN, CAUSE_STROKES_MIN, MAX_MOVERS_SERVED, NOISE_Z, attributionContext, bookMoves, changesPayload, logitPerStroke, parseChangesPayload, sportsbookAlertLines, whatChanged,
+} from "../app/changes-rules.ts";
+import { ROLE, buildPair, clone as cl, idOf } from "./fixtures/changes-pair.mjs";
 
 const read = async (n) => JSON.parse(await readFile(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 const weekRaw = await read("explain_week.json");
@@ -237,4 +241,213 @@ test("event lede reads as one sentence", () => {
   const s = eventLede(parseExplain(clone(weekRaw)));
   assert.match(s, /players, /);
   assert.ok(!/undefined|NaN|null/.test(s));
+});
+
+/* ------------------------------------------------------------------ causes behind each move */
+const win = (c, id) => c.movers.win.find((m) => m.id === id);
+const keys = (m) => m.causes.map((x) => x.key);
+
+test("each price move is split into labelled causes with strokes and a share of the probability move", () => {
+  const { prev, cur } = buildPair();
+  const c = whatChanged(parseExplain(cur), parseExplain(prev));
+  // weather (mu excludes weather, so the strokes come from the wx components) and the later wave
+  const w = win(c, idOf(cur, "weather"));
+  const wx = w.causes.find((x) => x.key === "weather");
+  assert.ok(wx, "weather named");
+  assert.equal(w.causes[0].key, "weather");
+  assert.equal(wx.chip, "weather helps 0.12");
+  assert.ok(Math.abs(wx.strokes - 0.12) < 1e-9);
+  assert.match(wx.detail, /wave early → late/);
+  assert.ok(wx.pts > 0 && w.delta > wx.pts, "the field effect adds to the weather share");
+  assert.ok(w.separable);
+  // skill update
+  const s = win(c, idOf(cur, "skill"));
+  assert.equal(s.causes[0].key, "skill");
+  assert.equal(s.causes[0].chip, "skill update helps 0.15");
+  // owner override
+  const o = win(c, idOf(cur, "override"));
+  assert.equal(o.causes[0].key, "override");
+  assert.equal(o.causes[0].chip, "override helps 0.30");
+  // course and travel: both named, course first
+  const ct = win(c, idOf(cur, "courseTravel"));
+  assert.deepEqual(keys(ct), ["course", "travel"]);
+  assert.equal(ct.causes[1].chip, "travel hurts 0.05");
+  assert.ok(ct.causes[1].pts < 0 && ct.causes[0].pts > 0);
+  assert.ok(ct.causes.length <= CAUSE_CHIPS);
+});
+
+test("a withdrawal is named as the cause of the field effect, never as the player's own doing", () => {
+  const { prev, cur, wdWin } = buildPair();
+  const c = whatChanged(parseExplain(cur), parseExplain(prev));
+  const e = win(c, idOf(cur, "fieldOnly"));
+  assert.equal(e.causes[0].key, "field");
+  assert.equal(e.causes[0].chip, "Koivun WD");
+  assert.equal(e.causes[0].strokes, null);
+  assert.ok(Math.abs(e.causes[0].pts - e.delta) < 1e-9, "all of it is the field effect");
+  assert.match(e.causes[0].detail, /Jackson Koivun left the field/);
+  const w = win(c, idOf(cur, "weather"));
+  assert.ok(w.causes.some((x) => x.key === "field" && x.chip === "Koivun WD"));
+  assert.ok(wdWin > 0.05);
+  assert.deepEqual(c.field.withdrawn, ["Jackson Koivun"]);
+});
+
+test("own-skill shares add up: strokes become probability through the market slope, the rest is the field", () => {
+  const { prev, cur } = buildPair();
+  // no withdrawal: the weather share is the whole move
+  const noWd = cl(cur);
+  noWd.players[ROLE.wd].withdrawn = false;
+  for (const [i, p] of noWd.players.entries()) if (i !== ROLE.wd) { p.probs.win.model *= 1 - prev.players[ROLE.wd].probs.win.model; p.probs.win.rel = (p.probs.win.model - p.probs.win.market) / p.probs.win.market; }
+  const c = whatChanged(parseExplain(noWd), parseExplain(prev));
+  const w = win(c, idOf(cur, "weather"));
+  assert.equal(w.causes.length, 1, "only weather carries a share");
+  assert.ok(Math.abs(w.causes[0].pts - w.delta) < 1e-6, `${w.causes[0].pts} vs ${w.delta}`);
+  assert.ok(!c.movers.win.some((m) => m.id === idOf(cur, "fieldOnly")), "no field effect without a field change");
+});
+
+test("the published strokes_per_logit is the logit change per stroke, and top 5 is fitted from the field", () => {
+  const doc = parseExplain(clone(weekRaw));
+  const fit = (m) => {
+    const rows = doc.players.filter((p) => !p.withdrawn && p.probs[m].model > 0.0005 && p.probs[m].model < 0.9995);
+    const mx = rows.reduce((a, p) => a + p.mu, 0) / rows.length;
+    const lg = (p) => Math.log(p / (1 - p));
+    const my = rows.reduce((a, p) => a + lg(p.probs[m].model), 0) / rows.length;
+    return rows.reduce((a, p) => a + (p.mu - mx) * (lg(p.probs[m].model) - my), 0) / rows.reduce((a, p) => a + (p.mu - mx) ** 2, 0);
+  };
+  for (const m of ["top_10", "top_20", "make_cut"]) assert.ok(Math.abs(logitPerStroke(doc, m) / fit(m) - 1) < 0.15, m);
+  assert.ok(Math.abs(logitPerStroke(doc, "top_5") / fit("top_5") - 1) < 1e-9, "fallback is the fit across the field");
+});
+
+test("causes that cannot be separated say so, and noise is called noise", () => {
+  const { prev, cur } = buildPair();
+  const raw = cl(cur);
+  raw.players[ROLE.skill].components = {};
+  let c = whatChanged(parseExplain(raw), parseExplain(prev));
+  const m = win(c, idOf(cur, "skill"));
+  assert.equal(m.separable, false);
+  assert.deepEqual(m.causes.map((x) => x.chip), ["not separable"]);
+  // a market without a usable slope (small field, nothing to fit): strokes are shown, no probability share is invented
+  const slopeless = cl(cur);
+  slopeless.edge_model.strokes_per_logit = {};
+  slopeless.players = slopeless.players.slice(0, 5);
+  const prevSmall = cl(prev);
+  prevSmall.players = prevSmall.players.slice(0, 5);
+  c = whatChanged(parseExplain(slopeless), parseExplain(prevSmall));
+  const w = win(c, idOf(cur, "weather"));
+  assert.equal(w.causes[0].chip, "weather helps 0.12");
+  assert.equal(w.causes[0].pts, null);
+  // a small move with no cause: within simulation noise
+  const quiet = cl(weekRaw);
+  quiet.run = "later";
+  quiet.as_of = "2026-10-01T11:05:00Z";
+  quiet.players[0].probs.win.model += 0.0015;
+  c = whatChanged(parseExplain(quiet), parseExplain(clone(weekRaw)));
+  const n = c.movers.win[0];
+  assert.equal(n.causes[0].key, "noise");
+  assert.equal(n.causes[0].chip, "within simulation noise");
+  // a big move with no cause and nothing in the field is attributed to "field and other players", not to the player
+  quiet.players[0].probs.win.model += 0.02;
+  c = whatChanged(parseExplain(quiet), parseExplain(clone(weekRaw)));
+  assert.equal(c.movers.win[0].causes[0].chip, "field and other players");
+  assert.ok(NOISE_Z >= 2 && CAUSE_SHARE_MIN === 0.15 && CAUSE_STROKES_MIN === 0.01);
+});
+
+test("a shift common to the whole field is reported as field level, not as every player's own skill", () => {
+  const { prev, cur } = buildPair();
+  const raw = cl(cur);
+  for (const p of raw.players) { p.mu += 0.04; p.mu_rel += 0.04; }
+  const ctx = attributionContext(parseExplain(raw), parseExplain(prev));
+  assert.ok(Math.abs(ctx.fieldLevel - 0.04) < 1e-9, String(ctx.fieldLevel));
+  const c = whatChanged(parseExplain(raw), parseExplain(prev));
+  assert.ok(Math.abs(c.attribution.fieldLevelStrokes - 0.04) < 1e-9);
+  const m = win(c, idOf(cur, "weather"));
+  assert.ok(!m.causes.some((x) => x.key === "unseparated"), "not blamed on the player");
+});
+
+test("in play: the since-last numbers alone still give an in-play cause, with the scores as detail", () => {
+  const live = clone(liveRaw);
+  const withMove = live.players.find((p) => p.live && p.live.since_last.win);
+  withMove.live.d_mu_since_last = 0.31;
+  withMove.live.rounds = [{ round: 1, score: 68, sg_total: 2.1 }];
+  const c = whatChanged(parseExplain(live), null);
+  assert.ok(c.partial);
+  const row = Object.values(c.movers).flat().find((m) => m.id === withMove.id);
+  assert.ok(row, "mover found");
+  const ip = row.causes.find((x) => x.key === "in_play");
+  assert.ok(ip, JSON.stringify(row.causes));
+  assert.equal(ip.chip, "in-play helps 0.31");
+  assert.match(ip.detail ?? "", /scored 68 in round 1/);
+});
+
+/* ------------------------------------------------------------------ sportsbook moves */
+const bookFor = (c, cur, role, market = "win") => c.bookMoves.find((b) => b.id === idOf(cur, role) && b.market === market);
+
+test("sportsbook moves: who moved, which way the gap went, and what is actionable", () => {
+  const { prev, cur } = buildPair();
+  const c = whatChanged(parseExplain(cur), parseExplain(prev));
+  const away = bookFor(c, cur, "bookAway");
+  assert.equal(away.kind, "book_away");
+  assert.equal(away.actionable, "growing");
+  assert.match(away.text, /^Book drifted Jackson Suber away from our price: gap \+50% → \+100%$/);
+  const toward = bookFor(c, cur, "bookToward");
+  assert.equal(toward.kind, "book_toward");
+  assert.equal(toward.actionable, "closing");
+  assert.match(toward.text, /^Book shortened Rico Hoey toward our price: gap \+100% → \+33%$/);
+  const mt = bookFor(c, cur, "modelToward");
+  assert.equal(mt.kind, "model_toward");
+  assert.equal(mt.actionable, null, "only moves by the sportsbook are actionable");
+  assert.match(mt.text, /^We moved Kristoffer Ventura toward the book/);
+  assert.equal(bookFor(c, cur, "modelAway").kind, "model_away");
+  const both = bookFor(c, cur, "both");
+  assert.equal(both.kind, "both");
+  assert.equal(both.actionable, "growing");
+  assert.match(both.text, /^Both moved on Kevin Yu \(book shortened, our price up\)/);
+  // actionable cases come first
+  const firstOthers = c.bookMoves.findIndex((b) => !b.actionable);
+  assert.ok(c.bookMoves.slice(firstOthers).every((b) => !b.actionable));
+  assert.ok(c.headline.some((h) => /sportsbook moves? to act on/.test(h)));
+  assert.equal(BOOK_MOVE_REL_MIN, 0.03);
+  assert.equal(BOOK_GAP_CHANGE_MIN, 0.05);
+});
+
+test("sportsbook moves ignore small moves, tandem moves, in-play runs and long shots", () => {
+  const { prev, cur } = buildPair();
+  const set = (doc, role, model, market) => { const p = doc.players[ROLE[role]]; p.probs.win.model = model; p.probs.win.market = market; p.probs.win.rel = (model - market) / market; };
+  const raw = cl(cur);
+  set(raw, "bookAway", 0.030, 0.0201);              // the book moved 0.01 pts: below the bar
+  set(raw, "bookToward", 0.033, 0.0165);            // both move together by the same proportion: the gap is unchanged
+  const c = whatChanged(parseExplain(raw), parseExplain(prev));
+  assert.ok(!bookFor(c, cur, "bookAway"));
+  assert.ok(!bookFor(c, cur, "bookToward"));
+  const live = cl(cur);
+  live.kind = "live"; live.run = "R1_x"; live.after_round = 1;
+  assert.deepEqual(bookMoves(parseExplain(live), parseExplain(prev)), []);
+  const longShot = cl(prev);
+  const longShotCur = cl(cur);
+  set(longShot, "bookAway", 0.004, 0.003); set(longShotCur, "bookAway", 0.004, 0.002);
+  assert.ok(!bookMoves(parseExplain(longShotCur), parseExplain(longShot)).some((b) => b.id === idOf(cur, "bookAway") && b.market === "win"));
+});
+
+test("alert lines: only the actionable sportsbook moves, worded for a message", () => {
+  const { prev, cur } = buildPair();
+  const c = whatChanged(parseExplain(cur), parseExplain(prev));
+  const lines = sportsbookAlertLines(c.bookMoves, 10);
+  assert.ok(lines.length >= 3);
+  assert.ok(lines.every((l) => /^Edge (growing|closing): /.test(l)));
+  assert.ok(lines.some((l) => l.startsWith("Edge growing: Book drifted Jackson Suber")));
+  assert.equal(sportsbookAlertLines(c.bookMoves, 1).length, 1);
+  assert.deepEqual(sportsbookAlertLines([]), []);
+});
+
+test("the served diff keeps the biggest movers per market and round-trips through the parser", () => {
+  const { prev, cur } = buildPair();
+  const c = whatChanged(parseExplain(cur), parseExplain(prev));
+  const payload = changesPayload("pga:554:2026-10-01", "from.json", "to.json", c);
+  assert.ok(Object.values(payload.change.movers).every((r) => r.length <= MAX_MOVERS_SERVED));
+  assert.equal(payload.moverTotals.win, c.movers.win.length);
+  const back = parseChangesPayload(JSON.parse(JSON.stringify(payload)));
+  assert.deepEqual(back.movers.win[0], payload.change.movers.win[0]);
+  assert.equal(back.bookMoves.length, c.bookMoves.length);
+  assert.equal(parseChangesPayload({ schema: "other" }), null);
+  assert.equal(parseChangesPayload({ ...payload, change: { ...payload.change, movers: { win: [{ id: 1 }] } } }), null);
+  assert.equal(parseChangesPayload(null), null);
 });

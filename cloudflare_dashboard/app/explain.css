@@ -331,3 +331,18 @@
   .segmented.ex-events::-webkit-scrollbar { display: none; }
   .segmented.ex-events > button { flex: 0 0 auto; scroll-snap-align: start; white-space: nowrap; }
 }
+
+/* What changed: causes behind each price move, and the sportsbook's moves */
+.ex-mv-causes { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+.ex-cause { padding: 1px 8px; border-radius: 999px; background: var(--tint-2); color: var(--foreground); font-size: 11px; line-height: 1.6; white-space: nowrap; }
+.ex-cause.is-unseparated, .ex-cause.is-noise { background: none; border: 1px dashed var(--line-strong); color: var(--muted); }
+.ex-cause.is-field { background: var(--tint-1); border: 1px solid var(--line); color: var(--muted-strong); }
+.ex-book-moves { margin: 10px 0 4px; }
+.ex-book-moves ul { margin: 0; padding: 0; list-style: none; }
+.ex-book-moves li + li { border-top: 1px solid var(--line); }
+.ex-book-moves button { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; width: 100%; min-height: 44px; padding: 4px 2px; border: 0; background: none; color: inherit; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.ex-book-moves button:hover { background: var(--tint-1); }
+.ex-book-flag { padding: 1px 8px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.ex-book-flag.is-growing { background: var(--tint-2); color: var(--positive, var(--foreground)); }
+.ex-book-flag.is-closing { background: var(--tint-2); color: var(--negative, var(--foreground)); }
+.ex-cause-note p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted-strong); }

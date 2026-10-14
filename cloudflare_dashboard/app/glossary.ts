@@ -164,3 +164,11 @@ export function titlesFor(keys: string[], extra: Record<string, string> = {}): R
   }
   return out;
 }
+
+/* Distribution shapes (Same chance to win, different weeks). */
+Object.assign(GLOSSARY, {
+  spread: "How much a player's single-round score swings around his expected score, in strokes (the model's sd). Higher spread means more blow-up and breakout rounds, so more of his win chance comes from rare big weeks.",
+  steady: "Steady: more top-10 and top-20 finishes than a player's win chance usually comes with. A high floor, with less of his chance resting on one huge week.",
+  boom_bust: "Boom-or-bust: fewer top finishes than his win chance usually comes with, so more of his chance rides on a rare big week (and the rest of the time he fades).",
+  typical_shape: "The typical shape: the curve fitted across this week's top 30 relating win chance to top-5, top-10, top-20 and make-cut chance. A player above the curve is steadier than typical; below it, more boom-or-bust.",
+});

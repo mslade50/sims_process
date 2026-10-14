@@ -12,11 +12,12 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
 import type { FinishSeries } from "./ExplainCharts";
 import {
-  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, biggestGaps, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, whatChanged, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
+  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, biggestGaps, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
   explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
   type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
+import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
 
 // Heavy parts load on demand so the summary (key facts, what changed) renders without Recharts, the weather views or the course-geometry viewer.
@@ -25,6 +26,7 @@ const HoleStrip = lazy(() => import("./ExplainCharts").then((m) => ({ default: m
 const WeatherThisRound = lazy(() => import("./ScoringView").then((m) => ({ default: m.WeatherThisRound })));
 const CourseGeometry = lazy(() => import("./CourseGeometry").then((m) => ({ default: m.CourseGeometry })));
 const WeatherLinkCard = lazy(() => import("./WeatherBriefView").then((m) => ({ default: m.WeatherLinkCard })));
+const ShapeSpotlightCard = lazy(() => import("./ShapeViews").then((m) => ({ default: m.ShapeSpotlightCard })));
 /** Suspense with a placeholder of the final height, so nothing below jumps when the chunk arrives. */
 function Lazy({ height, children }: { height: number; children: React.ReactNode }) {
   return <Suspense fallback={<div className="ex-lazy" style={{ minHeight: height }} aria-hidden="true" />}>{children}</Suspense>;
@@ -196,6 +198,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
       {live && <LiveSection doc={doc} openPlayer={openPlayer} />}
 
       {!live && <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />}
+      <Suspense fallback={null}><ShapeSpotlightCard doc={doc} openPlayer={openPlayer} onSeeMore={() => window.location.assign("/distributions")} /></Suspense>
 
       <div className="two-column ex-two">
         <Panel title="The course" eyebrow={cc.course ?? "Course card"}>
@@ -317,18 +320,51 @@ function useLastSeen(eventUid: string, currentId: string, latest: boolean): stri
   return seen;
 }
 
+/** One cause of a price move: a short chip, with the strokes and probability share in its tooltip. */
+function CauseChip({ cause }: { cause: Cause }) {
+  const parts = [cause.strokes !== null ? `${signed(cause.strokes)} strokes a round` : null, cause.pts !== null ? `${ptsText(cause.pts)} of the move` : null, cause.detail].filter(Boolean);
+  return <span className={`ex-cause is-${cause.key}`} title={`${cause.label}${parts.length ? `: ${parts.join(", ")}` : ""}`}>{cause.chip}</span>;
+}
+
+/** Where the sportsbook moved relative to our price, and what it does to the edge. */
+function BookMoves({ moves, openPlayer }: { moves: BookMove[]; openPlayer: (id: number) => void }) {
+  const row = (b: BookMove) => (
+    <li key={`${b.id}${b.market}`}>
+      <button type="button" onClick={() => openPlayer(b.id)}>
+        <span>{b.text}</span>
+        {b.actionable && <b className={`ex-book-flag is-${b.actionable}`}>{b.actionable === "growing" ? "Edge growing" : "Edge closing"}</b>}
+      </button>
+    </li>
+  );
+  const first = moves.slice(0, 5);
+  return (
+    <div className="ex-book-moves">
+      <h3 className="ex-h3">Sportsbook moves</h3>
+      <ul aria-label="Sportsbook moves">{first.map(row)}</ul>
+      {moves.length > first.length && <details className="ex-details"><summary>{moves.length - first.length} more</summary><ul>{moves.slice(5).map(row)}</ul></details>}
+    </div>
+  );
+}
+
 function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc; event: IndexEvent; latest: boolean; openPlayer: (id: number) => void }) {
   const seen = useLastSeen(event.event_uid, `${doc.kind}_${doc.run}`, latest);
   const prevRef = useMemo(() => previousRunRef(event, doc), [event, doc]);
   const visitRef = useMemo(() => lastSeenRunRef(event, doc, seen), [event, doc, seen]);
   const [against, setAgainst] = useState<"prev" | "visit">("prev");
   const ref = against === "visit" && visitRef ? visitRef : prevRef;
-  const source = useDashboardData<unknown>(ref?.key ?? null);
+  // One small request for the stored diff of the two runs; the earlier run's whole document is fetched only when that request fails.
+  const toKey = useMemo(() => (event.distribution_runs ?? []).find((r) => !!r && r.kind === doc.kind && r.run === doc.run && typeof r.key === "string" && r.key.length > 0 && r.validated !== false)?.key ?? null, [event, doc]);
+  const changesName = ref && toKey && ref.key !== toKey ? `golfprice/changes.json?event=${encodeURIComponent(event.event_uid)}&from=${encodeURIComponent(ref.key)}&to=${encodeURIComponent(toKey)}` : null;
+  const served = useDashboardData<unknown>(changesName);
+  const fromServer = useMemo(() => parseChangesPayload(served.data), [served.data]);
+  const needFallback = !changesName || (!served.loading && !fromServer);
+  const source = useDashboardData<unknown>(needFallback ? ref?.key ?? null : null);
   const prevDoc = useMemo(() => parseExplain(source.data), [source.data]);
-  const change = useMemo(() => (source.loading ? null : whatChanged(doc, prevDoc)), [doc, prevDoc, source.loading]);
+  const loading = changesName ? served.loading || (needFallback && !!ref && source.data === null && !source.error) : source.loading;
+  const change = useMemo(() => (loading ? null : fromServer ?? whatChanged(doc, prevDoc)), [doc, prevDoc, loading, fromServer]);
   const [mk, setMk] = useState<Market>("win");
   if (!ref && !doc.since_last) return null;
-  if (source.loading) return <section className="ex-changed is-loading" aria-label="What changed" aria-busy="true"><h2>What changed</h2><span className="ex-muted">Comparing with the earlier run…</span></section>;
+  if (loading) return <section className="ex-changed is-loading" aria-label="What changed" aria-busy="true"><h2>What changed</h2><span className="ex-muted">Comparing with the earlier run…</span></section>;
   if (!change) return null;
   const mkts = (Object.keys(change.movers) as Market[]).filter((m) => change.movers[m]?.length);
   const shownMk: Market = mkts.includes(mk) ? mk : mkts[0] ?? "win";
@@ -363,10 +399,18 @@ function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc;
                 <span className="ex-mv-nums">{pct(m.before)} → {pct(m.after)}</span>
                 <b className={m.delta > 0 ? "pos" : "neg"}>{m.delta > 0 ? "▲" : "▼"} {ptsText(m.delta)}</b>
                 {m.marketDelta !== null && Math.abs(m.marketDelta) >= 0.05 && <small className="ex-mv-market">sportsbook {ptsText(m.marketDelta)}</small>}
+                {m.causes.length > 0 && <span className="ex-mv-causes" aria-label="Main causes">{m.causes.map((c) => <CauseChip key={c.key} cause={c} />)}</span>}
               </button>
             </li>
           ))}</ul>
         </>
+      )}
+      {change.bookMoves.length > 0 && <BookMoves moves={change.bookMoves} openPlayer={openPlayer} />}
+      {rows.length > 0 && (
+        <details className="ex-details ex-cause-note">
+          <summary>How the causes are worked out</summary>
+          <p>Each chip is the share of that player&rsquo;s move we can trace to a change in the model&rsquo;s inputs, in strokes a round (plus means better for the player). Weather, course, travel, skill and manual-adjustment changes come straight from the two runs&rsquo; published inputs. &ldquo;Field and other players&rdquo; is the part of the move that is not the player&rsquo;s own rating: other players withdrawing, joining or changing, and simulation variation. &ldquo;Not separable&rdquo; means no single cause carries a clear share.</p>
+        </details>
       )}
       {(change.field.added.length + change.field.removed.length + change.field.withdrawn.length + w.rounds.length + sc.rounds.length + change.gaps.length + change.overrides.added.length + change.overrides.removed.length > 0 || w.layer || sc.winning) && (
         <details className="ex-details">
@@ -651,7 +695,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   const [query, setQuery] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [only, setOnly] = useState<"all" | "above" | "below">("all");
-  const [top, setTop] = useState<"all" | "60" | "25">("60");
+  const [top, setTop] = useState<"all" | "60" | "25">("25");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "edge_sg", dir: "desc" });
   const live = doc.kind === "live";
   const markets = useMemo(() => availableMarkets(doc), [doc]);
