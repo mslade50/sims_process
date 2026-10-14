@@ -307,7 +307,7 @@ export function HistoryPanel({ brief }: { brief: Brief }) {
 }
 
 /* ------------------------------------------------------------------ (g) glossary */
-export function GlossaryPanel({ brief }: { brief: Brief }) {
+export function GlossaryPanel() {
   return (
     <Panel eyebrow="In plain English" title="What the words mean">
       <dl className="wb-gloss">
@@ -335,7 +335,7 @@ export function WeatherBriefBody({ brief, modelVersion }: { brief: Brief; modelV
       <PlayersPanel brief={brief} result={result} />
       <WhatIfPanel model={model} sliders={sliders} onChange={setSliders} />
       <HistoryPanel brief={brief} />
-      <GlossaryPanel brief={brief} />
+      <GlossaryPanel />
       <p className="wb-muted wb-foot"><Wind size={13} aria-hidden="true" /> {brief.forecast.source === "archive" ? "From an archived forecast." : "From the latest live forecast."}{brief.forecast.n_scenarios ? ` ${brief.forecast.n_scenarios} forecast scenarios.` : ""} Strokes are per round.</p>
     </div>
   );

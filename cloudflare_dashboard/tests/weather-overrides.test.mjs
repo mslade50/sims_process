@@ -73,7 +73,7 @@ test("parseWeather reads owner edits, p_wet and tee coverage, and tolerates thei
       { round: 1, time_local: "2026-10-15T09:00", wind: 4 },
     ] },
   });
-  assert.deepEqual(doc.forecast.owner_overrides, { count: 2, updated_at: "2026-10-13T20:00:00Z", updated_by: "o@x.com", note: "n", phase: "pre", after_round: null, expired: false });
+  assert.deepEqual(doc.forecast.owner_overrides, { count: 2, updated_at: "2026-10-13T20:00:00Z", updated_by: "o@x.com", note: "n", phase: "pre", after_round: null, expired: false, stale: false, forecast_newer_by_h: null });
   assert.deepEqual(doc.forecast.hourly[0].owner_override, { wind: { forecast: 3.1, override: 12 } });
   assert.equal(doc.forecast.hourly[0].p_wet, 0.03);
   assert.equal(doc.forecast.hourly[1].owner_override, null);

@@ -143,3 +143,13 @@ test("D6: the weather page renders the run beside the price checkpoint and an al
   assert.match(ok, /data-state="match"/);
   assert.doesNotMatch(ok, /out of step/);
 });
+
+test("owner edits saved before the forecast they override are flagged stale", () => {
+  const withEdits = (extra) => parseWeather({ ...fixture, forecast: { ...fixture.forecast, owner_overrides: { status: "applied", count: 3, phase: "pre", updated_at: "2026-10-13T15:00:00Z", ...extra } } });
+  const stale = withEdits({ stale: true, forecast_newer_by_h: 9 }).forecast.owner_overrides;
+  assert.equal(stale.stale, true);
+  assert.equal(stale.forecast_newer_by_h, 9);
+  const older = withEdits({}).forecast.owner_overrides;
+  assert.equal(older.stale, false);
+  assert.equal(older.forecast_newer_by_h, null);
+});

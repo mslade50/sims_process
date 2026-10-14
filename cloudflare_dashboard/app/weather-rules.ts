@@ -15,7 +15,7 @@ export type HourlyPoint = {
   /** Only the fields the owner edited: the forecast value and the edit. Absent in older documents. The top-level value is already the edited one. */
   owner_override: Partial<Record<"wind" | "gust" | "temp" | "rain" | "dir", { forecast: number | null; override: number | null }>> | null;
 };
-export type OwnerOverrideSummary = { count: number; updated_at: string; updated_by: string; note: string; phase: "pre" | "live"; after_round: number | null; expired: boolean };
+export type OwnerOverrideSummary = { count: number; updated_at: string; updated_by: string; note: string; phase: "pre" | "live"; after_round: number | null; expired: boolean; stale: boolean; forecast_newer_by_h: number | null };
 export type Wave = { round: number; wave: string; window: [number, number] | null; windowText: string; mean_wind: number | null; mean_temp: number | null; rel: number | null; rel_p10: number | null; rel_p90: number | null };
 export type PlayerRound = { tee_time: string; start_hole: number | null; mean_off_strokes: number | null; mean_off_rel: number | null; tod_strokes: number | null; sd_mult: number | null; components: Record<string, number> };
 export type PlayerRow = { dg_id: number; name: string; rounds: Record<number, PlayerRound>; total12: number | null; sdMax: number | null };
@@ -93,7 +93,7 @@ function parseOwnerSummary(value: unknown): OwnerOverrideSummary | null {
   const count = numOrNull(value.count);
   const expired = value.status === "expired";
   if (count === null || (count <= 0 && !expired)) return null;
-  return { count: Math.max(0, count), updated_at: text(value.updated_at), updated_by: text(value.updated_by), note: text(value.note), phase: value.phase === "live" ? "live" : "pre", after_round: numOrNull(value.after_round), expired };
+  return { count: Math.max(0, count), updated_at: text(value.updated_at), updated_by: text(value.updated_by), note: text(value.note), phase: value.phase === "live" ? "live" : "pre", after_round: numOrNull(value.after_round), expired, stale: value.stale === true, forecast_newer_by_h: numOrNull(value.forecast_newer_by_h) };
 }
 
 function parseWave(value: unknown): Wave | null {

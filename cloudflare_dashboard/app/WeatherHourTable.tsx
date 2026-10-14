@@ -28,6 +28,7 @@ export function OwnerEditNote({ summary, eventUid }: { summary: OwnerOverrideSum
       <Pencil size={13} /> Includes your {ownerEditKind(summary)}: {summary.count} {summary.count === 1 ? "hour" : "hours"}
       {summary.updated_at || summary.updated_by ? ` (saved ${summary.updated_at ? etTime(summary.updated_at) : "earlier"}${summary.updated_by ? ` by ${summary.updated_by}` : ""})` : ""}. The forecast values are in the tooltips.{" "}
       <a className="ex-link" href={`/weather-edits?e=${encodeURIComponent(eventUid)}`}>Change them</a>
+      {summary.stale && <><br /><strong>A newer forecast came out{summary.forecast_newer_by_h !== null ? ` ${Math.round(summary.forecast_newer_by_h)} h` : ""} after these edits were saved, and the edits still override it.</strong> Check them against the new forecast or clear them.</>}
     </p>
   );
 }
