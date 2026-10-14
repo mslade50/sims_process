@@ -4,15 +4,15 @@ import { useMemo, useState } from "react";
 import { useParams, BenchmarkCard, BenchmarkMethod, type WeeklyEvent } from "./PlayerProfilesView";
 import { DataTable, EmptyState, LoadingState, PageIntro, Panel } from "./components";
 import { useDashboardData } from "./data";
+import { usePlayerBenchmarks } from "./player-directory";
 import { explainKeyFor, orderEvents, parseExplain, pct, type ExplainDoc, type ExPlayer } from "./explain-rules";
-import { savedFieldSkill, checkpointBenchmarkValue, shortProfileDate, selectWeeklyEvent, matchingInputRun, matchesExplainCheckpoint, matchesInputCheckpoint, savedSkill, parseCatalog, profileHref, signedZ, type SavedCheckpoint } from "./player-profile-rules";
+import { savedFieldSkill, checkpointBenchmarkValue, shortProfileDate, selectWeeklyEvent, matchingInputRun, matchesExplainCheckpoint, matchesInputCheckpoint, savedSkill, profileHref, signedZ, type SavedCheckpoint } from "./player-profile-rules";
 import { checkpoints } from "./distributions-rules";
 import { humanCheckpoint } from "./player-deep-rules";
 import { GAP_METHOD_SENTENCE, LABELS, ZERO_SENTENCE, plainName, plainPhrase } from "./labels";
 import { COL, activeWeatherRounds, buildTable, nameOf, expandEntries, fieldMethod, parseInputs, reconciliationHeaders, residualFlag, residualText, thisWeekGuide, type WeeklyDeps, type WeeklyInputs } from "./weekly-rules";
 import "./player-profiles.css";
 import "./weekly.css";
-import { PLAYER_CATALOG_KEY } from "./shell-rules";
 
 const DEPS: WeeklyDeps = { LABELS, gapSentence: GAP_METHOD_SENTENCE, plainName, plainPhrase, signedZ, pct, savedFieldSkill, checkpointBenchmarkValue, savedSkill };
 
@@ -32,8 +32,9 @@ function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
   return sorted.filter((r,i)=>{const n=sorted[i+1];return !(n && n.kind===r.kind && Number.isFinite(t(r)) && Number.isFinite(t(n)) && t(n)-t(r)<600000);}).sort((a,b)=>(t(b)||0)-(t(a)||0));
 }
 function WeeklyExplain({event,dataKey,inputsKey,expected,playerId}:{event:WeeklyEvent;dataKey:string;inputsKey:string|null;expected:SavedCheckpoint|null;playerId:string|null}) {
-  const catalogLoad=useDashboardData<unknown>(PLAYER_CATALOG_KEY);const catalog=parseCatalog(catalogLoad.data);
-  const load=useDashboardData<unknown>(dataKey);const doc=useMemo(()=>parseExplain(load.data),[load.data]);const inputsLoad=useDashboardData<unknown>(inputsKey ?? "golfprice/none.json");const inputs=useMemo(()=>inputsKey && matchesInputCheckpoint(inputsLoad.data,expected) ? parseInputs(inputsLoad.data) : null,[inputsKey,inputsLoad.data,expected]);
+  const load=useDashboardData<unknown>(dataKey);const doc=useMemo(()=>parseExplain(load.data),[load.data]);
+  // Only this field's ratings are fetched (a few tens of KB), not the 16 MB catalog; the catalog is the fallback if that endpoint errors.
+  const fieldIds=useMemo(()=>doc ? doc.players.map(p=>p.id) : null,[doc]);const {catalog}=usePlayerBenchmarks(fieldIds);const inputsLoad=useDashboardData<unknown>(inputsKey ?? "golfprice/none.json");const inputs=useMemo(()=>inputsKey && matchesInputCheckpoint(inputsLoad.data,expected) ? parseInputs(inputsLoad.data) : null,[inputsKey,inputsLoad.data,expected]);
   if(load.loading) return <LoadingState label="Loading the model run"/>;
   if(load.error || !doc || !matchesExplainCheckpoint(doc,expected)) return <EmptyState title="This model run is not available" detail={load.error ?? "No model run was published for this event and checkpoint."}/>;
   if(playerId && !doc.players.some(p=>String(p.id)===playerId)) return <EmptyState title="This player is not in this field" detail="Choose another event above, or remove the player filter to see the full field."/>;
@@ -42,7 +43,7 @@ function WeeklyExplain({event,dataKey,inputsKey,expected,playerId}:{event:Weekly
   return <><div className="pp-run"><span className="eyebrow">{doc.kind==="live" ? `In play · after round ${doc.after_round}` : "Pre tournament"}</span><strong>{doc.event.name}</strong><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players</span></div>{(!!playerId || historicalCoverage>=5) && <Panel title="Recent form vs the PGA average" eyebrow="How each player has been playing lately · not a price forecast"><p className="pp-muted">Form ratings as of {shortProfileDate(catalog?.as_of)}. Model run: {humanCheckpoint(doc.as_of,doc.kind)}. Rounds played after the model run are left out. {historicalCoverage} of {doc.players.length} players have enough rounds for a rating.</p>{playerId && players.map(p=>{const rating=catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark;return <BenchmarkCard key={p.id} rating={rating} reference={catalog?.pga_benchmark_reference} fieldLabel={doc.event.name} checkpoint={doc.as_of} savedDoc={doc} playerId={p.id}/>;})}<BenchmarkMethod reference={catalog?.pga_benchmark_reference}/></Panel>}<Panel title="The field: skill and chances" eyebrow="Sort any column, choose columns, or download as CSV">{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}<WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players}/>{!players.length && <p>No players match this selection in the saved event.</p>}</Panel></>;
 }
 
-type Catalog=ReturnType<typeof parseCatalog>;
+type Catalog=ReturnType<typeof usePlayerBenchmarks>["catalog"];
 function WeeklyTable({doc,inputs,inputsPending,catalog,players}:{doc:ExplainDoc;inputs:WeeklyInputs;inputsPending:boolean;catalog:Catalog;players:ExPlayer[]}) {
   const built=useMemo(()=>buildTable({doc,inputs,catalog,players,deps:DEPS}),[doc,inputs,catalog,players]);
   const [open,setOpen]=useState<number|null>(null);

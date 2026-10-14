@@ -11,6 +11,8 @@
  * golfprice only reads active.json; nothing else in the bucket is written here.
  */
 import { accessIdentity, type AccessEnv, type Identity } from "./access";
+import { cacheControlFor, respondWithObject } from "./data-http";
+import { BENCHMARKS_PATH, SEARCH_INDEX_PATH, handleBenchmarks, handleSearchIndex } from "./player-search";
 import { HISTORY_PREFIX, OVERRIDES_KEY, buildRecord, isoSeconds, isExpired, parseUtc, type OverrideRecord } from "../app/overrides-rules";
 
 export interface ApiEnv extends AccessEnv {
@@ -135,18 +137,21 @@ export async function handleOverridesApi(request: Request, env: ApiEnv, now = Da
     }
     if (!requested || requested.includes("..") || requested.startsWith("/") || requested.includes("\\")) return fail(400, "Invalid golfprice path");
     if (!env.DASHBOARD_DATA) return fail(503, "dashboard bucket is not bound");
-    const object = await env.DASHBOARD_DATA.get(`golfprice/${requested}`);
-    if (!object) return fail(404, "not published yet");
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("content-type", requested.endsWith(".csv") ? "text/csv; charset=utf-8" : "application/json; charset=utf-8");
-    headers.set("cache-control", /(^|\/)(manifest|index|latest|brief_latest|dossier-review)\.json$/.test(requested) ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
-    headers.set("etag", object.httpEtag);
-    // R2 dossiers are already gzip encoded. Prevent Workers from applying
-    // the same content encoding a second time to their stored bytes.
-    const responseInit: ResponseInit & { encodeBody?: "manual" } = { headers };
-    if (headers.has("content-encoding")) responseInit.encodeBody = "manual";
-    return new Response(request.method === "HEAD" ? null : object.body, responseInit);
+    // A storage error is an outage (503, retried by the browser), not "internal error" and never "not published".
+    try {
+      if (requested === SEARCH_INDEX_PATH) return await handleSearchIndex(request, env.DASHBOARD_DATA);
+      if (requested === BENCHMARKS_PATH) return await handleBenchmarks(request, env.DASHBOARD_DATA);
+      const object = await env.DASHBOARD_DATA.get(`golfprice/${requested}`);
+      if (!object) return fail(404, "not published yet");
+      // Immutable for generation/content-hashed keys, short max-age + stale-while-revalidate for pointers; If-None-Match answers 304.
+      return respondWithObject(request, object, {
+        contentType: requested.endsWith(".csv") ? "text/csv; charset=utf-8" : "application/json; charset=utf-8",
+        cacheControl: cacheControlFor(requested),
+      });
+    } catch (error) {
+      console.error(`golfprice read failed for ${requested}: ${error instanceof Error ? error.message : String(error)}`);
+      return json({ ok: false, error: "data store unavailable" }, 503, { "retry-after": "5" });
+    }
   }
 
   if (path !== "/api/overrides" && !path.startsWith("/api/overrides/")) return null;

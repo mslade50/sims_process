@@ -7,6 +7,7 @@ import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
+import { cacheControlFor, respondWithObject } from "./data-http";
 
 interface Env {
   ASSETS: Fetcher;
@@ -111,12 +112,8 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
       // to the packaged snapshot until the first R2 publish completes.
     }
     if (object) {
-      const headers = new Headers();
-      object.writeHttpMetadata(headers);
-      headers.set("content-type", "application/json; charset=utf-8");
-      headers.set("cache-control", requested === "manifest.json" ? "no-cache" : "public, max-age=300, stale-while-revalidate=3600");
-      headers.set("etag", object.httpEtag);
-      return new Response(object.body, { headers });
+      // manifest.json is the publish pointer (short max-age + revalidate); If-None-Match answers 304 so unchanged files cost no body.
+      return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: cacheControlFor(requested) });
     }
     const assetUrl = new URL(`/data/${requested}`, request.url);
     return env.ASSETS.fetch(new Request(assetUrl, request));

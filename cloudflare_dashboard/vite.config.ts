@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 import { cloudflare, getLocalWorkerdCompatibilityDate } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
+import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -26,6 +27,21 @@ function excludePackagedGolfprice(): Plugin {
       await rm(resolve(root, "dist", "client", "golfprice"), { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * RESEARCH_LOCAL_PREVIEW builds keep emptyOutDir off (the preview server may be serving dist/), so content-hashed chunks from earlier
+ * builds piled up next to the new ones. Clear only the generated hashed output under dist/ once per build process, before any
+ * environment writes. Nothing outside dist/ is touched; public/ and dist/client/data (copied by the build) are re-created by the build.
+ */
+function cleanStaleBuildOutput(rootDir: string) {
+  const guard = globalThis as { __dashboardDistCleaned?: boolean };
+  if (guard.__dashboardDistCleaned) return;
+  guard.__dashboardDistCleaned = true;
+  const dist = resolve(rootDir, "dist");
+  for (const sub of [["client", "_next"], ["server", "_next"], ["server", "ssr"]]) {
+    rmSync(resolve(dist, ...sub), { recursive: true, force: true });
+  }
 }
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -60,6 +76,8 @@ export default defineConfig(({ command }) => {
   process.env.WRANGLER_WRITE_LOGS ??= "false";
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
+
+  if (command === "build" && localResearchPreview) cleanStaleBuildOutput(process.cwd());
 
   return {
     build: localResearchPreview ? { emptyOutDir: false } : undefined,

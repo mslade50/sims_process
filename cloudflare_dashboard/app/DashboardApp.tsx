@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { lazy, useEffect, useMemo, useState } from "react";
 import {
   Archive,
   ChartNoAxesCombined,
@@ -17,16 +17,6 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { ThisWeekView, WhyPricedView } from "./ExplainViews";
-import { DistributionView } from "./DistributionView";
-import { ScoringView } from "./ScoringView";
-import { PlayersView } from "./PlayerProfilesView";
-import { WeeklyPlayersView } from "./WeeklyPlayersView";
-import { InputsView } from "./InputsView";
-import { ResearchView } from "./ResearchView";
-import { RunView } from "./RunView";
-import { WeatherEffectsView } from "./WeatherEffectsView";
-import { WeatherEditsView } from "./WeatherEditsView";
 import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData } from "./data";
@@ -34,13 +24,7 @@ import { titleCase } from "./lib";
 import { LEGACY_VIEWS, NAVIGATION, navEntryFor, resolveRoute, unknownEventParam, type NavItem } from "./shell-rules";
 import { FreshnessBadge, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
-import {
-  DiagnosticsView,
-  HistoryView,
-  PerformanceView,
-  SgDistributionsView,
-  WeatherView,
-} from "./views";
+import { ViewBoundary } from "./ViewBoundary";
 import "./shell.css";
 
 export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced";
@@ -60,6 +44,53 @@ const NAV_ICONS: Record<string, typeof CircleGauge> = {
   "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
   inputs: SlidersHorizontal, run: Play, performance: TrendingUp, history: Archive, diagnostics: Microscope,
 };
+
+/** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
+const PlayersView = lazy(() => import("./PlayerProfilesView").then((m) => ({ default: m.PlayersView })));
+const WeeklyPlayersView = lazy(() => import("./WeeklyPlayersView").then((m) => ({ default: m.WeeklyPlayersView })));
+const RunView = lazy(() => import("./RunView").then((m) => ({ default: m.RunView })));
+const InputsView = lazy(() => import("./InputsView").then((m) => ({ default: m.InputsView })));
+const ResearchView = lazy(() => import("./ResearchView").then((m) => ({ default: m.ResearchView })));
+const DistributionView = lazy(() => import("./DistributionView").then((m) => ({ default: m.DistributionView })));
+const SgDistributionsView = lazy(() => import("./views").then((m) => ({ default: m.SgDistributionsView })));
+const ScoringView = lazy(() => import("./ScoringView").then((m) => ({ default: m.ScoringView })));
+const HistoryView = lazy(() => import("./views").then((m) => ({ default: m.HistoryView })));
+const PerformanceView = lazy(() => import("./views").then((m) => ({ default: m.PerformanceView })));
+const DiagnosticsView = lazy(() => import("./views").then((m) => ({ default: m.DiagnosticsView })));
+const WeatherView = lazy(() => import("./views").then((m) => ({ default: m.WeatherView })));
+const WeatherEffectsView = lazy(() => import("./WeatherEffectsView").then((m) => ({ default: m.WeatherEffectsView })));
+const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ default: m.WeatherEditsView })));
+const ThisWeekView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.ThisWeekView })));
+const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.WhyPricedView })));
+
+const loaders: Record<string, () => Promise<unknown>> = {
+  "players": () => import("./PlayerProfilesView"),
+  "weekly-players": () => import("./WeeklyPlayersView"),
+  "run": () => import("./RunView"),
+  "inputs": () => import("./InputsView"),
+  "research": () => import("./ResearchView"),
+  "distributions": () => import("./DistributionView"),
+  "sg-distributions": () => import("./views"),
+  "round-scores": () => import("./ScoringView"),
+  "history": () => import("./views"),
+  "performance": () => import("./views"),
+  "diagnostics": () => import("./views"),
+  "weather": () => import("./views"),
+  "weather-effects": () => import("./WeatherEffectsView"),
+  "weather-edits": () => import("./WeatherEditsView"),
+  "this-week": () => import("./ExplainViews"),
+  "why-priced": () => import("./ExplainViews"),
+};
+
+const warmed = new Set<string>();
+/** Warm a view's chunk (no render). Safe to call repeatedly; a failure is ignored and retried on the real navigation. */
+function prefetchView(key: string) {
+  const load = loaders[key];
+  if (!load || warmed.has(key)) return;
+  warmed.add(key);
+  load().catch(() => warmed.delete(key));
+}
+const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
 
 const views: Record<ViewKey, React.ComponentType> = {
   players: PlayersView,
@@ -118,14 +149,14 @@ function NavLink({ item, activeView, collapsed }: { item: NavItem; activeView: s
   const owns = activeView === item.key || !!item.toggle?.some((t) => t.key === activeView);
   return (
     <>
-      <a className={owns ? "active" : ""} href={item.href} onClick={(event) => navigateWithReload(event, item.href)} title={collapsed ? item.label : undefined}>
+      <a className={owns ? "active" : ""} href={item.href} onMouseEnter={() => prefetchView(item.key)} onFocus={() => prefetchView(item.key)} onClick={(event) => navigateWithReload(event, item.href)} title={collapsed ? item.label : item.description}>
         <Icon size={18} />
-        <span className="nav-text"><strong>{item.label}</strong><small>{item.description}</small></span>
+        <span className="nav-text"><strong>{item.label}</strong></span>
       </a>
       {item.toggle && (
         <div className="nav-toggle nav-text" role="group" aria-label={`${item.label} views`}>
           {item.toggle.map((t) => (
-            <a key={t.key} className={activeView === t.key ? "active" : ""} href={t.href} aria-current={activeView === t.key ? "page" : undefined} onClick={(event) => navigateWithReload(event, t.href)}>{t.label}</a>
+            <a key={t.key} className={activeView === t.key ? "active" : ""} href={t.href} onMouseEnter={() => prefetchView(t.key)} onFocus={() => prefetchView(t.key)} aria-current={activeView === t.key ? "page" : undefined} onClick={(event) => navigateWithReload(event, t.href)}>{t.label}</a>
           ))}
         </div>
       )}
@@ -144,6 +175,17 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const { data: gpIndex } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
   const now = useNow(30_000);
   const week = useMemo(() => summarizeWeek(gpIndex, now), [gpIndex, now]);
+  useEffect(() => {
+    // After first render, once the browser is idle, warm the most used views so the next click is instant.
+    const run = () => IDLE_PREFETCH.forEach(prefetchView);
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(run, { timeout: 4000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(run, 2000);
+    return () => window.clearTimeout(id);
+  }, []);
   const isLegacy = LEGACY_VIEWS.includes(activeKey);
   // An invalid ?e= used to fall back to the default event with no word of it (site audit B5). Read after mount so the server render matches.
   const [eventParam, setEventParam] = useState<string | null>(null);
@@ -224,7 +266,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
         <header className="topbar">
           <div className="topbar-left">
             <button className="menu-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open navigation menu"><Menu size={20} /><span>Menu</span></button>
-            <div className="topbar-title"><span>{activeMeta?.label}</span><small>{activeMeta?.description}</small></div>
+            <div className="topbar-title"><span>{activeMeta?.label}</span></div>
           </div>
           <HeaderSearch onNavigate={navigateWithReload} />
           <div className="event-context">
@@ -237,8 +279,8 @@ export function DashboardApp({ initialView }: { initialView: string }) {
               <>
                 <div><strong>{week.title}</strong>{week.sub && <small>{week.sub}</small>}</div>
                 {week.publishedLine && <span className="published-line">{week.publishedLine}</span>}
-                {week.heldBackNote && <p className="held-note" role="status">{week.heldBackNote}</p>}
-                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest run" : "Last run"} title={week.tooltip || "When the model last priced this week"} />
+                {week.heldBackNote && <p className="held-note" role="status" title={week.heldBackNote}>{week.heldBackNote}</p>}
+                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} />
               </>
             ) : (
               <>
@@ -250,7 +292,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
         </header>
         <div className="content-frame">
           {badEvent && <p className="link-notice" role="status">The event in this link is not in the published list, so the default event is shown instead.</p>}
-          {route.kind === "notfound" ? <NotFound requested={route.requested} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ActiveView /> : null}
+          {route.kind === "notfound" ? <NotFound requested={route.requested} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
         </div>
       </main>
 

@@ -14,7 +14,7 @@ export type Metric = { key: ProfileAxis; label: string; unit: string; value: num
 export type HistoricalTrait = {value?:number;raw_value?:number;unit?:string;percentile?:number|null;band?:string;interval_90?:number[]|null;shrinkage_weight?:number;reference_players?:number;label_status?:string;band_uncertain?:boolean};
 export type Archetype = {label?:string;description?:string;status?:string;reason?:string;caveat?:string;notes?:string[];sample?:{rounds?:number;events?:number;round_selection?:string};reliability?:{status?:string;evidence?:string;reason?:string;cut_maker?:unknown};volatility?:HistoricalTrait|null;relative_hot_round_upside?:HistoricalTrait|null;tail_balance?:HistoricalTrait|null};
 export type PlayerProfile = { deep_key?:string; schema_version: string; as_of: string; identity: ProfileEntry; coverage: {status: string}; photo?: Photo; radar: Metric[]; references: Record<string, Reference>; pga_benchmark?:PgaBenchmark; pga_benchmark_reference?:PgaBenchmarkReference; archetype?: Archetype | string | null; provenance?: unknown };
-export type ProfileCatalog = { schema_version: string; as_of: string; players: ProfileEntry[]; references: Record<string, Reference>; pga_benchmark_reference?:PgaBenchmarkReference; provenance?: unknown; catalog_key?: string };
+export type ProfileCatalog = { schema_version: string; as_of: string; players: ProfileEntry[]; references: Record<string, Reference>; pga_benchmark_reference?:PgaBenchmarkReference; provenance?: unknown; catalog_key?: string; /** True when built from the slim search index: identity only, no pga_benchmark / archetype / photo on the entries. */ slim?: boolean };
 export const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 export const signedZ = (v: unknown, digits = 2): string => finite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}` : "—";
 export function profileKey(key: string): string {
@@ -27,6 +27,55 @@ export function parseCatalog(raw: unknown): ProfileCatalog | null {
   const d = raw as ProfileCatalog;
   return d.schema_version === "player_profiles.v1" && Array.isArray(d.players) ? {...d, players: d.players.filter(p => ((Number.isSafeInteger(p.dg_id) && p.dg_id! > 0) || (p.dg_id === null && /^historical-[a-z0-9]+$/.test(p.profile_id ?? ""))) && typeof p.name === "string" && typeof p.profile_key === "string")} : null;
 }
+/** Search-index schema published by worker/player-search.ts (derived from the catalog; the publisher's format is untouched). */
+export const SEARCH_INDEX_SCHEMA = "player_search.v1";
+const asStr = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const asArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+/** Rebuild a catalog (identity fields only) from the column-major search index. Null when the document is not a usable index. */
+export function parseSearchIndex(raw: unknown): ProfileCatalog | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  if (d.schema !== SEARCH_INDEX_SCHEMA || !Array.isArray(d.name) || !Array.isArray(d.dg) || d.dg.length !== d.name.length) return null;
+  const meta = d.meta && typeof d.meta === "object" ? (d.meta as Record<string, unknown>) : {};
+  const n = d.name.length;
+  const statuses = asArr(d.statuses), tourSets = asArr(d.tour_sets), keys = asArr(d.keys);
+  const sparse = (v: unknown): Map<number, unknown[]> => { const m = new Map<number, unknown[]>(); for (const e of asArr(v)) if (Array.isArray(e) && typeof e[0] === "number") m.set(e[0], e); return m; };
+  const pid = sparse(d.pid), dn = sparse(d.dn), alias = sparse(d.alias), geo = sparse(d.geo);
+  const amateurs = new Set(asArr(d.am) as number[]);
+  const tours = asArr(d.tours) as number[], status = asArr(d.status) as number[], rounds = asArr(d.n) as Array<number | null>, last = asArr(d.last) as Array<number | string | null>, key = asArr(d.key) as number[];
+  const players: ProfileEntry[] = [];
+  let dg = 0;
+  for (let i = 0; i < n; i++) {
+    const delta = (d.dg as Array<number | null>)[i];
+    let dgId: number | null = null;
+    if (typeof delta === "number") { dg += delta; dgId = dg; }
+    const entry: ProfileEntry = {
+      dg_id: dgId, name: d.name[i] as string, profile_key: asStr(keys[key[i]]) ?? "",
+      status: asStr(statuses[status[i]]) ?? "unavailable", tours: (tourSets[tours[i]] as string[] | undefined) ?? [],
+    };
+    const p = pid.get(i); if (p) entry.profile_id = p[1] as string;
+    else if (dgId !== null) entry.profile_id = String(dgId);
+    const nm = dn.get(i); if (nm) entry.display_name = nm[1] as string;
+    const al = alias.get(i); if (al) entry.aliases = al[1] as string[];
+    const g = geo.get(i); if (g) { if (g[1]) entry.country = g[1] as string; if (g[2]) entry.country_code = g[2] as string; }
+    if (typeof rounds[i] === "number") entry.n_rounds = rounds[i] as number;
+    const l = last[i]; if (typeof l === "number") entry.last_observation = new Date(l * 86_400_000).toISOString().slice(0, 10); else if (typeof l === "string") entry.last_observation = l;
+    if (amateurs.has(i)) entry.amateur = true;
+    players.push(entry);
+  }
+  const catalog = parseCatalog({ ...meta, schema_version: meta.schema_version ?? "player_profiles.v1", as_of: asStr(d.as_of) ?? meta.as_of, players });
+  return catalog ? { ...catalog, slim: true } : null;
+}
+/** Benchmarks-for-a-field document (worker/player-search.ts handleBenchmarks): catalog-shaped, but only dg_id + pga_benchmark per golfer. */
+export const BENCHMARKS_SCHEMA = "player_benchmarks.v1";
+export function parseBenchmarks(raw: unknown): ProfileCatalog | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as {schema?: string; as_of?: string; pga_benchmark_reference?: PgaBenchmarkReference; players?: unknown};
+  if (d.schema !== BENCHMARKS_SCHEMA || !Array.isArray(d.players)) return null;
+  const players = (d.players as Array<{dg_id?: unknown; pga_benchmark?: PgaBenchmark | null}>)
+    .filter(p => Number.isSafeInteger(p.dg_id)).map(p => ({dg_id: p.dg_id as number, name: "", status: "", profile_key: "", pga_benchmark: p.pga_benchmark ?? undefined}));
+  return {schema_version: "player_profiles.v1", as_of: d.as_of ?? "", players, references: {}, pga_benchmark_reference: d.pga_benchmark_reference ?? undefined, slim: true};
+}
 export function parseProfile(raw: unknown, id: string | number): PlayerProfile | null {
   if (!raw || typeof raw !== "object") return null;
   const batch = raw as {schema_version?:string;profiles?:Record<string,unknown>};
@@ -34,16 +83,22 @@ export function parseProfile(raw: unknown, id: string | number): PlayerProfile |
   const d = raw as PlayerProfile;
   return d.schema_version === "player_profiles.v1" && d.identity && playerId(d.identity) === String(id) && Array.isArray(d.radar) ? d : null;
 }
+const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const haystacks = new WeakMap<ProfileEntry, string>();   // folded once per entry: 16,600 golfers x every keystroke would otherwise re-normalize all of them
 export function profileMatches(p: ProfileEntry, query: string): boolean {
-  const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const haystack = fold([p.name, entryName(p), ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" "));
-  return fold(query).split(/\s+/).every(word => haystack.includes(word));
+  let haystack = haystacks.get(p);
+  if (haystack === undefined) { haystack = fold([p.name, entryName(p), ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" ")); haystacks.set(p, haystack); }
+  const h = haystack;
+  return fold(query).split(/\s+/).every(word => h.includes(word));
 }
 /** Coverage first, then recent observation and alphabetic identity; do not mutate source order. */
 export function sortProfiles(players:ProfileEntry[]):ProfileEntry[] {
   const rank=(p:ProfileEntry)=>p.status==="complete"?0:p.status==="partial"?1:2;
   const time=(p:ProfileEntry)=>p.last_observation && Number.isFinite(Date.parse(p.last_observation)) ? Date.parse(p.last_observation) : -Infinity;
-  return [...players].sort((a,b)=>rank(a)-rank(b) || (time(a)===time(b)?0:time(b)-time(a)) || a.name.localeCompare(b.name) || playerId(a).localeCompare(playerId(b)));
+  // Decorate once: the comparator runs ~16,600 x log2(16,600) times and must not re-parse dates each time.
+  const keyed=players.map(p=>({p,r:rank(p),t:time(p),id:playerId(p)}));
+  keyed.sort((a,b)=>a.r-b.r || (a.t===b.t?0:b.t-a.t) || a.p.name.localeCompare(b.p.name) || a.id.localeCompare(b.id));
+  return keyed.map(k=>k.p);
 }
 /** Calendar dates ("2026-08-30") print as plain dates; full timestamps read in US Eastern time ("Oct 8, 12:10 PM ET"). */
 export function shortProfileDate(value:string|undefined):string {

@@ -197,12 +197,14 @@ test("search needs two characters, folds accents, ranks name-prefix first, and l
   assert.equal(searchPlayers(Array.from({ length: 30 }, (_, i) => ({ name: `Sam ${i}`, dg_id: i + 1, status: "complete", profile_key: `k${i}` })), "sam").length, 8);
 });
 
-test("the header search loads the catalog lazily and navigates with a full page load", async () => {
+test("the header search reads the slim index (never the 16 MB catalog unprompted) and navigates with a full page load", async () => {
   const search = await readFile(new URL("../app/HeaderSearch.tsx", import.meta.url), "utf8");
-  assert.match(search, /armed \? PLAYER_CATALOG_KEY : null/, "no request until the box is focused");
+  assert.match(search, /usePlayerDirectory\(\{ load: armed \|\| prefetch, allowFull: armed \}\)/, "the slim index may be warmed when idle; the full catalog only after the box is used");
+  assert.doesNotMatch(search, /PLAYER_CATALOG_KEY/, "the header search never names the 16 MB catalog");
   assert.match(search, /window\.location\.assign\(playerHref/);
   const rules = await readFile(new URL("../app/shell-rules.ts", import.meta.url), "utf8");
   assert.match(rules, /golfprice\/player_profiles\/index\.json/);
+  assert.match(rules, /golfprice\/player_profiles\/search-index\.json/);
   const html = await (await render("/this-week")).text();
   assert.match(html, /aria-label="Search golfers"/);
 });

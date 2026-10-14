@@ -1,12 +1,16 @@
 "use client";
 
-/** Header type-ahead for golfers. The catalog loads lazily, only after the box is first focused or typed in, then navigates to /players?player=<id>. */
-import { useMemo, useState } from "react";
+/**
+ * Header type-ahead for golfers, then navigates to /players?player=<id>. Reads the Worker's slim search index (identity only, ~0.3 MB gzipped)
+ * rather than the 16 MB catalog: it is fetched once the browser is idle (so the first keystroke is instant) or on first focus, and the full
+ * catalog is used only as a fallback after the person actually interacts with the box and the slim index is unavailable.
+ */
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { playerDisplayName } from "./player-name";
-import { useDashboardData } from "./data";
-import { parseCatalog, type ProfileEntry } from "./player-profile-rules";
-import { PLAYER_CATALOG_KEY, playerHref, searchPlayers } from "./shell-rules";
+import { usePlayerDirectory } from "./player-directory";
+import type { ProfileEntry } from "./player-profile-rules";
+import { playerHref, searchPlayers } from "./shell-rules";
 
 function Results({ query, active, hits, loading, available, onNavigate }: { query: string; active: number; hits: ProfileEntry[]; loading: boolean; available: boolean; onNavigate: (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void }) {
   if (query.trim().length < 2) return null;
@@ -29,9 +33,21 @@ function Results({ query, active, hits, loading, available, onNavigate }: { quer
 export function HeaderSearch({ onNavigate }: { onNavigate: (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void }) {
   const [query, setQuery] = useState("");
   const [armed, setArmed] = useState(false);
+  const [prefetch, setPrefetch] = useState(false);
   const [active, setActive] = useState(0);
-  const { data, loading } = useDashboardData<unknown>(armed ? PLAYER_CATALOG_KEY : null);
-  const catalog = useMemo(() => parseCatalog(data), [data]);
+  // Warm the slim index when the browser is idle, unless the visitor asked to save data. Never falls back to the 16 MB catalog by itself.
+  useEffect(() => {
+    const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+    if (saveData) return;
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void });
+    if (idle.requestIdleCallback) {
+      const id = idle.requestIdleCallback(() => setPrefetch(true), { timeout: 4000 });
+      return () => idle.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(() => setPrefetch(true), 2500);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const { catalog, loading } = usePlayerDirectory({ load: armed || prefetch, allowFull: armed });
   const hits = useMemo(() => (catalog ? searchPlayers(catalog.players, query) : []), [catalog, query]);
   return (
     <div className="header-search" role="search">

@@ -20,17 +20,29 @@ export function parseNumericText(text: string): NumericText | null {
 
 const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
 
+function formatParsed(parsed: NumericText, value: number): string {
+  const body = Math.abs(value).toLocaleString("en-US", { minimumFractionDigits: parsed.decimals, maximumFractionDigits: parsed.decimals, useGrouping: parsed.grouped });
+  const negative = value < 0 && Number(body.replaceAll(",", "")) !== 0;
+  const plus = parsed.prefix.endsWith("+");
+  const prefix = plus ? parsed.prefix.slice(0, -1) : parsed.prefix;
+  return `${prefix}${negative ? "−" : plus ? "+" : ""}${body}${parsed.suffix}`;
+}
+
+/** The text at `progress` (0..1) of a tween from `from` to `to`; non-numeric text (or progress >= 1) returns `to` unchanged. */
+export function tweenText(from: string, to: string, progress: number): string {
+  if (progress >= 1) return to;
+  const end = parseNumericText(to);
+  const start = parseNumericText(from);
+  if (!end || !start) return to;
+  return formatParsed(end, start.value + (end.value - start.value) * easeOutCubic(Math.max(0, progress)));
+}
+
 /** The text at `progress` (0..1) of a count-up from zero to `text`. progress >= 1 returns `text` unchanged. */
 export function countUpText(text: string, progress: number): string {
   if (progress >= 1) return text;
   const parsed = parseNumericText(text);
   if (!parsed) return text;
-  const current = parsed.value * easeOutCubic(Math.max(0, progress));
-  const body = Math.abs(current).toLocaleString("en-US", { minimumFractionDigits: parsed.decimals, maximumFractionDigits: parsed.decimals, useGrouping: parsed.grouped });
-  const negative = current < 0 && Number(body.replaceAll(",", "")) !== 0;
-  const plus = parsed.prefix.endsWith("+");
-  const prefix = plus ? parsed.prefix.slice(0, -1) : parsed.prefix;
-  return `${prefix}${negative ? "−" : plus ? "+" : ""}${body}${parsed.suffix}`;
+  return formatParsed(parsed, parsed.value * easeOutCubic(Math.max(0, progress)));
 }
 
 export type FreshnessTone = "live" | "fresh" | "aging" | "stale" | "unknown";

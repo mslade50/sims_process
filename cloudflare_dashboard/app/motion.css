@@ -1,0 +1,55 @@
+/*
+ * Motion and loading primitives. Imported first by globals.css, so it only holds rules globals.css does not redefine.
+ * Everything is CSS-only and cheap (opacity/transform); the reduced-motion block lives in globals.css.
+ */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes pop { from { transform: scale(0.94); } }
+@keyframes bar-grow { from { transform: scaleY(0.2); opacity: 0; } }
+@keyframes bar-grow-y { from { transform: scaleY(0); } }
+@keyframes grow-x { from { transform: scaleX(0); } }
+@keyframes draw { from { stroke-dashoffset: 1; } }
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes ping { 0% { transform: scale(0.6); opacity: 0.7; } 70%, 100% { transform: scale(2.1); opacity: 0; } }
+@keyframes pulse-green { 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes breathe { 50% { opacity: 0.6; } }
+@keyframes sheet-up { from { transform: translateY(40px); opacity: 0; } }
+@keyframes chart-in { from { clip-path: inset(-30px 100% -30px 0); opacity: 0.3; } to { clip-path: inset(-30px -40px -30px -10px); opacity: 1; } }
+@keyframes tick { from { background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); } }
+
+/* page entrance: top-level blocks fade and rise in a quick stagger (total <= 220 ms), nested cards stay still */
+.content-frame > *, .content-frame > .stack-lg > *, .kpi-grid > * { animation: rise 200ms var(--ease) backwards; }
+.content-frame > :nth-child(2), .content-frame > .stack-lg > :nth-child(2), .kpi-grid > :nth-child(2) { animation-delay: 30ms; }
+.content-frame > :nth-child(3), .content-frame > .stack-lg > :nth-child(3), .kpi-grid > :nth-child(3) { animation-delay: 60ms; }
+.content-frame > :nth-child(4), .content-frame > .stack-lg > :nth-child(4), .kpi-grid > :nth-child(4) { animation-delay: 90ms; }
+.content-frame > :nth-child(5), .content-frame > .stack-lg > :nth-child(5), .kpi-grid > :nth-child(5) { animation-delay: 120ms; }
+.content-frame > :nth-child(n+6), .content-frame > .stack-lg > :nth-child(n+6), .kpi-grid > :nth-child(n+6) { animation-delay: 150ms; }
+.skeleton-page, .skeleton-page > *, .skeleton-page .kpi { animation: none; }
+.chart-large, .chart-medium, .wx-chart, .waterfall { animation: chart-in 520ms var(--ease) backwards; }
+
+/* live pulse (freshness): fresh rings out, aging breathes, stale is a still red dot */
+.live-dot, .live-pulse { position: relative; display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; }
+.live-dot { width: 7px; height: 7px; }
+.live-dot.pulse::after, .live-pulse--fresh::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0; animation: ping 2.4s var(--ease) infinite; }
+.live-pulse--aging { animation: breathe 2.4s ease-in-out infinite; }
+
+/* number tween: a brief accent wash when a value changes after the first paint */
+.anim-num { border-radius: 6px; font-variant-numeric: tabular-nums; }
+.anim-num[data-tick] { animation: tick 700ms ease-out; }
+
+/* skeletons: shimmer blocks shaped like the content they stand in for */
+.skeleton { display: block; border-radius: 6px; background: linear-gradient(100deg, var(--surface-soft) 30%, color-mix(in srgb, var(--foreground) 9%, var(--surface-soft)) 50%, var(--surface-soft) 70%); background-size: 220% 100%; animation: shimmer 1.4s linear infinite; }
+.skeleton-stack { display: grid; gap: 12px; }
+.skeleton-card { display: grid; gap: 12px; align-content: center; min-height: 92px; }
+.skeleton-card::before, .skeleton-card::after { display: none; }
+
+/* scroll containers: side shadows appear only on the edge that has more content (no JS) */
+.table-scroll, .scroll-x, .dist-table-scroll, .pd-scroll, .pp-table-scroll, .score-table-scroll, .dsp-table-wrap, .wx-hour-table, .wx-edit-table {
+  max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain;
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left center / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right center / 40px 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--foreground) 18%, transparent), transparent) left center / 22px 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--foreground) 18%, transparent), transparent) right center / 22px 100% no-repeat scroll;
+}
+.scroll-x:focus-visible, .table-scroll:focus-visible { border-radius: 10px; }

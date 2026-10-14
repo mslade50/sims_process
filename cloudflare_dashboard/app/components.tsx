@@ -5,6 +5,8 @@ import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "luci
 import { DataRow, etTime, formatCell, numberValue, titleCase } from "./lib";
 import { AnimatedNumber, Delta, SkeletonPage, Sparkline } from "./ui";
 
+export { AnimatedNumber, Delta, LivePulse, ScrollTable } from "./ui";
+
 export function Panel({
   title,
   eyebrow,
@@ -105,11 +107,12 @@ export function LegacyNotice({ children }: { children?: React.ReactNode }) {
   return <p className="legacy-notice" role="note"><strong>Legacy data.</strong> {children ?? "This archived view comes from the retired simulation pipeline and does not show the current golfprice week."}</p>;
 }
 
-export function EmptyState({ title, detail }: { title: string; detail: string }) {
+export function EmptyState({ title, detail, onRetry }: { title: string; detail: string; onRetry?: () => void }) {
   return (
-    <div className="empty-state">
+    <div className="empty-state" role={onRetry ? "alert" : undefined}>
       <strong>{title}</strong>
       <span>{detail}</span>
+      {onRetry && <button type="button" className="ex-link" onClick={onRetry}>Try again</button>}
     </div>
   );
 }
@@ -429,7 +432,8 @@ export function DataTable({
           </button>
         </div>
       </div>
-      <div className="table-scroll">
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a focusable scroll region lets keyboard users scroll wide tables */}
+      <div className="table-scroll" role="region" aria-label={`${label} table`} tabIndex={0}>
         <table>
           <thead>
             <tr>

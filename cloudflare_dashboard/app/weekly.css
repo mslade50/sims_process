@@ -1,5 +1,4 @@
 .wk-table{display:grid;gap:14px;min-width:0}
-.wk-note{margin:0;max-width:78ch}
 .wk-method summary{cursor:pointer}
 .wk-method-list{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px;margin:8px 0}
 .wk-method-list dt{color:var(--muted)}

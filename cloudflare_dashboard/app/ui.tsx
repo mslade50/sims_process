@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { etTime } from "./lib";
-import { catalogFreshnessTone, countUpText, freshnessTone, parseTimestamp, relativeAge, type FreshnessTone } from "./ui-rules";
+import { catalogFreshnessTone, freshnessTone, parseTimestamp, relativeAge, tweenText, type FreshnessTone } from "./ui-rules";
 
 export type Tone = "positive" | "negative" | "warning" | "model" | "market" | "am" | "pm" | "accent" | "neutral";
 export type SegmentTone = Tone | "chart-1" | "chart-2" | "chart-3" | "chart-4" | "chart-5" | "chart-6" | "chart-7" | "chart-8";
@@ -34,23 +34,42 @@ export function useNow(intervalMs = 30_000): number {
   return now;
 }
 
-/** Renders `text` (e.g. "$1,234.5", "12.3%") counting up from zero once on mount and whenever it changes. */
-export function AnimatedNumber({ text, duration = 750 }: { text: string; duration?: number }) {
+/**
+ * Renders `text` (e.g. "$1,234.5", "12.3%") counting up from zero on mount and tweening from the previous value when it changes
+ * (with a brief accent wash). Tabular digits, requestAnimationFrame only, instant under prefers-reduced-motion.
+ */
+export function AnimatedNumber({ text, duration = 650 }: { text: string; duration?: number }) {
   const reduced = useReducedMotion();
-  const [shown, setShown] = useState<{ for: string; text: string }>({ for: text, text });
+  const [track, setTrack] = useState({ text, from: "0", changes: 0 });
+  if (track.text !== text) setTrack({ text, from: track.text, changes: track.changes + 1 });
+  const [frame, setFrame] = useState<{ key: string; text: string } | null>(null);
   useEffect(() => {
     if (reduced) return;
-    let frame = 0;
+    let id = 0;
     const start = performance.now();
-    const step = (time: number) => {
-      const progress = Math.min(1, (time - start) / duration);
-      setShown({ for: text, text: countUpText(text, progress) });
-      if (progress < 1) frame = requestAnimationFrame(step);
+    const length = track.changes ? duration * 0.65 : duration;
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - start) / length);
+      setFrame({ key: text, text: tweenText(track.from, text, progress) });
+      if (progress < 1) id = requestAnimationFrame(step);
     };
-    frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
-  }, [text, reduced, duration]);
-  return <>{reduced || shown.for !== text ? text : shown.text}</>;
+    id = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(id);
+  }, [text, track.from, track.changes, reduced, duration]);
+  return <span key={track.changes} className="anim-num" data-tick={track.changes || undefined}>{!reduced && frame?.key === text ? frame.text : text}</span>;
+}
+
+export type PulseStatus = "fresh" | "aging" | "stale";
+
+/** A status dot for freshness: fresh rings out softly, aging breathes, stale is a still red dot. Decorative unless `label` is given. */
+export function LivePulse({ status = "fresh", label }: { status?: PulseStatus; label?: string }) {
+  return <i className={`live-pulse live-pulse--${status}`} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true} />;
+}
+
+/** A horizontally scrolling region with edge shadows on the sides that have more content; keyboard focusable. Wrap any wide table in it. */
+export function ScrollTable({ children, label, className = "" }: { children: React.ReactNode; label: string; className?: string }) {
+  // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a focusable scroll region lets keyboard users scroll wide tables
+  return <div className={`scroll-x ${className}`.trim()} role="region" aria-label={label} tabIndex={0}>{children}</div>;
 }
 
 export function LiveDot({ tone = "positive", pulse = true }: { tone?: Tone; pulse?: boolean }) {
@@ -62,9 +81,10 @@ export function Badge({ tone = "neutral", pulse = false, children }: { tone?: To
 }
 
 /** Signed change with a direction glyph so the sign never relies on color alone. */
-export function Delta({ value, digits = 1, suffix = "" }: { value: number; digits?: number; suffix?: string }) {
+export function Delta({ value, digits = 1, suffix = "", inverse = false }: { value: number; digits?: number; suffix?: string; /** Lower is better (scores, error): a fall is shown as good. */ inverse?: boolean }) {
   if (!Number.isFinite(value)) return <span className="delta">—</span>;
-  const tone = value > 0 ? "positive" : value < 0 ? "negative" : "neutral";
+  const good = inverse ? value < 0 : value > 0;
+  const tone = value === 0 ? "neutral" : good ? "positive" : "negative";
   const glyph = value > 0 ? "▲" : value < 0 ? "▼" : "•";
   return (
     <span className={`delta tone-${tone}`}>
@@ -143,7 +163,7 @@ export function FreshnessBadge({ at, label = "Last run", scale = "run", title }:
   const text = age === null ? FRESH_LABEL.unknown : `${label} ${relativeAge(age)}${scale === "catalog" && tone === "aging" ? " · stale" : ""}`;
   return (
     <span className={`freshness-badge fresh-${tone}`} title={title ?? (parsed === null ? undefined : `${label}: ${etTime(new Date(parsed).toISOString())}`)}>
-      <LiveDot tone={tone === "aging" ? "warning" : tone === "stale" || tone === "unknown" ? "negative" : "positive"} pulse={tone === "live" || tone === "fresh"} />
+      <LivePulse status={tone === "live" || tone === "fresh" ? "fresh" : tone === "aging" ? "aging" : "stale"} />
       <span>{text}</span>
     </span>
   );

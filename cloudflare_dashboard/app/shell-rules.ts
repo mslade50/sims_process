@@ -114,12 +114,19 @@ export function decideFallback(outcome: FetchOutcome): FallbackDecision {
 }
 
 /* ------------------------------------------------------------------ player search (B6) */
+/** Derived by the Worker (worker/player-search.ts): identity-only column table, ~0.3 MB gzipped, instead of the 16 MB catalog. Append `?gen=<generation>` to pin a generation. */
+export const PLAYER_SEARCH_KEY = "golfprice/player_profiles/search-index.json";
+/** Derived by the Worker: pga_benchmark for only the golfers in `?ids=` (max 400). */
+export const PLAYER_BENCHMARKS_KEY = "golfprice/player_profiles/benchmarks.json";
 export const PLAYER_CATALOG_KEY = "golfprice/player_profiles/index.json";   // runner-owned, regression-gated pointer (site audit D3 end state); dossier-review.json stays frozen as last-known-good
 const profileId = (p: ProfileEntry): string => p.profile_id ?? String(p.dg_id);   // same rule as player-profile-rules.playerId (kept local so this file has no value imports)
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const haystacks = new WeakMap<ProfileEntry, string>();   // folded once per entry, not once per keystroke per golfer
 const matches = (p: ProfileEntry, query: string) => {
-  const haystack = fold([p.name, ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" "));
-  return fold(query).split(/\s+/).every((word) => haystack.includes(word));   // same rule as player-profile-rules.profileMatches
+  let haystack = haystacks.get(p);
+  if (haystack === undefined) { haystack = fold([p.name, ...(p.aliases ?? []), p.country, ...(p.tours ?? []), String(p.dg_id)].join(" ")); haystacks.set(p, haystack); }
+  const h = haystack;
+  return fold(query).split(/\s+/).every((word) => h.includes(word));   // same rule as player-profile-rules.profileMatches
 };
 export const playerHref = (p: ProfileEntry): string => `/players?player=${encodeURIComponent(profileId(p))}`;
 

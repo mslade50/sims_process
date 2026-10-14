@@ -6,25 +6,34 @@
  * Design-system tokens/components only (tokens.css, ui.tsx); logic in explain-rules.ts.
  */
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
-import { FinishChart, HoleStrip, LegendGroups, MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, shapeCap, Waterfall, type FinishSeries } from "./ExplainCharts";
+import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
+import type { FinishSeries } from "./ExplainCharts";
 import {
-  EDGE_MIN, MARKETS, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
+  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, biggestGaps, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, whatChanged, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
   explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
   type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { useDashboardData } from "./data";
-import { WeatherThisRound } from "./ScoringView";
-import { CourseGeometry } from "./CourseGeometry";
-import { WeatherLinkCard } from "./WeatherBriefView";
+
+// Heavy parts load on demand so the summary (key facts, what changed) renders without Recharts, the weather views or the course-geometry viewer.
+const FinishChart = lazy(() => import("./ExplainCharts").then((m) => ({ default: m.FinishChart })));
+const HoleStrip = lazy(() => import("./ExplainCharts").then((m) => ({ default: m.HoleStrip })));
+const WeatherThisRound = lazy(() => import("./ScoringView").then((m) => ({ default: m.WeatherThisRound })));
+const CourseGeometry = lazy(() => import("./CourseGeometry").then((m) => ({ default: m.CourseGeometry })));
+const WeatherLinkCard = lazy(() => import("./WeatherBriefView").then((m) => ({ default: m.WeatherLinkCard })));
+/** Suspense with a placeholder of the final height, so nothing below jumps when the chunk arrives. */
+function Lazy({ height, children }: { height: number; children: React.ReactNode }) {
+  return <Suspense fallback={<div className="ex-lazy" style={{ minHeight: height }} aria-hidden="true" />}>{children}</Suspense>;
+}
 import { parseWeatherExtras } from "./scoring-rules";
 import { parseWeather } from "./weather-rules";
 import { LABELS } from "./labels";
 import { etTime } from "./lib";
-import { Badge, Delta } from "./ui";
+import { Badge, Delta, FreshnessBadge } from "./ui";
 import "./explain.css";
 
 /* ------------------------------------------------------------------ URL state (?e=<event>&p=<player>&vs=a,b,c&m=<market>) */
@@ -58,6 +67,7 @@ function ExplainShell({ eyebrow, title, description, preEventFirst = false, defa
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
   if (index.loading) return <LoadingState label="Loading golfprice events" />;
+  if (index.error && index.errorKind === "outage") return <EmptyState title="Can’t reach the model data right now" detail={`${index.error} Nothing has been lost; this page retries on its own, or try again now.`} onRetry={index.refetch} />;
   if (index.error || !events.length) return <EmptyState title="No golfprice events published yet" detail={index.error ?? "Publish a run (python -m golfprice.publish_dashboard) and reload."} />;
   const current = events.find((e) => e.event_uid === params.e) ?? events.find((e) => e.explain_key) ?? events[0];
   const update = (patch: Partial<Params>) => {
@@ -121,7 +131,7 @@ function RunBanner({ doc }: { doc: ExplainDoc }) {
     <div className="ex-banner">
       <Badge tone={live ? "positive" : "model"} pulse={live}>{live ? `In play · after round ${doc.after_round}` : "Prices before the event"}</Badge>
       <span className="ex-banner-name">{doc.event.name}{doc.event.course ? ` · ${doc.event.course}` : ""}</span>
-      {doc.as_of && <span className="ex-muted ex-banner-time" title="When these prices were produced (US Eastern time)">Priced {etTime(doc.as_of)}</span>}
+      {doc.as_of && <FreshnessBadge at={doc.as_of} label="Priced" title={`When these prices were produced: ${etTime(doc.as_of)} (US Eastern time)`} />}
       {weatherStatus(doc).short && <span title={weatherStatus(doc).long}><Badge tone="neutral">{weatherStatus(doc).short}</Badge></span>}
       {doc.model.overrides_applied.length > 0 && <Badge tone="warning">{doc.model.overrides_applied.length} manual adjustment{doc.model.overrides_applied.length > 1 ? "s" : ""}</Badge>}
       {doc.finish.method === "unavailable" && <Badge tone="warning">finish chances not available</Badge>}
@@ -134,7 +144,7 @@ const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span clas
 /* ------------------------------------------------------------------ This week */
 export function ThisWeekView() {
   return (
-    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="How we price the field: the course, where we differ from the sportsbook, and which kinds of players we favor or fade.">
+    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="The favorite, what moved, and where we differ from the sportsbook.">
       {(s) => <ThisWeek {...s} />}
     </ExplainShell>
   );
@@ -152,50 +162,64 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   const shownMarket: Market = markets.includes(market) ? market : "win";
   const cc = doc.course_card;
   const ee = [...differ.rows].sort((a, b) => Math.abs(b.shape.skill_gap) - Math.abs(a.shape.skill_gap))[0];
-  const field = doc.players.filter((p) => !p.withdrawn).length;
   const fs = doc.event.field_strength ?? doc.event.field_strength_detail?.field_offset ?? null;
   const dgGap = doc.event.field_strength_detail?.typical_ours_minus_dg?.mean ?? null;
   const fsc = doc.field_scores ?? null;
   const bullets = plainCourseBullets(cc.what_drives_scoring);
   const tech = [live ? "" : SHAPE_METHOD, cc.weather?.venue_class ? `Venue class (publisher): ${cc.weather.venue_class}` : "", cc.weather?.wind_slope_source ?? "", cc.weather?.label ?? "", cc.hole_source ? `Hole table: ${cc.hole_source}` : ""].filter(Boolean);
+  const contenderIds = differ.differ.ids;
   return (
     <>
-      <div className={`kpi-grid${!live && ee ? " ex-kpi-5" : ""}`}>
-        <Kpi label="Field" value={`${field} players`} detail={doc.event.cut_rule ?? "no cut"} tone="neutral" />
-        <Kpi label="Field strength" value={fs == null ? "-" : `${signed(fs)} strokes`} hint="The field's average skill in strokes a round against an average PGA Tour player, on the same scale DataGolf uses. Plus means a stronger field." detail={fs == null ? "no field strength in this run" : `${fieldStrengthText(fs)}${dgGap != null && Math.abs(dgGap) >= 0.05 ? ` · about ${signed(fs - dgGap)} on DataGolf's numbers` : ""}`} tone={fs != null && fs >= 0 ? "positive" : "neutral"} />
-        {!live && ee && <Kpi label="Biggest skill gap to the market" value={`${signed(ee.shape.skill_gap)} strokes a round`} detail={`${ee.player.name} · ${ee.shape.pattern.toLowerCase()} (contenders only)`} tone={ee.shape.skill_gap >= 0 ? "positive" : "negative"} />}
-        <RoundAveragesTile fsc={fsc} cc={cc} />
-        <WinningScoreTile fsc={fsc} />
+      <KeyFacts doc={doc} ids={contenderIds} openPlayer={openPlayer} />
+      <WhatChangedStrip doc={doc} event={event} latest={latest} openPlayer={openPlayer} />
+
+      <div className="ex-lede-block">
+        <p className="ex-lede">{eventLede(doc)}</p>
+        <div className="ex-chips-row" aria-label="Field summary">
+          <span className="ex-chip"><Term k="ex_field_strength">Field strength</Term> <b>{fs == null ? "n/a" : `${signed(fs)} strokes`}</b></span>
+          {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)}</b></span>}
+          {weatherStatus(doc).short && <span className="ex-chip" title={weatherStatus(doc).long}>{weatherStatus(doc).short}</span>}
+        </div>
+        <details className="ex-details">
+          <summary>Details: scoring by round, field strength, method</summary>
+          <div className="ex-detail-grid">
+            <RoundAverages fsc={fsc} cc={cc} />
+            <WinningScore fsc={fsc} />
+          </div>
+          <p className="ex-muted">Field strength {fs == null ? "is not in this run" : fieldStrengthText(fs)}{fs != null && dgGap != null && Math.abs(dgGap) >= 0.05 ? `, about ${signed(fs - dgGap)} strokes on Data Golf's numbers` : ""}.</p>
+          {tech.map((t) => <p className="ex-muted" key={t}>{t}</p>)}
+        </details>
       </div>
 
-      <WeatherLinkCard event={event} />
+      <Lazy height={64}><WeatherLinkCard event={event} /></Lazy>
 
       {live && <LiveSection doc={doc} openPlayer={openPlayer} />}
 
-      <div className="two-column">
+      {!live && <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />}
+
+      <div className="two-column ex-two">
         <Panel title="The course" eyebrow={cc.course ?? "Course card"}>
-          <ul className="ex-bullets">{bullets.map((b) => <li key={b}>{b}</li>)}</ul>
-          <HoleStrip holes={cc.holes} />
+          <Lazy height={230}><HoleStrip holes={cc.holes} /></Lazy>
+          <ul className="ex-bullets">{bullets.slice(0, 2).map((b) => <li key={b}>{b}</li>)}</ul>
+          {bullets.length > 2 && <details className="ex-details"><summary>{bullets.length - 2} more notes on what drives scoring</summary><ul className="ex-bullets">{bullets.slice(2).map((b) => <li key={b}>{b}</li>)}</ul></details>}
           {cc.hole_source && <p className="ex-muted">{plainHoleSource(cc.hole_source)} Values are for the average player in this field.</p>}
         </Panel>
         <Panel title="Weather" eyebrow="Conditions and course type" actions={<Link className="ex-link" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`}>Weather page <ChevronRight size={14} /></Link>}>
           <WeatherSnapshot doc={doc} />
         </Panel>
       </div>
-      <CourseGeometry eventUid={event.event_uid} eventName={doc.event.name ?? event.name} />
+      <Lazy height={120}><CourseGeometry eventUid={event.event_uid} eventName={doc.event.name ?? event.name} /></Lazy>
       <WeatherEffects doc={doc} />
-      <WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} />
+      <Lazy height={160}><WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} /></Lazy>
 
       {live ? (
         <p className="ex-muted ex-notice">While play is under way we do not compare our prices with the sportsbook: its prices are not live, so a gap would not mean anything. See Why priced for the comparison made before the event.</p>
       ) : (
-        <>
-          <DifferPanel doc={doc} rows={differ.rows} differ={differ.differ} openPlayer={openPlayer} />
-        </>
+        <DifferPanel doc={doc} rows={differ.rows} differ={differ.differ} openPlayer={openPlayer} />
       )}
 
       <Panel title="Headline: our chances" eyebrow={live ? "Ten best chances" : "Ten shortest-priced players"} actions={<SegmentedControl label="Bet type" value={shownMarket} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
-        <div className="table-scroll"><table className="ex-table ex-cards">
+        <div className="table-scroll ex-scroll"><table className="ex-table ex-cards">
           <thead><tr><th>Player</th><th title="Our chance for this bet type, from the simulations.">Our chance</th>{!live && <th title="The chance implied by sportsbook odds, with the bookmaker margin removed.">Sportsbook</th>}{!live && <th title="How far our chance is from the sportsbook's, as a share of the sportsbook's chance. Plus means we are higher.">Gap</th>}<th title="The American odds that match our chance.">Our odds</th>{!live && fav.some((p) => p.probs[shownMarket]?.fair != null) && <th title="The price the odds board publishes: our chance blended with the sportsbook consensus using weights fitted on past events. The blend leans further than either source when both agree, so it can sit slightly outside both numbers.">Board price</th>}<th title="The biggest reasons for our rating of this player.">Why</th></tr></thead>
           <tbody>{fav.map((p) => {
             const e = p.probs[shownMarket];
@@ -212,20 +236,196 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
           })}</tbody>
         </table></div>
       </Panel>
-      <details className="ex-glossary-wrap"><summary>Technical details</summary>
-        {tech.map((t) => <p className="ex-muted" key={t}>{t}</p>)}
-      </details>
     </>
   );
 }
 
+/* ------------------------------------------------------------------ key facts: the three things to read first */
+function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; openPlayer: (id: number) => void }) {
+  const h = useMemo(() => heroFacts(doc, ids), [doc, ids]);
+  const live = doc.kind === "live";
+  const f = h.favourite;
+  const s = h.second;
+  const sc = h.scoring;
+  return (
+    <section className="ex-hero" aria-label="Key facts">
+      {f && (
+        <div className="ex-fact">
+          <span className="ex-fact-label"><Term k="ex_our_chance">{live ? "Best chance to win" : "Favorite to win"}</Term></span>
+          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(f.id)}>{f.name}</button></strong>
+          <span className="ex-fact-sub">{pct(f.model)} ours{f.market !== null ? <> · {pct(f.market)} <Term k="ex_market_chance">sportsbook</Term></> : null}</span>
+          <ProbPair model={f.model} market={f.market} scale={Math.max(f.model ?? 0, f.market ?? 0, 0.0001) * 1.15} />
+        </div>
+      )}
+      {s?.kind === "gap" && (
+        <div className="ex-fact">
+          <span className="ex-fact-label">Biggest <Term k="ex_gap">gap to the sportsbook</Term></span>
+          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.rel > 0 ? "pos" : "neg"}>{s.rel > 0 ? "▲" : "▼"} {relText(s.rel)}</em></strong>
+          <span className="ex-fact-sub">Win chance {pct(s.model)} ours vs {pct(s.market)} sportsbook</span>
+          <DeltaBar value={s.rel} scale={Math.max(0.25, Math.abs(s.rel))} label={`We are ${s.rel > 0 ? "higher" : "lower"} than the sportsbook by ${relText(s.rel)}`} />
+        </div>
+      )}
+      {s?.kind === "move" && (
+        <div className="ex-fact">
+          <span className="ex-fact-label">Biggest mover since the last run</span>
+          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.delta > 0 ? "pos" : "neg"}>{s.delta > 0 ? "▲" : "▼"} {ptsText(s.delta)}</em></strong>
+          <span className="ex-fact-sub">Win chance {pct(s.before)} → {pct(s.after)}</span>
+          <DeltaBar value={s.delta} scale={Math.max(1, Math.abs(s.delta))} label="Change in win chance" />
+        </div>
+      )}
+      {!s && !live && f && (
+        <div className="ex-fact is-quiet">
+          <span className="ex-fact-label"><Term k="ex_in_line">In line with the sportsbook</Term></span>
+          <strong className="ex-fact-value">No big gaps</strong>
+          <span className="ex-fact-sub">No contender&rsquo;s win chance is 5% or more away from the sportsbook&rsquo;s.</span>
+        </div>
+      )}
+      {sc?.kind === "winning" && (
+        <div className="ex-fact">
+          <span className="ex-fact-label"><Term k="ex_winning_score">Winning score</Term></span>
+          <strong className="ex-fact-value">{toPar(sc.median, Number.isInteger(sc.median) ? 0 : 1)} <em>median</em></strong>
+          <span className="ex-fact-sub">Most likely {toPar(sc.mode)} ({Math.round(sc.modeShare * 100)}% of sims) · 8 in 10 between {toPar(sc.p10)} and {toPar(sc.p90)}</span>
+          <RangeBar p10={sc.p10} p90={sc.p90} mode={sc.mode} median={sc.median} />
+        </div>
+      )}
+      {sc?.kind === "round" && (
+        <div className="ex-fact">
+          <span className="ex-fact-label"><Term k="ex_scoring_avg">{`Round ${sc.round} scoring average`}</Term></span>
+          <strong className="ex-fact-value">{sc.strokes.toFixed(1)} <em>{toPar(sc.vsPar, 1)} vs par</em></strong>
+          <span className="ex-fact-sub">{sc.basis === "actual" ? "Actual field average" : "Simulated field average, including the forecast"}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ what changed since the previous run (or your last visit) */
+const SEEN_AT_LOAD = new Map<string, string | null>();
+/** The run this browser last showed for the event (read once per page load, then moved to the current run when it is the latest). */
+function useLastSeen(eventUid: string, currentId: string, latest: boolean): string | null {
+  const [seen, setSeen] = useState<string | null>(null);
+  useEffect(() => {
+    let prior: string | null = null;
+    try {
+      const k = `golfprice-seen:${eventUid}`;
+      if (!SEEN_AT_LOAD.has(eventUid)) SEEN_AT_LOAD.set(eventUid, window.localStorage.getItem(k));
+      prior = SEEN_AT_LOAD.get(eventUid) ?? null;
+      if (latest) window.localStorage.setItem(k, currentId);
+    } catch { /* storage unavailable: no "since your last visit" option */ }
+    queueMicrotask(() => setSeen(prior));
+  }, [eventUid, currentId, latest]);
+  return seen;
+}
+
+function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc; event: IndexEvent; latest: boolean; openPlayer: (id: number) => void }) {
+  const seen = useLastSeen(event.event_uid, `${doc.kind}_${doc.run}`, latest);
+  const prevRef = useMemo(() => previousRunRef(event, doc), [event, doc]);
+  const visitRef = useMemo(() => lastSeenRunRef(event, doc, seen), [event, doc, seen]);
+  const [against, setAgainst] = useState<"prev" | "visit">("prev");
+  const ref = against === "visit" && visitRef ? visitRef : prevRef;
+  const source = useDashboardData<unknown>(ref?.key ?? null);
+  const prevDoc = useMemo(() => parseExplain(source.data), [source.data]);
+  const change = useMemo(() => (source.loading ? null : whatChanged(doc, prevDoc)), [doc, prevDoc, source.loading]);
+  const [mk, setMk] = useState<Market>("win");
+  if (!ref && !doc.since_last) return null;
+  if (source.loading) return <section className="ex-changed is-loading" aria-label="What changed" aria-busy="true"><h2>What changed</h2><span className="ex-muted">Comparing with the earlier run…</span></section>;
+  if (!change) return null;
+  const mkts = (Object.keys(change.movers) as Market[]).filter((m) => change.movers[m]?.length);
+  const shownMk: Market = mkts.includes(mk) ? mk : mkts[0] ?? "win";
+  const rows = (change.movers[shownMk] ?? []).slice(0, 5);
+  const scale = Math.max(0.5, ...rows.map((r) => Math.abs(r.delta)));
+  const baseKind = change.baseline.after_round ? `the run after round ${change.baseline.after_round}` : "the previous run";
+  const fromWhat = against === "visit" && visitRef ? "your last visit" : baseKind;
+  const span = spanText(change.gapMs);
+  const w = change.weather;
+  const sc = change.scoring;
+  return (
+    <section className={`ex-changed${change.quiet ? " is-quiet" : ""}`} aria-label="What changed">
+      <header>
+        <h2>What changed</h2>
+        <span className="ex-muted">since {fromWhat}{change.baseline.as_of ? ` (${etTime(change.baseline.as_of)}${span ? `, ${span} earlier` : ""})` : ""}</span>
+        {visitRef && <SegmentedControl label="Compare with" value={against} onChange={setAgainst} options={[{ value: "prev", label: "Previous run" }, { value: "visit", label: "Your last visit" }]} />}
+      </header>
+      {change.quiet ? (
+        <p className="ex-changed-none">Nothing material: no win chance moved by 0.1 points or more, the field and forecast are unchanged.</p>
+      ) : (
+        <ul className="ex-changed-chips">{change.headline.map((h) => <li key={h}>{h}</li>)}</ul>
+      )}
+      {change.partial && <p className="ex-muted">Price moves only: the earlier run&rsquo;s full document is not available here.</p>}
+      {rows.length > 0 && (
+        <>
+          {mkts.length > 1 && <SegmentedControl label="Bet type" value={shownMk} onChange={setMk} options={mkts.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}
+          <ul className="ex-movers-list" aria-label={`Biggest ${MARKET_LABEL[shownMk]} price moves`}>{rows.map((m) => (
+            <li key={m.id}>
+              <button type="button" onClick={() => openPlayer(m.id)}>
+                <span className="ex-mv-name">{m.name}</span>
+                <DeltaBar value={m.delta} scale={scale} label={`${m.name} ${ptsText(m.delta)}`} />
+                <span className="ex-mv-nums">{pct(m.before)} → {pct(m.after)}</span>
+                <b className={m.delta > 0 ? "pos" : "neg"}>{m.delta > 0 ? "▲" : "▼"} {ptsText(m.delta)}</b>
+                {m.marketDelta !== null && Math.abs(m.marketDelta) >= 0.05 && <small className="ex-mv-market">sportsbook {ptsText(m.marketDelta)}</small>}
+              </button>
+            </li>
+          ))}</ul>
+        </>
+      )}
+      {(change.field.added.length + change.field.removed.length + change.field.withdrawn.length + w.rounds.length + sc.rounds.length + change.gaps.length + change.overrides.added.length + change.overrides.removed.length > 0 || w.layer || sc.winning) && (
+        <details className="ex-details">
+          <summary>Field, forecast and market-gap changes</summary>
+          <ul className="ex-changed-list">
+            {change.field.withdrawn.length > 0 && <li>Withdrew: {change.field.withdrawn.join(", ")}</li>}
+            {change.field.removed.length > 0 && <li>Left the field: {change.field.removed.join(", ")}</li>}
+            {change.field.added.length > 0 && <li>Added to the field: {change.field.added.join(", ")}</li>}
+            {w.rounds.map((r) => <li key={`w${r.round}`}>Round {r.round} forecast effect on the whole field: {signed(r.before)} → {signed(r.after)} strokes a round (<span className={r.delta < 0 ? "pos" : "neg"}>{r.delta < 0 ? "easier" : "harder"} by {Math.abs(r.delta).toFixed(2)}</span>)</li>)}
+            {w.layer && <li>Weather model changed from {w.layer.from} to {w.layer.to}</li>}
+            {sc.rounds.map((r) => <li key={`s${r.round}`}>Expected round {r.round} scoring average: {toPar(r.before, 1)} → {toPar(r.after, 1)}</li>)}
+            {sc.winning && <li>Median winning score: {toPar(sc.winning.before, 1)} → {toPar(sc.winning.after, 1)}</li>}
+            {change.gaps.slice(0, 5).map((g) => <li key={`g${g.id}`}>{g.name}: win gap to the sportsbook {relText(g.before)} → {relText(g.after)}</li>)}
+            {change.overrides.added.length > 0 && <li>Manual adjustments added: {change.overrides.added.join(", ")}</li>}
+            {change.overrides.removed.length > 0 && <li>Manual adjustments removed: {change.overrides.removed.join(", ")}</li>}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ where we differ most: the glance list */
+function GapGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; openPlayer: (id: number) => void }) {
+  const g = useMemo(() => biggestGaps(doc, 3, ids), [doc, ids]);
+  if (!g.higher.length && !g.lower.length) return null;
+  const list = (rows: typeof g.higher, title: string) => rows.length > 0 && (
+    <div className="ex-gap-col">
+      <h3 className="ex-h3">{title}</h3>
+      <ul>{rows.map((r) => (
+        <li key={r.id}>
+          <button type="button" onClick={() => openPlayer(r.id)}>
+            <span className="ex-mv-name">{r.name}</span>
+            <DeltaBar value={r.rel} scale={g.scale} label={`${r.name}: our win chance ${relText(r.rel)} against the sportsbook`} />
+            <span className="ex-mv-nums">{pct(r.model)} vs {pct(r.market)}</span>
+            <b className={r.rel > 0 ? "pos" : "neg"}>{r.rel > 0 ? "▲" : "▼"} {relText(r.rel)}</b>
+          </button>
+        </li>
+      ))}</ul>
+    </div>
+  );
+  return (
+    <Panel title="Where we differ most" eyebrow="Win chance, ours vs the sportsbook">
+      <div className="ex-gap-grid">
+        {list(g.higher, "We are higher")}
+        {list(g.lower, "We are lower")}
+      </div>
+      <p className="ex-muted">Percent is how far our chance is from the sportsbook&rsquo;s <Term k="ex_gap">(what is this?)</Term>. Contenders only; the full bet-by-bet table is further down.</p>
+    </Panel>
+  );
+}
+
 /** Expected field scoring average for each round from the simulation draws (rounds 3-4: the players who made the cut); played rounds show the actual average. */
-function RoundAveragesTile({ fsc, cc }: { fsc: FieldScores | null; cc: ExplainDoc["course_card"] }) {
+function RoundAverages({ fsc, cc }: { fsc: FieldScores | null; cc: ExplainDoc["course_card"] }) {
   const rounds = fsc?.rounds ?? [];
   const foot = `par ${cc.par_per_round?.[0] ?? "-"} · ${cc.yardage ? `${Math.round(cc.yardage).toLocaleString()} yd` : "yardage n/a"}${rounds.some((r) => r.round > 2) ? " · rounds 3-4: players who made the cut" : ""}`;
   return (
-    <div className="kpi kpi-accent ex-kpi-wide">
-      <span title="The field's average score in each round across the simulations, including the weather forecast. A round already played shows the real average.">Expected scoring average</span>
+    <div className="ex-stat">
+      <span className="ex-stat-label"><Term k="ex_scoring_avg">Expected scoring average</Term></span>
       {rounds.length ? (
         <div className="ex-kpi-rounds">{rounds.map((r) => (
           <div key={r.round} className={r.basis === "actual" ? "is-actual" : ""} title={`${r.basis === "actual" ? "Actual" : "Simulated"} round ${r.round} average over ${Math.round(r.players)} players: ${r.mean_strokes.toFixed(2)} (${toPar(r.mean_vs_par, 2)})`}>
@@ -233,30 +433,35 @@ function RoundAveragesTile({ fsc, cc }: { fsc: FieldScores | null; cc: ExplainDo
           </div>
         ))}</div>
       ) : (
-        <div className="kpi-row"><strong>{cc.scoring_avg_vs_par == null || !cc.par_per_round?.[0] ? "-" : (cc.par_per_round[0] + cc.scoring_avg_vs_par).toFixed(1)}</strong></div>
+        <div className="ex-stat-one"><strong>{cc.scoring_avg_vs_par == null || !cc.par_per_round?.[0] ? "n/a" : (cc.par_per_round[0] + cc.scoring_avg_vs_par).toFixed(1)}</strong></div>
       )}
-      <div className="kpi-foot"><small>{rounds.length ? foot : `course table only (no simulation draws in this run) · ${foot}`}</small></div>
+      <small className="ex-muted">{rounds.length ? foot : `Course table only (no simulation draws in this run) · ${foot}`}</small>
     </div>
   );
 }
 
-/** The winning 72-hole score across the simulation draws: the most likely value, the median and the middle 80%. */
-function WinningScoreTile({ fsc }: { fsc: FieldScores | null }) {
+/** The winning 72-hole score across the simulation draws: the most likely value, the median and the middle 80%. Without draws it says why it is empty. */
+function WinningScore({ fsc }: { fsc: FieldScores | null }) {
   const w = fsc?.winning;
   return (
-    <div className="kpi kpi-model ex-kpi-wide">
-      <span title="The lowest total of each simulated tournament, to par. Most likely = the single score that wins most often; median = half the simulations are won with a lower score.">Winning score</span>
+    <div className="ex-stat">
+      <span className="ex-stat-label"><Term k="ex_winning_score">Winning score</Term></span>
       {w ? (
-        <div className="ex-kpi-rounds ex-kpi-two">
-          <div><em>Most likely</em><strong>{toPar(w.mode)}</strong><small>{Math.round(w.mode_share * 100)}% of sims</small></div>
-          <div><em>Median</em><strong>{toPar(w.median, Number.isInteger(w.median) ? 0 : 1)}</strong><small>mean {toPar(w.mean, 1)}</small></div>
-        </div>
-      ) : <div className="kpi-row"><strong>-</strong></div>}
-      <div className="kpi-foot"><small>{w ? `8 in 10 sims won between ${toPar(w.p10)} and ${toPar(w.p90)}` : "no simulation draws in this run"}</small></div>
+        <>
+          <div className="ex-kpi-rounds ex-kpi-two">
+            <div><em>Most likely</em><strong>{toPar(w.mode)}</strong><small>{Math.round(w.mode_share * 100)}% of sims</small></div>
+            <div><em>Median</em><strong>{toPar(w.median, Number.isInteger(w.median) ? 0 : 1)}</strong><small>mean {toPar(w.mean, 1)}</small></div>
+          </div>
+          <RangeBar p10={w.p10} p90={w.p90} mode={w.mode} median={w.median} />
+          <small className="ex-muted">8 in 10 sims won between {toPar(w.p10)} and {toPar(w.p90)}</small>
+        </>
+      ) : <small className="ex-muted">{WINNING_SCORE_MISSING}</small>}
     </div>
   );
 }
 
+/** Rows shown before "Show all": the whole contender list is ~14,000 px tall on a phone in card layout. */
+const DIFFER_PREVIEW = 12;
 const SORT_DIFFER = [{ value: "price", label: "Shortest price first" }, { value: "gap", label: "Biggest difference first" }] as const;
 const MARKET_HELP: Record<Market, string> = {
   win: "Win outright.", top_5: "Finish in the top 5 (ties share the payout).", top_10: "Finish in the top 10 (ties share the payout).", top_20: "Finish in the top 20 (ties share the payout).",
@@ -265,22 +470,23 @@ const MARKET_HELP: Record<Market, string> = {
 /** Contenders only: bet-by-bet gaps against the sportsbook, the pattern in words and the split of the skill gap; then player types among them by summed chances. */
 function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows: Array<{ player: ExPlayer; shape: Shape }>; differ: Differ; openPlayer: (id: number) => void }) {
   const [sort, setSort] = useState<"price" | "gap">("price");
+  const [showAll, setShowAll] = useState(false);
   const markets = availableMarkets(doc).filter((m) => rows.some((r) => r.shape.markets[m]));
   const shown = sort === "price" ? rows : [...rows].sort((a, b) => Math.abs(b.shape.skill_gap) + Math.abs(spreadGapOf(b.shape)) - Math.abs(a.shape.skill_gap) - Math.abs(spreadGapOf(a.shape)));
   const sg = differ.spread_gap_median;
   const fieldLine = spreadLeanNote(sg, differ.spread_gap_centered === true);
   const cap = useMemo(() => shapeCap(rows.map((r) => r.shape), markets), [rows, markets]);
-  if (!rows.length) return <Panel title="Where we differ from the market" eyebrow="Players who matter"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
+  if (!rows.length) return <Panel title="All contenders, bet by bet" eyebrow="Where we differ from the market"><p className="ex-muted">No contender has sportsbook prices for enough bet types in this run to compare.</p></Panel>;
   return (
-    <Panel title="Where we differ from the market" eyebrow="Players who matter" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
+    <Panel title="All contenders, bet by bet" eyebrow="Where we differ from the market" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
       <p className="ex-muted ex-differ-rule" title="Long shots with thin records swing wildly in percentage terms and would crowd out the players a bet actually depends on.">{differ.rule}</p>
       {fieldLine && <p className="ex-differ-field">{fieldLine}</p>}
-      <div className="table-scroll"><table className="ex-table ex-cards ex-differ">
+      <div className="table-scroll ex-scroll"><table className="ex-table ex-cards ex-differ">
         <thead><tr><th>Player</th>
           <th title={`One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, gray means within 5% (in line). Bar height grows with the square root of the gap; a full bar is a ${Math.round(cap * 100)}% gap (bigger gaps are cut off with a notch).`}>Shape</th>
           {markets.map((m) => <th key={m} title={`${MARKET_HELP[m]} The % is how much higher (+) or lower (−) our chance is than the sportsbook's with its margin removed; under ${Math.round(EDGE_MIN * 100)}% counts as in line.`}>{MARKET_LABEL[m]}</th>)}
           <th title="The pattern across bet types in words, with the skill and the spread (how much their scores swing round to round) that the sportsbook's prices imply, compared with ours.">What we see</th></tr></thead>
-        <tbody>{shown.map(({ player: p, shape: s }) => {
+        <tbody>{(showAll ? shown : shown.slice(0, DIFFER_PREVIEW)).map(({ player: p, shape: s }) => {
           const value = valueBets(s);
           return (
             <tr key={p.id} className="clickable-row" onClick={() => openPlayer(p.id)}>
@@ -301,6 +507,11 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
           );
         })}</tbody>
       </table></div>
+      {shown.length > DIFFER_PREVIEW && (
+        <button type="button" className="ex-showall" aria-expanded={showAll} onClick={() => setShowAll((v) => !v)}>
+          {showAll ? `Show the first ${DIFFER_PREVIEW}` : `Show all ${shown.length} contenders`}
+        </button>
+      )}
       {differ.groups.length > 0 ? (
         <>
           <h3 className="ex-h3">Player types among these contenders</h3>
@@ -330,11 +541,12 @@ function WeatherSnapshot({ doc }: { doc: ExplainDoc }) {
   const noTee = roundsWithoutTeeTimes(doc);
   return (
     <div className="ex-wx">
-      <p>{status.long}{w.issued_at ? <> Forecast issued {etTime(w.issued_at)}.</> : null}</p>
+      {w.issued_at && <p className="ex-wx-issued">Forecast issued {etTime(w.issued_at)}</p>}
+      {status.long && <details className="ex-details"><summary>{status.short || "How the forecast is used in the prices"}</summary><p className="ex-muted">{status.long}</p></details>}
       {venue.length > 0 && <ul className="ex-bullets">{venue.map((v) => <li key={v}>{v}</li>)}</ul>}
       {rounds.length > 0 && (
         <>
-          <div className="table-scroll"><table className="ex-table ex-wx-rounds">
+          <div className="table-scroll ex-scroll"><table className="ex-table ex-wx-rounds">
             <caption className="ex-muted">Expected effect on scores, strokes a round (minus means easier)</caption>
             <thead><tr><th>Round</th><th title="How much the forecast changes scoring for the whole field compared with typical conditions.">Whole field</th>{waveNames.map((n) => <th key={n} title="Strokes this wave is expected to play easier (minus) or harder (plus) than the field average, from the wind and temperature its tee times face.">{waveName(n)}</th>)}{cut.length > 0 && <th title="How far the forecast is expected to move the cut line.">Cut line</th>}</tr></thead>
             <tbody>{rounds.map((r) => {
@@ -357,17 +569,22 @@ function WeatherEffects({ doc }: { doc: ExplainDoc }) {
   const lines = useMemo(() => weatherEffectLines(doc), [doc]);
   if (!lines.length) return null;
   const used = lines.filter((l) => l.spread >= 0.005);
+  const biggest = Math.max(0, ...used.map((l) => l.spread));
   return (
     <Panel title="How weather enters the prices" eyebrow="Per-player effects, strokes a round">
-      <p className="ex-muted">{used.length ? "Each effect below adds to or takes from a player's expected score depending on their tee time and the weather their group faces." : "No player is separated by weather in this run yet, so every effect below is zero. It starts to matter once tee times are out."} Morning conditions such as firmness are covered by time of day; dew and humidity are not modeled as separate effects.</p>
-      <div className="table-scroll"><table className="ex-table ex-cards">
-        <thead><tr><th>Effect</th><th>What it is</th><th title="The biggest effect on any one player, in strokes a round.">Largest effect</th><th>Helped most</th><th>Hurt most</th></tr></thead>
-        <tbody>{lines.map((l) => (
-          <tr key={l.key}><th scope="row">{l.label}</th><td data-label="What it is" className="ex-why">{l.what}</td>
-            <td data-label="Largest effect">{l.spread < 0.005 ? <span className="ex-muted">none</span> : `${l.spread.toFixed(2)} strokes`}</td>
-            <td data-label="Helped most">{l.helped ? <span className="pos">{l.helped.name} {signed(l.helped.value)}</span> : <span className="ex-muted">-</span>}</td>
-            <td data-label="Hurt most">{l.hurt ? <span className="neg">{l.hurt.name} {signed(l.hurt.value)}</span> : <span className="ex-muted">-</span>}</td></tr>
-        ))}</tbody></table></div>
+      <p className="ex-wx-sum">{used.length ? <><b>{used.length}</b> weather {used.length === 1 ? "effect separates" : "effects separate"} players; the largest moves one player by <b>{biggest.toFixed(2)}</b> strokes a round.</> : "No player is separated by weather in this run yet; it starts to matter once tee times are out."}</p>
+      <details className="ex-details">
+        <summary>Effect by effect, with who it helps and hurts</summary>
+        <p className="ex-muted">Each effect adds to or takes from a player&rsquo;s expected score depending on their tee time and the weather their group faces. Morning conditions such as firmness are covered by time of day; dew and humidity are not modeled as separate effects.</p>
+        <div className="table-scroll ex-scroll"><table className="ex-table ex-cards">
+          <thead><tr><th>Effect</th><th>What it is</th><th title="The biggest effect on any one player, in strokes a round.">Largest effect</th><th>Helped most</th><th>Hurt most</th></tr></thead>
+          <tbody>{lines.map((l) => (
+            <tr key={l.key}><th scope="row">{l.label}</th><td data-label="What it is" className="ex-why">{l.what}</td>
+              <td data-label="Largest effect">{l.spread < 0.005 ? <span className="ex-muted">none</span> : `${l.spread.toFixed(2)} strokes`}</td>
+              <td data-label="Helped most">{l.helped ? <span className="pos">{l.helped.name} {signed(l.helped.value)}</span> : <span className="ex-muted">-</span>}</td>
+              <td data-label="Hurt most">{l.hurt ? <span className="neg">{l.hurt.name} {signed(l.hurt.value)}</span> : <span className="ex-muted">-</span>}</td></tr>
+          ))}</tbody></table></div>
+      </details>
     </Panel>
   );
 }
@@ -580,7 +797,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
             <SegmentedControl label="Chart type" value={mode} onChange={setMode} options={[{ value: "probability", label: "Position" }, { value: "cumulative", label: "Cumulative" }]} /></div>
           {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">Finish odds are not available for this run.</p> : (
             <>
-              <FinishChart series={series} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} />
+              <Lazy height={330}><FinishChart series={series} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} /></Lazy>
               <div className="ex-compare">
                 <h4>Compare with</h4>
                 <div className="chip-row">

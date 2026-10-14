@@ -9,15 +9,13 @@
 :root {
   color-scheme: dark;
   /* surfaces */
-  --background: #0b1220;
-  --surface: #111c2e;
-  --surface-raised: #172438;
+  --background: #09101d;
+  --surface: #101b2d;
+  --surface-raised: #16243a;
   --surface-soft: #1d2d44;
-  --popover: #111c2e;
-  --sidebar-bg: rgba(11, 18, 32, 0.98);
-  --topbar-bg: rgba(11, 18, 32, 0.94);
-  --sheen: rgba(255, 255, 255, 0.025);
-  --glow: rgba(141, 180, 255, 0.06);
+  --popover: #131f33;
+  --sidebar-bg: rgba(9, 16, 29, 0.98);
+  --topbar-bg: rgba(9, 16, 29, 0.88);
   /* text */
   --foreground: #f1f5fb;
   --muted: #a6b6cb;
@@ -58,46 +56,42 @@
   /* type scale */
   --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --text-2xs: 10px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 22px;
-  --text-2xl: 28px;
-  --text-3xl: clamp(28px, 3vw, 42px);
-  /* spacing + shape + motion */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
+  --fs-label: 11px;
+  --fs-small: 12px;
+  --fs-body: 14px;
+  --fs-h2: 17px;
+  --fs-kpi: clamp(26px, 6.4vw, 34px);
+  --fs-h1: clamp(26px, 4.6vw, 38px);
+  /* soft semantic fills + page glow (derived, so one definition serves both themes) */
+  --positive-soft: color-mix(in srgb, var(--positive) 12%, transparent);
+  --negative-soft: color-mix(in srgb, var(--negative) 12%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --gutter: 16px;
+  /* shape + motion */
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 18px;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 30px rgba(0, 0, 0, 0.2);
-  --shadow-lift: 0 14px 38px rgba(0, 0, 0, 0.34);
+  --radius-lg: 16px;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.16);
+  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 16px 40px rgba(0, 0, 0, 0.4);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --dur-fast: 140ms;
-  --dur: 260ms;
-  --dur-slow: 600ms;
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 220ms;
   --focus-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--accent);
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --background: #f3f6fb;
+    --background: #eef2f8;
     --surface: #ffffff;
     --surface-raised: #f7f9fc;
     --surface-soft: #e9eff7;
     --popover: #ffffff;
     --sidebar-bg: rgba(255, 255, 255, 0.98);
-    --topbar-bg: rgba(243, 246, 251, 0.95);
-    --sheen: rgba(255, 255, 255, 0.6);
-    --glow: rgba(29, 95, 184, 0.04);
+    --topbar-bg: rgba(238, 242, 248, 0.88);
     --foreground: #142338;
     --muted: #4d6078;
     --muted-strong: #31465f;
@@ -129,22 +123,20 @@
     --chart-7: #6e7400;
     --chart-8: #526781;
     --shadow: 0 14px 40px rgba(23, 44, 75, 0.08);
-    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 6px 22px rgba(23, 44, 75, 0.05);
-    --shadow-lift: 0 12px 32px rgba(23, 44, 75, 0.12);
+    --shadow-card: 0 1px 2px rgba(23, 44, 75, 0.06), 0 6px 20px rgba(23, 44, 75, 0.06);
+    --shadow-lift: 0 14px 34px rgba(23, 44, 75, 0.14);
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #f3f6fb;
+  --background: #eef2f8;
   --surface: #ffffff;
   --surface-raised: #f7f9fc;
   --surface-soft: #e9eff7;
   --popover: #ffffff;
   --sidebar-bg: rgba(255, 255, 255, 0.98);
-  --topbar-bg: rgba(243, 246, 251, 0.95);
-  --sheen: rgba(255, 255, 255, 0.6);
-  --glow: rgba(29, 95, 184, 0.04);
+  --topbar-bg: rgba(238, 242, 248, 0.88);
   --foreground: #142338;
   --muted: #4d6078;
   --muted-strong: #31465f;
@@ -176,6 +168,6 @@
   --chart-7: #6e7400;
   --chart-8: #526781;
   --shadow: 0 14px 40px rgba(23, 44, 75, 0.08);
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 6px 22px rgba(23, 44, 75, 0.05);
-  --shadow-lift: 0 12px 32px rgba(23, 44, 75, 0.12);
+  --shadow-card: 0 1px 2px rgba(23, 44, 75, 0.06), 0 6px 20px rgba(23, 44, 75, 0.06);
+  --shadow-lift: 0 14px 34px rgba(23, 44, 75, 0.14);
 }

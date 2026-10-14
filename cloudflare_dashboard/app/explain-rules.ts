@@ -945,3 +945,280 @@ export function groupSentence(g: DifferGroup): string {
   const r = (v: number) => `${v > 0 ? "+" : "−"}${Math.round(Math.abs(v) * 100)}%`;
   return `${g.label} (${g.n}): together ${pct(g.win_ours)} to win with us vs ${pct(g.win_market)} in the sportsbook (${r(g.win_rel)})${g.top20_rel !== null ? `, top 20 ${r(g.top20_rel)}` : ""}.`;
 }
+
+/* ------------------------------------------------------------------ This week: what changed, key facts, plain-language helpers (October 14) */
+/** "Last, First" as people say it: "First Last". Names without a comma are kept. */
+export function plainName(name: string | null | undefined): string {
+  if (!name) return "Unnamed player";
+  const parts = name.split(",").map((s) => s.trim()).filter(Boolean);
+  return parts.length === 2 ? `${parts[1]} ${parts[0]}` : name.trim();
+}
+const stamp = (iso: string | null | undefined): number | null => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
+};
+/** "just now", "12 min ago", "3 h ago", "2 days ago"; null when the age is unknown. A time in the future reads as "just now". */
+export function ageText(ms: number | null | undefined): string | null {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return null;
+  const m = Math.round(Math.max(0, ms) / 60000);
+  if (m < 2) return "just now";
+  if (m < 90) return `${m} min ago`;
+  const h = m / 60;
+  if (h < 36) return `${Math.round(h)} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+/** Length of a time span for "5 h earlier": same units as ageText, without the "ago". */
+export function spanText(ms: number | null | undefined): string | null {
+  const t = ageText(ms);
+  return t === null ? null : t === "just now" ? "moments" : t.replace(/ ago$/, "");
+}
+
+export type RunRef = { key: string; kind: string; run: string; as_of: string | null; after_round: number | null; id: string };
+const runRefs = (e: Pick<IndexEvent, "distribution_runs">): RunRef[] =>
+  (e.distribution_runs ?? []).filter((r): r is DistributionRun & { key: string; kind: string; run: string } => !!r && typeof r.key === "string" && r.key.length > 0 && typeof r.kind === "string" && typeof r.run === "string" && r.validated !== false)
+    .map((r) => ({ key: r.key, kind: r.kind, run: r.run, as_of: r.as_of ?? null, after_round: r.after_round ?? null, id: `${r.kind}_${r.run}` }));
+/** The validated runs of an event published strictly before `doc`, newest first. */
+export function runsBefore(event: Pick<IndexEvent, "distribution_runs">, doc: Pick<ExplainDoc, "kind" | "run" | "as_of">): RunRef[] {
+  const at = stamp(doc.as_of);
+  const self = `${doc.kind}_${doc.run}`;
+  return runRefs(event).filter((r) => r.id !== self && at !== null && (stamp(r.as_of) ?? Infinity) < at).sort((a, b) => (stamp(b.as_of) ?? 0) - (stamp(a.as_of) ?? 0));
+}
+/** The run to compare with by default: the one published just before this document. */
+export const previousRunRef = (event: Pick<IndexEvent, "distribution_runs">, doc: Pick<ExplainDoc, "kind" | "run" | "as_of">): RunRef | null => runsBefore(event, doc)[0] ?? null;
+/** The run the owner last looked at (stored id "<kind>_<run>"), when it is older than this document and not simply the previous run. */
+export function lastSeenRunRef(event: Pick<IndexEvent, "distribution_runs">, doc: Pick<ExplainDoc, "kind" | "run" | "as_of">, seenId: string | null | undefined): RunRef | null {
+  if (!seenId) return null;
+  const before = runsBefore(event, doc);
+  const hit = before.find((r) => r.id === seenId);
+  return hit && before[0] && hit.id !== before[0].id ? hit : null;
+}
+
+export type Mover = { id: number; name: string; market: Market; before: number; after: number; delta: number; marketDelta: number | null };
+export type GapMove = { id: number; name: string; before: number; after: number; delta: number };
+export type RoundShift = { round: number; before: number; after: number; delta: number };
+export type WhatChanged = {
+  /** True when only the in-play "since last run" numbers could be used (the earlier document was not available). */
+  partial: boolean;
+  baseline: { run: string | null; as_of: string | null; after_round: number | null; kind: string | null };
+  /** Milliseconds between the baseline and this document, when both times are known. */
+  gapMs: number | null;
+  /** Probability moves in percentage points (after minus before), largest first, only those above MOVE_MIN_PTS. */
+  movers: Partial<Record<Market, Mover[]>>;
+  field: { added: string[]; removed: string[]; withdrawn: string[] };
+  weather: { rounds: RoundShift[]; layer: { from: string; to: string } | null; reissued: boolean };
+  scoring: { rounds: RoundShift[]; winning: { before: number; after: number; delta: number } | null };
+  /** Change of the win gap to the sportsbook (relative, fraction of the sportsbook chance), largest first. */
+  gaps: GapMove[];
+  overrides: { added: string[]; removed: string[] };
+  /** Number of material changes found. */
+  count: number;
+  quiet: boolean;
+  /** Short phrases for the summary chips. */
+  headline: string[];
+};
+/** Smallest probability move, in percentage points, that counts as a change. */
+export const MOVE_MIN_PTS: Record<Market, number> = { win: 0.1, top_5: 0.3, top_10: 0.4, top_20: 0.5, make_cut: 0.5 };
+export const WEATHER_MIN = 0.05;   // strokes a round
+export const SCORING_MIN = 0.1;    // strokes a round
+export const GAP_MOVE_MIN = 0.05;  // 5% of the sportsbook's chance
+const GAP_MIN_MARKET = 0.01;       // only players the sportsbook gives at least 1% to win
+
+const emptyChange = (partial: boolean, baseline: WhatChanged["baseline"], gapMs: number | null): WhatChanged => ({
+  partial, baseline, gapMs, movers: {}, field: { added: [], removed: [], withdrawn: [] }, weather: { rounds: [], layer: null, reissued: false }, scoring: { rounds: [], winning: null }, gaps: [], overrides: { added: [], removed: [] }, count: 0, quiet: true, headline: [],
+});
+
+function moversFor(cur: ExPlayer[], prevById: Map<number, ExPlayer> | null, markets: readonly Market[]): Partial<Record<Market, Mover[]>> {
+  const out: Partial<Record<Market, Mover[]>> = {};
+  for (const m of markets) {
+    const rows: Mover[] = [];
+    for (const p of cur) {
+      if (p.withdrawn) continue;
+      const after = p.probs[m].model;
+      let before: number | null = null;
+      let marketDelta: number | null = null;
+      const q = prevById?.get(p.id);
+      if (q) {
+        before = q.probs[m].model;
+        if (p.probs[m].market !== null && q.probs[m].market !== null) marketDelta = (p.probs[m].market! - q.probs[m].market!) * 100;
+      } else if (!prevById) {
+        const d = p.live?.since_last?.[m];
+        if (after !== null && typeof d === "number" && Number.isFinite(d)) before = after - d;
+      }
+      if (before === null || after === null) continue;
+      const delta = (after - before) * 100;
+      if (Math.abs(delta) >= MOVE_MIN_PTS[m]) rows.push({ id: p.id, name: plainName(p.name), market: m, before, after, delta, marketDelta });
+    }
+    rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (a.name ?? "").localeCompare(b.name ?? ""));
+    if (rows.length) out[m] = rows;
+  }
+  return out;
+}
+
+function roundShifts(a: Array<{ round: number; v: number | null }>, b: Array<{ round: number; v: number | null }>, min: number, from = 0): RoundShift[] {
+  const out: RoundShift[] = [];
+  for (const x of b) {
+    if (x.round <= from || x.v === null) continue;
+    const y = a.find((r) => r.round === x.round);
+    if (!y || y.v === null) continue;
+    const delta = x.v - y.v;
+    if (Math.abs(delta) >= min) out.push({ round: x.round, before: y.v, after: x.v, delta });
+  }
+  return out.sort((p, q) => p.round - q.round);
+}
+
+function finishChange(c: WhatChanged): WhatChanged {
+  const moved = Object.values(c.movers).reduce((s, v) => s + (v?.length ?? 0), 0);
+  c.count = moved + c.field.added.length + c.field.removed.length + c.field.withdrawn.length + c.weather.rounds.length + (c.weather.layer ? 1 : 0) + c.scoring.rounds.length + (c.scoring.winning ? 1 : 0) + c.gaps.length + c.overrides.added.length + c.overrides.removed.length;
+  c.quiet = c.count === 0;
+  const h: string[] = [];
+  const win = c.movers.win ?? [];
+  if (win.length) h.push(`${win.length} win ${win.length === 1 ? "price" : "prices"} moved`);
+  else if (moved) h.push(`${moved} ${moved === 1 ? "price" : "prices"} moved`);
+  const gone = c.field.removed.length + c.field.withdrawn.length;
+  if (gone) h.push(`${gone} ${gone === 1 ? "player" : "players"} out`);
+  if (c.field.added.length) h.push(`${c.field.added.length} added`);
+  if (c.weather.rounds.length || c.weather.layer) h.push("forecast shifted");
+  if (c.scoring.winning) h.push(`winning score ${c.scoring.winning.delta < 0 ? "lower" : "higher"}`);
+  if (c.gaps.length) h.push(`${c.gaps.length} market ${c.gaps.length === 1 ? "gap" : "gaps"} changed`);
+  if (c.overrides.added.length || c.overrides.removed.length) h.push("manual adjustments changed");
+  c.headline = h;
+  return c;
+}
+
+/**
+ * What changed between the document shown and an earlier run of the same event.
+ * `prev` null means the earlier document is not available: an in-play document still carries each player's change since the last run, which gives the price moves alone (partial);
+ * anything else gives null so the strip stays hidden. A different event, or the same run, gives null.
+ */
+export function whatChanged(cur: ExplainDoc, prev: ExplainDoc | null): WhatChanged | null {
+  if (prev && (prev.event_uid !== cur.event_uid || (prev.kind === cur.kind && prev.run === cur.run))) return null;
+  const markets = availableMarkets(cur);
+  if (!prev) {
+    const sl = cur.since_last;
+    if (cur.kind !== "live" || !sl) return null;
+    if (!cur.players.some((p) => p.live?.since_last && Object.keys(p.live.since_last).length)) return null;
+    const a = stamp(cur.as_of);
+    const b = stamp(sl.prev_as_of);
+    const c = emptyChange(true, { run: sl.prev_run ?? null, as_of: sl.prev_as_of ?? null, after_round: sl.prev_after_round ?? null, kind: null }, a !== null && b !== null ? a - b : null);
+    c.movers = moversFor(cur.players, null, markets);
+    return finishChange(c);
+  }
+  const a = stamp(cur.as_of);
+  const b = stamp(prev.as_of);
+  const c = emptyChange(false, { run: prev.run, as_of: prev.as_of, after_round: prev.after_round ?? null, kind: prev.kind }, a !== null && b !== null ? a - b : null);
+  const prevById = new Map(prev.players.map((p) => [p.id, p] as const));
+  const curById = new Map(cur.players.map((p) => [p.id, p] as const));
+  c.movers = moversFor(cur.players, prevById, markets);
+  // field
+  c.field.added = cur.players.filter((p) => !p.withdrawn && !prevById.has(p.id)).map((p) => plainName(p.name));
+  c.field.removed = prev.players.filter((p) => !p.withdrawn && !curById.has(p.id)).map((p) => plainName(p.name));
+  c.field.withdrawn = cur.players.filter((p) => p.withdrawn && prevById.has(p.id) && !prevById.get(p.id)!.withdrawn).map((p) => plainName(p.name));
+  // weather: only rounds still to play
+  const from = cur.kind === "live" ? cur.after_round ?? 0 : 0;
+  const cw = cur.course_card.weather;
+  const pw = prev.course_card.weather;
+  c.weather.rounds = roundShifts((pw?.field ?? []).map((f) => ({ round: f.round, v: f.common })), (cw?.field ?? []).map((f) => ({ round: f.round, v: f.common })), WEATHER_MIN, from);
+  if (cw?.layer && pw?.layer && cw.layer !== pw.layer) c.weather.layer = { from: pw.layer, to: cw.layer };
+  c.weather.reissued = !!cw?.issued_at && !!pw?.issued_at && cw.issued_at !== pw.issued_at;
+  // scoring (simulation draws)
+  const cs = cur.field_scores;
+  const ps = prev.field_scores;
+  if (cs && ps) {
+    const sim = (f: FieldScores) => f.rounds.filter((r) => r.basis === "simulated").map((r) => ({ round: r.round, v: r.mean_vs_par }));
+    c.scoring.rounds = roundShifts(sim(ps), sim(cs), SCORING_MIN, from);
+    if (cs.winning && ps.winning) {
+      const d = cs.winning.median - ps.winning.median;
+      if (Math.abs(d) >= 0.5) c.scoring.winning = { before: ps.winning.median, after: cs.winning.median, delta: d };
+    }
+  }
+  // gap to the sportsbook (before the event only: in play the sportsbook's prices are not live)
+  if (cur.kind === "week" && prev.kind === "week") {
+    for (const p of cur.players) {
+      const q = prevById.get(p.id);
+      const x = p.probs.win.rel;
+      const y = q?.probs.win.rel;
+      if (p.withdrawn || x === null || y === null || y === undefined || (p.probs.win.market ?? 0) < GAP_MIN_MARKET) continue;
+      if (Math.abs(x - y) >= GAP_MOVE_MIN) c.gaps.push({ id: p.id, name: plainName(p.name), before: y, after: x, delta: x - y });
+    }
+    c.gaps.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta) || (x.name ?? "").localeCompare(y.name ?? ""));
+  }
+  // manual adjustments
+  const co = cur.model.overrides_applied ?? [];
+  const po = prev.model.overrides_applied ?? [];
+  c.overrides.added = co.filter((x) => !po.includes(x));
+  c.overrides.removed = po.filter((x) => !co.includes(x));
+  return finishChange(c);
+}
+
+export type HeroFacts = {
+  favourite: { id: number; name: string; model: number | null; market: number | null; live: boolean } | null;
+  /** Before the event: the contender whose win chance differs most from the sportsbook's. In play: the biggest mover since the last run. */
+  second: { kind: "gap"; id: number; name: string; model: number; market: number; rel: number } | { kind: "move"; id: number; name: string; before: number; after: number; delta: number } | null;
+  /** The winning score from the simulations, else the scoring average of the first simulated round, else nothing. */
+  scoring: { kind: "winning"; mode: number; modeShare: number; median: number; p10: number; p90: number } | { kind: "round"; round: number; strokes: number; vsPar: number; basis: "simulated" | "actual" } | null;
+};
+/** The three facts to read first. `ids` limits the disagreement to the contenders (differView ids); without it, players the sportsbook gives at least 2% to win. */
+export function heroFacts(doc: ExplainDoc, ids?: number[]): HeroFacts {
+  const live = doc.kind === "live";
+  const fav = favourites(doc, 1)[0];
+  const favourite = fav ? { id: fav.id, name: plainName(fav.name), model: fav.probs.win.model, market: live ? null : fav.probs.win.market, live } : null;
+  let second: HeroFacts["second"] = null;
+  if (!live) {
+    const pool = doc.players.filter((p) => !p.withdrawn && p.probs.win.model !== null && p.probs.win.market !== null && p.probs.win.rel !== null && (ids && ids.length ? ids.includes(p.id) : (p.probs.win.market ?? 0) >= 0.02));
+    const top = [...pool].sort((a, b) => Math.abs(b.probs.win.rel ?? 0) - Math.abs(a.probs.win.rel ?? 0) || (a.name ?? "").localeCompare(b.name ?? ""))[0];
+    if (top && Math.abs(top.probs.win.rel ?? 0) >= EDGE_MIN) second = { kind: "gap", id: top.id, name: plainName(top.name), model: top.probs.win.model!, market: top.probs.win.market!, rel: top.probs.win.rel! };
+  } else {
+    const mv = [...doc.players].filter((p) => !p.withdrawn && typeof p.live?.since_last?.win === "number" && p.probs.win.model !== null)
+      .sort((x, y) => Math.abs(y.live!.since_last.win!) - Math.abs(x.live!.since_last.win!))[0];
+    if (mv && Math.abs(mv.live!.since_last.win! * 100) >= MOVE_MIN_PTS.win) second = { kind: "move", id: mv.id, name: plainName(mv.name), before: mv.probs.win.model! - mv.live!.since_last.win!, after: mv.probs.win.model!, delta: mv.live!.since_last.win! * 100 };
+  }
+  const fsc = doc.field_scores;
+  let scoring: HeroFacts["scoring"] = null;
+  if (fsc?.winning) scoring = { kind: "winning", mode: fsc.winning.mode, modeShare: fsc.winning.mode_share, median: fsc.winning.median, p10: fsc.winning.p10, p90: fsc.winning.p90 };
+  else if (fsc?.rounds.length) {
+    const next = fsc.rounds.find((r) => r.basis === "simulated") ?? fsc.rounds[0];
+    scoring = { kind: "round", round: next.round, strokes: next.mean_strokes, vsPar: next.mean_vs_par, basis: next.basis };
+  }
+  return { favourite, second, scoring };
+}
+
+export type GapRow = { id: number; name: string; model: number; market: number; rel: number };
+/** The players we are furthest above and below the sportsbook on win chance (contenders if `ids` is given), for the glance list. `scale` is the largest gap shown, at least 25%, so bars share one scale. */
+export function biggestGaps(doc: ExplainDoc, n = 3, ids?: number[]): { higher: GapRow[]; lower: GapRow[]; scale: number } {
+  const rows: GapRow[] = doc.players.filter((p) => !p.withdrawn && p.probs.win.model !== null && p.probs.win.market !== null && p.probs.win.rel !== null && (ids && ids.length ? ids.includes(p.id) : (p.probs.win.market ?? 0) >= GAP_MIN_MARKET))
+    .map((p) => ({ id: p.id, name: plainName(p.name), model: p.probs.win.model!, market: p.probs.win.market!, rel: p.probs.win.rel! }));
+  const byGap = (a: GapRow, b: GapRow) => Math.abs(b.rel) - Math.abs(a.rel) || (a.name ?? "").localeCompare(b.name ?? "");
+  const higher = rows.filter((r) => r.rel >= EDGE_MIN).sort(byGap).slice(0, n);
+  const lower = rows.filter((r) => r.rel <= -EDGE_MIN).sort(byGap).slice(0, n);
+  return { higher, lower, scale: Math.max(0.25, ...[...higher, ...lower].map((r) => Math.abs(r.rel))) };
+}
+
+/** Signed percentage points, "+0.8 pts"; a move that rounds to zero is "no change". */
+export function ptsText(v: number | null | undefined, digits = 1): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "-";
+  const r = Number(Math.abs(v).toFixed(digits));
+  return r === 0 ? "no change" : `${v > 0 ? "+" : "−"}${r.toFixed(digits)} pts`;
+}
+/** Signed whole percent of the sportsbook's chance, "+39%". */
+export function relText(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "-";
+  const r = Math.round(Math.abs(v) * 100);
+  return r === 0 ? "0%" : `${v > 0 ? "+" : "−"}${r}%`;
+}
+
+/** Why a missing winning score is missing, in one short phrase. */
+export const WINNING_SCORE_MISSING = "Not in this run: it needs the simulation draws, which this run did not publish.";
+
+/** One readable sentence about the course and field, for the lede. */
+export function eventLede(doc: ExplainDoc): string {
+  const cc = doc.course_card;
+  const par = cc.par_per_round?.[0];
+  const course = cc.course || doc.event.course || doc.event.name;
+  const spec = [par ? `par ${par}` : "", cc.yardage ? `${Math.round(cc.yardage).toLocaleString("en-US")} yd` : ""].filter(Boolean).join(", ");
+  const field = doc.players.filter((p) => !p.withdrawn).length;
+  const fs = doc.event.field_strength ?? doc.event.field_strength_detail?.field_offset ?? null;
+  const strength = fs === null || fs === undefined ? "" : Math.abs(fs) < 0.1 ? ", an average-strength field" : fs > 0 ? ", a stronger-than-average field" : ", a weaker-than-average field";
+  const cut = doc.event.cut_rule ? doc.event.cut_rule.replace(/^./, (c) => c.toLowerCase()) : "no cut";
+  return `${[course, spec].filter(Boolean).join(" · ")}. ${field} players, ${cut}${strength}.`;
+}
