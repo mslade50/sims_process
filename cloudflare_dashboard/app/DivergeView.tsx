@@ -31,11 +31,6 @@ export function DivergeSection({ doc, player, onSelect }: { doc: ExplainDoc; pla
   const ck = d.dg_check;
   const note = doc.divergence?.course_data?.note ?? null;
   const formScale = doc.divergence?.form_source?.scale ?? "adjusted strokes gained a round vs an average PGA Tour field";
-  const bar = (v: number, scale: number) => (
-    <span className="ex-wf-track" aria-hidden="true">
-      <span className={`ex-wf-bar ${v >= 0 ? "pos" : "neg"}`} style={{ width: `${Math.min(1, Math.abs(v) / scale) * 50}%`, [v >= 0 ? "left" : "right"]: "50%" }} />
-    </span>
-  );
   return (
     <section className="ex-dv" aria-label="Why we differ">
       <h3 className="ex-h3">Why we differ</h3>
@@ -54,22 +49,15 @@ export function DivergeSection({ doc, player, onSelect }: { doc: ExplainDoc; pla
       {ck?.flag && ck.sentence && <p className="ex-callout is-warn" role="note"><span aria-hidden="true">⚠ </span><strong><Term k="ex_dg_check">Data Golf odds check</Term>.</strong> {ck.sentence}</p>}
 
       {split && (
-        <div className="ex-dv-split" role="table" aria-label="Our gap to the market, split into its sources">
-          <p className="ex-muted ex-dv-cap">Our gap to the market, strokes a round (+ means we rate the player above the market). The three rows add up to the gap.</p>
-          {split.segments.map((s) => (
-            <div key={s.key} className={`ex-dv-row is-${s.key}`} role="row">
-              <span className="ex-dv-label" role="cell">{s.key === "unexplained" ? <Term k="ex_unexplained">{s.label}</Term> : s.key === "reference" && split.referenceLabel === "players priced like them" ? <Term k="ex_peers">{s.label}</Term> : s.label}</span>
-              {bar(s.value, split.scale)}
-              <b className={s.value >= 0 ? "pos" : "neg"} role="cell">{signed(s.value)}</b>
-            </div>
-          ))}
-          <div className="ex-dv-row is-total" role="row"><span className="ex-dv-label" role="cell">Gap to the market</span>{bar(split.edge, split.scale)}<b className={split.edge >= 0 ? "pos" : "neg"} role="cell">{signed(split.edge)}</b></div>
-          {split.unexplainedShare !== null && split.unexplainedShare >= 0.2 && (
-            <p className="ex-dv-flag"><strong>{Math.round(split.unexplainedShare * 100)}%</strong> of what sets this player apart has no source in our model.</p>
-          )}
-          {d.edge_split?.sentence && <p className="ex-muted">{d.edge_split.sentence}</p>}
+        <div className="ex-dv-split" aria-label="Our rating and the sportsbooks' rating against the closest-priced players">
+          <div className="ex-dv-pair">
+            <div><span className="ex-dv-pair-label">We rate them vs the <Term k="ex_peers">closest-priced players</Term></span><b className={split.ours >= 0 ? "pos" : "neg"}>{signed(split.ours)}</b><small>strokes a round</small></div>
+            <div><span className="ex-dv-pair-label">The sportsbooks rate them</span><b className={split.book >= 0 ? "pos" : "neg"}>{signed(split.book)}</b><small>strokes a round</small></div>
+          </div>
+          {split.particular !== null && <p className="ex-muted">The gap between the two is {signed(split.particular)} strokes a round, which is particular to this player (the players priced like them sit at the market).</p>}
         </div>
       )}
+      {d.edge_split?.sentence && <p className="ex-muted ex-dv-edge">{d.edge_split.sentence}</p>}
 
       {peers && (parts.length > 0 || links.length > 0) && (
         <div className="ex-dv-peers">

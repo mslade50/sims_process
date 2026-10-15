@@ -25,21 +25,11 @@ export function oddColumn(c: DivergeCompare | null | undefined): Outlier | null 
   return c.outlier;
 }
 
-export type SplitSegment = { key: "reference" | "explained" | "unexplained"; label: string; value: number };
-export type SplitView = { edge: number; segments: SplitSegment[]; scale: number; unexplainedShare: number | null; referenceLabel: string };
-/** Three numbers that add up to the gap: what players priced like this one get, our parts, and what no part of our model explains. */
+export type SplitView = { edge: number | null; ours: number; book: number; particular: number | null };
+/** The two numbers beside each other: how we rate the player against the closest-priced players and how the sportsbooks do. Nothing for "in line", "long shot" or missing numbers (the sentence covers those). */
 export function splitView(es: EdgeSplit | null | undefined): SplitView | null {
-  if (!es) return null;
-  const referenceLabel = es.reference === "peers" ? "players priced like them" : "field average";
-  const segments: SplitSegment[] = [];
-  if (es.reference_edge !== null) segments.push({ key: "reference", label: referenceLabel, value: es.reference_edge });
-  if (es.explained !== null) segments.push({ key: "explained", label: "our parts", value: es.explained });
-  if (es.unexplained !== null) segments.push({ key: "unexplained", label: "not explained by our model", value: es.unexplained });
-  if (!segments.length) return null;
-  // Share of what is particular to this player (the gap beyond the reference) that no part of our model explains; defined when both pieces push the same way.
-  const ex = es.explained ?? 0, un = es.unexplained ?? 0;
-  const share = es.unexplained !== null && ex * un >= 0 && Math.abs(ex + un) > 1e-9 ? Math.abs(un) / Math.abs(ex + un) : null;
-  return { edge: es.edge, segments, scale: Math.max(0.1, Math.abs(es.edge), ...segments.map((s) => Math.abs(s.value))), unexplainedShare: share, referenceLabel };
+  if (!es || es.kind !== "normal" || es.ours_vs_peers === null || es.book_vs_peers === null) return null;
+  return { edge: es.edge, ours: es.ours_vs_peers, book: es.book_vs_peers, particular: es.particular };
 }
 
 export type PeerPartRow = { key: string; label: string; value: number | null; peer: number | null; diff: number | null; standout: boolean };

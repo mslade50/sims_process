@@ -451,8 +451,9 @@ test("the drawer section renders the chance table, odds warning, gap split, peer
   assert.match(html, /ex-callout is-warn/);                           // flagged: warning with the published sentence
   assert.match(html, /not −0\.61/);
   assert.match(html, /players priced like them/);
-  assert.match(html, /not explained by our model/);
-  assert.match(html, /39%<\/strong> of what sets this player apart/);  // 0.149 / (0.229 + 0.149)
+  assert.match(html, /closest-priced players/);                       // two numbers side by side
+  assert.match(html, /The sportsbooks rate them/);
+  assert.doesNotMatch(html, /not explained by our model|no source in our model/);
   assert.match(html, /<button[^>]*class="ex-linkbtn"[^>]*>[^<]*Fleetwood/);
   assert.match(html, /Priced-like-them median/);
   assert.match(html, /aria-current="true"/);                          // this player's form row is highlighted
@@ -472,11 +473,17 @@ test("form panel is hidden when nobody shown has form; the gap split reads its p
   assert.doesNotMatch(html, /Recent form/);
   assert.match(html, /Why we differ/);
   const s = D.splitView(rai.diverge.edge_split);
-  assert.equal(s.segments.length, 3);
-  assert.ok(Math.abs(s.segments.reduce((a, x) => a + x.value, 0) - s.edge) < 0.002);
-  assert.ok(Math.abs(s.unexplainedShare - 0.149 / 0.378) < 1e-9);
-  assert.equal(D.splitView({ edge: 0.2, reference: "field", reference_edge: 0.05, explained: -0.1, unexplained: 0.25, explained_by: {}, sentence: "" }).unexplainedShare, null);   // opposite signs: no share claimed
-  assert.equal(D.splitView({ edge: 0.2, reference: "field", reference_edge: null, explained: null, unexplained: null, explained_by: {}, sentence: "" }), null);
+  assert.deepEqual([s.ours, s.book, s.particular], [-0.7, -0.3, -0.378]);
+  const es = (o) => ({ kind: "normal", edge: 0.2, reference: "peers", reference_edge: 0.05, particular: 0.15, ours_vs_peers: 0.1, book_vs_peers: 0.2, sentence: "s", ...o });
+  assert.equal(D.splitView(es({ kind: "in_line" })), null);          // nothing but the sentence for in-line and long-shot players
+  assert.equal(D.splitView(es({ kind: "long_shot" })), null);
+  assert.equal(D.splitView(es({ book_vs_peers: null })), null);
+  assert.equal(D.splitView(es({})).book, 0.2);
+  const inLine = v11.players.find((p) => p.diverge?.edge_split?.kind === "in_line");
+  assert.ok(inLine && !/closest-priced/.test(drawerHtml(v11, inLine)));
+  // tolerant parser: unknown kind reads as normal, missing numbers are null, a bare sentence is kept
+  const loose = parseExplain({ ...v11raw, players: [{ ...v11raw.players[0], diverge: { edge_split: { kind: "weird", sentence: "only text" }, peers: null } }] }).players[0].diverge.edge_split;
+  assert.deepEqual([loose.kind, loose.edge, loose.ours_vs_peers, loose.reference], ["normal", null, null, "none"]);
   const t = D.formTable(v11, rai, rai.diverge.peers.ids, () => null);
   assert.equal(t.rows[0].self, true);
   assert.equal(t.rows.length, 7);
