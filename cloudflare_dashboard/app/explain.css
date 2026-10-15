@@ -346,3 +346,45 @@
 .ex-book-flag.is-growing { background: var(--tint-2); color: var(--positive, var(--foreground)); }
 .ex-book-flag.is-closing { background: var(--tint-2); color: var(--negative, var(--foreground)); }
 .ex-cause-note p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted-strong); }
+
+/* Why we differ (player drawer, DivergeView.tsx) */
+.ex-dv-lead { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: var(--foreground); }
+.ex-dv-h4 { margin: 18px 0 6px; font-size: 12.5px; font-weight: 750; color: var(--foreground); }
+.ex-dv-table { min-width: 0; }
+.ex-dv-table th small.ex-dv-odd { display: block; margin-top: 1px; font-size: 9.5px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; color: var(--warning); }
+.ex-dv-table .ex-term-btn { color: inherit; }
+.ex-dv-table th.is-odd, .ex-dv-table td.is-odd { background: var(--warning-soft); color: var(--foreground); box-shadow: inset 0 2px 0 var(--warning); }
+.ex-dv-table td.is-odd { font-weight: 700; }
+.ex-dv-table th[scope="row"] { white-space: normal; min-width: 120px; }
+.ex-dv-table tr.is-standout th[scope="row"], .ex-dv-table tr.is-standout td { font-weight: 750; background: var(--tint-1); }
+.ex-dv-table tr.is-self th, .ex-dv-table tr.is-self td { background: var(--tint-2); font-weight: 750; box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.ex-callout.is-warn { margin: 12px 0; border-left-color: var(--warning); background: var(--warning-soft); }
+.ex-dg-warn { color: var(--warning); font-weight: 800; cursor: help; }
+.ex-dg-warn-note { margin-top: 8px; }
+.ex-tag.ex-unavail { color: var(--warning); background: var(--warning-soft); text-transform: none; letter-spacing: 0; font-size: 10px; }
+.ex-dv-split { display: grid; gap: 6px; margin: 14px 0 4px; }
+.ex-dv-cap { margin: 0 0 2px; }
+.ex-dv-row { display: grid; grid-template-columns: minmax(110px, 190px) minmax(80px, 1fr) 56px; align-items: center; gap: 4px 10px; font-size: 12.5px; }
+.ex-dv-row .ex-dv-label { color: var(--muted-strong); line-height: 1.3; }
+.ex-dv-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.ex-dv-row .ex-wf-track { height: 14px; }
+.ex-dv-row.is-unexplained .ex-dv-label { color: var(--foreground); font-weight: 750; }
+.ex-dv-row.is-unexplained .ex-wf-track { outline: 1.5px dashed var(--warning); outline-offset: 2px; }
+.ex-dv-row.is-unexplained .ex-wf-bar { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .45) 0 3px, transparent 3px 7px); }
+.ex-dv-row.is-total { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line-strong); font-weight: 750; }
+.ex-dv-row.is-total .ex-dv-label { color: var(--foreground); }
+.ex-dv-flag { margin: 2px 0 0; padding: 6px 10px; border-left: 3px solid var(--warning); background: var(--warning-soft); border-radius: 0 8px 8px 0; font-size: 12.5px; line-height: 1.45; }
+.ex-dv-peerlist { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 8px; padding: 0; list-style: none; }
+.ex-dv-peerlist button { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: 12px; }
+.ex-dv-formtable th, .ex-dv-formtable td { padding: 8px 8px; }
+.ex-dv-formtable th[scope="row"] { position: sticky; left: 0; background: var(--surface); z-index: 1; white-space: nowrap; min-width: 118px; }
+.ex-dv-formtable tr.is-self th[scope="row"] { background: var(--tint-2); }
+.ex-dv-note { padding-top: 6px; border-top: 1px dashed var(--line); }
+@media (max-width: 640px) {
+  .ex-dv-row { grid-template-columns: minmax(0, 1fr) 54px; }
+  .ex-dv-row .ex-wf-track { grid-column: 1 / -1; grid-row: 2; }
+  .ex-dv-row b { grid-column: 2; grid-row: 1; }
+  .ex-dv-table th, .ex-dv-table td { padding: 9px 8px; }
+}
+.ex-dv-formtable .ex-linkbtn { display: inline; }
+@media (max-width: 640px) { .ex-dv-formtable .ex-linkbtn { display: inline-flex; align-items: center; min-height: 36px; } }

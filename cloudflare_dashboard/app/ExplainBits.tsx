@@ -89,7 +89,7 @@ export function Waterfall({ rows, small, smallCount, skillTotal, weatherTotal, s
   const rs = (k: string, fallback: number) => scales?.rows[k] ?? fallback;
   const row = (r: (typeof rows)[number], i: number, list: typeof rows) => (
     <div className="ex-wf-row" role="row" key={r.key} title={r.meaning}>
-      <span className="ex-wf-label" role="cell">{r.label}{(i === 0 || list[i - 1].group !== r.group) && r.group !== "skill" && r.group !== "weather" && <em className={`ex-tag g-${r.group}`}>{GROUP_TAG[r.group] ?? r.group}</em>}</span>
+      <span className="ex-wf-label" role="cell">{r.label}{r.unavailable && <em className="ex-tag ex-unavail" title={`No ${r.unavailable} data for this event, so the model cannot use it.`}>no data this week</em>}{(i === 0 || list[i - 1].group !== r.group) && r.group !== "skill" && r.group !== "weather" && <em className={`ex-tag g-${r.group}`}>{GROUP_TAG[r.group] ?? r.group}</em>}</span>
       {bar(r.value, rs(r.key, niceScale(Math.abs(r.value))))}
       <b className={r.value >= 0 ? "pos" : "neg"} role="cell">{signed(r.value)}</b>
     </div>

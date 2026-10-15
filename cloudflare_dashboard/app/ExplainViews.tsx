@@ -27,6 +27,7 @@ const WeatherThisRound = lazy(() => import("./ScoringView").then((m) => ({ defau
 const CourseGeometry = lazy(() => import("./CourseGeometry").then((m) => ({ default: m.CourseGeometry })));
 const WeatherLinkCard = lazy(() => import("./WeatherBriefView").then((m) => ({ default: m.WeatherLinkCard })));
 const ShapeSpotlightCard = lazy(() => import("./ShapeViews").then((m) => ({ default: m.ShapeSpotlightCard })));
+const DivergeSection = lazy(() => import("./DivergeView").then((m) => ({ default: m.DivergeSection })));
 /** Suspense with a placeholder of the final height, so nothing below jumps when the chunk arrives. */
 function Lazy({ height, children }: { height: number; children: React.ReactNode }) {
   return <Suspense fallback={<div className="ex-lazy" style={{ minHeight: height }} aria-hidden="true" />}>{children}</Suspense>;
@@ -181,7 +182,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         <div className="ex-chips-row" aria-label="Field summary">
           <span className="ex-chip"><Term k="ex_field_strength">Field strength</Term> <b>{fs == null ? "n/a" : `${signed(fs)} strokes`}</b></span>
           {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap vs sportsbooks</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)} a round</b></span>}
-          {!live && dgSkill && <span className="ex-chip"><Term k="ex_dg_skill_gap">Biggest skill gap vs Data Golf</Term> <b className={dgSkill.gap >= 0 ? "pos" : "neg"}>{dgSkill.name} {signed(dgSkill.gap)} a round</b></span>}
+          {!live && dgSkill && <span className="ex-chip" title={dgSkill.stated !== undefined ? "Measured against the skill Data Golf's own odds imply. Players whose stated skill disagrees with their odds are left out." : undefined}><Term k="ex_dg_skill_gap">Biggest skill gap vs Data Golf</Term> <b className={dgSkill.gap >= 0 ? "pos" : "neg"}>{dgSkill.name} {signed(dgSkill.gap)} a round</b></span>}
           {weatherStatus(doc).short && <span className="ex-chip" title={weatherStatus(doc).long}>{weatherStatus(doc).short}</span>}
         </div>
         <details className="ex-details">
@@ -473,6 +474,8 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
   const skill = kind === "skill";
   const what = skill ? "skill" : `${DG_GAP_LABEL[kind].toLowerCase()} chance`;
   const nums = (r: { ours: number; dg: number }) => (skill ? `${signed(r.ours)} vs ${signed(r.dg)}` : `${pct(r.ours)} vs ${pct(r.dg)}`);
+  const checked = skill && [...g.higher, ...g.lower].some((r) => r.stated !== undefined);
+  const anyFlag = skill && [...g.higher, ...g.lower].some((r) => r.flag);
   const gapTxt = (v: number) => (skill ? `${signed(v)}` : relText(v));
   const list = (rows: typeof g.higher, title: string) => (
     <div className="ex-gap-col">
@@ -480,8 +483,8 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
       {rows.length ? <ul>{rows.map((r) => (
         <li key={r.id}>
           <button type="button" onClick={() => openPlayer(r.id)}>
-            <span className="ex-mv-name">{r.name}</span>
-            <DeltaBar value={r.gap} scale={g.scale} label={`${r.name}: our ${what} ${gapTxt(r.gap)} against Data Golf`} />
+            <span className="ex-mv-name">{r.name}{r.flag && <span className="ex-dg-warn" role="img" aria-label="Data Golf's stated skill disagrees with its own odds" title={`Data Golf's odds imply ${signed(r.dg)}; its stated skill is ${r.stated != null ? signed(r.stated) : "n/a"}.`}> ⚠</span>}</span>
+            <DeltaBar value={r.gap} scale={g.scale} label={`${r.name}: our ${what} ${gapTxt(r.gap)} against Data Golf${r.flag ? " (its odds imply a different skill than it states)" : ""}`} />
             <span className="ex-mv-nums">{nums(r)}</span>
             <b className={r.gap > 0 ? "pos" : "neg"}>{r.gap > 0 ? "▲" : "▼"} {gapTxt(r.gap)}</b>
           </button>
@@ -496,8 +499,9 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         {list(g.higher, "We are higher")}
         {list(g.lower, "We are lower")}
       </div>
+      {anyFlag && <p className="ex-muted ex-dg-warn-note"><span aria-hidden="true">⚠ </span><Term k="ex_dg_check">Data Golf&rsquo;s odds check</Term>: for the marked players its stated skill is out of line with its own odds, so the gap is measured against the skill its odds imply.</p>}
       <p className="ex-muted">{skill
-        ? <>Skill is strokes a round against the average of this field (before weather), ours vs Data Golf&rsquo;s final pre-tournament estimate; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
+        ? <>Skill is strokes a round against the average of this field (before weather), ours vs {checked ? <>the skill Data Golf&rsquo;s own odds imply</> : <>Data Golf&rsquo;s final pre-tournament estimate</>}; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
         : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} {skill ? <>This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance.</> : <>Players with at least a {kind === "win" ? "1% win" : "10% top-20"} chance with us or Data Golf, so long shots don&rsquo;t fill the list.</>} Data Golf is a reference only; it never enters our price.</p>
     </Panel>
   );
@@ -862,6 +866,7 @@ function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSele
           {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
         </div>
         {shape && <p className="ex-callout"><strong>{shape.sentence}</strong> {shape.parts_sentence}{valueBets(shape).length > 0 ? ` Value against the sportsbook: ${valueBets(shape).join(", ")}.` : ""}</p>}
+        {doc.kind !== "live" && !player.withdrawn && player.diverge && <Lazy height={420}><DivergeSection doc={doc} player={player} onSelect={onSelect} /></Lazy>}
 
         <section>
           <h3 className="ex-h3">Why this price</h3>

@@ -326,3 +326,159 @@ test("Data Golf gaps: chances relative to theirs, skill in strokes, contenders p
   assert.ok(w.higher.every((r) => r.gap >= 0.05) && w.lower.every((r) => r.gap <= -0.05));
   assert.equal(parseExplain({ ...raw, players: [{ ...raw.players[0], dg: { skill: "x" } }] }).players[0].dg, null);
 });
+
+/* ------------------------------------------------------------------ Why we differ (explain version 11) */
+const { renderView } = await import("./helpers/render-harness.mjs");
+const D = await import("../app/diverge-rules.ts");
+const v11raw = await read("explain_week_v11.json");
+const v11 = parseExplain(v11raw);
+const rai = v11.players.find((p) => p.id === 18554);
+const drawerHtml = (doc, player) => renderView("DivergeView.tsx", "DivergeSection", { props: { doc, player, onSelect() {} } });
+const skillRows = (doc) => { const g = dgGaps(doc, "skill", 100); return g.higher.concat(g.lower); };
+
+test("v11 documents parse the diverge, form and divergence blocks; the edge sentence is kept as published", () => {
+  assert.ok(v11 && rai);
+  assert.equal(rai.diverge.compare.verdict, "book_outlier");
+  assert.equal(rai.diverge.compare.outlier, "book");
+  assert.equal(rai.diverge.compare.markets.win.book, 0.0516);
+  assert.equal(rai.diverge.dg_check.flag, true);
+  assert.match(rai.diverge.dg_check.sentence, /not −0\.61/);
+  assert.equal(rai.diverge.edge_split.reference, "peers");
+  assert.equal(rai.diverge.peers.ids.length, 6);
+  assert.equal(rai.diverge.sentences.length, 5);
+  assert.equal(rai.form.windows.L8.mean, 1.8);
+  assert.deepEqual(rai.form.seasons.map((s) => s.year), [2024, 2025, 2026]);
+  assert.equal(rai.why_edge, rai.diverge.edge_split.sentence);   // not reworded by the old why-edge pattern
+  assert.equal(v11.divergence.course_data.blank, true);
+  assert.match(v11.divergence.course_data.note, /Course fit and course history are blank/);
+  assert.match(v11.divergence.form_source.scale, /adjusted strokes gained/);
+  assert.equal(v11.divergence.dg_odds_fit.flagged.includes(18554), true);
+  // a flagged player carries the sentence, an unflagged one does not
+  assert.equal(v11.players.find((p) => p.diverge?.dg_check && !p.diverge.dg_check.flag).diverge.dg_check.sentence, null);
+});
+
+test("the course row of the legend keeps its relabelled text and the waterfall marks it as having no data", () => {
+  const lg = v11.components_legend.course;
+  assert.equal(lg.unavailable, "fit and history");
+  assert.match(lg.label, /no course fit or history this week/i);
+  assert.notEqual(lg.label, "Course fit and history");
+  const wf = waterfall(rai, v11.components_legend);
+  assert.equal(wf.rows.find((r) => r.key === "course").unavailable, "fit and history");
+  assert.equal(wf.rows.find((r) => r.key === "kalman").unavailable, undefined);
+  const html = renderView("ExplainBits.tsx", "Waterfall", { props: { ...wf, scale: 1 } });
+  assert.match(html, /no data this week/);
+});
+
+test("documents at version 10 and below, live runs and withdrawn players carry no blocks and stay unchanged", () => {
+  assert.equal(week.divergence, null);
+  assert.ok(week.players.every((p) => p.diverge === null && p.form === null));
+  assert.ok(live.players.every((p) => p.diverge === null && p.form === null));
+  // the old why-edge wording is still produced for them
+  const old = parseExplain({ ...await_week, players: [{ ...await_week.players[0], why_edge: "We are above the market by 0.26 strokes/round: mostly cross-tour +0.36, kalman trend -0.19." }] });
+  assert.match(old.players[0].why_edge, /^We rate them higher than the market/);
+  assert.equal(week.components_legend.course?.unavailable, undefined);
+  // a withdrawn player has no diverge block and renders nothing in the section
+  assert.equal(drawerHtml(v11, { ...rai, withdrawn: true, diverge: null, form: null }), "");
+});
+
+test("malformed blocks become null and never throw", () => {
+  const bad = (diverge, form, divergence) => parseExplain({ ...v11raw, divergence, players: [{ ...v11raw.players[0], diverge, form }] });
+  for (const junk of ["x", 5, [], { compare: 3, dg_check: "x", edge_split: [], peers: { ids: "x" }, sentences: 4 }]) {
+    const d = bad(junk, junk, junk);
+    assert.equal(d.players[0].diverge, null);
+    assert.equal(d.players[0].form, null);
+    assert.equal(d.divergence, null);
+  }
+  const partial = bad({ compare: { markets: { win: { ours: "a", dg: 0.1, book: 0.2 }, top_5: 7 }, verdict: "nonsense", outlier: "nobody" }, dg_check: { flag: "yes" }, edge_split: { edge: "big" }, peers: { ids: [1, "x", 2], names: ["A", 3], parts: [{ key: 1 }, { key: "a", label: "A", value: 1 }] }, sentences: ["ok", 3, ""] },
+    { windows: { L8: { mean: "x" }, L24: { mean: 0.5, n: 24 } }, seasons: [{ year: "y" }, { year: 2025, mean: 1 }] }, { course_data: { note: 4 }, dg_odds_fit: { flagged: [1, "a"] } });
+  const p = partial.players[0];
+  assert.deepEqual(p.diverge.compare.markets.win, { ours: null, dg: 0.1, book: 0.2 });
+  assert.equal(p.diverge.compare.verdict, "insufficient");
+  assert.equal(p.diverge.compare.outlier, null);
+  assert.equal(p.diverge.dg_check.flag, false);
+  assert.equal(p.diverge.edge_split, null);
+  assert.deepEqual(p.diverge.peers.ids, [1, 2]);
+  assert.equal(p.diverge.peers.parts.length, 1);
+  assert.deepEqual(p.diverge.sentences, ["ok"]);
+  assert.deepEqual(Object.keys(p.form.windows), ["L24"]);
+  assert.deepEqual(p.form.seasons.map((s) => s.year), [2025]);
+  assert.equal(partial.divergence.course_data.note, null);
+  assert.deepEqual(partial.divergence.dg_odds_fit.flagged, [1]);
+  assert.doesNotThrow(() => drawerHtml(partial, p));
+  assert.deepEqual(D.chanceRows(null), []);
+  assert.equal(D.splitView(null), null);
+  assert.deepEqual(D.peerPartRows(null), []);
+});
+
+test("chip: the biggest Data Golf skill gap skips players whose stated skill disagrees with their odds and ranks on the odds-implied gap", () => {
+  // Aaron Rai is flagged: stated gap -0.61, against the odds -0.22. The old chip would have named him.
+  const rows = skillRows(v11);
+  const r = rows.find((x) => x.id === 18554);
+  assert.equal(r.flag, true);
+  assert.equal(r.gap, -0.217);                 // measured against the odds, shown with a warning
+  assert.equal(r.stated, 2.114);
+  const top = biggestDgSkillGap(v11);
+  assert.ok(top && top.id !== 18554 && !top.flag);
+  assert.ok(rows.filter((x) => !x.flag).every((x) => Math.abs(x.gap) <= Math.abs(top.gap) + 1e-12));
+  // all flagged -> no chip
+  const allFlagged = parseExplain({ ...v11raw, players: v11raw.players.map((p) => ({ ...p, diverge: p.diverge && { ...p.diverge, dg_check: p.diverge.dg_check && { ...p.diverge.dg_check, flag: true } } })) });
+  assert.equal(biggestDgSkillGap(allFlagged), null);
+  // documents without the odds check fall back to the stated gap
+  const plain = parseExplain({ ...v11raw, players: v11raw.players.map((p) => ({ ...p, diverge: null })) });
+  assert.equal(skillRows(plain).find((x) => x.id === 18554)?.gap, rai.dg.skill_gap);
+  assert.ok(skillRows(plain).every((x) => x.flag === false && x.stated === x.dg));
+});
+
+test("chance table: rows need two sources, the odd-one-out column follows the verdict", () => {
+  const rows = D.chanceRows(rai.diverge.compare);
+  assert.deepEqual(rows.map((r) => r.market), ["win", "top_5", "top_10", "top_20", "make_cut"]);
+  assert.equal(D.oddColumn(rai.diverge.compare), "book");
+  const sparse = { markets: { win: { ours: 0.02, dg: null, book: null }, top_5: { ours: 0.1, dg: null, book: 0.2 }, top_10: { ours: null, dg: null, book: null } }, mean_logit_gap: {}, verdict: "no_dg", outlier: null };
+  assert.deepEqual(D.chanceRows(sparse).map((r) => r.market), ["top_5"]);
+  assert.equal(D.oddColumn(sparse), null);
+  assert.equal(D.oddColumn({ ...rai.diverge.compare, verdict: "all_differ", outlier: "ours" }), null);   // nobody is named when all three differ
+  for (const k of ["ours", "dg", "book"]) assert.equal(D.oddColumn({ ...rai.diverge.compare, verdict: `${k}_outlier`, outlier: k }), k);
+});
+
+test("the drawer section renders the chance table, odds warning, gap split, peers and form for Aaron Rai", () => {
+  const html = drawerHtml(v11, rai);
+  assert.match(html, /Why we differ/);
+  assert.match(html, /On chances we are close to Data Golf/);
+  assert.match(html, /<th class="is-odd">Sportsbooks/);                // the odd column is marked in the header...
+  assert.equal((html.match(/<td data-label="Sportsbooks" class="is-odd">/g) ?? []).length, 5);   // ...and in each of the five rows
+  assert.doesNotMatch(html, /<th class="is-odd">(Ours|Data Golf)/);
+  assert.match(html, /5\.2%/);
+  assert.match(html, /ex-callout is-warn/);                           // flagged: warning with the published sentence
+  assert.match(html, /not −0\.61/);
+  assert.match(html, /players priced like them/);
+  assert.match(html, /not explained by our model/);
+  assert.match(html, /39%<\/strong> of what sets this player apart/);  // 0.149 / (0.229 + 0.149)
+  assert.match(html, /<button[^>]*class="ex-linkbtn"[^>]*>[^<]*Fleetwood/);
+  assert.match(html, /Priced-like-them median/);
+  assert.match(html, /aria-current="true"/);                          // this player's form row is highlighted
+  assert.match(html, /adjusted strokes gained a round vs an average PGA Tour field/);
+  assert.match(html, /Sportsbook implies/);
+  assert.match(html, /1\.96/);                                        // the skill the sportsbook implies
+  assert.match(html, /Course fit and course history are blank/);
+  assert.match(html, /table-scroll/);
+  // an unflagged player shows no warning, and no odd-one-out claim when the verdict names nobody
+  const calm = v11.players.find((p) => p.diverge?.dg_check && !p.diverge.dg_check.flag && p.diverge.compare && !["book_outlier", "ours_outlier", "dg_outlier"].includes(p.diverge.compare.verdict));
+  if (calm) { const h = drawerHtml(v11, calm); assert.doesNotMatch(h, /is-warn/); assert.doesNotMatch(h, /class="is-odd"/); }
+});
+
+test("form panel is hidden when nobody shown has form; the gap split reads its parts", () => {
+  const noForm = parseExplain({ ...v11raw, players: v11raw.players.map((p) => ({ ...p, form: null })) });
+  const html = drawerHtml(noForm, noForm.players.find((p) => p.id === 18554));
+  assert.doesNotMatch(html, /Recent form/);
+  assert.match(html, /Why we differ/);
+  const s = D.splitView(rai.diverge.edge_split);
+  assert.equal(s.segments.length, 3);
+  assert.ok(Math.abs(s.segments.reduce((a, x) => a + x.value, 0) - s.edge) < 0.002);
+  assert.ok(Math.abs(s.unexplainedShare - 0.149 / 0.378) < 1e-9);
+  assert.equal(D.splitView({ edge: 0.2, reference: "field", reference_edge: 0.05, explained: -0.1, unexplained: 0.25, explained_by: {}, sentence: "" }).unexplainedShare, null);   // opposite signs: no share claimed
+  assert.equal(D.splitView({ edge: 0.2, reference: "field", reference_edge: null, explained: null, unexplained: null, explained_by: {}, sentence: "" }), null);
+  const t = D.formTable(v11, rai, rai.diverge.peers.ids, () => null);
+  assert.equal(t.rows[0].self, true);
+  assert.equal(t.rows.length, 7);
+  assert.equal(D.formTable({ players: [{ ...rai, form: null }] }, { ...rai, form: null }, [], () => null), null);
+});

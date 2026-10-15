@@ -26,10 +26,36 @@ export type ExPlayer = {
   scores: Record<string, Pctl | TotalScore>; live: LiveState | null;
   /** DataGolf reference (week documents from October 15, 2026): their pre-tournament chances and skill estimate. Reference only, never in our price. */
   dg?: DgRef | null;
+  /** "Why we differ" block (week documents from explain version 11): ours vs Data Golf vs the sportsbooks, the Data Golf odds check, the edge split and the price peers. Absent on older documents, live runs and withdrawn players. */
+  diverge?: Diverge | null;
+  /** Adjusted strokes gained a round against an average PGA Tour field, from rounds before the event (version 11 week documents). */
+  form?: Form | null;
 };
 /** DataGolf's chances and skill estimate for one player. Skills are strokes a round against the average of the players both models rate (before weather); skill_gap = ours - DataGolf's. */
 export type DgRef = Partial<Record<Market, number | null>> & { skill: number | null; skill_ours: number | null; skill_gap: number | null };
-export type LegendEntry = { label: string; group: string; meaning: string };
+export type LegendEntry = { label: string; group: string; meaning: string;
+  /** Set when this week has no data for the component ("fit and history", "fit" or "history"); the label and meaning are then already relabelled. */
+  unavailable?: string };
+
+/* ---- "Why we differ" (explain version 11). Parsed defensively: a malformed block is null and the view skips it. */
+export type DivergeVerdict = "all_agree" | "ours_outlier" | "dg_outlier" | "book_outlier" | "all_differ" | "no_dg" | "agree_book_no_dg" | "no_book" | "insufficient";
+export type Outlier = "ours" | "dg" | "book";
+export type SourceChances = { ours: number | null; dg: number | null; book: number | null };
+export type DivergeCompare = { markets: Partial<Record<Market, SourceChances>>; mean_logit_gap: { ours_dg: number | null; ours_book: number | null; dg_book: number | null }; verdict: DivergeVerdict; outlier: Outlier | null };
+export type DgCheck = { skill_stated: number | null; skill_from_odds: number | null; stated_minus_odds: number | null; market: string | null; flag: boolean; skill_ours: number | null; gap_vs_odds: number | null; sentence: string | null };
+export type EdgeSplit = { edge: number; reference: "peers" | "field"; reference_edge: number | null; explained: number | null; unexplained: number | null; explained_by: Record<string, number>; sentence: string };
+export type PeerPart = { key: string; label: string; value: number | null; peer_median: number | null; distinctive: number | null };
+export type PeerSet = { ids: number[]; names: string[]; peer_edge_median: number | null; parts: PeerPart[]; sentence: string };
+export type Diverge = { compare: DivergeCompare | null; dg_check: DgCheck | null; edge_split: EdgeSplit | null; peers: PeerSet | null; sentences: string[] };
+export const FORM_WINDOWS = ["L8", "L24", "L50", "L100"] as const;
+export type FormWindow = (typeof FORM_WINDOWS)[number];
+export type Form = { n: number | null; last_round: string | null; windows: Partial<Record<FormWindow, { mean: number | null; n: number | null }>>; seasons: Array<{ year: number; mean: number | null; n: number | null }> };
+export type Divergence = {
+  version: number | null;
+  course_data: { n_players: number | null; fit_available: number | null; history_available: number | null; venue_editions: number | null; blank: boolean; label: string | null; note: string | null } | null;
+  dg_odds_fit: { market: string | null; slope: number | null; intercept: number | null; n: number | null; resid_sd_skill: number | null; flag_threshold: number | null; n_flagged: number | null; flagged: number[] } | null;
+  field_edge_mean: number | null; form_source: { table: string | null; before: string | null; available: boolean; scale: string | null } | null; method: string | null;
+};
 export type BiasRow = {
   dimension: string; dimension_label: string; bucket: string; label: string; n: number; edge_sg: number | null; edge_sg_se: number | null;
   p_win_model: number | null; p_win_market: number | null; drivers: Array<{ component: string; label: string; attr_sg: number | null; avg_rel: number | null }>;
@@ -60,6 +86,8 @@ export type ExplainDoc = {
   /** Field-level view of the same simulation draws (explain export from October 13, 2026): scoring average per round and the winning score. */
   field_scores?: FieldScores | null;
   edge_model: { ridge_r2: number | null; strokes_per_logit: Record<string, number>; note: string };
+  /** Version 11 week documents: how course data, Data Golf's odds fit and form were sourced. */
+  divergence?: Divergence | null;
   bias: BiasRow[]; top_edges: number[]; players: ExPlayer[]; since_last: { prev_run: string; prev_as_of: string | null; prev_after_round: number | null } | null;
 };
 
@@ -82,7 +110,9 @@ function neutralLegend(raw: unknown): Record<string, LegendEntry> {
   for (const [k, v] of Object.entries(raw)) {
     const e = v as LegendEntry;
     const plain = COMPONENT_PLAIN[k];
-    out[k] = isObject(v) ? { ...e, label: plain?.label ?? plainText(String(e.label ?? k)), meaning: plain?.meaning ?? (typeof e.meaning === "string" ? plainText(neutralPronouns(e.meaning)) : "") } : e;
+    // A relabelled entry (nothing to go on this week) keeps the label and meaning the publisher wrote for it.
+    const own = isObject(v) && typeof e.unavailable === "string" && e.unavailable !== "";
+    out[k] = isObject(v) ? { ...e, label: (own ? undefined : plain?.label) ?? plainText(String(e.label ?? k)), meaning: (own ? undefined : plain?.meaning) ?? (typeof e.meaning === "string" ? plainText(neutralPronouns(e.meaning)) : "") } : e;
   }
   return out;
 }
@@ -100,12 +130,79 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
     return { ...(p as object), probs: full, components: isObject(p.components) ? p.components : {}, attribution: isObject(p.attribution) ? p.attribution : {},
       tags: Array.isArray(p.tags) ? p.tags : [], neighbors: Array.isArray(p.neighbors) ? p.neighbors : [], scores: isObject(p.scores) ? p.scores : {},
       finish: isObject(p.finish) && Array.isArray((p.finish as { pos?: unknown }).pos) ? p.finish : null, live: isObject(p.live) ? p.live : null, why: typeof p.why === "string" ? plainWhy(neutralPronouns(p.why)) : "",
-      why_edge: typeof p.why_edge === "string" ? plainWhyEdge(neutralPronouns(p.why_edge)) : null, dg: parseDg(p.dg) } as unknown as ExPlayer;
+      why_edge: typeof p.why_edge === "string" ? (isObject(p.diverge) && isObject(p.diverge.edge_split) ? neutralPronouns(p.why_edge) : plainWhyEdge(neutralPronouns(p.why_edge))) : null, dg: parseDg(p.dg),
+      diverge: parseDiverge(p.diverge), form: parseForm(p.form) } as unknown as ExPlayer;
   });
   return { ...d, players, bias: Array.isArray(d.bias) ? plainBias(d.bias) : [], top_edges: Array.isArray(d.top_edges) ? d.top_edges : [], components_legend: neutralLegend(d.components_legend),
     finish: isObject(d.finish) ? d.finish : { method: "unavailable", reason: null }, course_card: (isObject(d.course_card) ? d.course_card : { holes: [], what_drives_scoring: [], by_par: {}, weather: {} }) as CourseCard,
     edge_model: isObject(d.edge_model) ? d.edge_model : { ridge_r2: null, strokes_per_logit: {}, note: "" }, since_last: isObject(d.since_last) ? d.since_last : null,
-    field_scores: parseFieldScores(d.field_scores) };
+    field_scores: parseFieldScores(d.field_scores), divergence: parseDivergence(d.divergence) };
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+const OUTLIERS: readonly string[] = ["ours", "dg", "book"];
+const VERDICTS: readonly string[] = ["all_agree", "ours_outlier", "dg_outlier", "book_outlier", "all_differ", "no_dg", "agree_book_no_dg", "no_book", "insufficient"];
+function parseCompare(raw: unknown): DivergeCompare | null {
+  if (!isObject(raw)) return null;
+  const mk = isObject(raw.markets) ? raw.markets : {};
+  const markets: DivergeCompare["markets"] = {};
+  for (const m of MARKETS) {
+    const e = mk[m];
+    if (isObject(e)) markets[m] = { ours: num(e.ours), dg: num(e.dg), book: num(e.book) };
+  }
+  const g = isObject(raw.mean_logit_gap) ? raw.mean_logit_gap : {};
+  const verdict = (typeof raw.verdict === "string" && VERDICTS.includes(raw.verdict) ? raw.verdict : "insufficient") as DivergeVerdict;
+  const outlier = typeof raw.outlier === "string" && OUTLIERS.includes(raw.outlier) ? (raw.outlier as Outlier) : null;
+  return Object.keys(markets).length || verdict !== "insufficient" ? { markets, mean_logit_gap: { ours_dg: num(g.ours_dg), ours_book: num(g.ours_book), dg_book: num(g.dg_book) }, verdict, outlier } : null;
+}
+function parseDgCheck(raw: unknown): DgCheck | null {
+  if (!isObject(raw)) return null;
+  const flag = raw.flag === true;
+  return { skill_stated: num(raw.skill_stated), skill_from_odds: num(raw.skill_from_odds), stated_minus_odds: num(raw.stated_minus_odds), market: str(raw.market), flag, skill_ours: num(raw.skill_ours),
+    gap_vs_odds: num(raw.gap_vs_odds), sentence: flag ? str(raw.sentence) : null };
+}
+function parseEdgeSplit(raw: unknown): EdgeSplit | null {
+  if (!isObject(raw) || num(raw.edge) === null) return null;
+  const by: Record<string, number> = {};
+  if (isObject(raw.explained_by)) for (const [k, v] of Object.entries(raw.explained_by)) { const n = num(v); if (n !== null) by[k] = n; }
+  return { edge: raw.edge as number, reference: raw.reference === "peers" ? "peers" : "field", reference_edge: num(raw.reference_edge), explained: num(raw.explained), unexplained: num(raw.unexplained), explained_by: by, sentence: str(raw.sentence) ?? "" };
+}
+function parsePeers(raw: unknown): PeerSet | null {
+  if (!isObject(raw)) return null;
+  const ids = (Array.isArray(raw.ids) ? raw.ids : []).map(num).filter((n): n is number => n !== null);
+  const names = (Array.isArray(raw.names) ? raw.names : []).filter((n): n is string => typeof n === "string");
+  const parts = (Array.isArray(raw.parts) ? raw.parts : []).filter((x): x is Record<string, unknown> => isObject(x) && typeof x.label === "string" && typeof x.key === "string")
+    .map((x) => ({ key: x.key as string, label: x.label as string, value: num(x.value), peer_median: num(x.peer_median), distinctive: num(x.distinctive) }));
+  return ids.length || parts.length ? { ids, names, peer_edge_median: num(raw.peer_edge_median), parts, sentence: str(raw.sentence) ?? "" } : null;
+}
+function parseDiverge(raw: unknown): Diverge | null {
+  if (!isObject(raw)) return null;
+  const d: Diverge = { compare: parseCompare(raw.compare), dg_check: parseDgCheck(raw.dg_check), edge_split: parseEdgeSplit(raw.edge_split), peers: parsePeers(raw.peers),
+    sentences: (Array.isArray(raw.sentences) ? raw.sentences : []).filter((x): x is string => typeof x === "string" && x !== "") };
+  return d.compare || d.dg_check || d.edge_split || d.peers || d.sentences.length ? d : null;
+}
+function parseForm(raw: unknown): Form | null {
+  if (!isObject(raw)) return null;
+  const w = isObject(raw.windows) ? raw.windows : {};
+  const windows: Form["windows"] = {};
+  for (const k of FORM_WINDOWS) { const e = w[k]; if (isObject(e) && num(e.mean) !== null) windows[k] = { mean: num(e.mean), n: num(e.n) }; }
+  const seasons = (Array.isArray(raw.seasons) ? raw.seasons : []).filter((x): x is Record<string, unknown> => isObject(x) && num(x.year) !== null && num(x.mean) !== null)
+    .map((x) => ({ year: x.year as number, mean: num(x.mean), n: num(x.n) })).sort((a, b) => a.year - b.year);
+  return Object.keys(windows).length || seasons.length ? { n: num(raw.n), last_round: str(raw.last_round), windows, seasons } : null;
+}
+function parseDivergence(raw: unknown): Divergence | null {
+  if (!isObject(raw)) return null;
+  const c = isObject(raw.course_data) ? raw.course_data : null;
+  const f = isObject(raw.dg_odds_fit) ? raw.dg_odds_fit : null;
+  const fs = isObject(raw.form_source) ? raw.form_source : null;
+  const out: Divergence = {
+    version: num(raw.version),
+    course_data: c ? { n_players: num(c.n_players), fit_available: num(c.fit_available), history_available: num(c.history_available), venue_editions: num(c.venue_editions), blank: c.blank === true, label: str(c.label), note: str(c.note) } : null,
+    dg_odds_fit: f ? { market: str(f.market), slope: num(f.slope), intercept: num(f.intercept), n: num(f.n), resid_sd_skill: num(f.resid_sd_skill), flag_threshold: num(f.flag_threshold), n_flagged: num(f.n_flagged),
+      flagged: (Array.isArray(f.flagged) ? f.flagged : []).map(num).filter((n): n is number => n !== null) } : null,
+    field_edge_mean: num(raw.field_edge_mean), form_source: fs ? { table: str(fs.table), before: str(fs.before), available: fs.available === true, scale: str(fs.scale) } : null, method: str(raw.method),
+  };
+  return out.course_data || out.dg_odds_fit || out.form_source || out.field_edge_mean !== null ? out : null;
 }
 
 function parseFieldScores(raw: unknown): FieldScores | null {
@@ -237,7 +334,7 @@ export function topK(pos: number[], at: number[]): number[] {
 }
 
 /* ------------------------------------------------------------------ waterfall */
-export type WaterfallRow = { key: string; label: string; group: string; value: number; meaning: string };
+export type WaterfallRow = { key: string; label: string; group: string; value: number; meaning: string; unavailable?: string };
 const GROUP_ORDER = ["skill", "course", "location", "override", "live", "weather"];
 /** Components of one player, field-relative strokes per round, grouped and then by size; near-zero rows are folded into one "smaller items" row. */
 export type WaterfallResult = { rows: WaterfallRow[]; total: number; small: number; smallCount: number; skillTotal: number; weatherTotal: number; smallSkill: number; smallSkillCount: number; unexplained: number };
@@ -256,7 +353,7 @@ export function waterfall(player: ExPlayer, legend: Record<string, LegendEntry>,
       if (lg.group === "weather") weatherSmall += value; else { smallSkill += value; smallSkillCount += 1; }
       continue;
     }
-    rows.push({ key, label: lg.label, group: lg.group, value, meaning: lg.meaning });
+    rows.push({ key, label: lg.label, group: lg.group, value, meaning: lg.meaning, ...(lg.unavailable ? { unavailable: lg.unavailable } : {}) });
   }
   rows.sort((a, b) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group) || Math.abs(b.value) - Math.abs(a.value));
   const total = rows.reduce((s, r) => s + r.value, 0) + small;
@@ -1086,7 +1183,9 @@ function parseDg(raw: unknown): DgRef | null {
 export type DgGapKind = "win" | "top_20" | "skill";
 export const DG_GAP_LABEL: Record<DgGapKind, string> = { win: "Win", top_20: "Top 20", skill: "Skill" };
 /** ours / dg: chances (win, top 20) or skills in strokes a round; gap: relative for chances (ours / DataGolf's - 1), strokes for skill (ours - DataGolf's). */
-export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number };
+export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number;
+  /** Skill rows only: Data Golf's stated skill disagrees with its own odds (diverge.dg_check.flag). `dg` and `gap` are then measured against the skill its odds imply, `stated` is the number it published. */
+  flag?: boolean; stated?: number | null };
 export const DG_SKILL_MIN = 0.1;      // a skill gap under 0.1 strokes a round counts as in line
 export const DG_TOP20_MIN = 0.05;     // players DataGolf gives at least 5% to finish top 20, plus this week's contenders
 export const DG_WIN_FLOOR = 0.01;     // win view: at least 1% to win with us or Data Golf
@@ -1103,7 +1202,10 @@ export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]):
   for (const p of pool) {
     const d = p.dg!;
     if (kind === "skill") {
-      if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap });
+      const ck = p.diverge?.dg_check;
+      // With the odds check, compare against the skill Data Golf's own odds imply (its stated number can be off for some players); flagged players carry a warning.
+      if (ck && ck.skill_from_odds !== null && ck.gap_vs_odds !== null && (ck.skill_ours ?? d.skill_ours) !== null) rows.push({ id: p.id, name: plainName(p.name), ours: (ck.skill_ours ?? d.skill_ours) as number, dg: ck.skill_from_odds, gap: ck.gap_vs_odds, flag: ck.flag, stated: ck.skill_stated ?? d.skill });
+      else if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap, flag: ck?.flag === true, stated: d.skill });
     } else {
       const ours = p.probs[kind].model, dg = d[kind] ?? null;
       if (ours !== null && dg !== null && dg > 0 && dg < 1) rows.push({ id: p.id, name: plainName(p.name), ours, dg, gap: ours / dg - 1 });
@@ -1115,8 +1217,8 @@ export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]):
   const lower = rows.filter((r) => r.gap <= -min).sort(byGap).slice(0, n);
   return { higher, lower, scale: Math.max(kind === "skill" ? 0.3 : 0.25, ...[...higher, ...lower].map((r) => Math.abs(r.gap))) };
 }
-/** The single biggest skill gap against DataGolf among the same players, or null. */
+/** The single biggest skill gap against DataGolf among the same players, or null. Players whose stated skill disagrees with Data Golf's own odds are skipped (their gap is mostly Data Golf's inconsistency, not a disagreement); the rest are ranked on the odds-implied gap when the document has it. */
 export function biggestDgSkillGap(doc: ExplainDoc, ids?: number[]): DgGapRow | null {
-  const g = dgGaps(doc, "skill", 1, ids);
-  return [...g.higher, ...g.lower].sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))[0] ?? null;
+  const g = dgGaps(doc, "skill", 1000, ids);
+  return [...g.higher, ...g.lower].filter((r) => !r.flag).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))[0] ?? null;
 }
