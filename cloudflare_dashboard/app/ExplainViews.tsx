@@ -12,10 +12,10 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
 import type { FinishSeries } from "./ExplainCharts";
 import {
-  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
+  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
   explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
-  type DgGapKind, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
+  type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
@@ -467,42 +467,68 @@ function GapGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; o
   );
 }
 
-/** Where we differ most from Data Golf: win and top-20 chances (as a share of theirs) and skill estimates (strokes a round). Reference only. */
+/** Where we differ most from Data Golf: skill estimates (strokes a round) and every bet type's chance (raw percentage points), with the owner's
+ * minimum-rounds / minimum-skill filter (remembered in this browser). Reference only. */
 function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; openPlayer: (id: number) => void }) {
   const [kind, setKind] = useState<DgGapKind>("skill");
-  const g = useMemo(() => dgGaps(doc, kind, 4, ids), [doc, kind, ids]);
+  const [filter, setFilterState] = useState<DgFilter>(DG_FILTER_DEFAULT);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("gp.dgFilter");
+      const f = raw ? JSON.parse(raw) : null;
+      if (f && DG_ROUNDS_OPTIONS.includes(f.minRounds) && DG_SKILL_OPTIONS.includes(f.minSkill)) setFilterState({ minRounds: f.minRounds, minSkill: f.minSkill });
+    } catch { /* storage unavailable: defaults */ }
+  }, []);
+  const setFilter = (f: DgFilter) => { setFilterState(f); try { window.localStorage.setItem("gp.dgFilter", JSON.stringify(f)); } catch { /* ignore */ } };
+  const markets = useMemo(() => DG_GAP_KINDS.filter((k) => k === "skill" || (availableMarkets(doc) as string[]).includes(k)), [doc]);
+  const g = useMemo(() => dgGaps(doc, kind, 5, ids, filter), [doc, kind, ids, filter]);
   const skill = kind === "skill";
   const what = skill ? "skill" : `${DG_GAP_LABEL[kind].toLowerCase()} chance`;
   const nums = (r: { ours: number; dg: number }) => (skill ? `${signed(r.ours)} vs ${signed(r.dg)}` : `${pct(r.ours)} vs ${pct(r.dg)}`);
   const checked = skill && [...g.higher, ...g.lower].some((r) => r.stated !== undefined);
   const anyFlag = skill && [...g.higher, ...g.lower].some((r) => r.flag);
-  const gapTxt = (v: number) => (skill ? `${signed(v)}` : relText(v));
+  const gapTxt = (v: number) => (skill ? `${signed(v)}` : ptsText(v));
+  const filtered = filter.minRounds > 0 || filter.minSkill !== null;
   const list = (rows: typeof g.higher, title: string) => (
     <div className="ex-gap-col">
       <h3 className="ex-h3">{title}</h3>
       {rows.length ? <ul>{rows.map((r) => (
         <li key={r.id}>
           <button type="button" onClick={() => openPlayer(r.id)}>
-            <span className="ex-mv-name">{r.name}{r.flag && <span className="ex-dg-warn" role="img" aria-label="Data Golf's stated skill disagrees with its own odds" title={`Data Golf's odds imply ${signed(r.dg)}; its stated skill is ${r.stated != null ? signed(r.stated) : "n/a"}.`}> ⚠</span>}</span>
+            <span className="ex-mv-name">{r.name}{r.flag && <span className="ex-dg-warn" role="img" aria-label="Data Golf's stated skill disagrees with its own odds" title={`Data Golf's odds imply ${signed(r.dg)}; its stated skill is ${r.stated != null ? signed(r.stated) : "n/a"}.`}> ⚠</span>}
+              {r.rounds !== null && <small className="ex-dg-rounds" title="Rounds on record before this event">{Math.round(r.rounds)} rds</small>}</span>
             <DeltaBar value={r.gap} scale={g.scale} label={`${r.name}: our ${what} ${gapTxt(r.gap)} against Data Golf${r.flag ? " (its odds imply a different skill than it states)" : ""}`} />
             <span className="ex-mv-nums">{skill && r.flag && r.numberGap != null ? `skill numbers ${signed(r.numberGap)}, on chances ${signed(r.gap)}` : nums(r)}</span>
             <b className={r.gap > 0 ? "pos" : "neg"}>{r.gap > 0 ? "▲" : "▼"} {gapTxt(r.gap)}</b>
           </button>
         </li>
-      ))}</ul> : <p className="ex-muted">Nobody: every gap is under {skill ? "0.1 strokes a round" : "5%"}.</p>}
+      ))}</ul> : <p className="ex-muted">Nobody{filtered ? " who passes the filter" : ""}: every gap is under {skill ? "0.1 strokes a round" : ptsText(DG_PTS_MIN[kind as Exclude<DgGapKind, "skill">]).replace("+", "")}.</p>}
     </div>
   );
+  const sel = (label: string, value: string, options: Array<[string, string]>, onChange: (v: string) => void) => (
+    <label className="ex-dg-filter">{label}
+      <select value={value} onChange={(e) => onChange(e.target.value)}>{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+    </label>
+  );
   return (
-    <Panel title="Where we differ from Data Golf" eyebrow={skill ? "Skill estimate, ours vs Data Golf's" : `${DG_GAP_LABEL[kind]} chance, ours vs Data Golf's`}
-      actions={<SegmentedControl label="Compare" value={kind} onChange={setKind} options={(["skill", "win", "top_20"] as DgGapKind[]).map((k) => ({ value: k, label: DG_GAP_LABEL[k] }))} />}>
+    <Panel title="Where we differ from Data Golf" eyebrow={skill ? "Skill estimate, ours vs Data Golf's" : `${DG_GAP_LABEL[kind]} chance, ours vs Data Golf's, in percentage points`}
+      actions={<SegmentedControl label="Compare" value={kind} onChange={setKind} options={markets.map((k) => ({ value: k, label: DG_GAP_LABEL[k] }))} />}>
+      <div className="ex-dg-filters" role="group" aria-label="Filter players">
+        {sel("Min rounds", String(filter.minRounds), DG_ROUNDS_OPTIONS.map((n) => [String(n), n === 0 ? "Any" : `${n}+`]), (v) => setFilter({ ...filter, minRounds: Number(v) }))}
+        {sel("Min skill", filter.minSkill === null ? "any" : String(filter.minSkill), DG_SKILL_OPTIONS.map((x) => [x === null ? "any" : String(x), x === null ? "Any" : `${signed(x, 1)} vs field`]),
+          (v) => setFilter({ ...filter, minSkill: v === "any" ? null : Number(v) }))}
+        <span className="ex-muted">{g.pool} players compared</span>
+        {filtered && <button type="button" className="ex-linkbtn" onClick={() => setFilter(DG_FILTER_DEFAULT)}>Clear</button>}
+      </div>
       <div className="ex-gap-grid">
         {list(g.higher, "We are higher")}
         {list(g.lower, "We are lower")}
       </div>
       {anyFlag && <p className="ex-muted ex-dg-warn-note"><span aria-hidden="true">⚠ </span><Term k="ex_dg_check">Data Golf&rsquo;s odds check</Term>: for the marked players its stated skill is out of line with its own odds, so for those players we show both gaps: the skill numbers (ours minus Data Golf&rsquo;s stated skill) and the gap on chances (what its win and top-20 odds imply), which is the one used for ranking.</p>}
       <p className="ex-muted">{skill
-        ? <>Skill is strokes a round against the average of this field (before weather), ours vs {checked ? <>the skill Data Golf&rsquo;s own odds imply</> : <>Data Golf&rsquo;s final pre-tournament estimate</>}; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
-        : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} {skill ? <>This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance.</> : <>Players with at least a {kind === "win" ? "1% win" : "10% top-20"} chance with us or Data Golf, so long shots don&rsquo;t fill the list.</>} Data Golf is a reference only; it never enters our price.</p>
+        ? <>Skill is strokes a round against the average of this field (before weather), ours vs {checked ? <>the skill Data Golf&rsquo;s own odds imply</> : <>Data Golf&rsquo;s final pre-tournament estimate</>}; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term> This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance.</>
+        : <>The gap is our chance minus Data Golf&rsquo;s pre-tournament chance, in percentage points (pts): 5.0% vs 3.0% is +2.0 pts. Gaps under {ptsText(DG_PTS_MIN[kind as Exclude<DgGapKind, "skill">]).replace("+", "")} are not listed.</>}
+        {" "}Min skill uses the higher of our skill and Data Golf&rsquo;s, in strokes a round against this field. Data Golf is a reference only; it never enters our price.</p>
     </Panel>
   );
 }

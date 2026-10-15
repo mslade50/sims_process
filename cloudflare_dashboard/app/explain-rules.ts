@@ -1187,42 +1187,62 @@ function parseDg(raw: unknown): DgRef | null {
   return Object.values(out).some((v) => v !== null) ? out : null;
 }
 
-export type DgGapKind = "win" | "top_20" | "skill";
-export const DG_GAP_LABEL: Record<DgGapKind, string> = { win: "Win", top_20: "Top 20", skill: "Skill" };
-/** ours / dg: chances (win, top 20) or skills in strokes a round; gap: relative for chances (ours / DataGolf's - 1), strokes for skill (ours - DataGolf's). */
-export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number;
+export type DgGapKind = "skill" | "win" | "top_5" | "top_10" | "top_20" | "make_cut";
+export const DG_GAP_KINDS: DgGapKind[] = ["skill", "win", "top_5", "top_10", "top_20", "make_cut"];
+export const DG_GAP_LABEL: Record<DgGapKind, string> = { skill: "Skill", win: "Win", top_5: "Top 5", top_10: "Top 10", top_20: "Top 20", make_cut: "Make cut" };
+/** ours / dg: chances or skills in strokes a round; gap: percentage points for chances (100 x (ours - DataGolf's)), strokes for skill (ours - DataGolf's). */
+export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number; rounds: number | null; skill: number | null;
   /** Skill rows only: Data Golf's stated skill disagrees with its own odds (diverge.dg_check.flag). `dg` and `gap` are then measured against the skill its odds imply, `stated` is the number it published. */
   flag?: boolean; stated?: number | null; numberGap?: number | null };
 export const DG_SKILL_MIN = 0.1;      // a skill gap under 0.1 strokes a round counts as in line
 export const DG_TOP20_MIN = 0.05;     // players DataGolf gives at least 5% to finish top 20, plus this week's contenders
-export const DG_WIN_FLOOR = 0.01;     // win view: at least 1% to win with us or Data Golf
-export const DG_TOP20_FLOOR = 0.1;    // top-20 view: at least 10% to finish top 20 with us or Data Golf
+/** Smallest chance gap (percentage points) worth listing, per bet type: a point means more on a 3% win chance than on an 80% make-cut chance. */
+export const DG_PTS_MIN: Record<Exclude<DgGapKind, "skill">, number> = { win: 0.3, top_5: 0.75, top_10: 1, top_20: 1.5, make_cut: 2 };
+/** Owner filters for the Data Golf panel: minimum rounds on record and minimum skill (strokes a round vs this field, the higher of ours and Data Golf's). */
+export type DgFilter = { minRounds: number; minSkill: number | null };
+export const DG_FILTER_DEFAULT: DgFilter = { minRounds: 0, minSkill: null };
+export const DG_ROUNDS_OPTIONS = [0, 50, 100, 200];
+export const DG_SKILL_OPTIONS: Array<number | null> = [null, 0, 0.5, 1, 1.5];
 /** Whether the document carries any DataGolf reference (older documents and live runs do not). */
 export function hasDg(doc: ExplainDoc): boolean { return doc.players.some((p) => p.dg != null); }
-/** Biggest gaps against DataGolf, ours above and ours below, among this week's contenders and the players DataGolf gives a real top-20 chance. */
-export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]): { higher: DgGapRow[]; lower: DgGapRow[]; scale: number } {
-  // Chance gaps are relative, so long shots (0.06% vs 0.2%) would fill the list with noise: the chance views need a real chance on either side.
-  const floor = kind === "win" ? DG_WIN_FLOOR : kind === "top_20" ? DG_TOP20_FLOOR : 0;
-  const real = (p: ExPlayer) => kind === "skill" || Math.max(p.probs[kind].model ?? 0, p.dg?.[kind] ?? 0) >= floor;
-  const pool = doc.players.filter((p) => !p.withdrawn && p.dg && ((ids ?? []).includes(p.id) || (p.dg.top_20 ?? 0) >= DG_TOP20_MIN) && real(p));
+/** The player's skill for the filter: the higher of ours (mu_rel) and Data Golf's skill number, so a player either model rates passes. */
+export function dgFilterSkill(p: ExPlayer): number | null {
+  const v = [p.mu_rel, p.dg?.skill].filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  return v.length ? Math.max(...v) : null;
+}
+export function passesDgFilter(p: ExPlayer, f: DgFilter): boolean {
+  if (f.minRounds > 0 && !(typeof p.n_prior_rounds === "number" && p.n_prior_rounds >= f.minRounds)) return false;
+  if (f.minSkill !== null) {
+    const s = dgFilterSkill(p);
+    if (s === null || s < f.minSkill) return false;
+  }
+  return true;
+}
+/** Biggest gaps against DataGolf, ours above and ours below. Skill: this week's contenders and the players DataGolf gives a real top-20 chance.
+ * Chances: every active player with both numbers, ranked by the raw gap in percentage points (long shots fall out naturally: their points are tiny).
+ * The owner filter (minimum rounds / minimum skill) applies to every view. */
+export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[], filter: DgFilter = DG_FILTER_DEFAULT): { higher: DgGapRow[]; lower: DgGapRow[]; scale: number; pool: number } {
+  const base = doc.players.filter((p) => !p.withdrawn && p.dg && passesDgFilter(p, filter));
+  const pool = kind === "skill" ? base.filter((p) => (ids ?? []).includes(p.id) || (p.dg!.top_20 ?? 0) >= DG_TOP20_MIN) : base;
   const rows: DgGapRow[] = [];
   for (const p of pool) {
     const d = p.dg!;
+    const extra = { rounds: typeof p.n_prior_rounds === "number" ? p.n_prior_rounds : null, skill: dgFilterSkill(p) };
     if (kind === "skill") {
       const ck = p.diverge?.dg_check;
       // With the odds check, compare against the skill Data Golf's own odds imply (its stated number can be off for some players); flagged players carry a warning.
-      if (ck && ck.skill_from_odds !== null && ck.gap_vs_odds !== null && (ck.skill_ours ?? d.skill_ours) !== null) rows.push({ id: p.id, name: plainName(p.name), ours: (ck.skill_ours ?? d.skill_ours) as number, dg: ck.skill_from_odds, gap: ck.gap_vs_odds, flag: ck.flag, stated: ck.skill_stated ?? d.skill, numberGap: ck.skill_number_gap ?? d.skill_gap });
-      else if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap, flag: ck?.flag === true, stated: d.skill });
+      if (ck && ck.skill_from_odds !== null && ck.gap_vs_odds !== null && (ck.skill_ours ?? d.skill_ours) !== null) rows.push({ id: p.id, name: plainName(p.name), ours: (ck.skill_ours ?? d.skill_ours) as number, dg: ck.skill_from_odds, gap: ck.gap_vs_odds, flag: ck.flag, stated: ck.skill_stated ?? d.skill, numberGap: ck.skill_number_gap ?? d.skill_gap, ...extra });
+      else if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap, flag: ck?.flag === true, stated: d.skill, ...extra });
     } else {
-      const ours = p.probs[kind].model, dg = d[kind] ?? null;
-      if (ours !== null && dg !== null && dg > 0 && dg < 1) rows.push({ id: p.id, name: plainName(p.name), ours, dg, gap: ours / dg - 1 });
+      const ours = p.probs[kind]?.model ?? null, dg = d[kind] ?? null;
+      if (ours !== null && dg !== null && Number.isFinite(ours) && Number.isFinite(dg)) rows.push({ id: p.id, name: plainName(p.name), ours, dg, gap: 100 * (ours - dg), ...extra });
     }
   }
-  const min = kind === "skill" ? DG_SKILL_MIN : EDGE_MIN;
+  const min = kind === "skill" ? DG_SKILL_MIN : DG_PTS_MIN[kind];
   const byGap = (a: DgGapRow, b: DgGapRow) => Math.abs(b.gap) - Math.abs(a.gap) || a.name.localeCompare(b.name);
   const higher = rows.filter((r) => r.gap >= min).sort(byGap).slice(0, n);
   const lower = rows.filter((r) => r.gap <= -min).sort(byGap).slice(0, n);
-  return { higher, lower, scale: Math.max(kind === "skill" ? 0.3 : 0.25, ...[...higher, ...lower].map((r) => Math.abs(r.gap))) };
+  return { higher, lower, pool: rows.length, scale: Math.max(kind === "skill" ? 0.3 : 2 * min, ...[...higher, ...lower].map((r) => Math.abs(r.gap))) };
 }
 /** The single biggest skill gap against DataGolf among the same players, or null. Players whose stated skill disagrees with Data Golf's own odds are skipped (their gap is mostly Data Golf's inconsistency, not a disagreement); the rest are ranked on the odds-implied gap when the document has it. */
 export function biggestDgSkillGap(doc: ExplainDoc, ids?: number[]): DgGapRow | null {

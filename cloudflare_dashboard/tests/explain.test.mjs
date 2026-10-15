@@ -310,9 +310,9 @@ test("spread label reads the gap relative to this week's contenders; older docum
   assert.equal(R.spreadLeanNote(null, true), null);
 });
 
-test("Data Golf gaps: chances relative to theirs, skill in strokes, contenders plus real top-20 chances; old documents have none", () => {
+test("Data Golf gaps: chances in percentage points, skill in strokes, owner filters; old documents have none", () => {
   assert.equal(hasDg(week), false);
-  assert.deepEqual(dgGaps(week, "skill"), { higher: [], lower: [], scale: 0.3 });
+  assert.deepEqual(dgGaps(week, "skill"), { higher: [], lower: [], scale: 0.3, pool: 0 });
   const raw = await_week;
   const players = raw.players.map((p, i) => ({ ...p, dg: { win: (p.probs?.win?.model ?? 0.01) * (i === 0 ? 0.5 : 1), top_20: 0.3, skill: 0.1 * i, skill_ours: 0.1 * i + (i === 1 ? 0.4 : i === 2 ? -0.25 : 0), skill_gap: i === 1 ? 0.4 : i === 2 ? -0.25 : 0 } }));
   const d = parseExplain({ ...raw, players });
@@ -321,9 +321,17 @@ test("Data Golf gaps: chances relative to theirs, skill in strokes, contenders p
   assert.equal(s.higher[0].id, players[1].id);
   assert.equal(s.lower[0].gap, -0.25);
   assert.equal(biggestDgSkillGap(d).id, players[1].id);
-  const w = dgGaps(d, "win", 4);
-  if (players[0].probs?.win?.model) assert.ok(Math.abs(w.higher[0].gap - 1) < 1e-9);       // ours twice theirs = +100%
-  assert.ok(w.higher.every((r) => r.gap >= 0.05) && w.lower.every((r) => r.gap <= -0.05));
+  const w = dgGaps(d, "win", 100);
+  const p0 = players[0].probs?.win?.model;
+  if (p0 && 100 * (p0 - p0 * 0.5) >= 0.3) assert.ok(Math.abs(w.higher.find((r) => r.id === players[0].id).gap - 100 * (p0 - p0 * 0.5)) < 1e-9);   // raw points, not relative
+  assert.ok(w.higher.every((r) => r.gap >= 0.3) && w.lower.every((r) => r.gap <= -0.3));
+  // filters: min rounds drops players below it (and players with no count); min skill uses the higher of ours and Data Golf's
+  const thin = parseExplain({ ...raw, players: players.map((p, i) => ({ ...p, n_prior_rounds: i === 1 ? 10 : 500 })) });
+  assert.ok(dgGaps(thin, "skill", 100).higher.some((r) => r.id === players[1].id));
+  assert.ok(!dgGaps(thin, "skill", 100, undefined, { minRounds: 50, minSkill: null }).higher.some((r) => r.id === players[1].id));
+  const all = dgGaps(thin, "top_20", 1000).pool, hi = dgGaps(thin, "top_20", 1000, undefined, { minRounds: 0, minSkill: 1 }).pool;
+  assert.ok(hi <= all);
+  for (const r of [...dgGaps(thin, "top_20", 1000, undefined, { minRounds: 0, minSkill: 1 }).higher]) assert.ok(r.skill >= 1);
   assert.equal(parseExplain({ ...raw, players: [{ ...raw.players[0], dg: { skill: "x" } }] }).players[0].dg, null);
 });
 
