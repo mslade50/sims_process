@@ -27,6 +27,8 @@
   // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). Required by worker/access.ts.
   "vars": {
     "ACCESS_TEAM_DOMAIN": "denaliassetmanagement.cloudflareaccess.com",
-    "ACCESS_AUD": "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0"
+    "ACCESS_AUD": "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0",
+    // Owners (worker/owner.ts): only these Access users see Run, weather edits and overrides. Colleagues added in Access see the rest.
+    "OWNER_EMAILS": "mckinleyslade@gmail.com"
   }
 }

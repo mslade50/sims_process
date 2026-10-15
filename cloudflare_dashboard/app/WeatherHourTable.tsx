@@ -2,6 +2,7 @@
 
 import { Pencil } from "lucide-react";
 import { etTime } from "./lib";
+import { useIsOwner } from "./viewer";
 import { compassLetters, ownerEditKind } from "./weather-overrides-rules";
 import { hhmm, type HourlyPoint, type OwnerOverrideSummary } from "./weather-rules";
 import "./weather-edits.css";
@@ -21,13 +22,14 @@ export function editTitle(point: HourlyPoint, field: Field): string | undefined 
 
 /** The "Includes your weather edits" note shown above the charts when the published forecast carries owner edits. */
 export function OwnerEditNote({ summary, eventUid }: { summary: OwnerOverrideSummary | null; eventUid: string }) {
+  const owner = useIsOwner();   // colleagues see that edits are in, not the way to change them (worker/owner.ts)
   if (!summary) return null;
   if (summary.expired || summary.count === 0) return <p className="inputs-muted wx-edit-note">Earlier in-event edits have expired.</p>;
   return (
     <p className="inputs-note accent wx-edit-note" role="status">
-      <Pencil size={13} /> Includes your {ownerEditKind(summary)}: {summary.count} {summary.count === 1 ? "hour" : "hours"}
+      <Pencil size={13} /> Includes {owner ? "your" : "the owner's"} {ownerEditKind(summary)}: {summary.count} {summary.count === 1 ? "hour" : "hours"}
       {summary.updated_at || summary.updated_by ? ` (saved ${summary.updated_at ? etTime(summary.updated_at) : "earlier"}${summary.updated_by ? ` by ${summary.updated_by}` : ""})` : ""}. The forecast values are in the tooltips.{" "}
-      <a className="ex-link" href={`/weather-edits?e=${encodeURIComponent(eventUid)}`}>Change them</a>
+      {owner && <a className="ex-link" href={`/weather-edits?e=${encodeURIComponent(eventUid)}`}>Change them</a>}
       {summary.stale && <><br /><strong>A newer forecast came out{summary.forecast_newer_by_h !== null ? ` ${Math.round(summary.forecast_newer_by_h)} h` : ""} after these edits were saved, and the edits still override it.</strong> Check them against the new forecast or clear them.</>}
     </p>
   );

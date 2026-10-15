@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
+import { useIsOwner } from "./viewer";
 import { WeatherBriefBody } from "./WeatherBriefView";
 import { OwnerEditNote, WeatherHourTable, editTitle } from "./WeatherHourTable";
 import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
@@ -311,6 +312,7 @@ export function CheckpointBanner({ event, docAsOf }: { event: IndexEvent; docAsO
 }
 
 export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
+  const owner = useIsOwner();   // weather edits are owner-only (worker/owner.ts)
   const [roundPick, setRound] = useState<number | null>(null);
   const round = roundPick !== null && doc.rounds.includes(roundPick) ? roundPick : doc.rounds[0] ?? 1;
   const points = doc.forecast.hourly.filter((h) => h.round === round);
@@ -336,7 +338,7 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
         <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={doc.rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
       )}
 
-      <Panel eyebrow={`Round ${round}`} title="Forecast by hour" actions={<a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a>}>
+      <Panel eyebrow={`Round ${round}`} title="Forecast by hour" actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
         <OwnerEditNote summary={doc.forecast.owner_overrides} eventUid={doc.event_uid} />
         {points.length ? <><HourlyCharts points={points} waves={waves} /><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." />}
       </Panel>
@@ -359,11 +361,12 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
 
 /** Under the weather brief: the hour-by-hour numbers for one round, plus the way into the edit page. */
 function BriefHourly({ doc }: { doc: WeatherDoc }) {
+  const owner = useIsOwner();   // weather edits are owner-only (worker/owner.ts)
   const rounds = [...new Set(doc.forecast.hourly.map((h) => h.round))].sort((a, b) => a - b);
   const [pick, setPick] = useState<number | null>(null);
   const round = pick !== null && rounds.includes(pick) ? pick : rounds[0];
   return (
-    <Panel eyebrow="Hour by hour" title="Forecast numbers by round" actions={<a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a>}>
+    <Panel eyebrow="Hour by hour" title="Forecast numbers by round" actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
       <SegmentedControl label="Round" value={String(round)} onChange={(x) => setPick(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
       <WeatherHourTable points={doc.forecast.hourly.filter((h) => h.round === round)} />
     </Panel>

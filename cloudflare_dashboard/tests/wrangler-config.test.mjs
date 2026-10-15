@@ -14,3 +14,8 @@ test("R2 binding and Access vars are declared", () => {
   assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }]);
   assert.ok(cfg.vars?.ACCESS_TEAM_DOMAIN && cfg.vars?.ACCESS_AUD);
 });
+test("owner-only gate is on in the deployed config", () => {
+  const owners = String(cfg.vars?.OWNER_EMAILS ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+  assert.ok(owners.length > 0, "OWNER_EMAILS must name at least one owner, or Run and overrides open to every Access user");
+  for (const email of owners) assert.match(email, /^[^@\s]+@[^@\s]+$/);
+});

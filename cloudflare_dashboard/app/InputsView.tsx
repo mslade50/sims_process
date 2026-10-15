@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalSto
 import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl, humanValue } from "./components";
+import { useIsOwner } from "./viewer";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
 import { matchPlayers, matchText } from "./inputs-search";
@@ -426,7 +427,7 @@ function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (d
 
 const THIN_ROUNDS = 50;
 
-function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust: (dgId: number) => void; fmtTee: (local: unknown) => Tee; playedRounds: number }) {
+function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust?: (dgId: number) => void; fmtTee: (local: unknown) => Tee; playedRounds: number }) {
   const ch = obj(player.challenger);
   const bd = obj(ch.breakdown);
   const overridden = playerHasOverride(player);
@@ -472,7 +473,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
       actions={
         <>
           <PlayerSearch players={choices} onPick={onPick} />
-          <button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>
+          {onAdjust && <button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>}
         </>
       }
     >
@@ -572,7 +573,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
 const SIGNED_COLUMNS = new Set(["mu", "mu_untouched", "location", "course_fit", "override_total", "course_history", "fit_rs_ddacc", LABELS.thisWeekPga.short]);
 const SWING_COLUMNS = new Set(["sd", "sd_untouched", "se_kernel", "course_sd_mult"]);
 
-function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust: (dgId: number) => void; playedRounds: number }) {
+function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgId: number) => void; playedRounds: number }) {
   const players = arr(doc.players);
   const showUntouched = useMemo(() => players.some(playerHasOverride), [players]);
   const rows = useMemo(() => playerRows(players, showUntouched), [players, showUntouched]);
@@ -1618,6 +1619,8 @@ export function InputsView() {
   });
   const [presetPlayer, setPresetPlayer] = useState<number | null>(null);
   const narrow = useNarrow();
+  // Adjust (overrides) is owner-only: hidden for colleagues, and the Worker refuses /api/overrides for them (worker/owner.ts).
+  const owner = useIsOwner();
 
   const events = useMemo(() => index?.events ?? [], [index]);
   const event = events.find((e) => e.event_uid === eventUid) ?? events[0];
@@ -1634,13 +1637,14 @@ export function InputsView() {
   const runAsOf = String(run?.as_of ?? "");
   const playedRounds = run?.kind === "live" ? run.after_round ?? 0 : 0;
   const runTech = run ? <KeyValue data={{ run_file: run.key, hole_table_file: run.hole_table_key, checksum: run.sha256, size_bytes: run.bytes, schema: index?.schema, overrides_applied: run.overrides_applied, overrides_rejected: run.overrides_rejected }} /> : null;
-  const tabOptions = TABS.map((t) => ({ value: t.value, label: t.label }));
+  const tabOptions = TABS.filter((t) => owner || t.value !== "adjust").map((t) => ({ value: t.value, label: t.label }));
+  const activeTab: Tab = !owner && tab === "adjust" ? "players" : tab;
   return (
     <div>
       <PageIntro
         eyebrow="Model"
         title="Model inputs"
-        description="What went into the simulation: player skill, the course, how much scores swing, weather, odds and settings. Features explains every skill measurement; Adjust applies one-off overrides."
+        description={`What went into the simulation: player skill, the course, how much scores swing, weather, odds and settings. Features explains every skill measurement${owner ? "; Adjust applies one-off overrides" : ""}.`}
         controls={
           <div className="control-row wrap">
             <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
@@ -1656,18 +1660,18 @@ export function InputsView() {
         {run && <span>{run.n_players} players</span>}
         <span>{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "no overrides applied"}</span>
       </div>
-      {narrow ? <Select label="Section" value={tab} onChange={(v) => setTab(v as Tab)} options={tabOptions} /> : <SegmentedControl label="Model inputs area" value={tab} onChange={setTab} options={tabOptions} />}
-      {docLoading && tab !== "features" && <LoadingState label="Loading run" />}
-      {docError && tab !== "features" && tab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
-      {doc && tab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={(id) => { setPresetPlayer(id); setTab("adjust"); }} />}
-      {doc && tab === "course" && <CourseTab doc={doc} extra={runTech} />}
-      {doc && tab === "variance" && <VarianceTab doc={doc} extra={runTech} />}
-      {doc && tab === "weather" && <WeatherTab doc={doc} runAsOf={runAsOf} extra={runTech} />}
-      {doc && tab === "odds" && <OddsTab doc={doc} runAsOf={runAsOf} />}
-      {doc && tab === "config" && <ConfigTab doc={doc} extra={runTech} />}
-      {tab === "features" && <FeaturesTab />}
-      {doc && tab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} />}
-      {run && !OWN_TECHNICAL.includes(tab) && (
+      {narrow ? <Select label="Section" value={activeTab} onChange={(v) => setTab(v as Tab)} options={tabOptions} /> : <SegmentedControl label="Model inputs area" value={activeTab} onChange={setTab} options={tabOptions} />}
+      {docLoading && activeTab !== "features" && <LoadingState label="Loading run" />}
+      {docError && activeTab !== "features" && activeTab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
+      {doc && activeTab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={owner ? (id) => { setPresetPlayer(id); setTab("adjust"); } : undefined} />}
+      {doc && activeTab === "course" && <CourseTab doc={doc} extra={runTech} />}
+      {doc && activeTab === "variance" && <VarianceTab doc={doc} extra={runTech} />}
+      {doc && activeTab === "weather" && <WeatherTab doc={doc} runAsOf={runAsOf} extra={runTech} />}
+      {doc && activeTab === "odds" && <OddsTab doc={doc} runAsOf={runAsOf} />}
+      {doc && activeTab === "config" && <ConfigTab doc={doc} extra={runTech} />}
+      {activeTab === "features" && <FeaturesTab />}
+      {doc && activeTab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} />}
+      {run && !OWN_TECHNICAL.includes(activeTab) && (
         <div style={{ marginTop: 24 }}>
           <Technical>{runTech}</Technical>
         </div>

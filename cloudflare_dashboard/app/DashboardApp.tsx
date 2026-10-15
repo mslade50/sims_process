@@ -21,10 +21,11 @@ import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData } from "./data";
 import { titleCase } from "./lib";
-import { LEGACY_VIEWS, NAVIGATION, navEntryFor, resolveRoute, unknownEventParam, type NavItem } from "./shell-rules";
+import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
 import { FreshnessBadge, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
+import { useViewer } from "./viewer";
 import "./shell.css";
 
 export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced";
@@ -130,13 +131,13 @@ function Moved({ to }: { to: string }) {
   );
 }
 
-function NotFound({ requested }: { requested: string }) {
+function NotFound({ requested, navigation }: { requested: string; navigation: NavGroup[] }) {
   return (
     <div className="route-notice">
       <PageIntro eyebrow="Not found" title="That page does not exist" description={requested ? `There is no page at /${requested}.` : "There is no page at this address."} />
       <EmptyState title="Pick a page from the navigation" detail="Or start with one of these." />
       <ul>
-        {NAVIGATION.filter((group) => !group.collapsed).flatMap((group) => group.items).map((item) => (
+        {navigation.filter((group) => !group.collapsed).flatMap((group) => group.items).map((item) => (
           <li key={item.key}><a className="ex-link" href={item.href}>{item.label}</a> <small>{item.description}</small></li>
         ))}
       </ul>
@@ -168,6 +169,10 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const route = resolveRoute(initialView, Object.keys(views));
   const activeKey = route.kind === "view" || route.kind === "redirect" || route.kind === "retired" ? route.key : "";
   const ActiveView = route.kind === "view" ? views[route.key as ViewKey] : route.kind === "retired" ? ResearchView : null;
+  // Colleagues see everything but the owner-only areas (worker/owner.ts enforces it; this only hides the links).
+  const viewer = useViewer();
+  const navigation = navigationFor(viewer?.owner === true);
+  const ownerOnly = route.kind === "view" && OWNER_ONLY_VIEWS.includes(route.key);
   const { data: manifest } = useDashboardData<Manifest>("manifest.json");
   // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
   // falling back to the legacy sims_process manifest only when the golfprice index is unavailable. Freshness is the OLDEST event's
@@ -224,7 +229,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [accent, density, theme]);
 
-  const activeMeta = navEntryFor(activeKey) ?? (route.kind === "notfound" ? { label: "Page not found", description: "Choose a page from the navigation" } : route.kind === "retired" ? { label: "Retired", description: "This page was retired" } : null);
+  const activeMeta = (ownerOnly && viewer && !viewer.owner ? null : navEntryFor(activeKey)) ?? (route.kind === "notfound" || ownerOnly ? { label: "Page not found", description: "Choose a page from the navigation" } : route.kind === "retired" ? { label: "Retired", description: "This page was retired" } : null);
   const archiveActive = isLegacy;
   const [archiveOpen, setArchiveOpen] = useState(archiveActive);
 
@@ -240,7 +245,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           <button className="mobile-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
         <nav aria-label="Dashboard navigation">
-          {NAVIGATION.map((group) =>
+          {navigation.map((group) =>
             group.collapsed && !collapsed ? (
               <details className="nav-group nav-archive" key={group.label} open={archiveOpen} onToggle={(event) => setArchiveOpen(event.currentTarget.open)}>
                 <summary><span className="nav-label">{group.label}</span></summary>
@@ -292,7 +297,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
         </header>
         <div className="content-frame">
           {badEvent && <p className="link-notice" role="status">The event in this link is not in the published list, so the default event is shown instead.</p>}
-          {route.kind === "notfound" ? <NotFound requested={route.requested} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
+          {route.kind === "notfound" ? <NotFound requested={route.requested} navigation={navigation} /> : ownerOnly && !viewer ? null : ownerOnly && !viewer?.owner ? <NotFound requested={activeKey} navigation={navigation} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
         </div>
       </main>
 

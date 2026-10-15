@@ -80,7 +80,9 @@ test("one Players entry toggles Field and Player; the active entry resolves for 
 
 test("the rendered nav shows the groups and keeps the Archive group closed", async () => {
   const html = await (await render("/this-week")).text();
-  for (const label of ["Week", "Model", "Operate", "Review", "Archive", "Weather", "Scoring", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
+  for (const label of ["Week", "Model", "Review", "Archive", "Weather", "Scoring", "Scorecard and P&amp;L"]) assert.match(html, new RegExp(`>${label}<`), label);
+  // Owner-only links (Run, Weather edits) are added in the browser once /api/whoami says owner, so the server render never shows them.
+  for (const label of ["Operate", "Run", "Weather edits"]) assert.doesNotMatch(html, new RegExp(`>${label}<`), label);
   assert.match(html, /<details class="nav-group nav-archive"/);
   assert.doesNotMatch(html, /<details class="nav-group nav-archive" open/);
 });

@@ -86,6 +86,36 @@ export function navEntryFor(viewKey: string): { item: NavItem; label: string; de
   return null;
 }
 
+/* ------------------------------------------------------------------ owner-only areas (owner, October 15, 2026) */
+/**
+ * Colleagues may be let in through Cloudflare Access; these areas stay with the owner (OWNER_EMAILS on the Worker, worker/owner.ts).
+ * The Worker enforces it (pages redirect home, APIs answer 403); the app only hides the links.
+ */
+export const OWNER_ONLY_VIEWS: readonly string[] = ["run", "weather-edits"];
+export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/jobs", "/api/overrides", "/api/weather-overrides"];
+
+/** "page" or "api" when `pathname` is owner-only, else null. Case, a trailing slash and an `.rsc` suffix do not get around it. */
+export function ownerOnlyPath(pathname: string): "page" | "api" | null {
+  const path = pathname.toLowerCase().replace(/\.rsc$/, "").replace(/\/+$/, "");
+  if (OWNER_ONLY_API_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return "api";
+  if (OWNER_ONLY_VIEWS.some((view) => path === `/${view}`)) return "page";
+  return null;
+}
+
+/** The navigation a visitor sees: owner-only items are dropped for everyone else, and a group left empty goes with them. */
+export function navigationFor(owner: boolean): NavGroup[] {
+  if (owner) return NAVIGATION;
+  return NAVIGATION.map((group) => ({ ...group, items: group.items.filter((item) => !OWNER_ONLY_VIEWS.includes(item.key)) })).filter((group) => group.items.length > 0);
+}
+
+export type Viewer = { email: string | null; owner: boolean };
+
+/** GET /api/whoami answer to a Viewer. Anything but an explicit `owner: true` is a non-owner, so a failed check never shows owner links. */
+export function viewerFrom(json: unknown): Viewer {
+  const body = json && typeof json === "object" ? (json as { email?: unknown; owner?: unknown }) : {};
+  return { email: typeof body.email === "string" ? body.email : null, owner: body.owner === true };
+}
+
 /* ------------------------------------------------------------------ data fallback (D2) */
 export type FetchOutcome =
   | { kind: "network" }

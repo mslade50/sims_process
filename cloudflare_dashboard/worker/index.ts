@@ -5,6 +5,7 @@ import { runAlerts } from "./alerts";
 import { handleScheduled } from "./cron";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
+import { handleOwnerGate } from "./owner";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
@@ -15,6 +16,8 @@ interface Env {
   /** Optional: set both to verify the Cloudflare Access JWT signature on override writes. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** Comma-separated owner emails (worker/owner.ts): only they see Run, weather edits and overrides. Unset = gate off. */
+  OWNER_EMAILS?: string;
   /** Optional Worker secrets (owner action). While either is absent the alert tick only logs what it would send. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
@@ -85,6 +88,10 @@ const worker = {
 
 async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
+
+  // Owner-only pages and APIs are refused before any handler sees them (worker/owner.ts).
+  const ownerGate = await handleOwnerGate(request, env);
+  if (ownerGate) return ownerGate;
 
   const apiResponse = await handleOverridesApi(request, env);
   if (apiResponse) return apiResponse;
