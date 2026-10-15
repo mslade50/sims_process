@@ -40,6 +40,10 @@
 .shp-curves.shp-hist { max-width: 640px; }
 .shp-hist .steady-bar { fill: var(--shp-steady); }
 .shp-hist .bust-bar { fill: var(--shp-bust); }
+.shp-hist .band { fill: var(--accent-soft); opacity: 1; }
+.shp-hist .bracket path { fill: none; stroke: var(--muted-strong); stroke-width: 1; }
+.shp-hist .bracket text { font-size: 10px; fill: var(--text, currentColor); font-weight: 600; }
+.shp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .shp-hist text.val { font-size: 9px; fill: var(--muted-strong); font-variant-numeric: tabular-nums; }
 .shp-key-sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-left: 2px; }
 .shp-key-sw[data-kind="steady"] { background: var(--shp-steady); }

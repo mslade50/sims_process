@@ -369,7 +369,7 @@ export function finishBuckets(pos: number[] | null | undefined, pMiss: number | 
     for (let i = lo - 1; i < end; i++) p += Math.max(0, f[i]);
     out.push({ label: lo === hi ? "Win" : hi === null || end < hi ? `${lo}+` : `${lo}–${hi}`, lo, hi: hi === null || end < hi ? null : hi, p });
   }
-  if (cut) out.push({ label: "Missed cut", lo: Infinity, hi: null, p: isNum(pMiss) ? Math.max(0, pMiss) : 0 });
+  if (cut) out.push({ label: "Miss cut", lo: Infinity, hi: null, p: isNum(pMiss) ? Math.max(0, pMiss) : 0 });
   return out;
 }
 /** x position of the cut line to mark, or null when the event has no cut or the line is off the drawn range. */

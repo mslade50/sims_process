@@ -45,14 +45,18 @@ export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDo
   const ba = pa?.finish ? finishBuckets(pa.finish.pos, pa.finish.p_miss_cut, cut) : null;
   const bb = pb?.finish ? finishBuckets(pb.finish.pos, pb.finish.p_miss_cut, cut) : null;
   if (!ba || !bb || ba.length !== bb.length) return <p className="shp-curve-note">The finish chart is not available for one of these players, so only the prices are compared.</p>;
-  const L = 4, R = 4, T = 16, B = 18;
+  const L = 4, R = 4, T = 28, B = 18;
   const n = ba.length, gw = (CW - L - R) / n, bw = Math.min(18, (gw - 8) / 2);
   const yMax = Math.max(...ba.map((b) => b.p), ...bb.map((b) => b.p), 0.05) * 1.08;
   const sy = (v: number) => T + (1 - v / yMax) * (height - T - B);
   const base = height - B;
   const band = bandEnd(market, doc);
-  const lbl = (v: number) => (v < 0.005 ? "" : `${Math.round(v * 100) || "<1"}%`);
+  const lbl = (v: number) => (v < 0.0005 ? "" : v < 0.1 ? `${(v * 100).toFixed(1)}%` : `${Math.round(v * 100)}%`);
   const sa = shortName(pair.steady.name), sb = shortName(pair.bust.name);
+  const counted = ba.map((b) => inMarket(b, market, band));
+  const sumIn = (bs: FinishBucket[]) => bs.reduce((t, b, i) => t + (counted[i] ? b.p : 0), 0);
+  const firstIn = counted.indexOf(true), lastIn = counted.lastIndexOf(true);
+  const mkWord = market === "make_cut" ? "Make cut" : SHAPE_MARKET_LABEL[market];
   const label = `Chance of each finish for ${sa} and ${sb}: ${ba.map((b, i) => `${b.label} ${pct(b.p, 0)} vs ${pct(bb[i].p, 0)}`).join("; ")}.`;
   return (
     <div>
@@ -61,18 +65,19 @@ export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDo
           const x0 = L + i * gw, cx = x0 + gw / 2, q = bb[i];
           return (
             <g key={b.label}>
-              {inMarket(b, market, band) && <rect className="band" x={x0 + 1} y={T - 12} width={gw - 2} height={base - T + 12} />}
-              <rect className="steady-bar" x={cx - bw - 1} y={sy(b.p)} width={bw} height={Math.max(0, base - sy(b.p))} rx={1.5}><title>{`${sa}: ${b.label} ${pct(b.p, 1)}`}</title></rect>
-              <rect className="bust-bar" x={cx + 1} y={sy(q.p)} width={bw} height={Math.max(0, base - sy(q.p))} rx={1.5}><title>{`${sb}: ${q.label} ${pct(q.p, 1)}`}</title></rect>
+              {counted[i] && <rect className="band" x={x0 + 1} y={T - 2} width={gw - 2} height={base - T + 2} />}
+              <rect className="steady-bar" x={cx - bw - 1} y={sy(b.p)} width={bw} height={Math.max(b.p > 0 ? 1.5 : 0, base - sy(b.p))} rx={1.5}><title>{`${sa}: ${b.label} ${pct(b.p, 1)}`}</title></rect>
+              <rect className="bust-bar" x={cx + 1} y={sy(q.p)} width={bw} height={Math.max(q.p > 0 ? 1.5 : 0, base - sy(q.p))} rx={1.5}><title>{`${sb}: ${q.label} ${pct(q.p, 1)}`}</title></rect>
               <text className="val" x={cx - bw / 2 - 1} y={sy(b.p) - 3} textAnchor="middle">{lbl(b.p)}</text>
               <text className="val" x={cx + bw / 2 + 1} y={sy(q.p) - 3} textAnchor="middle">{lbl(q.p)}</text>
               <text x={cx} y={height - 5} textAnchor="middle">{b.label}</text>
             </g>
           );
         })}
+        {firstIn >= 0 && <g className="bracket"><path d={`M${L + firstIn * gw + 3},${T - 4} V${T - 9} H${L + (lastIn + 1) * gw - 3} V${T - 4}`} /><text x={L + ((firstIn + lastIn + 1) / 2) * gw} y={T - 11} textAnchor="middle">{mkWord}: {pct(sumIn(ba), 1)} vs {pct(sumIn(bb), 1)}</text></g>}
         <line className="axis" x1={L} x2={CW - R} y1={base} y2={base} />
       </svg>
-      <p className="shp-curve-note"><i className="shp-key-sw" data-kind="steady" aria-hidden="true" /> {sa} <i className="shp-key-sw" data-kind="bust" aria-hidden="true" /> {sb} · chance of each finish{band !== null || market === "make_cut" ? `; shaded buckets count for ${market === "make_cut" ? "make cut" : SHAPE_MARKET_LABEL[market].toLowerCase()}` : ""}.</p>
+      <p className="shp-curve-note shp-legend"><span><i className="shp-key-sw" data-kind="steady" aria-hidden="true" /> {sa}</span><span><i className="shp-key-sw" data-kind="bust" aria-hidden="true" /> {sb}</span><span>Chance of each finish; shaded buckets add up to the {mkWord.toLowerCase()} chance. Buckets cover different numbers of places (Win is one place, 31–50 is twenty), so compare the two colours within a bucket, not the bucket heights.</span></p>
     </div>
   );
 }

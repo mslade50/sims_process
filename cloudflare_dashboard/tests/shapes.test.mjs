@@ -308,7 +308,7 @@ test("finish buckets for the paired histogram sum to one and split out the misse
   const p = week.players.find((x) => x.id === analyzeShapes(week, "top_20").pairs[0].bust.id);
   const b = finishBuckets(p.finish.pos, p.finish.p_miss_cut, true);
   assert.deepEqual(b.slice(0, 4).map((x) => x.label), ["Win", "2–5", "6–10", "11–20"]);
-  assert.equal(b.at(-1).label, "Missed cut");
+  assert.equal(b.at(-1).label, "Miss cut");
   assert.equal(b.at(-1).p, p.finish.p_miss_cut);
   assert.ok(Math.abs(b.reduce((s, x) => s + x.p, 0) - 1) < 0.01);
   assert.ok(Math.abs(b[0].p - p.finish.pos[0]) < 1e-9);

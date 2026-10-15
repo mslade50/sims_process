@@ -180,8 +180,8 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         <p className="ex-lede">{eventLede(doc)}</p>
         <div className="ex-chips-row" aria-label="Field summary">
           <span className="ex-chip"><Term k="ex_field_strength">Field strength</Term> <b>{fs == null ? "n/a" : `${signed(fs)} strokes`}</b></span>
-          {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap vs sportsbooks</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)}</b></span>}
-          {!live && dgSkill && <span className="ex-chip"><Term k="ex_dg_skill_gap">Biggest skill gap vs Data Golf</Term> <b className={dgSkill.gap >= 0 ? "pos" : "neg"}>{dgSkill.name} {signed(dgSkill.gap)}</b></span>}
+          {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap vs sportsbooks</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)} a round</b></span>}
+          {!live && dgSkill && <span className="ex-chip"><Term k="ex_dg_skill_gap">Biggest skill gap vs Data Golf</Term> <b className={dgSkill.gap >= 0 ? "pos" : "neg"}>{dgSkill.name} {signed(dgSkill.gap)} a round</b></span>}
           {weatherStatus(doc).short && <span className="ex-chip" title={weatherStatus(doc).long}>{weatherStatus(doc).short}</span>}
         </div>
         <details className="ex-details">
