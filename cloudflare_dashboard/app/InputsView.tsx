@@ -292,6 +292,8 @@ function playerRows(players: Obj[], showUntouched: boolean): DataRow[] {
       se_kernel: num(ch.se_kernel),
       location: num(loc.total),
       course_fit: num(cf.contribution_to_mu),
+      course_fit_part: num(cf.fit_part),
+      course_history_part: num(cf.history_part),
       fit_rs_ddacc: num(cf.fit_rs_ddacc_lam1000),
       course_history: num(cf.course_history_resid_k80),
       course_sd_mult: num(cf.course_sd_mult_feature),
@@ -570,7 +572,7 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
   );
 }
 
-const SIGNED_COLUMNS = new Set(["mu", "mu_untouched", "location", "course_fit", "override_total", "course_history", "fit_rs_ddacc", LABELS.thisWeekPga.short]);
+const SIGNED_COLUMNS = new Set(["mu", "mu_untouched", "location", "course_fit", "course_fit_part", "course_history_part", "override_total", "course_history", "fit_rs_ddacc", LABELS.thisWeekPga.short]);
 const SWING_COLUMNS = new Set(["sd", "sd_untouched", "se_kernel", "course_sd_mult"]);
 
 function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgId: number) => void; playedRounds: number }) {
@@ -583,9 +585,11 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
   const fmtTee = useMemo(() => teeFormatter(doc), [doc]);
   const present = new Set(rows.flatMap((row) => Object.keys(row)));
-  const preferred = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit", "course_history", "fit_rs_ddacc", "override_total", "prior_rounds", "prob_win", "prob_top_5", "prob_top_10", "prob_top_20", "prob_make_cut", LABELS.thisWeekPga.short, ...FAMILIES.map(([key]) => `chl_${key}`)];
+  const preferred = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "se_kernel", "location", "course_fit_part", "course_history_part", "course_fit", "course_history", "fit_rs_ddacc", "override_total", "prior_rounds", "prob_win", "prob_top_5", "prob_top_10", "prob_top_20", "prob_make_cut", LABELS.thisWeekPga.short, ...FAMILIES.map(([key]) => `chl_${key}`)];
   // One rating column by default; the PGA-scale version is one click away under Columns.
-  const defaultColumns = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "location", "course_fit", "override_total", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut"].filter((key) => present.has(key));
+  // Course fit and course history as separate columns when the run carries the split (runs from 2026-10-15); older runs keep the combined column.
+  const split = present.has("course_fit_part") && present.has("course_history_part");
+  const defaultColumns = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "location", ...(split ? ["course_fit_part", "course_history_part"] : ["course_fit"]), "override_total", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut"].filter((key) => present.has(key));
   const headerLabels: Record<string, string> = { ...HEADERS, [LABELS.thisWeekPga.short]: LABELS.thisWeekPga.short };
   const headerTitles = titlesFor([...present], { [LABELS.thisWeekPga.short]: GLOSSARY.mu_tour });
   const best = players.reduce<Obj | null>((top, p) => ((num(obj(p.challenger).mu) ?? -Infinity) > (num(obj(top?.challenger).mu) ?? -Infinity) ? p : top), null);
