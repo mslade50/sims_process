@@ -1089,11 +1089,16 @@ export const DG_GAP_LABEL: Record<DgGapKind, string> = { win: "Win", top_20: "To
 export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number };
 export const DG_SKILL_MIN = 0.1;      // a skill gap under 0.1 strokes a round counts as in line
 export const DG_TOP20_MIN = 0.05;     // players DataGolf gives at least 5% to finish top 20, plus this week's contenders
+export const DG_WIN_FLOOR = 0.01;     // win view: at least 1% to win with us or Data Golf
+export const DG_TOP20_FLOOR = 0.1;    // top-20 view: at least 10% to finish top 20 with us or Data Golf
 /** Whether the document carries any DataGolf reference (older documents and live runs do not). */
 export function hasDg(doc: ExplainDoc): boolean { return doc.players.some((p) => p.dg != null); }
 /** Biggest gaps against DataGolf, ours above and ours below, among this week's contenders and the players DataGolf gives a real top-20 chance. */
 export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]): { higher: DgGapRow[]; lower: DgGapRow[]; scale: number } {
-  const pool = doc.players.filter((p) => !p.withdrawn && p.dg && ((ids ?? []).includes(p.id) || (p.dg.top_20 ?? 0) >= DG_TOP20_MIN));
+  // Chance gaps are relative, so long shots (0.06% vs 0.2%) would fill the list with noise: the chance views need a real chance on either side.
+  const floor = kind === "win" ? DG_WIN_FLOOR : kind === "top_20" ? DG_TOP20_FLOOR : 0;
+  const real = (p: ExPlayer) => kind === "skill" || Math.max(p.probs[kind].model ?? 0, p.dg?.[kind] ?? 0) >= floor;
+  const pool = doc.players.filter((p) => !p.withdrawn && p.dg && ((ids ?? []).includes(p.id) || (p.dg.top_20 ?? 0) >= DG_TOP20_MIN) && real(p));
   const rows: DgGapRow[] = [];
   for (const p of pool) {
     const d = p.dg!;

@@ -498,7 +498,7 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
       </div>
       <p className="ex-muted">{skill
         ? <>Skill is strokes a round against the average of this field (before weather), ours vs Data Golf&rsquo;s final pre-tournament estimate; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
-        : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance. Data Golf is a reference only; it never enters our price.</p>
+        : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} {skill ? <>This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance.</> : <>Players with at least a {kind === "win" ? "1% win" : "10% top-20"} chance with us or Data Golf, so long shots don&rsquo;t fill the list.</>} Data Golf is a reference only; it never enters our price.</p>
     </Panel>
   );
 }
