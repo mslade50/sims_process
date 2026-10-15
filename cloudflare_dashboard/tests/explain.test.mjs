@@ -479,6 +479,7 @@ test("form panel is hidden when nobody shown has form; the gap split reads its p
   const es = (o) => ({ kind: "normal", edge: 0.2, reference: "peers", reference_edge: 0.05, particular: 0.15, ours_vs_peers: 0.1, book_vs_peers: 0.2, sentence: "s", ...o });
   assert.equal(D.splitView(es({ kind: "in_line" })), null);          // nothing but the sentence for in-line and long-shot players
   assert.equal(D.splitView(es({ kind: "long_shot" })), null);
+  assert.equal(D.splitView(es({ kind: "mixed" })), null);
   assert.equal(D.splitView(es({ book_vs_peers: null })), null);
   assert.equal(D.splitView(es({})).book, 0.2);
   const inLine = v11.players.find((p) => p.diverge?.edge_split?.kind === "in_line");
@@ -499,4 +500,13 @@ test("flagged skill rows carry both gaps; a partial course gap reads as missing 
   const html = renderView("ExplainBits.tsx", "Waterfall", { props: { ...waterfall(rai, { ...v11.components_legend, course: { ...v11.components_legend.course, unavailable: "some players" } }), scale: 1 } });
   assert.match(html, /missing for some/);
   assert.equal(parseExplain({ ...v11raw, divergence: { ...v11raw.divergence, course_data: { ...v11raw.divergence.course_data, unavailable: 4 } } }).divergence.course_data.unavailable, null);
+});
+
+test("a mixed player (skill gap and bet edge disagree in sign) renders only the sentence", () => {
+  const mixed = v11.players.find((p) => p.diverge?.edge_split?.kind === "mixed");
+  assert.ok(mixed);
+  assert.equal(mixed.diverge.edge_split.ours_vs_peers, null);
+  const html = drawerHtml(v11, mixed);
+  assert.match(html, /in shape rather than level/);
+  assert.doesNotMatch(html, /closest-priced players|The sportsbooks rate them/);
 });

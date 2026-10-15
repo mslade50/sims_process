@@ -499,7 +499,7 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         {list(g.higher, "We are higher")}
         {list(g.lower, "We are lower")}
       </div>
-      {anyFlag && <p className="ex-muted ex-dg-warn-note"><span aria-hidden="true">⚠ </span><Term k="ex_dg_check">Data Golf&rsquo;s odds check</Term>: for the marked players its stated skill is out of line with its own odds, so the gap is measured against the skill its odds imply.</p>}
+      {anyFlag && <p className="ex-muted ex-dg-warn-note"><span aria-hidden="true">⚠ </span><Term k="ex_dg_check">Data Golf&rsquo;s odds check</Term>: for the marked players its stated skill is out of line with its own odds, so for those players we show both gaps: the skill numbers (ours minus Data Golf&rsquo;s stated skill) and the gap on chances (what its win and top-20 odds imply), which is the one used for ranking.</p>}
       <p className="ex-muted">{skill
         ? <>Skill is strokes a round against the average of this field (before weather), ours vs {checked ? <>the skill Data Golf&rsquo;s own odds imply</> : <>Data Golf&rsquo;s final pre-tournament estimate</>}; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
         : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} {skill ? <>This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance.</> : <>Players with at least a {kind === "win" ? "1% win" : "10% top-20"} chance with us or Data Golf, so long shots don&rsquo;t fill the list.</>} Data Golf is a reference only; it never enters our price.</p>

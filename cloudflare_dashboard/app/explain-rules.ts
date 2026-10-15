@@ -45,9 +45,9 @@ export type DivergeCompare = { markets: Partial<Record<Market, SourceChances>>; 
 export type DgCheck = { skill_stated: number | null; skill_from_odds: number | null; stated_minus_odds: number | null; market: string | null; flag: boolean; skill_ours: number | null; gap_vs_odds: number | null;
   /** Ours minus Data Golf's stated skill number; gap_vs_odds is the same gap measured on chances, in Data Golf strokes. */
   skill_number_gap: number | null; sentence: string | null };
-/** Our gap to the market (strokes a round, + = we are above). kind "in_line" and "long_shot" carry only the sentence; "normal" also splits the gap against the closest-priced players:
+/** Our gap to the market (strokes a round, + = we are above). kind "in_line", "long_shot" and "mixed" (skill gap and bet-by-bet edge disagree in sign) carry only the sentence; "normal" also splits the gap against the closest-priced players:
  *  particular = edge - reference_edge; ours_vs_peers / book_vs_peers = our / the sportsbooks' implied skill minus the peers' median. */
-export type EdgeSplit = { kind: "in_line" | "long_shot" | "normal"; edge: number | null; reference: "peers" | "none"; reference_edge: number | null; particular: number | null; ours_vs_peers: number | null; book_vs_peers: number | null; sentence: string };
+export type EdgeSplit = { kind: "in_line" | "long_shot" | "mixed" | "normal"; edge: number | null; reference: "peers" | "none"; reference_edge: number | null; particular: number | null; ours_vs_peers: number | null; book_vs_peers: number | null; sentence: string };
 export type PeerPart = { key: string; label: string; value: number | null; peer_median: number | null; distinctive: number | null };
 export type PeerSet = { ids: number[]; names: string[]; peer_edge_median: number | null; parts: PeerPart[]; sentence: string };
 export type Diverge = { compare: DivergeCompare | null; dg_check: DgCheck | null; edge_split: EdgeSplit | null; peers: PeerSet | null; sentences: string[] };
@@ -169,7 +169,7 @@ function parseDgCheck(raw: unknown): DgCheck | null {
 }
 function parseEdgeSplit(raw: unknown): EdgeSplit | null {
   if (!isObject(raw)) return null;
-  const kind = raw.kind === "in_line" || raw.kind === "long_shot" ? raw.kind : "normal";
+  const kind = raw.kind === "in_line" || raw.kind === "long_shot" || raw.kind === "mixed" ? raw.kind : "normal";
   const out: EdgeSplit = { kind, edge: num(raw.edge), reference: raw.reference === "peers" ? "peers" : "none", reference_edge: num(raw.reference_edge), particular: num(raw.particular),
     ours_vs_peers: num(raw.ours_vs_peers), book_vs_peers: num(raw.book_vs_peers), sentence: str(raw.sentence) ?? "" };
   return out.edge !== null || out.sentence ? out : null;
