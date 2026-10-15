@@ -42,7 +42,9 @@ export type DivergeVerdict = "all_agree" | "ours_outlier" | "dg_outlier" | "book
 export type Outlier = "ours" | "dg" | "book";
 export type SourceChances = { ours: number | null; dg: number | null; book: number | null };
 export type DivergeCompare = { markets: Partial<Record<Market, SourceChances>>; mean_logit_gap: { ours_dg: number | null; ours_book: number | null; dg_book: number | null }; verdict: DivergeVerdict; outlier: Outlier | null };
-export type DgCheck = { skill_stated: number | null; skill_from_odds: number | null; stated_minus_odds: number | null; market: string | null; flag: boolean; skill_ours: number | null; gap_vs_odds: number | null; sentence: string | null };
+export type DgCheck = { skill_stated: number | null; skill_from_odds: number | null; stated_minus_odds: number | null; market: string | null; flag: boolean; skill_ours: number | null; gap_vs_odds: number | null;
+  /** Ours minus Data Golf's stated skill number; gap_vs_odds is the same gap measured on chances, in Data Golf strokes. */
+  skill_number_gap: number | null; sentence: string | null };
 /** Our gap to the market (strokes a round, + = we are above). kind "in_line" and "long_shot" carry only the sentence; "normal" also splits the gap against the closest-priced players:
  *  particular = edge - reference_edge; ours_vs_peers / book_vs_peers = our / the sportsbooks' implied skill minus the peers' median. */
 export type EdgeSplit = { kind: "in_line" | "long_shot" | "normal"; edge: number | null; reference: "peers" | "none"; reference_edge: number | null; particular: number | null; ours_vs_peers: number | null; book_vs_peers: number | null; sentence: string };
@@ -54,7 +56,9 @@ export type FormWindow = (typeof FORM_WINDOWS)[number];
 export type Form = { n: number | null; last_round: string | null; windows: Partial<Record<FormWindow, { mean: number | null; n: number | null }>>; seasons: Array<{ year: number; mean: number | null; n: number | null }> };
 export type Divergence = {
   version: number | null;
-  course_data: { n_players: number | null; fit_available: number | null; history_available: number | null; venue_editions: number | null; blank: boolean; label: string | null; note: string | null } | null;
+  course_data: { n_players: number | null; fit_available: number | null; history_available: number | null; venue_editions: number | null; blank: boolean; label: string | null; note: string | null;
+    /** What is missing this week: "fit and history", "fit", "history" or "some players"; null when nothing is. */
+    unavailable: string | null } | null;
   dg_odds_fit: { market: string | null; slope: number | null; intercept: number | null; n: number | null; resid_sd_skill: number | null; flag_threshold: number | null; n_flagged: number | null; flagged: number[] } | null;
   field_edge_mean: number | null; form_source: { table: string | null; before: string | null; available: boolean; scale: string | null } | null; method: string | null;
 };
@@ -161,7 +165,7 @@ function parseDgCheck(raw: unknown): DgCheck | null {
   if (!isObject(raw)) return null;
   const flag = raw.flag === true;
   return { skill_stated: num(raw.skill_stated), skill_from_odds: num(raw.skill_from_odds), stated_minus_odds: num(raw.stated_minus_odds), market: str(raw.market), flag, skill_ours: num(raw.skill_ours),
-    gap_vs_odds: num(raw.gap_vs_odds), sentence: flag ? str(raw.sentence) : null };
+    gap_vs_odds: num(raw.gap_vs_odds), skill_number_gap: num(raw.skill_number_gap), sentence: flag ? str(raw.sentence) : null };
 }
 function parseEdgeSplit(raw: unknown): EdgeSplit | null {
   if (!isObject(raw)) return null;
@@ -200,7 +204,7 @@ function parseDivergence(raw: unknown): Divergence | null {
   const fs = isObject(raw.form_source) ? raw.form_source : null;
   const out: Divergence = {
     version: num(raw.version),
-    course_data: c ? { n_players: num(c.n_players), fit_available: num(c.fit_available), history_available: num(c.history_available), venue_editions: num(c.venue_editions), blank: c.blank === true, label: str(c.label), note: str(c.note) } : null,
+    course_data: c ? { n_players: num(c.n_players), fit_available: num(c.fit_available), history_available: num(c.history_available), venue_editions: num(c.venue_editions), blank: c.blank === true, label: str(c.label), note: str(c.note), unavailable: str(c.unavailable) } : null,
     dg_odds_fit: f ? { market: str(f.market), slope: num(f.slope), intercept: num(f.intercept), n: num(f.n), resid_sd_skill: num(f.resid_sd_skill), flag_threshold: num(f.flag_threshold), n_flagged: num(f.n_flagged),
       flagged: (Array.isArray(f.flagged) ? f.flagged : []).map(num).filter((n): n is number => n !== null) } : null,
     field_edge_mean: num(raw.field_edge_mean), form_source: fs ? { table: str(fs.table), before: str(fs.before), available: fs.available === true, scale: str(fs.scale) } : null, method: str(raw.method),
@@ -1188,7 +1192,7 @@ export const DG_GAP_LABEL: Record<DgGapKind, string> = { win: "Win", top_20: "To
 /** ours / dg: chances (win, top 20) or skills in strokes a round; gap: relative for chances (ours / DataGolf's - 1), strokes for skill (ours - DataGolf's). */
 export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number;
   /** Skill rows only: Data Golf's stated skill disagrees with its own odds (diverge.dg_check.flag). `dg` and `gap` are then measured against the skill its odds imply, `stated` is the number it published. */
-  flag?: boolean; stated?: number | null };
+  flag?: boolean; stated?: number | null; numberGap?: number | null };
 export const DG_SKILL_MIN = 0.1;      // a skill gap under 0.1 strokes a round counts as in line
 export const DG_TOP20_MIN = 0.05;     // players DataGolf gives at least 5% to finish top 20, plus this week's contenders
 export const DG_WIN_FLOOR = 0.01;     // win view: at least 1% to win with us or Data Golf
@@ -1207,7 +1211,7 @@ export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]):
     if (kind === "skill") {
       const ck = p.diverge?.dg_check;
       // With the odds check, compare against the skill Data Golf's own odds imply (its stated number can be off for some players); flagged players carry a warning.
-      if (ck && ck.skill_from_odds !== null && ck.gap_vs_odds !== null && (ck.skill_ours ?? d.skill_ours) !== null) rows.push({ id: p.id, name: plainName(p.name), ours: (ck.skill_ours ?? d.skill_ours) as number, dg: ck.skill_from_odds, gap: ck.gap_vs_odds, flag: ck.flag, stated: ck.skill_stated ?? d.skill });
+      if (ck && ck.skill_from_odds !== null && ck.gap_vs_odds !== null && (ck.skill_ours ?? d.skill_ours) !== null) rows.push({ id: p.id, name: plainName(p.name), ours: (ck.skill_ours ?? d.skill_ours) as number, dg: ck.skill_from_odds, gap: ck.gap_vs_odds, flag: ck.flag, stated: ck.skill_stated ?? d.skill, numberGap: ck.skill_number_gap ?? d.skill_gap });
       else if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap, flag: ck?.flag === true, stated: d.skill });
     } else {
       const ours = p.probs[kind].model, dg = d[kind] ?? null;

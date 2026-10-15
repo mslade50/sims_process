@@ -54,7 +54,7 @@ export function DivergeSection({ doc, player, onSelect }: { doc: ExplainDoc; pla
             <div><span className="ex-dv-pair-label">We rate them vs the <Term k="ex_peers">closest-priced players</Term></span><b className={split.ours >= 0 ? "pos" : "neg"}>{signed(split.ours)}</b><small>strokes a round</small></div>
             <div><span className="ex-dv-pair-label">The sportsbooks rate them</span><b className={split.book >= 0 ? "pos" : "neg"}>{signed(split.book)}</b><small>strokes a round</small></div>
           </div>
-          {split.particular !== null && <p className="ex-muted">The gap between the two is {signed(split.particular)} strokes a round, which is particular to this player (the players priced like them sit at the market).</p>}
+          {split.particular !== null && <p className="ex-muted">The gap between the two is {signed(split.particular)} strokes a round, which is particular to this player.</p>}
         </div>
       )}
       {d.edge_split?.sentence && <p className="ex-muted ex-dv-edge">{d.edge_split.sentence}</p>}

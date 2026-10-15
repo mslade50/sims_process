@@ -485,7 +485,7 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
           <button type="button" onClick={() => openPlayer(r.id)}>
             <span className="ex-mv-name">{r.name}{r.flag && <span className="ex-dg-warn" role="img" aria-label="Data Golf's stated skill disagrees with its own odds" title={`Data Golf's odds imply ${signed(r.dg)}; its stated skill is ${r.stated != null ? signed(r.stated) : "n/a"}.`}> ⚠</span>}</span>
             <DeltaBar value={r.gap} scale={g.scale} label={`${r.name}: our ${what} ${gapTxt(r.gap)} against Data Golf${r.flag ? " (its odds imply a different skill than it states)" : ""}`} />
-            <span className="ex-mv-nums">{nums(r)}</span>
+            <span className="ex-mv-nums">{skill && r.flag && r.numberGap != null ? `skill numbers ${signed(r.numberGap)}, on chances ${signed(r.gap)}` : nums(r)}</span>
             <b className={r.gap > 0 ? "pos" : "neg"}>{r.gap > 0 ? "▲" : "▼"} {gapTxt(r.gap)}</b>
           </button>
         </li>
