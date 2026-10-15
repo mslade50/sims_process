@@ -1,5 +1,5 @@
 /* Distribution shapes: "Same chance to win, different weeks". Tokens only; mobile first; no horizontal page scroll. */
-.shp-root, .shp-card { --shp-steady: var(--chart-1); --shp-bust: var(--chart-6); font-variant-numeric: tabular-nums; }
+.shp-root, .shp-card { container-type: inline-size; --shp-steady: var(--chart-1); --shp-bust: var(--chart-6); font-variant-numeric: tabular-nums; }
 .shp-root { display: grid; gap: 18px; min-width: 0; }
 .shp-root > * { min-width: 0; }
 .shp-variety { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted-strong); max-width: 70ch; }
@@ -11,7 +11,22 @@
 .shp-tabs .segmented { margin-bottom: 0; }
 .shp-h { margin: 0 0 6px; font-size: 13px; font-weight: 800; letter-spacing: -.01em; }
 
-/* pair spotlight */
+/* pair spotlight: cards above the chart on narrow screens; a slim card column beside a natural-size chart when there is room */
+.shp-pair-main { display: grid; gap: 10px; min-width: 0; }
+.shp-pair-main > * { min-width: 0; }
+.shp-pair-text { display: grid; gap: 8px; align-content: start; }
+@container (min-width: 640px) {
+  .shp-pair-main { grid-template-columns: 180px minmax(0, 460px); gap: 18px; align-items: start; }
+  .shp-pair-main .shp-sides { grid-template-columns: 1fr; }
+  .shp-pair-main .shp-pair-text { grid-column: 1 / -1; }
+  .shp-pair-main .shp-stats dd { font-size: 15px; }
+  .shp-pair-main .shp-stats .shp-minor { grid-column: 1 / -1; display: flex; gap: 6px; align-items: baseline; }
+  .shp-pair-main .shp-stats .shp-minor dd { font-size: 12px; }
+}
+@container (min-width: 1000px) {
+  .shp-pair-main { grid-template-columns: 180px 460px minmax(0, 1fr); }
+  .shp-pair-main .shp-pair-text { grid-column: auto; padding-top: 4px; }
+}
 .shp-pair { display: grid; gap: 10px; min-width: 0; }
 .shp-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .shp-side { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-top: 3px solid var(--shp-steady); border-radius: var(--radius-md); background: var(--surface-raised); }
@@ -37,14 +52,14 @@
 .shp-curves .bust-line { stroke: var(--shp-bust); }
 .shp-curves .steady-area { fill: var(--shp-steady); opacity: .16; }
 .shp-curves .bust-area { fill: var(--shp-bust); opacity: .16; }
-.shp-curves.shp-hist { max-width: 640px; }
+.shp-curves.shp-hist { width: 100%; max-width: 460px; height: auto; }
 .shp-hist .steady-bar { fill: var(--shp-steady); }
 .shp-hist .bust-bar { fill: var(--shp-bust); }
 .shp-hist .band { fill: var(--accent-soft); opacity: 1; }
 .shp-hist .bracket path { fill: none; stroke: var(--muted-strong); stroke-width: 1; }
 .shp-hist .bracket text { font-size: 10px; fill: var(--text, currentColor); font-weight: 600; }
 .shp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
-.shp-hist text.val { font-size: 8.5px; fill: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.shp-hist text.val { font-size: 9.5px; fill: var(--muted-strong); font-variant-numeric: tabular-nums; }
 .shp-key-sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-left: 2px; }
 .shp-key-sw[data-kind="steady"] { background: var(--shp-steady); }
 .shp-key-sw[data-kind="bust"] { background: var(--shp-bust); }

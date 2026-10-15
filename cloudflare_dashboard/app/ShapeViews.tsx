@@ -5,7 +5,7 @@
  * Chart-free (inline SVG only, no Recharts) so the compact card can sit on This week without adding to its bundle.
  * All numbers come from shape-rules.ts; this file only draws them.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SegmentedControl } from "./components";
 import { Term } from "./ExplainBits";
 import { pct, type ExplainDoc } from "./explain-rules";
@@ -31,7 +31,8 @@ function bandEnd(market: ShapeMarket, doc: ExplainDoc): number | null {
 }
 
 /* ------------------------------------------------------------------ paired finish histogram */
-const CW = 380;
+/** Widest the histogram draws; narrower containers redraw at their own width so the text never shrinks below its set size. */
+const CW_MAX = 460, CW_MIN = 280;
 /** Buckets that pay out for the market (shaded): win through top 5/10/20, or every made-cut bucket for make cut. */
 function inMarket(b: FinishBucket, market: ShapeMarket, band: number | null): boolean {
   if (b.lo === Infinity) return false;
@@ -39,6 +40,15 @@ function inMarket(b: FinishBucket, market: ShapeMarket, band: number | null): bo
   return band !== null && b.hi !== null && b.hi <= band;
 }
 export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDoc; pair: ShapePair; market: ShapeMarket; height?: number }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [CW, setCW] = useState(CW_MAX);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => { const w = Math.round(e.contentRect.width); if (w > 0) setCW(Math.max(CW_MIN, Math.min(CW_MAX, w))); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const cut = !!doc.event?.cut_round || !!doc.event?.cut_top_n;
   const pa = doc.players.find((p) => p.id === pair.steady.id);
   const pb = doc.players.find((p) => p.id === pair.bust.id);
@@ -58,8 +68,8 @@ export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDo
   const mkWord = market === "make_cut" ? "Make cut" : SHAPE_MARKET_LABEL[market];
   const label = `Chance of each finish for ${sa} and ${sb}: ${ba.map((b, i) => `${b.label} ${pct(b.p, 0)} vs ${pct(bb[i].p, 0)}`).join("; ")}.`;
   return (
-    <div>
-      <svg className="shp-curves shp-hist" viewBox={`0 0 ${CW} ${height}`} role="img" aria-label={label}>
+    <div ref={box}>
+      <svg className="shp-curves shp-hist" width={CW} height={height} viewBox={`0 0 ${CW} ${height}`} role="img" aria-label={label}>
         {ba.map((b, i) => {
           const x0 = L + i * gw, cx = x0 + gw / 2, q = bb[i];
           return (
@@ -69,7 +79,7 @@ export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDo
               <rect className="bust-bar" x={cx + 1} y={sy(q.p)} width={bw} height={Math.max(q.p > 0 ? 1.5 : 0, base - sy(q.p))} rx={1.5}><title>{`${sb}: ${q.label} ${pct(q.p, 1)}`}</title></rect>
               <text className="val" x={cx - bw / 2 - 1} y={sy(b.p) - 3} textAnchor="middle">{lbl(b.p)}</text>
               <text className="val" x={cx + bw / 2 + 1} y={sy(q.p) - 3} textAnchor="middle">{lbl(q.p)}</text>
-              <text x={cx} y={height - 5} textAnchor="middle">{b.label}</text>
+              <text x={cx} y={height - 5} textAnchor="middle">{gw < 46 && b.label === "Miss cut" ? "MC" : b.label}</text>
             </g>
           );
         })}
@@ -102,13 +112,17 @@ export function PairSpotlight({ doc, pair, market, compact = false, onPick }: { 
   const maxShape = Math.max(pair.shapePartPp, ...pair.effects.map((e) => Math.abs(e.effectPp)), 0.1);
   return (
     <div className="shp-pair">
-      <div className="shp-sides">
-        <Side p={pair.steady} market={market} onPick={onPick} />
-        <Side p={pair.bust} market={market} onPick={onPick} />
+      <div className="shp-pair-main">
+        <div className="shp-sides">
+          <Side p={pair.steady} market={market} onPick={onPick} />
+          <Side p={pair.bust} market={market} onPick={onPick} />
+        </div>
+        <PairCurves doc={doc} pair={pair} market={market} height={compact ? 150 : 160} />
+        <div className="shp-pair-text">
+          <p className="shp-gap"><b>{pair.gapPp.toFixed(1)} pp</b> apart on {label} at a {pair.winRatio < 1.06 ? "near-identical" : "similar"} win chance ({pct(pair.bust.win, 1)} vs {pct(pair.steady.win, 1)}).</p>
+          <p className="shp-why">{pair.why}</p>
+        </div>
       </div>
-      <PairCurves doc={doc} pair={pair} market={market} height={compact ? 120 : 140} />
-      <p className="shp-gap"><b>{pair.gapPp.toFixed(1)} pp</b> apart on {label} at a {pair.winRatio < 1.06 ? "near-identical" : "similar"} win chance ({pct(pair.bust.win, 1)} vs {pct(pair.steady.win, 1)}).</p>
-      <p className="shp-why">{pair.why}</p>
       {!compact && pair.effects.length > 0 && (
         <div>
           <h4 className="shp-h">What lines up with the shape gap</h4>
