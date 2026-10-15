@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parseExplain } from "../app/explain-rules.ts";
-import { analyzeShapes, availableMarkets, curveAt, curveXMax, cutLineAt, finishCurve, fitCurve, kindLabel, MATCH_WIDE, pairWhy, playerWhy, signedPp, topPlayers } from "../app/shape-rules.ts";
+import { analyzeShapes, availableMarkets, curveAt, curveXMax, cutLineAt, finishBuckets, finishCurve, fitCurve, kindLabel, MATCH_WIDE, pairWhy, playerWhy, signedPp, topPlayers } from "../app/shape-rules.ts";
 import { renderView } from "./helpers/render-harness.mjs";
 
 const load = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
@@ -302,4 +302,17 @@ test("the Distributions page shows the shapes panel above the player comparison"
   const shapes = html.indexOf("Same chance to win, different weeks");
   assert.ok(shapes > 0 && shapes < html.indexOf("Up to four on the same axes"));
   assert.doesNotMatch(html, /\[object Object\]|undefined|NaN/);
+});
+
+test("finish buckets for the paired histogram sum to one and split out the missed cut", () => {
+  const p = week.players.find((x) => x.id === analyzeShapes(week, "top_20").pairs[0].bust.id);
+  const b = finishBuckets(p.finish.pos, p.finish.p_miss_cut, true);
+  assert.deepEqual(b.slice(0, 4).map((x) => x.label), ["Win", "2–5", "6–10", "11–20"]);
+  assert.equal(b.at(-1).label, "Missed cut");
+  assert.equal(b.at(-1).p, p.finish.p_miss_cut);
+  assert.ok(Math.abs(b.reduce((s, x) => s + x.p, 0) - 1) < 0.01);
+  assert.ok(Math.abs(b[0].p - p.finish.pos[0]) < 1e-9);
+  const nc = finishBuckets([0.5, 0.3, 0.2], null, false);
+  assert.deepEqual(nc.map((x) => [x.label, x.p]), [["Win", 0.5], ["2+", 0.5]]);
+  assert.equal(finishBuckets(null, 0, true), null);
 });

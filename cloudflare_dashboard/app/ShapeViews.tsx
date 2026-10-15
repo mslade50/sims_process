@@ -10,8 +10,8 @@ import { SegmentedControl } from "./components";
 import { Term } from "./ExplainBits";
 import { pct, type ExplainDoc } from "./explain-rules";
 import {
-  analyzeShapes, availableMarkets, curveAt, curveXMax, cutLineAt, finishCurve, kindLabel, playerWhy, shortName, signedPp, SHAPE_MARKET_LABEL,
-  type FinishCurve, type ShapeAnalysis, type ShapeKind, type ShapeMarket, type ShapePair, type ShapePlayer,
+  analyzeShapes, availableMarkets, curveAt, finishBuckets, kindLabel, playerWhy, shortName, signedPp, SHAPE_MARKET_LABEL,
+  type FinishBucket, type ShapeAnalysis, type ShapeKind, type ShapeMarket, type ShapePair, type ShapePlayer,
 } from "./shape-rules";
 import { AnimatedNumber, ScrollTable } from "./ui";
 import "./shapes.css";
@@ -30,45 +30,49 @@ function bandEnd(market: ShapeMarket, doc: ExplainDoc): number | null {
   return market === "top_5" ? 5 : market === "top_10" ? 10 : 20;
 }
 
-/* ------------------------------------------------------------------ two overlaid finish curves */
-const CW = 320;
-function pathOf(c: FinishCurve, sx: (x: number) => number, sy: (y: number) => number): string {
-  return c.x.map((x, i) => `${i ? "L" : "M"}${sx(x).toFixed(1)},${sy(c.y[i]).toFixed(1)}`).join(" ");
+/* ------------------------------------------------------------------ paired finish histogram */
+const CW = 380;
+/** Buckets that pay out for the market (shaded): win through top 5/10/20, or every made-cut bucket for make cut. */
+function inMarket(b: FinishBucket, market: ShapeMarket, band: number | null): boolean {
+  if (b.lo === Infinity) return false;
+  if (market === "make_cut") return true;
+  return band !== null && b.hi !== null && b.hi <= band;
 }
-export function PairCurves({ doc, pair, market, height = 112 }: { doc: ExplainDoc; pair: ShapePair; market: ShapeMarket; height?: number }) {
+export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDoc; pair: ShapePair; market: ShapeMarket; height?: number }) {
   const cut = !!doc.event?.cut_round || !!doc.event?.cut_top_n;
   const pa = doc.players.find((p) => p.id === pair.steady.id);
   const pb = doc.players.find((p) => p.id === pair.bust.id);
-  const xMax = curveXMax([pa, pb], cut);
-  const ca = xMax && pa?.finish ? finishCurve(pa.finish.pos, pa.finish.p_miss_cut, cut, xMax) : null;
-  const cb = xMax && pb?.finish ? finishCurve(pb.finish.pos, pb.finish.p_miss_cut, cut, xMax) : null;
-  if (!ca || !cb) return <p className="shp-curve-note">The finish chart is not available for one of these players, so only the prices are compared.</p>;
-  const L = 6, R = 6, T = 14, B = 18;
-  const n = Math.max(ca.x.length, cb.x.length);
-  const yMax = Math.max(...ca.y, ...cb.y, 0.5) * 1.12;
-  const sx = (x: number) => L + ((x - 0.5) / n) * (CW - L - R);
-  const sy = (y: number) => T + (1 - y / yMax) * (height - T - B);
+  const ba = pa?.finish ? finishBuckets(pa.finish.pos, pa.finish.p_miss_cut, cut) : null;
+  const bb = pb?.finish ? finishBuckets(pb.finish.pos, pb.finish.p_miss_cut, cut) : null;
+  if (!ba || !bb || ba.length !== bb.length) return <p className="shp-curve-note">The finish chart is not available for one of these players, so only the prices are compared.</p>;
+  const L = 4, R = 4, T = 16, B = 18;
+  const n = ba.length, gw = (CW - L - R) / n, bw = Math.min(18, (gw - 8) / 2);
+  const yMax = Math.max(...ba.map((b) => b.p), ...bb.map((b) => b.p), 0.05) * 1.08;
+  const sy = (v: number) => T + (1 - v / yMax) * (height - T - B);
   const base = height - B;
   const band = bandEnd(market, doc);
-  const cutX = cutLineAt(doc, n);
-  const step = n > 60 ? 20 : n > 30 ? 10 : 5;
-  const ticks = [1, ...Array.from({ length: Math.floor(n / step) }, (_, i) => (i + 1) * step)].filter((t, i, a) => t <= n && a.indexOf(t) === i);
-  const area = (c: FinishCurve) => `${pathOf(c, sx, sy)} L${sx(c.x[c.x.length - 1]).toFixed(1)},${base} L${sx(1).toFixed(1)},${base} Z`;
-  const label = `Chance of finishing at each position for ${shortName(pair.steady.name)} and ${shortName(pair.bust.name)}. ${shortName(pair.steady.name)} is more concentrated near the top; ${shortName(pair.bust.name)} has a flatter, wider spread.`;
+  const lbl = (v: number) => (v < 0.005 ? "" : `${Math.round(v * 100) || "<1"}%`);
+  const sa = shortName(pair.steady.name), sb = shortName(pair.bust.name);
+  const label = `Chance of each finish for ${sa} and ${sb}: ${ba.map((b, i) => `${b.label} ${pct(b.p, 0)} vs ${pct(bb[i].p, 0)}`).join("; ")}.`;
   return (
     <div>
-      <svg className="shp-curves" viewBox={`0 0 ${CW} ${height}`} role="img" aria-label={label}>
-        {band !== null && band <= n && <rect className="band" x={sx(0.5)} y={T - 4} width={sx(Math.min(band, n) + 0.5) - sx(0.5)} height={base - T + 4} />}
-        {band !== null && band <= n && <text x={sx(0.5) + 3} y={T + 4}>{market === "make_cut" ? "Makes cut" : SHAPE_MARKET_LABEL[market]}</text>}
-        <path className="bust-area" d={area(cb)} />
-        <path className="steady-area" d={area(ca)} />
-        <path className="bust-line" d={pathOf(cb, sx, sy)} />
-        <path className="steady-line" d={pathOf(ca, sx, sy)} />
-        {cutX !== null && market !== "make_cut" && <g><line className="cutline" x1={sx(cutX + 0.5)} x2={sx(cutX + 0.5)} y1={T - 4} y2={base} /><text x={sx(cutX + 0.5) - 3} y={T + 4} textAnchor="end">cut line</text></g>}
+      <svg className="shp-curves shp-hist" viewBox={`0 0 ${CW} ${height}`} role="img" aria-label={label}>
+        {ba.map((b, i) => {
+          const x0 = L + i * gw, cx = x0 + gw / 2, q = bb[i];
+          return (
+            <g key={b.label}>
+              {inMarket(b, market, band) && <rect className="band" x={x0 + 1} y={T - 12} width={gw - 2} height={base - T + 12} />}
+              <rect className="steady-bar" x={cx - bw - 1} y={sy(b.p)} width={bw} height={Math.max(0, base - sy(b.p))} rx={1.5}><title>{`${sa}: ${b.label} ${pct(b.p, 1)}`}</title></rect>
+              <rect className="bust-bar" x={cx + 1} y={sy(q.p)} width={bw} height={Math.max(0, base - sy(q.p))} rx={1.5}><title>{`${sb}: ${q.label} ${pct(q.p, 1)}`}</title></rect>
+              <text className="val" x={cx - bw / 2 - 1} y={sy(b.p) - 3} textAnchor="middle">{lbl(b.p)}</text>
+              <text className="val" x={cx + bw / 2 + 1} y={sy(q.p) - 3} textAnchor="middle">{lbl(q.p)}</text>
+              <text x={cx} y={height - 5} textAnchor="middle">{b.label}</text>
+            </g>
+          );
+        })}
         <line className="axis" x1={L} x2={CW - R} y1={base} y2={base} />
-        {ticks.map((t) => <text key={t} x={sx(t)} y={height - 5} textAnchor="middle">{t}</text>)}
       </svg>
-      <p className="shp-curve-note">Finish position (left is better), smoothed.{cut ? ` Chance of missing the cut: ${shortName(pair.steady.name)} ${pct(ca.pMiss, 0)}, ${shortName(pair.bust.name)} ${pct(cb.pMiss, 0)}.` : ""}</p>
+      <p className="shp-curve-note"><i className="shp-key-sw" data-kind="steady" aria-hidden="true" /> {sa} <i className="shp-key-sw" data-kind="bust" aria-hidden="true" /> {sb} · chance of each finish{band !== null || market === "make_cut" ? `; shaded buckets count for ${market === "make_cut" ? "make cut" : SHAPE_MARKET_LABEL[market].toLowerCase()}` : ""}.</p>
     </div>
   );
 }
@@ -98,7 +102,7 @@ export function PairSpotlight({ doc, pair, market, compact = false, onPick }: { 
         <Side p={pair.steady} market={market} onPick={onPick} />
         <Side p={pair.bust} market={market} onPick={onPick} />
       </div>
-      <PairCurves doc={doc} pair={pair} market={market} height={compact ? 100 : 124} />
+      <PairCurves doc={doc} pair={pair} market={market} height={compact ? 120 : 140} />
       <p className="shp-gap"><b>{pair.gapPp.toFixed(1)} pp</b> apart on {label} at a {pair.winRatio < 1.06 ? "near-identical" : "similar"} win chance ({pct(pair.bust.win, 1)} vs {pct(pair.steady.win, 1)}).</p>
       <p className="shp-why">{pair.why}</p>
       {!compact && pair.effects.length > 0 && (

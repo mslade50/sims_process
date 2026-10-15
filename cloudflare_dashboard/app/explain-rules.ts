@@ -24,7 +24,11 @@ export type ExPlayer = {
   edge_sg: number | null; attribution: Record<string, number>; why: string; why_edge: string | null; tags: string[]; neighbors: number[];
   finish: { pos: number[]; p_miss_cut: number; mean_pos: number; p10: number; median: number; p90: number } | null;
   scores: Record<string, Pctl | TotalScore>; live: LiveState | null;
+  /** DataGolf reference (week documents from October 15, 2026): their pre-tournament chances and skill estimate. Reference only, never in our price. */
+  dg?: DgRef | null;
 };
+/** DataGolf's chances and skill estimate for one player. Skills are strokes a round against the average of the players both models rate (before weather); skill_gap = ours - DataGolf's. */
+export type DgRef = Partial<Record<Market, number | null>> & { skill: number | null; skill_ours: number | null; skill_gap: number | null };
 export type LegendEntry = { label: string; group: string; meaning: string };
 export type BiasRow = {
   dimension: string; dimension_label: string; bucket: string; label: string; n: number; edge_sg: number | null; edge_sg_se: number | null;
@@ -96,7 +100,7 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
     return { ...(p as object), probs: full, components: isObject(p.components) ? p.components : {}, attribution: isObject(p.attribution) ? p.attribution : {},
       tags: Array.isArray(p.tags) ? p.tags : [], neighbors: Array.isArray(p.neighbors) ? p.neighbors : [], scores: isObject(p.scores) ? p.scores : {},
       finish: isObject(p.finish) && Array.isArray((p.finish as { pos?: unknown }).pos) ? p.finish : null, live: isObject(p.live) ? p.live : null, why: typeof p.why === "string" ? plainWhy(neutralPronouns(p.why)) : "",
-      why_edge: typeof p.why_edge === "string" ? plainWhyEdge(neutralPronouns(p.why_edge)) : null } as unknown as ExPlayer;
+      why_edge: typeof p.why_edge === "string" ? plainWhyEdge(neutralPronouns(p.why_edge)) : null, dg: parseDg(p.dg) } as unknown as ExPlayer;
   });
   return { ...d, players, bias: Array.isArray(d.bias) ? plainBias(d.bias) : [], top_edges: Array.isArray(d.top_edges) ? d.top_edges : [], components_legend: neutralLegend(d.components_legend),
     finish: isObject(d.finish) ? d.finish : { method: "unavailable", reason: null }, course_card: (isObject(d.course_card) ? d.course_card : { holes: [], what_drives_scoring: [], by_par: {}, weather: {} }) as CourseCard,
@@ -1068,4 +1072,46 @@ export function eventLede(doc: ExplainDoc): string {
   const strength = fs === null || fs === undefined ? "" : Math.abs(fs) < 0.1 ? ", an average-strength field" : fs > 0 ? ", a stronger-than-average field" : ", a weaker-than-average field";
   const cut = doc.event.cut_rule ? doc.event.cut_rule.replace(/^./, (c) => c.toLowerCase()) : "no cut";
   return `${[course, spec].filter(Boolean).join(" · ")}. ${field} players, ${cut}${strength}.`;
+}
+
+/** A player's DataGolf block, numbers only; null when absent or empty. */
+function parseDg(raw: unknown): DgRef | null {
+  if (!isObject(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const out = { skill: num(r.skill), skill_ours: num(r.skill_ours), skill_gap: num(r.skill_gap) } as DgRef;
+  for (const m of MARKETS) out[m] = num(r[m]);
+  return Object.values(out).some((v) => v !== null) ? out : null;
+}
+
+export type DgGapKind = "win" | "top_20" | "skill";
+export const DG_GAP_LABEL: Record<DgGapKind, string> = { win: "Win", top_20: "Top 20", skill: "Skill" };
+/** ours / dg: chances (win, top 20) or skills in strokes a round; gap: relative for chances (ours / DataGolf's - 1), strokes for skill (ours - DataGolf's). */
+export type DgGapRow = { id: number; name: string; ours: number; dg: number; gap: number };
+export const DG_SKILL_MIN = 0.1;      // a skill gap under 0.1 strokes a round counts as in line
+export const DG_TOP20_MIN = 0.05;     // players DataGolf gives at least 5% to finish top 20, plus this week's contenders
+/** Whether the document carries any DataGolf reference (older documents and live runs do not). */
+export function hasDg(doc: ExplainDoc): boolean { return doc.players.some((p) => p.dg != null); }
+/** Biggest gaps against DataGolf, ours above and ours below, among this week's contenders and the players DataGolf gives a real top-20 chance. */
+export function dgGaps(doc: ExplainDoc, kind: DgGapKind, n = 4, ids?: number[]): { higher: DgGapRow[]; lower: DgGapRow[]; scale: number } {
+  const pool = doc.players.filter((p) => !p.withdrawn && p.dg && ((ids ?? []).includes(p.id) || (p.dg.top_20 ?? 0) >= DG_TOP20_MIN));
+  const rows: DgGapRow[] = [];
+  for (const p of pool) {
+    const d = p.dg!;
+    if (kind === "skill") {
+      if (d.skill !== null && d.skill_ours !== null && d.skill_gap !== null) rows.push({ id: p.id, name: plainName(p.name), ours: d.skill_ours, dg: d.skill, gap: d.skill_gap });
+    } else {
+      const ours = p.probs[kind].model, dg = d[kind] ?? null;
+      if (ours !== null && dg !== null && dg > 0 && dg < 1) rows.push({ id: p.id, name: plainName(p.name), ours, dg, gap: ours / dg - 1 });
+    }
+  }
+  const min = kind === "skill" ? DG_SKILL_MIN : EDGE_MIN;
+  const byGap = (a: DgGapRow, b: DgGapRow) => Math.abs(b.gap) - Math.abs(a.gap) || a.name.localeCompare(b.name);
+  const higher = rows.filter((r) => r.gap >= min).sort(byGap).slice(0, n);
+  const lower = rows.filter((r) => r.gap <= -min).sort(byGap).slice(0, n);
+  return { higher, lower, scale: Math.max(kind === "skill" ? 0.3 : 0.25, ...[...higher, ...lower].map((r) => Math.abs(r.gap))) };
+}
+/** The single biggest skill gap against DataGolf among the same players, or null. */
+export function biggestDgSkillGap(doc: ExplainDoc, ids?: number[]): DgGapRow | null {
+  const g = dgGaps(doc, "skill", 1, ids);
+  return [...g.higher, ...g.lower].sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))[0] ?? null;
 }

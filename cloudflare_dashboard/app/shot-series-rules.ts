@@ -4,8 +4,7 @@ export type SeriesMetric={n:number;rc:number[];v?:number[];b?:string};
 export type ShotSeries={schema_version:string;rounds:Array<[string,string,number]>;metrics:Record<string,SeriesMetric|undefined>};
 export type ShotPoint={index:number;date:string;time:number;event_id:string;round:number;value:number;sma:number|null};
 const fin=(v:unknown):v is number=>typeof v==="number"&&Number.isFinite(v);
-/** Hole-level measures have about 18 samples a round, so they need shorter windows than shot-level ones. */
-const HOLE_BASED=new Set(["app_gir","short_scramble","short_updown","short_sand_save","score_birdie","score_bogey_avoid","score_three_putt_avoid"]);
+
 /** Rare events (penalties, bunker shots) need long windows to mean anything. */
 const RARE=new Set(["tee_penalty","app_penalty","arg_sand","tee_relief_drop"]);
 
@@ -45,8 +44,9 @@ export function shotMovingAverage(shots:Array<Omit<ShotPoint,"sma"|"index">>,win
   shots.forEach((p,i)=>{sum+=p.value;if(i>=w)sum-=shots[i-w].value;out.push({...p,index:i+1,sma:i+1>=w?sum/w:null});});
   return out;
 }
-/** Selectable shot windows for the metric. */
-export function shotWindows(key:string):number[]{return HOLE_BASED.has(key)?[50,100,250]:RARE.has(key)?[250,500,1000]:[100,250,500];}
+/** Selectable shot windows for the metric. Chosen October 15, 2026 (experiments/ma_window_20261015 in sim_prep): at 250-500 shots the line barely moves,
+ *  and 50-200 still shows real movement (the luck band says how much of it could be chance). Rare events keep long windows. */
+export function shotWindows(key:string):number[]{return RARE.has(key)?[250,500,1000]:[50,100,200];}
 /** Longest window that still leaves at least two non-overlapping windows of shots, else the longest that fits, else the shortest. */
 export function defaultShotWindow(count:number,key:string):number{
   const ws=shotWindows(key);
@@ -75,4 +75,13 @@ export function indexTicks(count:number,max=5):number[]{
 export function tickDate(t:number,first:number,last:number):string{
   const long=Math.abs(last-first)>548*864e5;
   return new Date(t).toLocaleDateString("en-US",long?{month:"short",year:"numeric",timeZone:"UTC"}:{month:"short",day:"numeric",year:"2-digit",timeZone:"UTC"});
+}
+/** Mean and the band a w-shot average would wander in from luck alone if the player's true level never moved (±2 standard errors around the overall mean).
+ *  Assumes shots are independent; null with fewer than two shots. */
+export function luckBand(shots:Array<{value:number}>,window:number):{mean:number;lo:number;hi:number}|null{
+  const n=shots.length;if(n<2||window<1)return null;
+  let s=0;for(const p of shots)s+=p.value;const mean=s/n;
+  let v=0;for(const p of shots)v+=(p.value-mean)**2;
+  const half=2*Math.sqrt(v/(n-1)/window);
+  return Number.isFinite(half)?{mean,lo:mean-half,hi:mean+half}:null;
 }

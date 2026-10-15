@@ -4,7 +4,7 @@ import {useDashboardData} from "./data";
 import {HOLE_BASED} from "./player-fingerprint-rules";
 import {profileKey} from "./player-profile-rules";
 import {finite,formatMetric,dayText,windowWords,type ShotMetric} from "./player-deep-rules";
-import {parseSeries,seriesValues,seriesShotCount,shotMovingAverage,shotWindows,defaultShotWindow,shotTrendSummary,indexTicks,tickDate,type ShotSeries} from "./shot-series-rules";
+import {parseSeries,seriesValues,seriesShotCount,shotMovingAverage,shotWindows,defaultShotWindow,shotTrendSummary,luckBand,indexTicks,tickDate,type ShotSeries} from "./shot-series-rules";
 import {movingAverage,fullAveragePoints,trendRoundCount,defaultTrendWindow,trendSummary,trendImproved,scopeLabel,TREND_WINDOWS,type TrendRoundRow} from "./metric-trend-rules";
 
 const W=640,H=250,L=58,R=16,T=14,B=34;
@@ -24,8 +24,10 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
   const all=useMemo(()=>shotMovingAverage(shots,win),[shots,win]),full=all.filter(p=>p.sma!==null) as Array<typeof all[number]&{sma:number}>,sum=shotTrendSummary(all,win);
   const unit=metric.unit,lower=!descriptive&&metric.higher_is_better===false,ref=finite(metric.reference_mean)?metric.reference_mean:null;
   const fmt=(v:number|null|undefined)=>formatMetric(v,unit)+(["fraction","ratio","SG/round","field SG/round","strokes/shot","strokes/round",""].includes(unit)?"":` ${unit}`);
-  const vals:number[]=[...full.map(p=>p.sma),...(ref===null?[]:[ref])];
+  const band=useMemo(()=>luckBand(shots,win),[shots,win]),[showBand,setShowBand]=useState(true),bandOn=showBand&&!!band&&full.length>1;
+  const vals:number[]=[...full.map(p=>p.sma),...(ref===null?[]:[ref]),...(bandOn?[band!.lo,band!.hi]:[])];
   let lo=Math.min(...vals),hi=Math.max(...vals);if(!vals.length){lo=0;hi=1;}const pad=(hi-lo)*.12||Math.abs(hi)*.05||.5;lo-=pad;hi+=pad;
+  const outside=bandOn?full.filter(p=>p.sma<band!.lo||p.sma>band!.hi).length/full.length:null;
   // Every shot is one equal step along the axis; dates are only labels under it and never move the line.
   const last=Math.max(1,full.length-1),x=(i:number)=>L+(full.length>1?i/last:.5)*(W-L-R),y=(v:number)=>T+(1-(v-lo)/(hi-lo))*(H-T-B);
   const step=Math.max(1,Math.ceil(full.length/400)),line=full.map((p,i)=>[p,i] as const).filter(([,i])=>i%step===0||i===full.length-1).map(([p,i])=>`${x(i).toFixed(1)},${y(p.sma).toFixed(1)}`).join(" ");
@@ -37,12 +39,13 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
   const pointer=(e:React.PointerEvent<SVGSVGElement>)=>{const r=e.currentTarget.getBoundingClientRect();if(!full.length||!r.width)return;const px=(e.clientX-r.left)/r.width*W;setHover(Math.round(Math.max(0,Math.min(1,(px-L)/(W-L-R)))*last));};
   return <div className="pd-trend-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget)onClose();}}><section className="pd-metric-trend" role="dialog" aria-modal="false" aria-label={`${title} trend, ${win}-${word} moving average`}>
     <div className="pd-mt-head"><div><span className="eyebrow">{win}-{word} moving average · every {word} one step, in play order</span><h4>{title}</h4></div><button ref={closeRef} type="button" className="pd-mt-close" onClick={onClose} aria-label="Close trend panel">Close ✕</button></div>
-    <div className="pd-mt-tools"><div className="pd-mt-windows" role="group" aria-label={`Moving average window in ${words}`}>{windows.map(w=><button key={w} type="button" aria-pressed={win===w} onClick={()=>{setWin(w);setHover(null);}}>{w}</button>)}</div><span className="pd-muted">Last {win} {words}</span></div>
+    <div className="pd-mt-tools"><div className="pd-mt-windows" role="group" aria-label={`Moving average window in ${words}`}>{windows.map(w=><button key={w} type="button" aria-pressed={win===w} onClick={()=>{setWin(w);setHover(null);}}>{w}</button>)}</div><label><input type="checkbox" checked={showBand} disabled={!band} onChange={e=>setShowBand(e.target.checked)}/> Show luck band</label></div>
     <p className="pd-mt-trend" role="status"><b>{changeText}</b></p>
     <p className="pd-muted">{full.length?<>Latest {win}-{word} average <b>{fmt(sum.current)}</b> over {total.toLocaleString("en-US")} {words}</>:<>{total} {words} recorded</>}{ref!==null?<> · PGA average {fmt(ref)}</>:" · PGA average not published for this view"}.{lower&&" Lower is better for this measure (the radar flips it so further out is still better)."}{descriptive&&" Ball flight, not skill: higher is not better or worse."}</p>
     {full.length>1?<svg className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-${word} moving average over ${total} ${words}, from ${fmt(full[0].sma)} to ${fmt(sum.current)}. Use left and right arrows to read along the line.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
       {[0,.5,1].map(f=>{const v=lo+(hi-lo)*f;return <g key={f}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="10" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
       {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><text x={W-R} y={y(ref)-4} textAnchor="end" fontSize="10" fill="var(--muted-strong)">PGA average {formatMetric(ref,unit)}</text></g>}
+      {bandOn&&<g><rect x={L} width={W-L-R} y={y(band!.hi)} height={Math.max(0,y(band!.lo)-y(band!.hi))} fill="var(--chart-2)" opacity=".1"/><line x1={L} x2={W-R} y1={y(band!.mean)} y2={y(band!.mean)} stroke="var(--chart-2)" strokeOpacity=".45" strokeDasharray="2 3"/><text x={L+4} y={y(band!.hi)+11} fontSize="10" fill="var(--muted-strong)">Luck band (their average ± chance)</text></g>}
       <polyline points={line} fill="none" stroke="var(--chart-2)" strokeWidth="2.5" strokeLinejoin="round"/>
       {ticks.map((i,k)=><text key={i} x={x(i)} y={H-14} textAnchor={k===0?"start":k===ticks.length-1?"end":"middle"} fontSize="10" fill="var(--muted)">{tickText(i)}</text>)}
       <text x={(L+W-R)/2} y={H-1} textAnchor="middle" fontSize="10" fill="var(--muted)">{word[0].toUpperCase()+word.slice(1)}s in play order (dates are rough markers) · the line starts once {win} {words} are behind it</text>
@@ -51,6 +54,7 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
     <p className="pd-mt-readout" aria-live="polite">{sel?<>{dayText(sel.date)} · {word} {sel.index.toLocaleString("en-US")} of {total.toLocaleString("en-US")} · average {fmt(sel.sma)} (last {win} {words})</>:"Hover or use the arrow keys (Shift for bigger steps) to read along the line."}</p>
     <ul className="pd-mt-notes pd-muted">
       <li>Includes {total.toLocaleString("en-US")} {words} {filtered?"from the rounds you selected in the filters":"with published shot detail"}{descriptive?" (rounds with launch-monitor readings)":""}, in play order{windowDays&&!filtered?` (last ${windowWords(windowDays)} at most)`:""}.</li>
+      {bandOn&&<li>The shaded luck band is where a {win}-{word} average would wander from chance alone if this player&rsquo;s true level never changed (their overall average {fmt(band!.mean)}, ±2 standard errors). {outside!==null&&outside>=.1?<>The line is outside it {Math.round(outside*100)}% of the time, so some of the movement is real.</>:<>The line stays inside it, so its wiggles are mostly luck.</>} Shorter averages react faster but wander more; the band widens to match.</li>}
       <li>Each point is the plain average of the last {win} {words}, so the line shows form over time rather than round-to-round noise. Every {word} takes the same step along the axis, so the line never stretches over breaks between events; the dates underneath only mark roughly when those {words} were played.</li>
     </ul>
   </section></div>;

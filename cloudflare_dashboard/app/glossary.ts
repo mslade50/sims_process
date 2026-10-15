@@ -81,6 +81,7 @@ export const GLOSSARY: Record<string, string> = {
   ex_gap: "Gap to the sportsbook: how far our chance is from the sportsbook's, as a share of the sportsbook's chance. +39% means ours is 39% higher. Under 5% counts as in line.",
   ex_pts: "Percentage points: the plain difference between two chances. Going from 10.0% to 10.8% is +0.8 points.",
   ex_field_strength: "Field strength: the field's average skill in strokes a round against an average PGA Tour player, on the Data Golf scale. Plus means a stronger field.",
+  ex_dg_skill_gap: "Skill gap vs Data Golf: our pre-tournament skill estimate minus Data Golf's final estimate, in strokes a round against this field's average (before weather). + means we rate the player higher. Data Golf is a reference only.",
   ex_skill_gap: "Skill gap: strokes a round better (+) or worse (-) than the sportsbook's prices imply, allowing for how boom-or-bust each side sees the player.",
   ex_winning_score: "Winning score: the lowest 72-hole total in each simulated tournament, to par. Most likely is the single score that wins most often; the range covers 8 in 10 simulations.",
   ex_scoring_avg: "Expected scoring average: the field's average score in a round across the simulations, including the weather forecast. A round already played shows the real average.",

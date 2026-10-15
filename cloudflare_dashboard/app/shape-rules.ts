@@ -355,6 +355,23 @@ export function curveXMax(players: Array<ExPlayer | undefined | null>, cut: bool
   for (let i = 0; i < pooled.length; i++) { c += pooled[i]; if (c / total >= 0.995) { k = i + 1; break; } }
   return Math.min(size, Math.max(k, Math.min(25, size)));
 }
+/** Finish-position buckets for the paired histogram: win, 2-5, 6-10, 11-20, 21-30, 31-50, 51 or worse, and (cut events) missed cut. Chances sum to 1. */
+export type FinishBucket = { label: string; lo: number; hi: number | null; p: number };
+const BIN_EDGES: Array<[number, number | null]> = [[1, 1], [2, 5], [6, 10], [11, 20], [21, 30], [31, 50], [51, null]];
+export function finishBuckets(pos: number[] | null | undefined, pMiss: number | null | undefined, cut: boolean): FinishBucket[] | null {
+  if (!pos || !pos.length || pos.some((v) => !isNum(v))) return null;
+  const f = finishingProbs(pos, pMiss, cut);
+  const out: FinishBucket[] = [];
+  for (const [lo, hi] of BIN_EDGES) {
+    if (lo > f.length) break;
+    const end = hi === null ? f.length : Math.min(hi, f.length);
+    let p = 0;
+    for (let i = lo - 1; i < end; i++) p += Math.max(0, f[i]);
+    out.push({ label: lo === hi ? "Win" : hi === null || end < hi ? `${lo}+` : `${lo}–${hi}`, lo, hi: hi === null || end < hi ? null : hi, p });
+  }
+  if (cut) out.push({ label: "Missed cut", lo: Infinity, hi: null, p: isNum(pMiss) ? Math.max(0, pMiss) : 0 });
+  return out;
+}
 /** x position of the cut line to mark, or null when the event has no cut or the line is off the drawn range. */
 export function cutLineAt(doc: ExplainDoc, xMax: number): number | null {
   const n = doc.event?.cut_top_n;

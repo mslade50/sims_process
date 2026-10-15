@@ -12,10 +12,10 @@ import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } fro
 import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
 import type { FinishSeries } from "./ExplainCharts";
 import {
-  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, biggestGaps, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
+  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
   explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
   modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, tourName, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
-  type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
+  type DgGapKind, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
 } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
@@ -170,6 +170,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   const bullets = plainCourseBullets(cc.what_drives_scoring);
   const tech = [live ? "" : SHAPE_METHOD, cc.weather?.venue_class ? `Venue class (publisher): ${cc.weather.venue_class}` : "", cc.weather?.wind_slope_source ?? "", cc.weather?.label ?? "", cc.hole_source ? `Hole table: ${cc.hole_source}` : ""].filter(Boolean);
   const contenderIds = differ.differ.ids;
+  const dgSkill = useMemo(() => (live ? null : biggestDgSkillGap(doc, contenderIds)), [doc, contenderIds, live]);
   return (
     <>
       <KeyFacts doc={doc} ids={contenderIds} openPlayer={openPlayer} />
@@ -179,7 +180,8 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         <p className="ex-lede">{eventLede(doc)}</p>
         <div className="ex-chips-row" aria-label="Field summary">
           <span className="ex-chip"><Term k="ex_field_strength">Field strength</Term> <b>{fs == null ? "n/a" : `${signed(fs)} strokes`}</b></span>
-          {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)}</b></span>}
+          {!live && ee && <span className="ex-chip"><Term k="ex_skill_gap">Biggest skill gap vs sportsbooks</Term> <b className={ee.shape.skill_gap >= 0 ? "pos" : "neg"}>{plainName(ee.player.name)} {signed(ee.shape.skill_gap)}</b></span>}
+          {!live && dgSkill && <span className="ex-chip"><Term k="ex_dg_skill_gap">Biggest skill gap vs Data Golf</Term> <b className={dgSkill.gap >= 0 ? "pos" : "neg"}>{dgSkill.name} {signed(dgSkill.gap)}</b></span>}
           {weatherStatus(doc).short && <span className="ex-chip" title={weatherStatus(doc).long}>{weatherStatus(doc).short}</span>}
         </div>
         <details className="ex-details">
@@ -198,6 +200,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
       {live && <LiveSection doc={doc} openPlayer={openPlayer} />}
 
       {!live && <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />}
+      {!live && hasDg(doc) && <DgGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />}
       <Suspense fallback={null}><ShapeSpotlightCard doc={doc} openPlayer={openPlayer} onSeeMore={() => window.location.assign("/distributions")} /></Suspense>
 
       <div className="two-column ex-two">
@@ -459,6 +462,43 @@ function GapGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; o
         {list(g.lower, "We are lower")}
       </div>
       <p className="ex-muted">Percent is how far our chance is from the sportsbook&rsquo;s <Term k="ex_gap">(what is this?)</Term>. Contenders only; the full bet-by-bet table is further down.</p>
+    </Panel>
+  );
+}
+
+/** Where we differ most from Data Golf: win and top-20 chances (as a share of theirs) and skill estimates (strokes a round). Reference only. */
+function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; openPlayer: (id: number) => void }) {
+  const [kind, setKind] = useState<DgGapKind>("skill");
+  const g = useMemo(() => dgGaps(doc, kind, 4, ids), [doc, kind, ids]);
+  const skill = kind === "skill";
+  const what = skill ? "skill" : `${DG_GAP_LABEL[kind].toLowerCase()} chance`;
+  const nums = (r: { ours: number; dg: number }) => (skill ? `${signed(r.ours)} vs ${signed(r.dg)}` : `${pct(r.ours)} vs ${pct(r.dg)}`);
+  const gapTxt = (v: number) => (skill ? `${signed(v)}` : relText(v));
+  const list = (rows: typeof g.higher, title: string) => (
+    <div className="ex-gap-col">
+      <h3 className="ex-h3">{title}</h3>
+      {rows.length ? <ul>{rows.map((r) => (
+        <li key={r.id}>
+          <button type="button" onClick={() => openPlayer(r.id)}>
+            <span className="ex-mv-name">{r.name}</span>
+            <DeltaBar value={r.gap} scale={g.scale} label={`${r.name}: our ${what} ${gapTxt(r.gap)} against Data Golf`} />
+            <span className="ex-mv-nums">{nums(r)}</span>
+            <b className={r.gap > 0 ? "pos" : "neg"}>{r.gap > 0 ? "▲" : "▼"} {gapTxt(r.gap)}</b>
+          </button>
+        </li>
+      ))}</ul> : <p className="ex-muted">Nobody: every gap is under {skill ? "0.1 strokes a round" : "5%"}.</p>}
+    </div>
+  );
+  return (
+    <Panel title="Where we differ from Data Golf" eyebrow={skill ? "Skill estimate, ours vs Data Golf's" : `${DG_GAP_LABEL[kind]} chance, ours vs Data Golf's`}
+      actions={<SegmentedControl label="Compare" value={kind} onChange={setKind} options={(["skill", "win", "top_20"] as DgGapKind[]).map((k) => ({ value: k, label: DG_GAP_LABEL[k] }))} />}>
+      <div className="ex-gap-grid">
+        {list(g.higher, "We are higher")}
+        {list(g.lower, "We are lower")}
+      </div>
+      <p className="ex-muted">{skill
+        ? <>Skill is strokes a round against the average of this field (before weather), ours vs Data Golf&rsquo;s final pre-tournament estimate; the gap is ours minus theirs. <Term k="ex_dg_skill_gap">(what is this?)</Term></>
+        : <>Percent is how far our chance is from Data Golf&rsquo;s pre-tournament chance, as a share of theirs.</>} This week&rsquo;s contenders and anyone Data Golf gives at least a 5% top-20 chance. Data Golf is a reference only; it never enters our price.</p>
     </Panel>
   );
 }

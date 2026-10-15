@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   american, availableTags, biasDimensions, biasForDimension, biasSentence, binFinish, defaultCompetitors, explainKeyFor, filterWhy, finishBins, leaderboard, movers, nameMatches, orderEvents,
-  parseExplain, pct, signed, sortWhy, toParText, toggleCompetitor, topEdges, topK, waterfall,
+  biggestDgSkillGap, dgGaps, hasDg, parseExplain, pct, signed, sortWhy, toParText, toggleCompetitor, topEdges, topK, waterfall,
 } from "../app/explain-rules.ts";
 
 const read = async (n) => JSON.parse(await readFile(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 const week = parseExplain(await read("explain_week.json"));
 const live = parseExplain(await read("explain_live.json"));
+const await_week = await read("explain_week.json");
 
 async function loadWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -307,4 +308,21 @@ test("spread label reads the gap relative to this week's contenders; older docum
   assert.match(n, /small/); assert.match(n, /relative to this week's contenders/); assert.ok(!/tends to favor/.test(n));
   assert.ok(!/relative to this week/.test(R.spreadLeanNote(0.02, false)));
   assert.equal(R.spreadLeanNote(null, true), null);
+});
+
+test("Data Golf gaps: chances relative to theirs, skill in strokes, contenders plus real top-20 chances; old documents have none", () => {
+  assert.equal(hasDg(week), false);
+  assert.deepEqual(dgGaps(week, "skill"), { higher: [], lower: [], scale: 0.3 });
+  const raw = await_week;
+  const players = raw.players.map((p, i) => ({ ...p, dg: { win: (p.probs?.win?.model ?? 0.01) * (i === 0 ? 0.5 : 1), top_20: 0.3, skill: 0.1 * i, skill_ours: 0.1 * i + (i === 1 ? 0.4 : i === 2 ? -0.25 : 0), skill_gap: i === 1 ? 0.4 : i === 2 ? -0.25 : 0 } }));
+  const d = parseExplain({ ...raw, players });
+  assert.equal(hasDg(d), true);
+  const s = dgGaps(d, "skill", 4);
+  assert.equal(s.higher[0].id, players[1].id);
+  assert.equal(s.lower[0].gap, -0.25);
+  assert.equal(biggestDgSkillGap(d).id, players[1].id);
+  const w = dgGaps(d, "win", 4);
+  if (players[0].probs?.win?.model) assert.ok(Math.abs(w.higher[0].gap - 1) < 1e-9);       // ours twice theirs = +100%
+  assert.ok(w.higher.every((r) => r.gap >= 0.05) && w.lower.every((r) => r.gap <= -0.05));
+  assert.equal(parseExplain({ ...raw, players: [{ ...raw.players[0], dg: { skill: "x" } }] }).players[0].dg, null);
 });
