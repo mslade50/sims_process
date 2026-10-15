@@ -5,13 +5,13 @@
  * Chart-free (inline SVG only, no Recharts) so the compact card can sit on This week without adding to its bundle.
  * All numbers come from shape-rules.ts; this file only draws them.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SegmentedControl } from "./components";
 import { Term } from "./ExplainBits";
 import { pct, type ExplainDoc } from "./explain-rules";
 import {
-  analyzeShapes, availableMarkets, curveAt, finishBuckets, kindLabel, playerWhy, shortName, signedPp, SHAPE_MARKET_LABEL,
-  type FinishBucket, type ShapeAnalysis, type ShapeKind, type ShapeMarket, type ShapePair, type ShapePlayer,
+  analyzeShapes, availableMarkets, curveAt, kindLabel, ladderHeadline, pairLadder, pairsForBetting, playerWhy, shortName, signedPp, SHAPE_MARKET_LABEL,
+  type LadderRow, type ShapeAnalysis, type ShapeKind, type ShapeMarket, type ShapePlayer,
 } from "./shape-rules";
 import { AnimatedNumber, ScrollTable } from "./ui";
 import "./shapes.css";
@@ -24,120 +24,58 @@ function KindWord({ kind }: { kind: ShapeKind }) {
   return <Term k={k}>{kindLabel(kind)}</Term>;
 }
 
-/** The finish position that closes the shaded "market" band: top 5/10/20 or the cut line for make cut. */
-function bandEnd(market: ShapeMarket, doc: ExplainDoc): number | null {
-  if (market === "make_cut") return doc.event?.cut_top_n && doc.event.cut_top_n > 0 ? doc.event.cut_top_n : null;
-  return market === "top_5" ? 5 : market === "top_10" ? 10 : 20;
-}
 
-/* ------------------------------------------------------------------ paired finish histogram */
-/** Widest the histogram draws; narrower containers redraw at their own width so the text never shrinks below its set size. */
-const CW_MAX = 460, CW_MIN = 280;
-/** Buckets that pay out for the market (shaded): win through top 5/10/20, or every made-cut bucket for make cut. */
-function inMarket(b: FinishBucket, market: ShapeMarket, band: number | null): boolean {
-  if (b.lo === Infinity) return false;
-  if (market === "make_cut") return true;
-  return band !== null && b.hi !== null && b.hi <= band;
-}
-export function PairCurves({ doc, pair, market, height = 132 }: { doc: ExplainDoc; pair: ShapePair; market: ShapeMarket; height?: number }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [CW, setCW] = useState(CW_MAX);
-  useEffect(() => {
-    const el = box.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([e]) => { const w = Math.round(e.contentRect.width); if (w > 0) setCW(Math.max(CW_MIN, Math.min(CW_MAX, w))); });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const cut = !!doc.event?.cut_round || !!doc.event?.cut_top_n;
-  const pa = doc.players.find((p) => p.id === pair.steady.id);
-  const pb = doc.players.find((p) => p.id === pair.bust.id);
-  const ba = pa?.finish ? finishBuckets(pa.finish.pos, pa.finish.p_miss_cut, cut) : null;
-  const bb = pb?.finish ? finishBuckets(pb.finish.pos, pb.finish.p_miss_cut, cut) : null;
-  if (!ba || !bb || ba.length !== bb.length) return <p className="shp-curve-note">The finish chart is not available for one of these players, so only the prices are compared.</p>;
-  const L = 4, R = 4, T = 28, B = 18;
-  const n = ba.length, gw = (CW - L - R) / n, bw = Math.min(18, (gw - 8) / 2);
-  const yMax = Math.max(...ba.map((b) => b.p), ...bb.map((b) => b.p), 0.05) * 1.08;
-  const sy = (v: number) => T + (1 - v / yMax) * (height - T - B);
-  const base = height - B;
-  const band = bandEnd(market, doc);
-  const lbl = (v: number) => (v < 0.0005 ? "" : v < 0.1 ? (v * 100).toFixed(1) : String(Math.round(v * 100)));
-  const sa = shortName(pair.steady.name), sb = shortName(pair.bust.name);
-  const counted = ba.map((b) => inMarket(b, market, band));
-  const firstIn = counted.indexOf(true), lastIn = counted.lastIndexOf(true);
-  const mkWord = market === "make_cut" ? "Make cut" : SHAPE_MARKET_LABEL[market];
-  const label = `Chance of each finish for ${sa} and ${sb}: ${ba.map((b, i) => `${b.label} ${pct(b.p, 0)} vs ${pct(bb[i].p, 0)}`).join("; ")}.`;
+/* ------------------------------------------------------------------ bet ladder: the finding in one sentence, then one row per bet */
+const pts1 = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(1)}`);
+const pct1 = (v: number | null) => (v === null ? "—" : `${(v * 100).toFixed(1)}%`);
+/** Same win chance, different finishes: pair chips (best betting pair first), the finding, and a ladder whose gap bars grow on arrival and slide when the pair changes. */
+export function ShapeLadder({ doc, a, onPick, onSeeMore, title = true }: { doc: ExplainDoc; a: ShapeAnalysis; onPick?: (id: number) => void; onSeeMore?: () => void; title?: boolean }) {
+  const pairs = useMemo(() => pairsForBetting(doc, a.pairs, a.market), [doc, a.pairs, a.market]);
+  const [ix, setIx] = useState(0);
+  const [shown, setShown] = useState(false);
+  const pair = pairs[Math.min(ix, pairs.length - 1)];
+  const rows = useMemo<LadderRow[]>(() => (pair ? pairLadder(doc, pair) : []), [doc, pair]);
+  useEffect(() => { const id = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(id); }, []);
+  if (!pair) return <p className="shp-empty">No two top-30 players have win chances within 20% of each other and a different shape, so there is no pair to show.</p>;
+  const h = ladderHeadline(doc, pair, rows, a.market);
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.gapPts ?? 0)));
+  const al = lastName(pair.steady.name), bl = lastName(pair.bust.name);
+  const hasBook = rows.some((r) => r.a.book !== null || r.b.book !== null);
+  const name = (id: number, text: string) => onPick ? <button type="button" className="shl-name" onClick={() => onPick(id)}>{text}</button> : <span>{text}</span>;
   return (
-    <div ref={box}>
-      <svg className="shp-curves shp-hist" width={CW} height={height} viewBox={`0 0 ${CW} ${height}`} role="img" aria-label={label}>
-        {ba.map((b, i) => {
-          const x0 = L + i * gw, cx = x0 + gw / 2, q = bb[i];
-          return (
-            <g key={b.label}>
-              {counted[i] && <rect className="band" x={x0 + 1} y={T - 2} width={gw - 2} height={base - T + 2} />}
-              <rect className="steady-bar" x={cx - bw - 1} y={sy(b.p)} width={bw} height={Math.max(b.p > 0 ? 1.5 : 0, base - sy(b.p))} rx={1.5}><title>{`${sa}: ${b.label} ${pct(b.p, 1)}`}</title></rect>
-              <rect className="bust-bar" x={cx + 1} y={sy(q.p)} width={bw} height={Math.max(q.p > 0 ? 1.5 : 0, base - sy(q.p))} rx={1.5}><title>{`${sb}: ${q.label} ${pct(q.p, 1)}`}</title></rect>
-              <text className="val" x={cx - bw / 2 - 1} y={sy(b.p) - 3} textAnchor="middle">{lbl(b.p)}</text>
-              <text className="val" x={cx + bw / 2 + 1} y={sy(q.p) - 3} textAnchor="middle">{lbl(q.p)}</text>
-              <text x={cx} y={height - 5} textAnchor="middle">{gw < 46 && b.label === "Miss cut" ? "MC" : b.label}</text>
-            </g>
-          );
-        })}
-        {firstIn >= 0 && <g className="bracket"><path d={`M${L + firstIn * gw + 3},${T - 4} V${T - 9} H${L + (lastIn + 1) * gw - 3} V${T - 4}`} /><text x={L + ((firstIn + lastIn + 1) / 2) * gw} y={T - 11} textAnchor="middle">{mkWord}: {pct(pair.steady.p, 1)} vs {pct(pair.bust.p, 1)}</text></g>}
-        <line className="axis" x1={L} x2={CW - R} y1={base} y2={base} />
-      </svg>
-      <p className="shp-curve-note shp-legend"><span><i className="shp-key-sw" data-kind="steady" aria-hidden="true" /> {sa}</span><span><i className="shp-key-sw" data-kind="bust" aria-hidden="true" /> {sb}</span><span>Chance of each finish, in percent; shaded buckets add up to the {mkWord.toLowerCase()} chance. Buckets cover different numbers of places (Win is one place, 31–50 is twenty), so compare the two colours within a bucket, not the bucket heights.</span></p>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ pair spotlight */
-function Side({ p, market, onPick }: { p: ShapePlayer; market: ShapeMarket; onPick?: (id: number) => void }) {
-  const kind: ShapeKind = p.kind === "typical" ? "typical" : p.kind;
-  return (
-    <div className="shp-side" data-kind={kind}>
-      <span className="shp-tag"><Glyph kind={kind} /><KindWord kind={kind} /></span>
-      {onPick ? <button type="button" className="shp-name" onClick={() => onPick(p.id)}>{shortName(p.name)}</button> : <span className="shp-name">{shortName(p.name)}</span>}
-      <dl className="shp-stats">
-        <div><dt>Win</dt><dd><AnimatedNumber text={pct(p.win, 1)} /></dd></div>
-        <div><dt>{SHAPE_MARKET_LABEL[market]}</dt><dd><AnimatedNumber text={pct(p.p, 1)} /></dd></div>
-        {p.sd !== null && <div className="shp-minor"><dt><Term k="spread">Spread</Term></dt><dd className="shp-minor">{p.sd.toFixed(2)} strokes</dd></div>}
-        {p.pMiss !== null && <div className="shp-minor"><dt>Miss cut</dt><dd className="shp-minor">{pct(p.pMiss, 0)}</dd></div>}
-      </dl>
-    </div>
-  );
-}
-export function PairSpotlight({ doc, pair, market, compact = false, onPick }: { doc: ExplainDoc; pair: ShapePair; market: ShapeMarket; compact?: boolean; onPick?: (id: number) => void }) {
-  const label = SHAPE_MARKET_LABEL[market].toLowerCase();
-  const maxShape = Math.max(pair.shapePartPp, ...pair.effects.map((e) => Math.abs(e.effectPp)), 0.1);
-  return (
-    <div className="shp-pair">
-      <div className="shp-pair-main">
-        <div className="shp-sides">
-          <Side p={pair.steady} market={market} onPick={onPick} />
-          <Side p={pair.bust} market={market} onPick={onPick} />
-        </div>
-        <PairCurves doc={doc} pair={pair} market={market} height={compact ? 150 : 160} />
-        <div className="shp-pair-text">
-          <p className="shp-gap"><b>{pair.gapPp.toFixed(1)} pp</b> apart on {label} at a {pair.winRatio < 1.06 ? "near-identical" : "similar"} win chance ({pct(pair.bust.win, 1)} vs {pct(pair.steady.win, 1)}).</p>
-          <p className="shp-why">{pair.why}</p>
-        </div>
-      </div>
-      {!compact && pair.effects.length > 0 && (
-        <div>
-          <h4 className="shp-h">What lines up with the shape gap</h4>
-          <ul className="shp-effects">
-            {pair.effects.map((e) => (
-              <li key={e.key}>
-                <span>{e.label}</span>
-                <span className="bar" aria-hidden="true"><i data-neg={e.effectPp < 0 ? "" : undefined} style={{ width: `${Math.min(100, (Math.abs(e.effectPp) / maxShape) * 100)}%` }} /></span>
-                <b>{e.effectPp >= 0 ? "+" : "−"}{Math.abs(e.effectPp).toFixed(1)} pp</b>
-              </li>
-            ))}
-          </ul>
-          <p className="shp-fine">Of the {pair.shapePartPp.toFixed(1)} pp shape gap. Each bar is how far the two sit apart on that input times how strongly it goes with shape across this week&apos;s top 30. It is an association, not a controlled test, and the bars need not add up.</p>
+    <div className="shl">
+      {title && <div className="shl-head"><h3>Same win chance, different finishes</h3>{onSeeMore && <button type="button" className="shl-more" onClick={onSeeMore}>All 30 shapes →</button>}</div>}
+      <p className="shl-lede">{h.lead}<b className="shl-key">{h.gap}</b>{h.tail}</p>
+      {(h.why || h.book) && <dl className="shl-notes">
+        {h.why && <div><dt>Why</dt><dd>{h.why}</dd></div>}
+        {h.book && <div><dt>Books</dt><dd>{h.book}</dd></div>}
+      </dl>}
+      {pairs.length > 1 && (
+        <div className="shl-chips" role="group" aria-label="Pair of players">
+          {pairs.map((p, i) => <button key={`${p.steady.id}-${p.bust.id}`} type="button" aria-pressed={i === ix} onClick={() => setIx(i)}>{lastName(p.steady.name)} <span aria-hidden="true">·</span> {lastName(p.bust.name)}</button>)}
         </div>
       )}
+      <div className="shl-table" role="table" aria-label={`Chances for ${shortName(pair.steady.name)} and ${shortName(pair.bust.name)} on each bet`} data-shown={shown ? "" : undefined}>
+        <div className="shl-row shl-hdr" role="row">
+          <span role="columnheader">Bet</span>
+          <span role="columnheader" className="shl-n"><i className="shl-dot" data-kind="steady" aria-hidden="true" />{name(pair.steady.id, al)}</span>
+          <span role="columnheader" className="shl-n"><i className="shl-dot" data-kind="bust" aria-hidden="true" />{name(pair.bust.id, bl)}</span>
+          <span role="columnheader" className="shl-gaph">How much more often {al}</span>
+          <span role="columnheader" className="shl-n">Points</span>
+        </div>
+        {rows.map((r, i) => {
+          const g = r.gapPts ?? 0, k = Math.min(1, Math.abs(g) / max);
+          return (
+            <div key={r.market} role="row" className="shl-row" data-hl={r.market === a.market ? "" : undefined} style={{ ["--i" as string]: i }}>
+              <span role="rowheader" className="shl-bet">{r.label}</span>
+              <span role="cell" className="shl-n"><AnimatedNumber text={pct1(r.a.ours)} />{hasBook && <small>{r.a.book === null ? "no book" : `book ${pct1(r.a.book)}`}</small>}</span>
+              <span role="cell" className="shl-n"><AnimatedNumber text={pct1(r.b.ours)} />{hasBook && <small>{r.b.book === null ? "no book" : `book ${pct1(r.b.book)}`}</small>}</span>
+              <span role="cell" className="shl-track" aria-hidden="true"><i data-neg={g < 0 ? "" : undefined} style={{ ["--k" as string]: k }} /></span>
+              <span role="cell" className="shl-n shl-pts">{pts1(r.gapPts)}{r.bookGapPts !== null && <small>book {pts1(r.bookGapPts)}</small>}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -232,11 +170,10 @@ const TIER_WORD = { narrow: "Alike", moderate: "Some variety", wide: "Clear vari
 export function ShapeExplorer({ doc, onPick }: { doc: ExplainDoc; onPick?: (ids: number[]) => void }) {
   const markets = useMemo(() => availableMarkets(doc), [doc]);
   const [market, setMarket] = useState<ShapeMarket>("top_20");
-  const [pairIx, setPairIx] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const a = useMemo(() => analyzeShapes(doc, market), [doc, market]);
   if (!a.ok) return <p className="shp-empty">{a.reason ?? "Shapes are not available for this simulation."}</p>;
-  const pair = a.pairs[Math.min(pairIx, a.pairs.length - 1)];
+  const pair = a.pairs[0];
   const sel = a.players.find((p) => p.id === selected) ?? null;
   return (
     <div className="shp-root">
@@ -244,11 +181,10 @@ export function ShapeExplorer({ doc, onPick }: { doc: ExplainDoc; onPick?: (ids:
       <p className="shp-intro">Yes, it is possible, and the simulation does it on purpose. Every player has an expected score and a <Term k="spread">round-to-round spread</Term>. A high-spread player wins more of his chance from rare blow-out weeks and keeps fewer steady top finishes; a low-spread player is the reverse. Two players can therefore land on the same win chance with very different top-20 chances.</p>
       <div className="shp-tabs">
         <SegmentedControl label="Market for shape" value={a.market} onChange={(m) => { setMarket(m); setSelected(null); }} options={markets.map((m) => ({ value: m, label: SHAPE_MARKET_LABEL[m] }))} />
-        {a.pairs.length > 1 && <SegmentedControl label="Pair" value={String(Math.min(pairIx, a.pairs.length - 1))} onChange={(v) => setPairIx(Number(v))} options={a.pairs.map((p, i) => ({ value: String(i), label: i === 0 ? "Biggest gap" : `${lastName(p.bust.name)} / ${lastName(p.steady.name)}` }))} />}
       </div>
       {pair ? (
         <div>
-          <PairSpotlight doc={doc} pair={pair} market={a.market} onPick={(id) => setSelected(id)} />
+          <ShapeLadder doc={doc} a={a} title={false} onPick={(id) => setSelected(id)} />
           {onPick && <div className="shp-actions"><button type="button" className="shp-btn" onClick={() => onPick([pair.steady.id, pair.bust.id])}>Compare these two in the finish chart below</button></div>}
         </div>
       ) : <p className="shp-empty">No two top-30 players have win chances within 20% of each other and a different shape, so there is no pair to show.</p>}
@@ -297,14 +233,8 @@ export function ShapeSpotlightCard({ doc, openPlayer, onSeeMore, market = "top_2
   const a = useMemo(() => analyzeShapes(doc, market), [doc, market]);
   if (!doc || !a.ok || !a.pairs[0]) return null;
   return (
-    <section className="shp-card" aria-label="Same chance to win, different weeks">
-      <div>
-        <span className="eyebrow">Distribution shapes</span>
-        <h3>Same chance to win, different weeks</h3>
-      </div>
-      <p className="shp-variety"><span className="shp-tier" data-tier={a.variety.tier}>{TIER_WORD[a.variety.tier]}</span>{" "}{a.variety.text}</p>
-      <PairSpotlight doc={doc} pair={a.pairs[0]} market={a.market} compact onPick={openPlayer} />
-      {onSeeMore && <div className="shp-actions"><button type="button" className="shp-btn" onClick={onSeeMore}>See all 30 shapes</button></div>}
+    <section className="shp-card shl-card" aria-label="Same win chance, different finishes">
+      <ShapeLadder doc={doc} a={a} onPick={openPlayer} onSeeMore={onSeeMore} />
     </section>
   );
 }

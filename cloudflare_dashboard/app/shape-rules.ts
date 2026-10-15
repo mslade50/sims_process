@@ -377,3 +377,72 @@ export function cutLineAt(doc: ExplainDoc, xMax: number): number | null {
   const n = doc.event?.cut_top_n;
   return hasCut(doc) && isNum(n) && n > 0 && n <= xMax ? n : null;
 }
+
+/* ------------------------------------------------------------------ bet ladder (This week card and the Distributions explorer) */
+export type LadderMarket = "win" | ShapeMarket;
+export type LadderCell = { ours: number | null; book: number | null };
+/** One bet: both players' chances (ours and the sportsbook's) and the gap in percentage points, taken from the one-decimal figures shown so the row adds up on screen. */
+export type LadderRow = { market: LadderMarket; label: string; a: LadderCell; b: LadderCell; gapPts: number | null; bookGapPts: number | null };
+const LADDER: Array<[LadderMarket, string]> = [["win", "Win"], ["top_5", "Top 5"], ["top_10", "Top 10"], ["top_20", "Top 20"], ["make_cut", "Make cut"]];
+const shownPts = (v: number | null): number | null => (isNum(v) ? Math.round(v * 1000) / 10 : null);
+const cellOf = (p: ExPlayer | undefined, m: LadderMarket): LadderCell => {
+  const e = p?.probs?.[m];
+  return { ours: isNum(e?.model) ? e!.model : null, book: isNum(e?.market) ? e!.market : null };
+};
+/** Win to make cut (make cut only when the event has a cut) for the pair's steadier (a) and wilder (b) player. */
+export function pairLadder(doc: ExplainDoc, pair: ShapePair): LadderRow[] {
+  const pa = doc.players.find((p) => p.id === pair.steady.id), pb = doc.players.find((p) => p.id === pair.bust.id);
+  return LADDER.filter(([m]) => m !== "make_cut" || hasCut(doc)).map(([m, label]) => {
+    const a = cellOf(pa, m), b = cellOf(pb, m);
+    const sa = shownPts(a.ours), sb = shownPts(b.ours), ka = shownPts(a.book), kb = shownPts(b.book);
+    return { market: m, label, a, b, gapPts: sa !== null && sb !== null ? Math.round((sa - sb) * 10) / 10 : null, bookGapPts: ka !== null && kb !== null ? Math.round((ka - kb) * 10) / 10 : null };
+  });
+}
+/** Points by which the books under-state (+) or over-state (−) our gap on the given bet; null without both book prices. */
+export function bookMissPts(rows: LadderRow[], market: LadderMarket): number | null {
+  const r = rows.find((x) => x.market === market);
+  return r && r.gapPts !== null && r.bookGapPts !== null ? Math.round((r.gapPts - r.bookGapPts) * 10) / 10 : null;
+}
+export const BOOK_WIN_MATCH = 1.3; // the books must also price the two within 30% of each other to win, or a gap to the books is about skill, not shape
+/** Whether the sportsbook also prices the pair about equally to win (both book prices present and within BOOK_WIN_MATCH). */
+export function booksMatchWin(rows: LadderRow[]): boolean {
+  const w = rows.find((r) => r.market === "win");
+  const a = w?.a.book ?? null, b = w?.b.book ?? null;
+  return a !== null && b !== null && a > 0 && b > 0 && Math.max(a, b) / Math.min(a, b) <= BOOK_WIN_MATCH;
+}
+/** Pairs ordered for betting: among pairs the books also price alike to win, the biggest difference between our gap and the books' gap on the chosen bet first; every other pair keeps its order after those. */
+export function pairsForBetting(doc: ExplainDoc, pairs: ShapePair[], market: ShapeMarket): ShapePair[] {
+  const scored = pairs.map((p, i) => { const rows = pairLadder(doc, p); return { p, i, miss: booksMatchWin(rows) ? bookMissPts(rows, market) : null }; });
+  return scored.sort((x, y) => (y.miss === null ? -1 : 0) - (x.miss === null ? -1 : 0) || Math.abs(y.miss ?? 0) - Math.abs(x.miss ?? 0) || x.i - y.i).map((s) => s.p);
+}
+/** The player furthest from the books on this bet, in plain words. */
+function edgeSide(rows: LadderRow[], market: ShapeMarket, pair: ShapePair): string {
+  const r = rows.find((x) => x.market === market);
+  if (!r) return "";
+  const lab = SHAPE_MARKET_LABEL[market].toLowerCase();
+  const cand = [{ n: lastOf(pair.steady.name), c: r.a }, { n: lastOf(pair.bust.name), c: r.b }]
+    .filter((x) => x.c.ours !== null && x.c.book !== null).map((x) => ({ ...x, d: x.c.ours! - x.c.book! }))
+    .sort((x, y) => Math.abs(y.d) - Math.abs(x.d))[0];
+  if (!cand || Math.abs(cand.d) < 0.01) return "";
+  const o = (cand.c.ours! * 100).toFixed(1), b = (cand.c.book! * 100).toFixed(1);
+  return cand.d < 0 ? `They like ${cand.n} ${lab} more than we do (${b}% vs our ${o}%).` : `We like ${cand.n} ${lab} more than they do (${o}% vs their ${b}%).`;
+}
+const lastOf = (raw: string) => { const n = shortName(raw).split(" "); return n[n.length - 1] ?? shortName(raw); };
+/** The finding in plain words: who finishes the chosen bet more often at the same win chance, by how much, and whether the books see it. */
+export function ladderHeadline(doc: ExplainDoc, pair: ShapePair, rows: LadderRow[], market: ShapeMarket): { lead: string; gap: string; tail: string; why: string; book: string | null } {
+  const a = shortName(pair.steady.name), b = shortName(pair.bust.name), al = lastOf(pair.steady.name), bl = lastOf(pair.bust.name);
+  const win = rows.find((r) => r.market === "win"), row = rows.find((r) => r.market === market);
+  const winTxt = win?.a.ours != null && win?.b.ours != null ? (Math.abs(win.a.ours - win.b.ours) < 0.0015 ? `both win about ${(((win.a.ours + win.b.ours) / 2) * 100).toFixed(1)}% of the time` : `win ${(win.a.ours * 100).toFixed(1)}% and ${(win.b.ours * 100).toFixed(1)}% of the time`) : "have about the same win chance";
+  const bet = market === "make_cut" ? "makes the cut" : `finishes ${SHAPE_MARKET_LABEL[market].toLowerCase()}`;
+  const gap = row?.gapPts != null ? `${Math.abs(row.gapPts).toFixed(1)} points` : `${pair.gapPp.toFixed(1)} points`;
+  const why = pair.steady.sd !== null && pair.bust.sd !== null && pair.bust.sd > pair.steady.sd
+    ? `${bl} is the wilder player: rounds swing ${(pair.bust.sd - pair.steady.sd).toFixed(2)} strokes more, so more of the chance comes from rare big weeks.`
+    : pair.why.split(". ").slice(1, 2).join("") || "";
+  const miss = bookMissPts(rows, market);
+  const w = rows.find((r) => r.market === "win");
+  const book = row?.bookGapPts == null || miss === null ? null
+    : !booksMatchWin(rows) ? (w?.a.book != null && w?.b.book != null ? `The books don't price them alike to win (${(w.a.book * 100).toFixed(1)}% vs ${(w.b.book * 100).toFixed(1)}%), so their gap is about skill, not shape.` : null)
+    : Math.abs(miss) < 1 ? `The books see the same gap (${row.bookGapPts.toFixed(1)} points), so there is nothing to bet here.`
+    : `${row.bookGapPts < 0 ? `The books have it the other way round, ${bl} ahead by ${Math.abs(row.bookGapPts).toFixed(1)}.` : `The books have them only ${row.bookGapPts.toFixed(1)} apart.`} ${edgeSide(rows, market, pair)}`;
+  return { lead: `${a} and ${b} ${winTxt}, but ${al} ${bet} `, gap, tail: " more often.", why, book };
+}

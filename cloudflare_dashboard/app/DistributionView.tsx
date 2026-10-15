@@ -75,7 +75,7 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
   const drawCount = doc.finish?.n_draws;
   return <div className="dist-explorer">
     <div className="dist-context"><span className="dist-status">{latest ? "Latest simulation" : "Earlier simulation"}</span><span>{doc.kind === "week" ? "Before the event" : `After round ${doc.after_round}`} · {etTime(doc.as_of, "time unknown")}</span>{drawCount ? <span title="How many times the tournament was simulated to get these probabilities.">{drawCount.toLocaleString()} simulated tournaments</span> : null}</div>
-    <Panel title="Same chance to win, different weeks" eyebrow="Finish shapes of the top 30">
+    <Panel title="Same win chance, different finishes" eyebrow="Finish shapes of the top 30">
       <ShapeExplorer doc={doc} onPick={(picked) => { setIds(picked.slice(-4)); setQuery(""); }} />
     </Panel>
     <Panel title="Compare players" eyebrow="Up to four on the same axes">

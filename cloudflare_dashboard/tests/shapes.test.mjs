@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parseExplain } from "../app/explain-rules.ts";
-import { analyzeShapes, availableMarkets, curveAt, curveXMax, cutLineAt, finishBuckets, finishCurve, fitCurve, kindLabel, MATCH_WIDE, pairWhy, playerWhy, signedPp, topPlayers } from "../app/shape-rules.ts";
+import { analyzeShapes, availableMarkets, curveAt, curveXMax, booksMatchWin, bookMissPts, cutLineAt, finishBuckets, finishCurve, ladderHeadline, pairLadder, pairsForBetting, fitCurve, kindLabel, MATCH_WIDE, pairWhy, playerWhy, signedPp, topPlayers } from "../app/shape-rules.ts";
 import { renderView } from "./helpers/render-harness.mjs";
 
 const load = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
@@ -273,10 +273,10 @@ test("the steadier player's curve is taller near the top 20 than the boom-or-bus
 /* ------------------------------------------------------------------ render smoke */
 test("ShapeSpotlightCard renders the pair, the honest summary and no Recharts", () => {
   const html = renderView("ShapeViews.tsx", "ShapeSpotlightCard", { props: { doc: week, openPlayer: () => {}, onSeeMore: () => {} } });
-  assert.match(html, /Same chance to win, different weeks/);
-  assert.match(html, /Shapes are alike this week/);
-  assert.match(html, /<svg/);
-  assert.match(html, /See all 30 shapes/);
+  assert.match(html, /Same win chance, different finishes/);
+  assert.match(html, /role="table"/);
+  assert.match(html, /finishes top 20 <b class="shl-key">\d+\.\d points<\/b> more often/);
+  assert.match(html, /All 30 shapes/);
   assert.doesNotMatch(html, /\[object Object\]|undefined|NaN/);
   const src = readFileSync(new URL("../app/ShapeViews.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(src, /recharts|ExplainCharts/);
@@ -299,7 +299,7 @@ test("ShapeExplorer renders scatter, ranked list and table for both runs, and an
 test("the Distributions page shows the shapes panel above the player comparison", () => {
   const event = { event_uid: "e1", name: "Fixture Open", tour: "euro", date_start: "2026-10-08", explain_key: "golfprice/explain/e1/week.json", distribution_runs: [{ run: "w", kind: "week", as_of: "2026-10-08T02:31:00Z", after_round: null, key: "golfprice/explain/e1/week.json", validated: true }] };
   const html = renderView("DistributionView.tsx", "DistributionView", { data: { "golfprice/index.json": { events: [event] }, "golfprice/explain/e1/week.json": weekRaw }, pathname: "/distributions" });
-  const shapes = html.indexOf("Same chance to win, different weeks");
+  const shapes = html.indexOf("Same win chance, different finishes");
   assert.ok(shapes > 0 && shapes < html.indexOf("Up to four on the same axes"));
   assert.doesNotMatch(html, /\[object Object\]|undefined|NaN/);
 });
@@ -315,4 +315,27 @@ test("finish buckets for the paired histogram sum to one and split out the misse
   const nc = finishBuckets([0.5, 0.3, 0.2], null, false);
   assert.deepEqual(nc.map((x) => [x.label, x.p]), [["Win", 0.5], ["2+", 0.5]]);
   assert.equal(finishBuckets(null, 0, true), null);
+});
+
+test("bet ladder: rows add up on screen, book gaps, betting order needs books to price the pair alike to win", () => {
+  const a = analyzeShapes(week, "top_20");
+  const pair = a.pairs[0];
+  const rows = pairLadder(week, pair);
+  assert.deepEqual(rows.map((r) => r.market), ["win", "top_5", "top_10", "top_20", "make_cut"]);
+  for (const r of rows) if (r.gapPts !== null) assert.equal(r.gapPts, Math.round((Math.round(r.a.ours * 1000) / 10 - Math.round(r.b.ours * 1000) / 10) * 10) / 10);
+  const h = ladderHeadline(week, pair, rows, "top_20");
+  assert.match(h.lead, /finishes top 20 $/);
+  assert.match(h.gap, /^\d+\.\d points$/);
+  // books pricing the pair alike to win: ordered by how far the books are from our gap
+  const fake = (doc, ids, win, t20) => ({ ...doc, players: doc.players.map((p) => { const k = ids.indexOf(p.id); return k < 0 ? p : { ...p, probs: { ...p.probs, win: { ...p.probs.win, market: win[k] }, top_20: { ...p.probs.top_20, market: t20[k] } } }; }) });
+  const d1 = fake(week, [pair.steady.id, pair.bust.id], [0.05, 0.05], [0.3, 0.35]);
+  const r1 = pairLadder(d1, pair);
+  assert.equal(booksMatchWin(r1), true);
+  assert.equal(r1.find((r) => r.market === "top_20").bookGapPts, -5);
+  assert.ok(bookMissPts(r1, "top_20") > 0);
+  assert.match(ladderHeadline(d1, pair, r1, "top_20").book, /other way round/);
+  const d2 = fake(week, [pair.steady.id, pair.bust.id], [0.02, 0.08], [0.3, 0.35]);
+  assert.equal(booksMatchWin(pairLadder(d2, pair)), false);
+  assert.match(ladderHeadline(d2, pair, pairLadder(d2, pair), "top_20").book, /about skill, not shape/);
+  if (a.pairs.length > 1) assert.equal(pairsForBetting(d1, a.pairs, "top_20")[0], pair);
 });
