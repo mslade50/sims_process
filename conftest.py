@@ -113,9 +113,15 @@ if not credentials_present():
 
 
 def pytest_ignore_collect(collection_path, config):  # noqa: ARG001
-    """Skip known credential, kernel, and script modules. Return None otherwise."""
+    """Skip known credential, kernel, and script modules. Return None otherwise.
+
+    ``SECRET_FREE_COLLECT_SCRIPTS=1`` collects script modules anyway. The
+    runner uses that to reject a SCRIPT_MODULES entry that still has pytest
+    tests. Adding a pytest module to SCRIPT_MODULES must not hide those tests.
+    """
     name = Path(str(collection_path)).name
-    if name in SCRIPT_MODULES:
+    collect_scripts = os.environ.get("SECRET_FREE_COLLECT_SCRIPTS") == "1"
+    if name in SCRIPT_MODULES and not collect_scripts:
         return True
     if name in CREDENTIAL_IMPORTS and not credentials_present():
         return True

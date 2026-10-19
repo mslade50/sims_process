@@ -2,9 +2,13 @@ name: review-check
 
 # Proof and Rollback must be filled in. The tests job runs the secret-free
 # suite (python secret_free_tests.py): offline modules only, one process per
-# file. Nothing secret is read or printed. The PR body is passed only through
-# env vars. Dependabot and Renovate skip the template rule inside
-# scripts/check_pr_body.py; other bots and agents do not. Fork pull requests
+# file. The test-weakening job reads the pull request diff. The test-inventory
+# job collects that same suite on the base commit and the head commit and
+# fails if a test disappears, becomes skipped, or a script check count drops,
+# unless the body has a real "## Test changes" section. Nothing secret is
+# read or printed. The PR body is passed only through env vars. Dependabot
+# and Renovate skip the template rule inside scripts/check_pr_body.py and
+# both weakening checks; other bots and agents do not. Fork pull requests
 # stay safe: pull_request only, a read-only token, and ubuntu-latest.
 
 on:
@@ -32,6 +36,64 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: python3 scripts/check_pr_body.py
+
+  test-weakening:
+    name: test weakening
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check test weakening
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_test_weakening.py
+
+  test-inventory:
+    name: test inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      COEFFS_FROM_CACHE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Collect base inventory
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          git worktree add --detach /tmp/inv-base "$BASE_SHA"
+          python -m pip install -r /tmp/inv-base/requirements.txt "pytest>=8.1,<10"
+          python3 scripts/check_test_inventory.py --collect /tmp/inv-base --out /tmp/inventory-base.json
+
+      - name: Collect head inventory and compare
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          git worktree add --detach /tmp/inv-head "$HEAD_SHA"
+          python -m pip install -r /tmp/inv-head/requirements.txt "pytest>=8.1,<10"
+          python3 scripts/check_test_inventory.py --collect /tmp/inv-head --out /tmp/inventory-head.json
+          python3 scripts/check_test_inventory.py --compare /tmp/inventory-base.json /tmp/inventory-head.json
 
   tests:
     name: Secret-free tests
