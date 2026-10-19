@@ -37,6 +37,18 @@ Modes:
                      prefix); manual hand-clicked orders are left resting
 
 Automation safety layer (maker_guard.py) — applies to --live AND the dry-run:
+    INPUT CONFIRMATION (halts --live before scan or POST, pulls the bot's
+    quotes, exits non-zero, and alerts). --live quotes only when DataGolf
+    positively confirms that sim_inputs.event_ids contains the live event.
+    The field-updates id wins, including on Monday when it has rolled to the
+    next event and the schedule still names the completed one. No API key,
+    an import error, both lookups failing, an empty event_ids, a field and
+    schedule that name different events the config contains neither of, and
+    a multi-event week with no field id all halt. A DataGolf outage halts
+    live quoting. KALSHI_PREFLIGHT_STRICT does not turn the halt off, and a
+    green preflight does not release it. A quote pull that does not actually
+    clear smk_ orders also exits non-zero so the healthcheck is not pinged
+    green. The overlap filter below remains, and it is not this gate.
     KILL SWITCH (any halts --live; a halt also pulls the bot's own quotes):
         env  MAKER_KILL=1               hard override (CI / GitHub Actions var)
         file permanent_data/MAKER_HALT  local panic button
@@ -1401,8 +1413,11 @@ def cancel_script():
     manual = sum(1 for o in golf if not _is_script_order(o))
     print(f"[cancel-script] pulling script quotes: {len(golf) - manual} script, "
           f"{manual} manual golf order(s) left untouched.")
-    n = maker_guard.pull_script_quotes(lambda: golf, _is_script_order, cancel_order)
+    n, err = maker_guard.pull_script_quotes(lambda: golf, _is_script_order, cancel_order)
     print(f"[cancel-script] cancelled {n} script order(s).")
+    if err:
+        print(f"[cancel-script] NOT verified: {err}")
+    return err
 
 
 def list_orders_smoke():
@@ -1936,20 +1951,126 @@ def _fetch_maker_config():
         return default
 
 
+def _load_datagolf_lookups():
+    """Read-only DataGolf helpers. No Kalshi call."""
+    from api_utils import fetch_field_updates, fetch_pga_events_this_week
+    return fetch_field_updates, fetch_pga_events_this_week
+
+
+def _live_event_for_orders():
+    """(field_event_id, field_event_name, week_events, problem).
+
+    problem is set when the live event cannot be read at all: no API key,
+    the lookup module did not import, or both the field and the schedule
+    failed. A single successful source leaves problem empty so the field
+    id, or one schedule id, can still confirm the event. No Kalshi call
+    and no order or portfolio endpoint. The API key is never put in problem.
+    """
+    key = os.getenv("DATAGOLF_API_KEY")
+    if not key:
+        print("  [live-event] no DATAGOLF_API_KEY; refusing to quote")
+        return None, None, None, "no DATAGOLF_API_KEY"
+    try:
+        fetch_field, fetch_week = _load_datagolf_lookups()
+    except Exception as exc:
+        print(f"  [live-event] lookup import failed ({type(exc).__name__}); "
+              "refusing to quote")
+        return None, None, None, f"DataGolf lookup import failed ({type(exc).__name__})"
+    field_id, field_name, field_problem = None, None, None
+    try:
+        frame = fetch_field(key)
+        attrs = getattr(frame, "attrs", {}) or {}
+        field_id = attrs.get("event_id")
+        field_name = attrs.get("event_name")
+        if field_id is None:
+            field_problem = "field-updates returned no event id"
+    except Exception as exc:
+        field_problem = f"field-updates failed ({type(exc).__name__})"
+        print(f"  [live-event] {field_problem}")
+    week, week_problem = None, None
+    try:
+        week = fetch_week(key)
+    except Exception as exc:
+        week_problem = f"schedule failed ({type(exc).__name__})"
+        print(f"  [live-event] {week_problem}")
+        week = None
+    problem = None
+    if field_id is None and week is None:
+        parts = [part for part in (field_problem, week_problem) if part]
+        problem = "; ".join(parts) or "DataGolf field and schedule were not read"
+    return field_id, field_name, week, problem
+
+
+def _inputs_lag_halt():
+    """(ok, reason). ok only when DataGolf confirms the configured event.
+
+    Does not read KALSHI_PREFLIGHT_STRICT. A green preflight does not release
+    this halt. A DataGolf outage returns ok False.
+    """
+    try:
+        from sim_inputs import event_ids as configured
+    except Exception:
+        configured = []
+    field_id, field_name, week, problem = _live_event_for_orders()
+    import kalshi_preflight
+    return kalshi_preflight.inputs_ready_to_quote(
+        configured, field_id, live_event_name=field_name, week_events=week,
+        lookup_problem=problem)
+
+
+def _abort_live_post(trade_ok):
+    """True when --live must exit before scan() and reconcile_and_post()."""
+    return not trade_ok
+
+
+def halt_live_run(trade_reason, *, confirmation_failed, list_resting, is_script,
+                  cancel_order, alert):
+    """Pull the bot's own smk_ quotes, alert, and return the process exit code.
+
+    A live-event confirmation failure exits 1 even when the pull verifies
+    clean, so run_maker.sh pings the healthcheck /fail endpoint. A list
+    error, a cancel exception, a non-success cancel, or a script order that
+    is still resting after the retry also exits 1. An ordinary halt whose
+    pull verifies clean exits 0. This does not place orders.
+    """
+    cancelled, pull_error = maker_guard.pull_script_quotes(
+        list_resting, is_script, cancel_order)
+    text = " ".join(str(trade_reason).split())
+    if pull_error:
+        text = f"{text} | quote pull failed: {pull_error}"
+        print(f"[HALT] quote pull failed: {pull_error}")
+    else:
+        print(f"[HALT] cancelled {cancelled} script quote(s). Posting nothing.")
+    exit_code = 1 if confirmation_failed or pull_error else 0
+    try:
+        alert(text)
+    except Exception as exc:
+        print(f"  [alerts] alerting failed ({type(exc).__name__}) — never blocks the run")
+    return exit_code
+
+
 def _check_live_preconditions():
-    """Full --live gate: kill switch -> fairs fresh (round-aware) -> risk limits
-    (daily realized-loss breaker + balance-vs-caps) -> not live-round. Returns
-    (ok, reason); the first failure wins. Each is fail-closed."""
+    """Full --live gate. Returns (ok, reason, confirmation_failed).
+
+    Order: live-event confirmation, then kill switch, then fairs freshness
+    (round-aware), then risk limits, then not a live round. The first
+    failure wins. confirmation_failed is True only for the event gate, which
+    exits non-zero. Later checks stay fail-closed on their own.
+    """
+    ok, reason = _inputs_lag_halt()
+    if not ok:
+        return ok, reason, True
     ok, reason = maker_guard.should_trade()
     if not ok:
-        return (ok, reason)
+        return ok, reason, False
     ok, reason = _check_fairs_fresh()
     if not ok:
-        return (ok, reason)
+        return ok, reason, False
     ok, reason = _check_risk_limits()
     if not ok:
-        return (ok, reason)
-    return _check_not_live()
+        return ok, reason, False
+    ok, reason = _check_not_live()
+    return ok, reason, False
 
 
 if __name__ == "__main__":
@@ -2000,30 +2121,33 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(0)
     if args.cancel_script:
-        cancel_script()
+        _cancel_err = cancel_script()
         _client.close()
-        sys.exit(0)
+        sys.exit(1 if _cancel_err else 0)
 
-    # ── Live-trade preconditions: kill switch -> sim fairs fresh -> NOT a live
-    # round (schedule default + DataGolf override). Any failure halts --live and
-    # PULLS the bot's own resting quotes so live risk comes off; manual orders are
-    # left alone. (Computed before scan so a halted --live exits fast.) ──
-    trade_ok, trade_reason = _check_live_preconditions()
-    if args.live and not trade_ok:
+    # ── Live-trade preconditions: the live event must be confirmed inside
+    # sim_inputs, then kill switch, sim fairs fresh, then NOT a live round.
+    # Any failure halts --live and PULLS the bot's own smk_ quotes. Manual
+    # orders are left alone. A confirmation failure, or a pull that does not
+    # clear those quotes, exits non-zero so the healthcheck is not pinged
+    # green. Computed before scan so a halted --live never reaches
+    # reconcile_and_post. ──
+    trade_ok, trade_reason, confirmation_failed = _check_live_preconditions()
+    if args.live and _abort_live_post(trade_ok):
         print(f"\n[HALT] not trading: {trade_reason}")
         print("[HALT] pulling the bot's resting script quotes (manual orders untouched)…")
-        n = maker_guard.pull_script_quotes(
-            lambda: list_resting_orders(golf_only=True), _is_script_order, cancel_order)
-        print(f"[HALT] cancelled {n} script quote(s). Posting nothing. Exiting.")
-        try:
+
+        def _alert(text):
             import maker_alerts
-            maker_alerts.process_run(status="HALT",
-                                     reason=" ".join(str(trade_reason).split()),
+            maker_alerts.process_run(status="HALT", reason=text,
                                      post_report=None, fills=None, enabled=True)
-        except Exception as _ae:
-            print(f"  [alerts] alerting failed ({_ae}) — never blocks the run")
+
+        _halt_code = halt_live_run(
+            trade_reason, confirmation_failed=confirmation_failed,
+            list_resting=lambda: list_resting_orders(golf_only=True),
+            is_script=_is_script_order, cancel_order=cancel_order, alert=_alert)
         _client.close()
-        sys.exit(0)
+        sys.exit(_halt_code)
 
     try:
         cands, prob_lookup = scan()

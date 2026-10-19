@@ -13,12 +13,20 @@ It does three things, all against the LIVE Kalshi API:
   3. DISCOVERY — list every open KXPGA*/golf series Kalshi offers and flag any not
      in our handled set (catches brand-new / renamed series, incl. major-specific).
 
-Alerts (loud print + Telegram when TELEGRAM_* env set) fire on a stale
-sim_inputs (configured event already settled, or not this week's DataGolf
-event), a real resolution failure (winner markets we cannot read), low overlap,
-or unhandled series with open markets for our event. A field whose event is
-simply not listed yet is a warning and a green run only after sim_inputs is
-confirmed current: Kalshi opens the weekly book after DataGolf has a field.
+Alerts (loud print + Telegram when TELEGRAM_* env set) fire on a real
+resolution failure (winner markets we cannot read, a failed fetch), low
+overlap, unhandled series with open markets for our event, or a stale
+sim_inputs that is not a simple lag (the configured event has settled and no
+live or scheduled event can be confirmed, or the field and the schedule
+disagree). A simple lag — DataGolf confirms one live event and
+sim_inputs.event_ids does not contain it — prints NOT READY YET as a warning
+and exits 0. That green run does not release orders. kalshi_maker.py --live
+quotes only when DataGolf positively confirms that sim_inputs.event_ids
+contains the live event, and a DataGolf outage halts live quoting. On Monday
+the field-updates event id wins over a schedule that still names the
+completed event. A field whose event is simply not listed yet is a warning
+and a green run only after sim_inputs is confirmed current: Kalshi opens the
+weekly book after DataGolf has a field.
 
     python kalshi_preflight.py [tourney]
 """
@@ -302,9 +310,11 @@ def schedule_config_status(configured_event_ids, week_events):
 def stale_config_reason(configured_event_ids, week_events):
     """SC-07 schedule relationship, or None when it is not a stale-config case.
 
-    Kept for the existing guard tests. A mismatch here is a loud STALE CONFIG
-    failure in classify_preflight, not a skip. KALSHI_PREFLIGHT_STRICT=1 makes
-    this helper return None; it does not silence that failure.
+    Kept for the existing guard tests. classify_preflight reports a simple lag
+    (one confirmed live event outside these ids, field and schedule agreeing)
+    as NOT READY YET, and reports every other mismatch as STALE CONFIG.
+    KALSHI_PREFLIGHT_STRICT=1 makes this helper return None. It does not
+    silence STALE CONFIG, and it does not lift the maker's order halt.
     """
     if _strict_preflight():
         return None
@@ -378,6 +388,184 @@ def stale_config_issue(configured_event_ids, week_events, field_event_id=None,
     if not bits:
         return None
     return "STALE CONFIG: " + "; ".join(bits) + "."
+
+
+def live_event_relation(configured_event_ids, week_events, field_event_id=None,
+                        field_event_name=None):
+    """How sim_inputs sits against the confirmed live event.
+
+    status
+      current      — config contains the one event the live sources agree on
+      lag          — one agreed live event, and config does not contain it
+      conflict     — field and schedule name different events, or this week
+                     lists several events and nothing narrows them to one
+      unconfirmed  — no live source, or config has no event id
+
+    A source counts only when it names an event: the field id, or a non-empty
+    this-week schedule. An off week (empty schedule) and a failed lookup
+    (week_events is None) are not sources, so they cannot by themselves prove
+    a lag.
+    """
+    configured = _id_set(configured_event_ids)
+    field_token = _event_id_token(field_event_id)
+    names = {}
+    schedule_ids = None
+    if week_events is not None:
+        schedule_ids = set()
+        for value in week_events:
+            if isinstance(value, dict):
+                token = _event_id_token(value.get("event_id"))
+                name = value.get("event_name") or value.get("name")
+            else:
+                token = _event_id_token(value)
+                name = None
+            if token is None:
+                continue
+            schedule_ids.add(token)
+            if name and token not in names:
+                names[token] = str(name).strip()
+    if field_token and field_event_name:
+        text = str(field_event_name).strip()
+        if text:
+            names[field_token] = text
+
+    sources = []
+    if field_token:
+        sources.append({field_token})
+    if schedule_ids:
+        sources.append(set(schedule_ids))
+
+    def pack(status, live_ids):
+        shown = [str(item) for item in live_ids]
+        name = names.get(shown[0]) if len(shown) == 1 else None
+        return {"status": status, "live_ids": shown, "name": name}
+
+    if not configured or not sources:
+        return pack("unconfirmed", [])
+    if len(sources) == 1:
+        agreed = set(sources[0])
+    else:
+        agreed = sources[0] & sources[1]
+        if not agreed:
+            union = sorted(sources[0] | sources[1], key=str)
+            return pack("conflict", union)
+    if len(agreed) != 1:
+        ordered = sorted(agreed, key=str)
+        if agreed & configured:
+            return pack("current", ordered)
+        return pack("conflict", ordered)
+    live = next(iter(agreed))
+    if live in configured:
+        return pack("current", [live])
+    return pack("lag", [live])
+
+
+def not_ready_message(configured_event_ids, live_event_id, live_event_name=None):
+    """The operator line for a simple lag, or None when it is not that case."""
+    configured = sorted(_id_set(configured_event_ids), key=str)
+    live = _event_id_token(live_event_id)
+    if not configured or live is None:
+        return None
+    shown = configured[0] if len(configured) == 1 else str(configured)
+    name = str(live_event_name).strip() if live_event_name else ""
+    if not name:
+        name = "name unavailable"
+    return (f"NOT READY YET: sim_inputs is event {shown}, live event is {live} "
+            f"({name}); advance sim_inputs")
+
+
+def _schedule_ids_and_names(week_events):
+    """(ids or None, {id: name}). None means the schedule was not read."""
+    if week_events is None:
+        return None, {}
+    ids, names = set(), {}
+    for value in week_events:
+        if isinstance(value, dict):
+            token = _event_id_token(value.get("event_id"))
+            name = value.get("event_name") or value.get("name")
+        else:
+            token = _event_id_token(value)
+            name = None
+        if token is None:
+            continue
+        ids.add(token)
+        if name and token not in names:
+            text = str(name).strip()
+            if text:
+                names[token] = text
+    return ids, names
+
+
+def _configured_text(configured_event_ids):
+    configured = sorted(_id_set(configured_event_ids), key=str)
+    if not configured:
+        return None
+    if len(configured) == 1:
+        return configured[0]
+    return str(configured)
+
+
+def inputs_ready_to_quote(configured_event_ids, live_event_id=None,
+                          live_event_name=None, week_events=None,
+                          lookup_problem=None):
+    """(ok, reason). The --live order gate. Read-only: no Kalshi call.
+
+    ok is True only when one live event id is positively known and
+    sim_inputs.event_ids contains it. Anything else refuses to quote. This
+    does not read KALSHI_PREFLIGHT_STRICT, so a green preflight does not
+    release orders and a red one does not lift the halt.
+
+    The field id wins whenever it is present, including when the schedule
+    names a different event. On Monday, field-updates rolls to the next
+    tournament while the Mon-Sun schedule can still name the event that
+    just finished (api_utils.fetch_scoring_round). Orders follow the field
+    because that is the event DataGolf is currently publishing. The schedule
+    is the live id only when the field id is missing and the schedule names
+    exactly one event. A missing key, a failed import, both lookups failing,
+    an empty config, or several schedule ids with no field id are not a
+    positive confirmation.
+    """
+    if lookup_problem:
+        return False, (f"LIVE EVENT UNCONFIRMED: {lookup_problem}; "
+                       "refusing to quote")
+    shown = _configured_text(configured_event_ids)
+    if shown is None:
+        return False, ("LIVE EVENT UNCONFIRMED: sim_inputs.event_ids is empty; "
+                       "refusing to quote")
+    field_token = _event_id_token(live_event_id)
+    schedule_ids, schedule_names = _schedule_ids_and_names(week_events)
+    field_name = str(live_event_name).strip() if live_event_name else ""
+    if field_token and field_name:
+        schedule_names[field_token] = field_name
+    if field_token:
+        name = schedule_names.get(field_token) or "name unavailable"
+        if field_token in _id_set(configured_event_ids):
+            return True, ""
+        if schedule_ids and schedule_ids != {field_token}:
+            other = ", ".join(sorted(schedule_ids))
+            return False, (
+                f"NOT READY YET: sim_inputs is event {shown}, live event is "
+                f"{field_token} ({name}); field-updates wins over schedule "
+                f"event {other}; advance sim_inputs")
+        return False, (
+            f"NOT READY YET: sim_inputs is event {shown}, live event is "
+            f"{field_token} ({name}); advance sim_inputs")
+    if schedule_ids is None:
+        return False, ("LIVE EVENT UNCONFIRMED: DataGolf schedule was not read "
+                       "and the field id is missing; refusing to quote")
+    if len(schedule_ids) != 1:
+        if not schedule_ids:
+            return False, ("LIVE EVENT UNCONFIRMED: DataGolf has no field event "
+                           "id and no event scheduled this week; refusing to quote")
+        listed = ", ".join(sorted(schedule_ids))
+        return False, (
+            f"LIVE EVENT UNCONFIRMED: schedule lists events {listed} and the "
+            "field id is missing; refusing to quote")
+    live = next(iter(schedule_ids))
+    if live in _id_set(configured_event_ids):
+        return True, ""
+    return False, not_ready_message(
+        configured_event_ids, live, schedule_names.get(live))
 
 
 def not_listed_is_benign(configured_event_ids, week_events, field_event_id=None,
@@ -482,30 +670,63 @@ def assess_winner_resolution(markets, field, name_replacements=None, min_overlap
     ))
 
 
-def classify_preflight(assessment, *, configured_event_ids, week_events,
-                      field_event_id=None, tourney=None, winner_events=None,
-                      strict=False):
-    """Issues that fail the run, and the not-listed warning if the run stays green.
+def _real_resolution_issue(assessment):
+    """A broken read, a failed fetch, or low overlap. A missing listing is not one."""
+    status = (assessment or {}).get("status")
+    if status not in ("fetch_failed", "failed", "low_overlap"):
+        return None
+    return resolution_failure_issue(assessment, strict=True) or _RESOLUTION_FAILED
 
-    A stale sim_inputs wins over 'not listed yet'. The warning is only for a
-    confirmed-current config whose Kalshi book is not up yet.
+
+def classify_preflight(assessment, *, configured_event_ids, week_events,
+                      field_event_id=None, field_event_name=None, tourney=None,
+                      winner_events=None, strict=False):
+    """Issues that fail the run, and a warning when the run stays green.
+
+    A broken read, a failed fetch, or low overlap stays red even when
+    sim_inputs also lags. A simple lag with a readable book is NOT READY YET
+    (warning, exit 0) unless strict mode turns that warning into an issue.
+    Anything else that shows the config is stale — a settled book with no
+    confirmed live event, or field and schedule that disagree — stays
+    STALE CONFIG. 'Not listed yet' is a warning only for a confirmed-current
+    config, and strict mode turns that warning red too.
     """
-    issues = []
+    relation = live_event_relation(
+        configured_event_ids, week_events, field_event_id, field_event_name)
+    lag_message = None
+    if relation["status"] == "lag":
+        lag_message = not_ready_message(
+            configured_event_ids, relation["live_ids"][0], relation.get("name"))
+    real = _real_resolution_issue(assessment)
+    if real:
+        issues = [real]
+        if lag_message:
+            issues.append(lag_message)
+        else:
+            stale = stale_config_issue(
+                configured_event_ids, week_events, field_event_id, tourney,
+                winner_events)
+            if stale:
+                issues.append(stale)
+        return {"issues": issues, "warning": None}
+    if lag_message:
+        if strict:
+            return {"issues": [lag_message], "warning": None}
+        return {"issues": [], "warning": lag_message}
     stale = stale_config_issue(
         configured_event_ids, week_events, field_event_id, tourney, winner_events)
     if stale:
-        issues.append(stale)
-    if assessment and assessment.get("status") == "fetch_failed":
-        issues.append(assessment.get("message") or _RESOLUTION_FAILED)
-        return {"issues": issues, "warning": None}
-    if issues:
-        return {"issues": issues, "warning": None}
+        return {"issues": [stale], "warning": None}
     if not assessment:
         return {"issues": [], "warning": None}
     if assessment.get("status") == "not_listed":
-        if not_listed_is_benign(configured_event_ids, week_events, field_event_id,
-                                tourney, winner_events):
+        benign = not_listed_is_benign(
+            configured_event_ids, week_events, field_event_id, tourney, winner_events)
+        if benign and not strict:
             return {"issues": [], "warning": assessment.get("message")}
+        if benign and strict:
+            return {"issues": [resolution_failure_issue(assessment, strict=True)],
+                    "warning": None}
         return {"issues": [_RESOLUTION_FAILED + " sim_inputs was not confirmed as "
                            "this week's event, so this is not treated as not listed yet."],
                 "warning": None}
@@ -650,16 +871,26 @@ def main():
         print(f"  overlap by event: {assessment['counts']}")
     verdict = classify_preflight(
         assessment, configured_event_ids=_cfg_event_ids, week_events=week_events,
-        field_event_id=field_info.get("event_id"), tourney=tourney,
+        field_event_id=field_info.get("event_id"),
+        field_event_name=field_info.get("event_name"), tourney=tourney,
         winner_events=winner_events, strict=_strict_preflight())
     issues.extend(verdict["issues"])
-    if verdict["warning"]:
+    not_ready = None
+    if verdict["warning"] and verdict["warning"].startswith("NOT READY YET:"):
+        not_ready = verdict["warning"]
+        print(f"::warning title=Kalshi not ready yet::{not_ready}")
+        print(f"  {not_ready}")
+    elif verdict["warning"]:
         not_listed = verdict["warning"]
         print(f"::warning title=Kalshi not listed yet::{not_listed}")
         print(f"  NOT LISTED YET: {not_listed}")
     elif any(item.startswith("STALE CONFIG:") for item in verdict["issues"]):
         resolved = None
         print("::error title=Kalshi stale config::" + verdict["issues"][0])
+    elif any(item.startswith("NOT READY YET:") for item in verdict["issues"]):
+        resolved = None
+        ready = next(item for item in verdict["issues"] if item.startswith("NOT READY YET:"))
+        print("::error title=Kalshi not ready yet::" + ready)
 
     # 2) COVERAGE for the resolved event + 3) DISCOVERY of unhandled series.
     print("\nCOVERAGE (open markets for our event):")
@@ -708,6 +939,11 @@ def main():
         _telegram("\n".join(lines))
         print("  (Telegram alert sent if TELEGRAM_* configured)")
         return 1
+    if not_ready:
+        print("  NO FAILURE — sim_inputs lags the confirmed live event. "
+              "The run stays green. kalshi_maker.py --live still halts "
+              "before posting until sim_inputs.event_ids is advanced.")
+        return 0
     if not_listed:
         print("  NO FAILURE — winner event is not listed yet. Run stays green; "
               "a real lookup or title-format break still fails.")
