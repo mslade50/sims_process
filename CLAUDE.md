@@ -8,6 +8,8 @@ Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
 Run `python -m pytest scripts/test_review_check.py -q`, paste the real output
 into the PR, name the risk tier, and write the rollback steps in plain
 words. Never print or commit secrets.
+Ordinary fixes still go straight to main, as AGENTS.md already says, and this
+policy applies whenever a pull request is opened.
 
 ## Pipeline Execution Order
 

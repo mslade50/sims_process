@@ -4,6 +4,8 @@ A coding agent writes the change. A different agent, with fresh context and no
 memory of the writing session, reviews it. People spend attention by risk:
 risky changes get a full read, small ones get a light check. The repo owner
 does not review the code himself. A bad change should be cheap to undo.
+Ordinary fixes still go straight to main, as AGENTS.md already says, and this
+policy applies whenever a pull request is opened.
 
 ## Proof before asking for review
 

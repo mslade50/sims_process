@@ -192,8 +192,6 @@ cleanup_backup_*.tar.gz
 !cloudflare_dashboard/**
 !odds_screen/
 !odds_screen/**
-!docs/
-!scripts/
 
 # Auditable frozen-model rebuild utility (archive remains off the weekly path).
 !archive/
@@ -292,3 +290,14 @@ permanent_data/maker_scheduler.log
 permanent_data/board_closing.json
 # coeffs_cache.json is COMMITTED: CI checkouts need the last good
 # coefficient cache as the Sheets-outage fallback (audit F22)
+
+# Review files only. /*/ ignores these directories. Un-ignore the directory
+# so the named file can be seen, then ignore the directory contents again.
+# This block stays after !*.py and !*.md so those exceptions do not reopen it.
+!docs/
+docs/*
+!docs/REVIEW_POLICY.md
+!scripts/
+scripts/*
+!scripts/check_pr_body.py
+!scripts/test_review_check.py
