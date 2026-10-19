@@ -13,8 +13,10 @@ It does three things, all against the LIVE Kalshi API:
   3. DISCOVERY — list every open KXPGA*/golf series Kalshi offers and flag any not
      in our handled set (catches brand-new / renamed series, incl. major-specific).
 
-Alerts (loud print + Telegram when TELEGRAM_* env set) fire on resolution failure,
-low overlap, or unhandled series with open markets for our event.
+Alerts (loud print + Telegram when TELEGRAM_* env set) fire on a real resolution
+failure (winner markets we cannot read), low overlap, or unhandled series with
+open markets for our event. A field whose event is simply not listed yet is a
+warning and a green run: Kalshi opens the weekly book after DataGolf has a field.
 
     python kalshi_preflight.py [tourney]
 """
@@ -62,6 +64,15 @@ CANDIDATE = [
 GROUP_SERIES = {"KXPGA3BALL", "KXPGA5BALL"}
 # Title carries the player (vs yes_sub_title) for these outright/winner series.
 TITLE_SERIES = {"KXPGATOUR", "KXPGAWIN", "KXPGATOP5", "KXPGATOP10", "KXPGATOP20"}
+# A weekly winner book covers essentially the whole field (Baycurrent 72/72,
+# Bank of Utah 117/120). Masters futures cleared the old absolute floor of 10
+# (20 of a 72-name file on Oct 13-16) and then overlapped the next live field
+# by 0 (Oct 17-18). Half the field separates those from a real listing.
+FIELD_COVERAGE_MIN = 0.5
+_RESOLUTION_FAILED = (
+    "RESOLUTION FAILED: no Kalshi event overlaps our field — check "
+    "sim_inputs.tourney / name_replacements."
+)
 
 
 def _client():
@@ -149,6 +160,11 @@ def _telegram(text):
         print("  Warning: Telegram failed")
 
 
+def _strict_preflight():
+    """KALSHI_PREFLIGHT_STRICT=1 keeps the old loud failure for a missing listing."""
+    return (os.getenv("KALSHI_PREFLIGHT_STRICT") or "").strip().lower() in ("1", "true", "yes")
+
+
 def stale_config_reason(configured_event_ids, week_events):
     """SC-07: why a failed resolution is NOT a real fault, or None when it is.
 
@@ -156,7 +172,7 @@ def stale_config_reason(configured_event_ids, week_events):
     event (or there is no PGA event this week) a 0-overlap result is expected and alerting
     daily teaches everyone to ignore the check.  Only a configured event that IS this
     week's event can fail resolution loudly.  KALSHI_PREFLIGHT_STRICT=1 disables the skip."""
-    if (os.getenv("KALSHI_PREFLIGHT_STRICT") or "").strip().lower() in ("1", "true", "yes"):
+    if _strict_preflight():
         return None
     if week_events is None:      # schedule lookup failed: stay loud
         return None
@@ -168,6 +184,88 @@ def stale_config_reason(configured_event_ids, week_events):
         return (f"sim_inputs.event_ids {sorted(configured)} is not this week's PGA event "
                 f"{sorted(live)} (config not rolled forward)")
     return None
+
+
+def assess_winner_resolution(markets, field, name_replacements=None, min_overlap=10):
+    """Classify open winner markets against our field.
+
+    status
+      resolved    — one event covers at least half the field (and min_overlap)
+      low_overlap — a few of our players match; the existing name-drift alert
+      not_listed  — markets are absent, or they name players but do not cover
+                    this field (another event, usually futures)
+      failed      — markets are present and most of them do not name a player
+                    (title/format or lookup break; Oct 1 2026 was this shape)
+
+    Read-only: this only inspects market dicts already fetched. It does not
+    place, amend, or cancel orders.
+    """
+    markets = list(markets or [])
+    field = set(field or [])
+    raw = len(markets)
+    named = sum(1 for m in markets if km.player_from_market(m, kind="title"))
+    _, rep = km.match_markets(
+        markets, field, name_replacements, kind="title", min_overlap=min_overlap)
+    leader = int(rep.get("leader") or 0)
+    target = rep.get("target")
+    field_n = len(field)
+    coverage = (leader / field_n) if field_n else 0.0
+    parse_rate = (named / raw) if raw else 1.0
+    base = {
+        "target": target, "leader": leader, "counts": rep.get("counts") or {},
+        "raw": raw, "named": named, "coverage": coverage, "parse_rate": parse_rate,
+        "reason": rep.get("reason") or "",
+    }
+    if field_n and leader >= min_overlap and coverage >= FIELD_COVERAGE_MIN:
+        return dict(base, status="resolved", message="")
+    if target and 0 < leader < min_overlap:
+        return dict(base, status="low_overlap", message=(
+            f"LOW OVERLAP: best event {target} has only {leader} of our "
+            f"players — likely name drift; check name_replacements."
+        ))
+    if raw == 0 or parse_rate >= 0.5 or leader >= min_overlap:
+        if raw == 0:
+            message = (
+                f"No open winner markets. This {field_n}-player field's Kalshi "
+                "event is not listed yet."
+            )
+        elif leader:
+            message = (
+                f"best open event {target} overlaps {leader} of {field_n} field "
+                f"players ({coverage:.0%}), under half the field. {named} of {raw} "
+                "open winner markets name a player, so the lookup can read Kalshi, "
+                "but this field's event is not listed yet."
+            )
+        else:
+            message = (
+                f"{named} of {raw} open winner markets name a player and none are "
+                f"in the {field_n}-player field. This field's Kalshi event is not "
+                "listed yet."
+            )
+        return dict(base, status="not_listed", message=message)
+    return dict(base, status="failed", message=(
+        _RESOLUTION_FAILED +
+        f" Only {named} of {raw} open winner markets named a player, so this is "
+        "a lookup or title-format break, not a missing listing."
+    ))
+
+
+def resolution_failure_issue(assessment, *, strict=False):
+    """Issue string that fails the run, or None when the run stays green.
+
+    'not listed yet' is a warning, not a failure, unless strict mode is on.
+    Unreadable markets and low overlap still fail.
+    """
+    status = assessment.get("status")
+    if status == "resolved":
+        return None
+    if status == "not_listed" and not strict:
+        return None
+    if status == "not_listed":
+        return _RESOLUTION_FAILED + " " + assessment.get("message", "")
+    if status == "low_overlap":
+        return assessment.get("message") or "LOW OVERLAP"
+    return assessment.get("message") or _RESOLUTION_FAILED
 
 
 def _week_events():
@@ -202,23 +300,28 @@ def main():
 
     # 1) RESOLVE via the winner series (open well before the event).
     resolved = None
+    not_listed = None
     if field:
         winner = _get_open(client, "KXPGATOUR") or _get_open(client, "KXPGAWIN")
-        _, rep = km.match_markets(winner, field, name_replacements, kind="title", min_overlap=10)
-        resolved = rep["target"]
-        print(f"\nRESOLUTION: event={resolved}  overlap={rep['leader']}  (raw={rep['raw']})")
-        print(f"  overlap by event: {rep['counts']}")
-        if resolved is None:
+        assessment = assess_winner_resolution(
+            winner, field, name_replacements, min_overlap=10)
+        resolved = assessment["target"] if assessment["status"] == "resolved" else None
+        print(f"\nRESOLUTION: event={resolved}  overlap={assessment['leader']}  "
+              f"(raw={assessment['raw']}, named={assessment['named']})")
+        print(f"  overlap by event: {assessment['counts']}")
+        if assessment["status"] == "not_listed":
+            not_listed = assessment["message"]
+            print(f"::warning title=Kalshi not listed yet::{not_listed}")
+            print(f"  NOT LISTED YET: {not_listed}")
+        elif assessment["status"] == "failed":
             stale = stale_config_reason(_cfg_event_ids, _week_events())
             if stale:
                 print(f"::notice title=Kalshi preflight skipped::{stale}")
                 print(f"  SKIP: {stale}; no resolution check this run.")
                 return 0
-            issues.append("RESOLUTION FAILED: no Kalshi event overlaps our field — check "
-                          "sim_inputs.tourney / name_replacements.")
-        elif rep["leader"] < 10:
-            issues.append(f"LOW OVERLAP: best event {resolved} has only {rep['leader']} of our "
-                          f"players — likely name drift; check name_replacements.")
+        issue = resolution_failure_issue(assessment, strict=_strict_preflight())
+        if issue:
+            issues.append(issue)
 
     # 2) COVERAGE for the resolved event + 3) DISCOVERY of unhandled series.
     print("\nCOVERAGE (open markets for our event):")
@@ -260,6 +363,10 @@ def main():
         _telegram("\n".join(lines))
         print("  (Telegram alert sent if TELEGRAM_* configured)")
         return 1
+    if not_listed:
+        print("  NO FAILURE — winner event is not listed yet. Run stays green; "
+              "a real lookup or title-format break still fails.")
+        return 0
     print(f"  ALL CLEAR — resolved to {resolved}, all open per-event series handled.")
     return 0
 

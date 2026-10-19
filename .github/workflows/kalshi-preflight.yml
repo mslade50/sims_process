@@ -7,9 +7,13 @@ name: Kalshi Preflight
 # R2/R3 leaders mid-week, 3-balls Thu/Fri once pairings post — so a single Monday run
 # would pass resolution but miss everything that opens later. Hence it runs DAILY.
 #
-# Silent on success. On a problem (resolution failed / low or ambiguous overlap / a
-# NEW priceable series with open markets we don't handle) it exits non-zero — which
-# turns the build red + notifies — and Telegrams the detail. The field is pulled LIVE
+# Silent on success. On a real problem (winner markets we cannot read, low overlap,
+# or a NEW priceable series with open markets we don't handle) it exits non-zero —
+# which turns the build red + notifies — and Telegrams the detail.
+# "Not listed yet" (no open winner book covers the live field, but the markets that
+# are open name their players) is a ::warning and a green run. Kalshi lists the
+# weekly event after DataGolf already has a field; that gap is not a broken lookup.
+# KALSHI_PREFLIGHT_STRICT=1 restores the loud failure. The field is pulled LIVE
 # from DataGolf, so the check is never fooled by a stale committed field file.
 
 on:
