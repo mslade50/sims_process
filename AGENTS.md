@@ -5,7 +5,7 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 ## Review
 
 Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
-Run `python -m pytest scripts/test_review_check.py -q`, paste the real output
+Run `python secret_free_tests.py`, paste the real output
 into the PR, name the risk tier, and write the rollback steps in plain
 words. Never print or commit secrets.
 Ordinary fixes still go straight to main, as AGENTS.md already says, and this

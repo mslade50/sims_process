@@ -4,7 +4,7 @@
 
 ## Proof
 
-<!-- Paste the real checker-test output here. If the change touches a page or an alert, also attach sample alert text, a screenshot, or a JSON sample. -->
+<!-- Paste the real `python secret_free_tests.py` summary here. If the change touches a page or an alert, also attach sample alert text, a screenshot, or a JSON sample. -->
 
 ## Rollback steps
 

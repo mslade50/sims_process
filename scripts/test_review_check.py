@@ -88,15 +88,54 @@ def test_body_is_passed_by_env_not_interpolated_into_the_script():
                 assert "${{" not in run
 
 
-def test_workflow_checks_the_pr_body_only():
-    text = _workflow_text()
+def test_body_job_only_checks_the_pr_body():
     wf = _workflow()
-    assert list(wf["jobs"]) == ["body"]
-    runs = [step.get("run", "") for step in wf["jobs"]["body"]["steps"] if "run" in step]
+    assert list(wf["jobs"]) == ["body", "tests"]
+    body = wf["jobs"]["body"]
+    dumped = yaml.safe_dump(body)
+    assert "pip install" not in dumped
+    assert "pytest" not in dumped
+    assert "ruff" not in dumped
+    runs = [step.get("run", "") for step in body["steps"] if "run" in step]
     assert runs == ["python3 scripts/check_pr_body.py"]
-    assert "pip install" not in text
-    assert "pytest" not in text
+    assert body["runs-on"] == "ubuntu-latest"
+    assert "permissions" not in body
+
+
+def test_secret_free_job_reads_contents_only_and_runs_the_suite():
+    text = _workflow_text()
+    job = _workflow()["jobs"]["tests"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["COEFFS_FROM_CACHE"] == "1"
     assert "ruff" not in text
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    assert 'python -m pip install -r requirements.txt "pytest>=8.1,<10"' in runs
+    assert "python secret_free_tests.py" in runs
+
+
+def test_pytest_summary_parser_ignores_subtests():
+    import secret_free_tests
+
+    text = "1 failed, 606 passed, 11 warnings, 434 subtests passed in 13.31s\n"
+    assert secret_free_tests.parse_pytest_summary(text) == {
+        "passed": 606,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+    }
+
+
+def test_exclusion_list_is_explicit():
+    import conftest
+
+    assert "test_round_score_reprice.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_reprice_alert_delivery.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_finish_probs_real.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_env_setup.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_cascade_parity.py" in conftest.KERNEL_IMPORTS
+    assert "test_maker_guard.py" in conftest.SCRIPT_MODULES
+    assert "test_live_stats_engine_exposes_no_sheet_write_mode" in conftest.SKIP_TESTS
 
 
 def test_empty_body_fails():
