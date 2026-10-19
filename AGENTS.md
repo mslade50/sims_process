@@ -2,6 +2,15 @@
 
 Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Combines EMA-weighted strokes gained distributions, course shape adjustments, weather effects, and live skill updates to price matchups, score cards, and finish positions.
 
+## Review
+
+Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
+Run `python -m pytest scripts/test_review_check.py -q`, paste the real output
+into the PR, name the risk tier, and write the rollback steps in plain
+words. Never print or commit secrets.
+Ordinary fixes still go straight to main, as AGENTS.md already says, and this
+policy applies whenever a pull request is opened.
+
 ## Pipeline Execution Order
 
 When preparing ETR, run `hole_baselines.py`; it resolves historical editions
