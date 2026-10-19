@@ -77,29 +77,76 @@ _RESOLUTION_FAILED = (
 )
 
 
+class KalshiReadError(Exception):
+    """A read-only markets or events GET failed. An empty book is not this."""
+
+    def __init__(self, series, detail):
+        self.series = series
+        self.detail = detail
+        super().__init__(f"{series}: {detail}")
+
+
 def _client():
     return httpx.Client(timeout=25.0, headers={"Accept": "application/json"})
 
 
 def _get_open(client, series):
+    """Open markets for one series.
+
+    Returns [] only when Kalshi answers 200 with no open markets. A non-200,
+    timeout, bad JSON body, or a page that does not finish raises KalshiReadError.
+    Partial pages are not returned as a successful book.
+    """
     out, cur = [], None
+    pages = 0
+    rate_limits = 0
     while True:
-        p = {"limit": 200, "status": "open", "series_ticker": series}
+        pages += 1
+        if pages > 25:
+            raise KalshiReadError(series, "pagination did not finish")
+        params = {"limit": 200, "status": "open", "series_ticker": series}
         if cur:
-            p["cursor"] = cur
-        r = client.get(f"{KALSHI_API}/markets", params=p)
-        if r.status_code == 429:
+            params["cursor"] = cur
+        try:
+            response = client.get(f"{KALSHI_API}/markets", params=params)
+        except Exception as exc:
+            raise KalshiReadError(series, type(exc).__name__) from exc
+        if response.status_code == 429:
+            rate_limits += 1
+            if rate_limits > 5:
+                raise KalshiReadError(series, "HTTP 429")
             time.sleep(0.6)
             continue
-        if r.status_code != 200:
+        rate_limits = 0
+        if response.status_code != 200:
+            raise KalshiReadError(series, f"HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise KalshiReadError(series, f"bad JSON ({type(exc).__name__})") from exc
+        markets = payload.get("markets") if isinstance(payload, dict) else None
+        if not isinstance(markets, list):
+            raise KalshiReadError(series, "response has no markets list")
+        out.extend(markets)
+        cur = payload.get("cursor") or None
+        if not cur or len(markets) < 200:
             return out
-        d = r.json()
-        out += d.get("markets", [])
-        cur = d.get("cursor")
-        if not cur or len(d.get("markets", [])) < 200:
-            break
         time.sleep(0.05)
-    return out
+
+
+def load_open_winner_markets(client):
+    """(markets, error). error is None only when the read succeeded.
+
+    KXPGATOUR is the primary book. KXPGAWIN is tried only after KXPGATOUR
+    succeeds with no open markets. A failed read is not an empty book.
+    """
+    try:
+        primary = _get_open(client, "KXPGATOUR")
+        if primary:
+            return primary, None
+        return _get_open(client, "KXPGAWIN"), None
+    except KalshiReadError as exc:
+        return None, f"{exc.series}: {exc.detail}"
 
 
 def discover_golf_series(client):
@@ -350,7 +397,8 @@ def not_listed_is_benign(configured_event_ids, week_events, field_event_id=None,
     return False
 
 
-def assess_winner_resolution(markets, field, name_replacements=None, min_overlap=10):
+def assess_winner_resolution(markets, field, name_replacements=None, min_overlap=10,
+                             fetch_error=None):
     """Classify open winner markets against our field.
 
     status
@@ -361,9 +409,18 @@ def assess_winner_resolution(markets, field, name_replacements=None, min_overlap
       failed      — markets are present and most of them do not name a player
                     (title/format or lookup break; Oct 1 2026 was this shape)
 
+    fetch_error — set when the winner GET failed. That is not an empty book.
     Read-only: this only inspects market dicts already fetched. It does not
     place, amend, or cancel orders.
     """
+    if fetch_error:
+        return {
+            "status": "fetch_failed", "target": None, "leader": 0, "counts": {},
+            "raw": 0, "named": 0, "coverage": 0.0, "parse_rate": 0.0,
+            "reason": str(fetch_error),
+            "message": ("RESOLUTION FAILED: winner market fetch failed "
+                        f"({fetch_error}). This is not an empty book."),
+        }
     markets = list(markets or [])
     field = set(field or [])
     raw = len(markets)
@@ -380,6 +437,15 @@ def assess_winner_resolution(markets, field, name_replacements=None, min_overlap
         "raw": raw, "named": named, "coverage": coverage, "parse_rate": parse_rate,
         "reason": rep.get("reason") or "",
     }
+    # Fewer than half the open winner markets naming a player is a broken
+    # read, even when a futures book contributes 10 or more field matches.
+    if raw and named * 2 < raw:
+        return dict(base, status="failed", message=(
+            _RESOLUTION_FAILED +
+            f" Only {named} of {raw} open winner markets named a player "
+            f"({parse_rate:.0%}), under half, so this is a lookup or "
+            "title-format break, not a missing listing."
+        ))
     if field_n and leader >= min_overlap and coverage >= FIELD_COVERAGE_MIN:
         return dict(base, status="resolved", message="")
     if target and 0 < leader < min_overlap:
@@ -387,7 +453,7 @@ def assess_winner_resolution(markets, field, name_replacements=None, min_overlap
             f"LOW OVERLAP: best event {target} has only {leader} of our "
             f"players — likely name drift; check name_replacements."
         ))
-    if raw == 0 or parse_rate >= 0.5 or leader >= min_overlap:
+    if raw == 0 or parse_rate >= 0.5:
         if raw == 0:
             message = (
                 f"No open winner markets. This {field_n}-player field's Kalshi "
@@ -422,10 +488,16 @@ def classify_preflight(assessment, *, configured_event_ids, week_events,
     A stale sim_inputs wins over 'not listed yet'. The warning is only for a
     confirmed-current config whose Kalshi book is not up yet.
     """
+    issues = []
     stale = stale_config_issue(
         configured_event_ids, week_events, field_event_id, tourney, winner_events)
     if stale:
-        return {"issues": [stale], "warning": None}
+        issues.append(stale)
+    if assessment and assessment.get("status") == "fetch_failed":
+        issues.append(assessment.get("message") or _RESOLUTION_FAILED)
+        return {"issues": issues, "warning": None}
+    if issues:
+        return {"issues": issues, "warning": None}
     if not assessment:
         return {"issues": [], "warning": None}
     if assessment.get("status") == "not_listed":
@@ -566,9 +638,10 @@ def main():
     winner_events = _tourney_winner_books(client, tourney)
     assessment = None
     if field:
-        winner = _get_open(client, "KXPGATOUR") or _get_open(client, "KXPGAWIN")
+        winner, fetch_error = load_open_winner_markets(client)
         assessment = assess_winner_resolution(
-            winner, field, name_replacements, min_overlap=10)
+            winner or [], field, name_replacements, min_overlap=10,
+            fetch_error=fetch_error)
         resolved = assessment["target"] if assessment["status"] == "resolved" else None
         print(f"\nRESOLUTION: event={resolved}  overlap={assessment['leader']}  "
               f"(raw={assessment['raw']}, named={assessment['named']})")
@@ -589,7 +662,14 @@ def main():
     # 2) COVERAGE for the resolved event + 3) DISCOVERY of unhandled series.
     print("\nCOVERAGE (open markets for our event):")
     for series in CANDIDATE:
-        mk = _get_open(client, series)
+        if assessment and assessment.get("status") == "fetch_failed":
+            break
+        try:
+            mk = _get_open(client, series)
+        except KalshiReadError as exc:
+            issues.append("RESOLUTION FAILED: Kalshi market fetch failed for "
+                          f"{exc.series} ({exc.detail}).")
+            continue
         if not mk:
             continue
         if series in GROUP_SERIES:

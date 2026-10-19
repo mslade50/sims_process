@@ -213,6 +213,166 @@ def test_open_book_for_the_configured_tourney_is_not_stale():
     assert reason is None
 
 
+def _unreadable(n, event="BAC26"):
+    return [{
+        "ticker": f"KXPGATOUR-{event}-X{i:03d}",
+        "event_ticker": f"KXPGATOUR-{event}",
+        "title": "Prop format the winner parser does not recognize",
+        "yes_sub_title": "Yes",
+        "market_type": "binary",
+        "rules_primary": "Resolves some other way.",
+    } for i in range(n)]
+
+
+def _current_baycurrent():
+    """sim_inputs matches this week's event, so 'not listed' would be green."""
+    return dict(
+        configured_event_ids=[527],
+        week_events=[{"event_id": 527, "event_name": "Baycurrent Classic"}],
+        field_event_id=527,
+        tourney="baycurrent",
+        winner_events=[{
+            "event_ticker": "KXPGATOUR-BAC26",
+            "title": "Baycurrent Classic Winner",
+            "sub_title": "2026 Baycurrent Classic",
+            "book": "open",
+        }],
+    )
+
+
+def test_unreadable_majority_fails_even_when_futures_overlap_clears_ten():
+    """72 markets that name nobody plus 19 readable Masters names.
+
+    The 19 match the field, so the old '10 or more' shortcut called this
+    not listed and exited green. Under half the open winner markets name a
+    player, so it stays RESOLUTION FAILED and is an issue main Telegrams.
+    """
+    field = _field(72)
+    markets = _unreadable(72) + _weekly(19, event="MAST27", tournament="Masters Tournament")
+    result = kp.assess_winner_resolution(markets, field, min_overlap=10)
+    assert result["raw"] == 91
+    assert result["named"] == 19
+    assert result["named"] * 2 < result["raw"]
+    assert result["leader"] == 19
+    assert result["leader"] >= 10
+    assert result["counts"] == {"MAST27": 19}
+    assert result["parse_rate"] < 0.5
+    assert result["status"] == "failed"
+    assert "under half" in result["message"]
+    assert "not a missing listing" in result["message"]
+    verdict = kp.classify_preflight(result, **_current_baycurrent())
+    assert verdict["warning"] is None
+    assert len(verdict["issues"]) == 1
+    assert verdict["issues"][0].startswith("RESOLUTION FAILED:")
+    assert "not listed yet" not in verdict["issues"][0]
+    assert not any(item.startswith("STALE CONFIG:") for item in verdict["issues"])
+
+
+class _Response:
+    def __init__(self, status_code, payload=None, json_error=None):
+        self.status_code = status_code
+        self._payload = {} if payload is None else payload
+        self._json_error = json_error
+
+    def json(self):
+        if self._json_error is not None:
+            raise self._json_error
+        return self._payload
+
+
+class _Client:
+    """Scripted read-only markets client. No order or portfolio calls."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def get(self, url, params=None):
+        assert "/markets" in url
+        assert "/orders" not in url and "/portfolio" not in url
+        self.calls.append(params or {})
+        nxt = self._responses.pop(0)
+        if isinstance(nxt, BaseException):
+            raise nxt
+        return nxt
+
+
+def _assert_fetch_failure(error, detail):
+    assert error is not None
+    assert detail in error
+    assessment = kp.assess_winner_resolution(
+        [], _field(72), min_overlap=10, fetch_error=error)
+    assert assessment["status"] == "fetch_failed"
+    assert assessment["raw"] == 0
+    assert "not an empty book" in assessment["message"]
+    verdict = kp.classify_preflight(assessment, **_current_baycurrent())
+    assert verdict["warning"] is None
+    assert verdict["issues"]
+    assert verdict["issues"][0].startswith("RESOLUTION FAILED:")
+    assert "winner market fetch failed" in verdict["issues"][0]
+    assert "not an empty book" in verdict["issues"][0]
+    assert "not listed yet" not in verdict["issues"][0]
+
+
+def test_winner_fetch_http_500_fails_instead_of_not_listed():
+    """A 500 used to come back as [] and exit green as 'not listed yet'."""
+    client = _Client([_Response(500, {"error": "upstream"})])
+    markets, error = kp.load_open_winner_markets(client)
+    assert markets is None
+    assert client.calls == [{"limit": 200, "status": "open", "series_ticker": "KXPGATOUR"}]
+    _assert_fetch_failure(error, "HTTP 500")
+
+
+def test_winner_fetch_timeout_bad_json_and_pagination_fail(monkeypatch):
+    monkeypatch.setattr(kp.time, "sleep", lambda *_a, **_k: None)
+
+    timed = _Client([TimeoutError("timed out")])
+    markets, error = kp.load_open_winner_markets(timed)
+    assert markets is None
+    _assert_fetch_failure(error, "TimeoutError")
+
+    broken = _Client([_Response(200, json_error=ValueError("not json"))])
+    markets, error = kp.load_open_winner_markets(broken)
+    assert markets is None
+    _assert_fetch_failure(error, "bad JSON")
+
+    # A full page plus a cursor, then a 500. The first page must not count
+    # as a successful book.
+    paged = _Client([
+        _Response(200, {"markets": [{}] * 200, "cursor": "more"}),
+        _Response(500, {}),
+    ])
+    markets, error = kp.load_open_winner_markets(paged)
+    assert markets is None
+    assert len(paged.calls) == 2
+    _assert_fetch_failure(error, "HTTP 500")
+
+    endless = _Client([
+        _Response(200, {"markets": [{}] * 200, "cursor": f"page-{i}"})
+        for i in range(30)
+    ])
+    markets, error = kp.load_open_winner_markets(endless)
+    assert markets is None
+    assert len(endless.calls) == 25
+    _assert_fetch_failure(error, "pagination did not finish")
+
+
+def test_successful_empty_winner_book_with_current_config_stays_a_warning():
+    """Green only when both winner GETs succeed and the book is actually empty."""
+    empty = _Response(200, {"markets": []})
+    client = _Client([empty, empty])
+    markets, error = kp.load_open_winner_markets(client)
+    assert markets == []
+    assert error is None
+    assert [call["series_ticker"] for call in client.calls] == ["KXPGATOUR", "KXPGAWIN"]
+    assessment = kp.assess_winner_resolution(
+        markets, _field(72), min_overlap=10, fetch_error=error)
+    assert assessment["status"] == "not_listed"
+    verdict = kp.classify_preflight(assessment, **_current_baycurrent())
+    assert verdict["issues"] == []
+    assert "not listed yet" in verdict["warning"]
+
+
 def test_field_source_names_live_datagolf_not_the_configured_file():
     text = kp.format_field_source({
         "names": _field(120), "source": "datagolf_live",
