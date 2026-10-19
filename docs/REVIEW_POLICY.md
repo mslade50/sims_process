@@ -9,19 +9,20 @@ policy applies whenever a pull request is opened.
 
 ## Proof before asking for review
 
-This repo has no secret-free application test command and no linter config.
-Root `test_*.py` modules are not run in CI, and many of them need credentials
-before they can be collected. Do not invent a suite command for the pull request.
-
-From the repo root, run the review-checker tests before you open a pull
+From the repo root, run the secret-free suite before you open a pull
 request or ask for review:
 
 ```
-python -m pytest scripts/test_review_check.py -q
+python secret_free_tests.py
 ```
 
-Paste the real output into the PR description, under Proof. "Tests passed"
-with no output is not proof.
+That is the command CI runs, after
+`python -m pip install -r requirements.txt "pytest>=8.1,<10"`.
+It includes the review-checker tests. Paste the real summary (pytest and
+script counts, plus the not-collected list) into the PR description, under
+Proof. "Tests passed" with no output is not proof.
+
+There is no linter config, so there is no lint command. Do not invent one.
 
 If the change touches a displayed page or an alert, also attach something
 real: the sample alert text, a screenshot, or a JSON sample. A description
@@ -57,12 +58,23 @@ output. Scrub tokens, chat ids, and API keys before you paste proof.
 
 ## What CI checks
 
-`.github/workflows/review-check.yml` fails the check when the Proof or
-Rollback section is missing, empty, or still placeholder text. It runs only
-that body check (`python3 scripts/check_pr_body.py`). It does not install
-dependencies, run the application tests, or run a linter. The job uses
-`ubuntu-latest` (a GitHub-hosted runner), the `pull_request` event, read-only
-permissions, and no secrets, so a pull request from a fork stays safe.
+`.github/workflows/review-check.yml` has two jobs. Both use `ubuntu-latest`
+and the `pull_request` event. Neither job reads secrets.
+
+The `body` job is unchanged. It fails the check when the Proof or Rollback
+section is missing, empty, or still placeholder text. It runs
+`python3 scripts/check_pr_body.py` only.
+
+The `tests` job sets `permissions: contents: read` and nothing else. It
+installs `requirements.txt` and `pytest>=8.1,<10`, sets `COEFFS_FROM_CACHE=1` so
+coefficient import uses the committed cache, and runs
+`python secret_free_tests.py`. Each pytest module runs in its own process.
+Modules that need Google credentials, a live external service, or the
+compiled `sims_kernel` extension are not collected when that dependency is
+missing, and they still run locally when it is present. The list is
+`conftest.py`. A collection error in a module that is not on that list
+fails the job. One stale source-grep test is skipped; the rest of its
+module runs. There is no ruff config, so this job does not run a linter.
 
 Existing workflows are unchanged. They are scheduled or started by hand, and
 some of them use a self-hosted runner. This check does not.
