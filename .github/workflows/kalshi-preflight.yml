@@ -7,10 +7,21 @@ name: Kalshi Preflight
 # R2/R3 leaders mid-week, 3-balls Thu/Fri once pairings post — so a single Monday run
 # would pass resolution but miss everything that opens later. Hence it runs DAILY.
 #
-# Silent on success. On a problem (resolution failed / low or ambiguous overlap / a
-# NEW priceable series with open markets we don't handle) it exits non-zero — which
-# turns the build red + notifies — and Telegrams the detail. The field is pulled LIVE
-# from DataGolf, so the check is never fooled by a stale committed field file.
+# Silent on success. On a real problem it exits non-zero — which turns the build
+# red + notifies — and Telegrams the detail. That includes winner markets we
+# cannot read (fewer than half name a player, even if 10+ readable futures
+# names match the field), a winner-market fetch that errors (non-200, timeout,
+# bad JSON, unfinished pagination), low overlap, or a NEW priceable series with
+# open markets we don't handle.
+# "Not listed yet" is a ::warning and a green run only when the winner GET
+# succeeded, sim_inputs matches this week's DataGolf event (or an off week
+# whose Kalshi book has not settled), and that successful book truly does not
+# cover the field. A configured event that has settled (KXPGATOUR-BAC26) or is
+# not this week's DataGolf event fails with STALE CONFIG. The names used for
+# overlap are DataGolf field-updates, the current event, not the sim_inputs
+# tourney file, unless that live field is missing. KALSHI_PREFLIGHT_STRICT=1
+# restores the loud failure for a confirmed-current event that is not listed
+# yet. It does not hide STALE CONFIG, an unreadable book, or a failed fetch.
 
 on:
   schedule:
