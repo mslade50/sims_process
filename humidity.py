@@ -464,4 +464,6 @@ def write_weather_to_sheet():
         print(f"  wind_base -> D44 ({len(hist_wind)} hours, avg {sum(hist_wind)/len(hist_wind):.1f} mph)")
 
 
+from etr_only_mode import print_banner as _etr_banner
+_etr_banner()
 write_weather_to_sheet()

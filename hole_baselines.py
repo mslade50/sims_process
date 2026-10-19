@@ -422,6 +422,10 @@ def build(scores: pd.DataFrame, geometry: pd.DataFrame,
 
 
 def main() -> None:
+    # Owner decision 2026-10-19: ETR-only mode must never read the local shot archive;
+    # the sim_prep lane builds adj_hole_dist from golfprice's hole table instead.
+    from etr_only_mode import refuse as _etr_refuse
+    _etr_refuse("hole_baselines.py (reads the local shot archive)")
     history = resolve_course_history()
     scores, geometry, history = load_hole_scores(history)
     round_dates = load_round_dates(history)

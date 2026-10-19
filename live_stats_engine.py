@@ -1969,6 +1969,8 @@ def send_summary_email(df, round_num, spline_pdf_path=None):
     Reads app password from GMAIL_APP_PASSWORD environment variable.
     Attaches weather spline PDF if available.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_summary_email')
     password = os.environ.get("EMAIL_PASSWORD")
     if not password:
         print("  [warn] GMAIL_APP_PASSWORD not set. Skipping email.")

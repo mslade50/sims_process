@@ -86,6 +86,8 @@ class NovigClient:
         return resp.json() if resp.content else {}
 
     def _delete(self, path: str, json_data=None) -> dict | list:
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse("Novig DELETE request")
         resp = self._http.request(
             "DELETE",
             self._base + path,
@@ -204,6 +206,8 @@ class NovigClient:
         Returns:
             Order response with id, status, etc.
         """
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig place_order')
         body = {
             "outcomeId": outcome_id,
             "price": round(price, 3),
@@ -218,26 +222,38 @@ class NovigClient:
 
         Each order dict: {outcomeId, price, qty, currency, tif, ttl?, flags?}
         """
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig place_orders')
         return self._post("/nbx/v2/emm/orders/batch", orders)
 
     def cancel_order(self, order_id: str) -> dict:
         """Cancel a single order."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig cancel_order')
         return self._delete(f"/nbx/v2/emm/orders/{order_id}")
 
     def cancel_orders(self, order_ids: list[str]) -> list[dict]:
         """Cancel multiple orders (max 256)."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig cancel_orders')
         return self._delete("/nbx/v2/emm/orders/batch", order_ids)
 
     def cancel_all_orders(self) -> list[dict]:
         """Cancel all open orders."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig cancel_all_orders')
         return self._delete("/nbx/v2/emm/kill")
 
     def cancel_orders_by_event(self, event_id: str) -> list[dict]:
         """Cancel all orders for an event."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig cancel_orders_by_event')
         return self._delete(f"/nbx/v2/emm/orders/event/{event_id}")
 
     def cancel_orders_by_market(self, market_id: str) -> list[dict]:
         """Cancel all orders for a market."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Novig cancel_orders_by_market')
         return self._delete(f"/nbx/v2/emm/orders/market/{market_id}")
 
     def get_order(self, order_id: str) -> dict:

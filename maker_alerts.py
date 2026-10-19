@@ -45,6 +45,8 @@ def alerts_forced():
 
 def send_telegram(text):
     """Best-effort Telegram send. Returns True if a send was attempted OK."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram maker_alerts.send_telegram')
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat = os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat:

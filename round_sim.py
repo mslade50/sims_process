@@ -2696,6 +2696,8 @@ def implied_to_american(prob):
 
 def _send_telegram(text):
     """Optional diagnostics; actionable execution alerts use their dedicated sender."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram _send_telegram')
     if os.getenv("TELEGRAM_DIAGNOSTICS") != "1":
         print("Telegram diagnostic retained in logs:", text)
         return
@@ -4777,6 +4779,8 @@ def send_round_sim_email(sharp_df, sim_round, sample_lookup,
     best-effort by default; production automation passes ``required=True`` so a
     missing/failed report stops the run before bet storage.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_round_sim_email')
     password = os.getenv("EMAIL_PASSWORD")
     recipients = [str(address).strip() for address in EMAIL_TO if str(address).strip()]
     if not password or not EMAIL_FROM or not recipients:
@@ -5028,6 +5032,8 @@ def _send_reprice_alert(new_mu, new_se, sim_round, tourney_name, new_op=None):
     are split before delivery.  Any rejected chunk raises and the caller must
     leave all pending rows unstored so the workflow retry can alert them.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('reprice alert (_send_reprice_alert)')
     lines = []
     lines.append(f"<b>R{sim_round} Reprice — {tourney_name.replace('_', ' ').title()}</b>")
     lines.append("")

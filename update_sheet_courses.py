@@ -88,6 +88,8 @@ def update_course_codes(ws, course_codes):
 
 
 if __name__ == "__main__":
+    from etr_only_mode import print_banner as _etr_banner
+    _etr_banner()
     courses, tourney = get_course_codes()
 
     if not courses:

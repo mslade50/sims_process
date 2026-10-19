@@ -95,7 +95,8 @@ except ImportError:
     yardage_history_course_ids = [course_id]
 
 # Paths
-DG_HISTORICAL_DB = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
+# DG_HISTORICAL_DB env overrides the (possibly stale) OneDrive copy (ETR-only mode points it at the fresh ingest DB)
+DG_HISTORICAL_DB = os.environ.get("DG_HISTORICAL_DB") or os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 FIELD_STRENGTH_DB = os.path.join(os.path.expanduser("~"), "OneDrive", "field_strength.db")
 WIND_DATA_DB = os.path.join(os.path.dirname(__file__), "wind_data.db")
 WIND_TEST_CSV = os.path.join(os.path.dirname(__file__), "permanent_data", "wind_test.csv")
@@ -2832,10 +2833,16 @@ def prompt_coefficient_approval(wind_factor, course_wind_effect):
     print(f"  Dew: excluded from baseline (handled by score_adj)")
     print("=" * 50)
 
-    try:
-        choice = input("  Proceed? [Y/n/override]: ").strip().lower()
-    except EOFError:
+    from etr_only_mode import etr_only as _etr_only
+    if _etr_only():
+        # ETR-only mode is non-interactive: never block on stdin, default to proceed.
+        print("  [ETR-only mode] non-interactive: proceeding with blended wind factor")
         choice = "y"
+    else:
+        try:
+            choice = input("  Proceed? [Y/n/override]: ").strip().lower()
+        except EOFError:
+            choice = "y"
 
     if choice == "n":
         print("  Aborted.")
@@ -2856,6 +2863,8 @@ def prompt_coefficient_approval(wind_factor, course_wind_effect):
 def main():
     global _BLEND_PREWINDOW_COURSE
     import argparse
+    from etr_only_mode import print_banner as _etr_banner
+    _etr_banner()
     parser = argparse.ArgumentParser(
         description="Scoring baselines + expected scores + variance profiles.")
     parser.add_argument("--no-sheet", action="store_true",

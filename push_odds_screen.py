@@ -1229,6 +1229,8 @@ def _get_r2_client():
 
 def _upload_json(client, key: str, data: dict):
     """Upload a JSON object to R2."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('odds screen R2 upload (_upload_json)')
     body = json.dumps(data, default=str, allow_nan=False)
     client.put_object(
         Bucket=R2_BUCKET,
@@ -1652,6 +1654,8 @@ def _atomic_upload_plan(output_dir: Path) -> list[tuple[str, Path]]:
 
 def _upload_atomic_payload_bundle(client, payloads: dict, generation: str | None = None):
     """Stage one complete R2 generation, then atomically advance root meta.json."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('odds screen R2 upload (_upload_atomic_payload_bundle)')
     bundle = _build_atomic_payload_bundle(payloads, generation=generation)
     for name, data in bundle["encoded"].items():
         key = f"generations/{bundle['generation']}/{name}"
@@ -2447,6 +2451,8 @@ def _build_outrights(
 # ─── main ───────────────────────────────────────────────────────────────────
 
 def main():
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('odds screen publish main')
     import argparse
     parser = argparse.ArgumentParser(description="Upload odds screen data to R2")
     output_mode = parser.add_mutually_exclusive_group()
