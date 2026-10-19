@@ -366,19 +366,56 @@ def resolve_live(sched, dg):
     return (True, "live status unknown (schedule + datagolf both blind) -> fail-closed: assume live")
 
 
-def pull_script_quotes(list_resting, is_script, cancel_order):
-    """On halt, cancel the bot's own resting (script) quotes; leave manual
-    orders alone. Injected callables keep this testable. Returns count cancelled."""
-    n = 0
-    for o in list_resting():
-        if not is_script(o):
-            continue
-        try:
-            if cancel_order(o.get("order_id"), o.get("ticker", ""), reason="HALT"):
-                n += 1
-        except Exception as e:
-            print(f"[guard] cancel failed for {o.get('order_id')}: {e}")
-    return n
+def pull_script_quotes(list_resting, is_script, cancel_order, attempts=2):
+    """Cancel the bot's own resting script quotes and verify none remain.
+
+    Returns (cancelled_count, error). error is None only when the list
+    succeeded and a follow-up list shows no script orders. Cancel exceptions
+    and falsy cancel results are retried. A list error is returned, not
+    raised, so the caller can exit non-zero instead of crashing with quotes
+    still up. Manual orders are never sent to cancel_order. This does not
+    place orders.
+    """
+    try:
+        resting = list(list_resting() or [])
+    except Exception as exc:
+        print(f"[guard] list resting orders failed ({type(exc).__name__})")
+        return 0, f"list resting orders failed ({type(exc).__name__})"
+
+    pending = [order for order in resting if is_script(order)]
+    cancelled = 0
+    tries = max(1, int(attempts))
+    for attempt in range(tries):
+        if not pending:
+            break
+        if attempt:
+            print(f"[guard] retrying {len(pending)} script cancel(s)")
+        still = []
+        for order in pending:
+            order_id = order.get("order_id")
+            ticker = order.get("ticker", "")
+            try:
+                ok = bool(cancel_order(order_id, ticker, reason="HALT"))
+            except Exception as exc:
+                print(f"[guard] cancel failed for {order_id} ({type(exc).__name__})")
+                still.append(order)
+                continue
+            if ok:
+                cancelled += 1
+            else:
+                print(f"[guard] cancel rejected for {order_id}")
+                still.append(order)
+        pending = still
+
+    try:
+        remaining = [order for order in list(list_resting() or []) if is_script(order)]
+    except Exception as exc:
+        print(f"[guard] verify list failed ({type(exc).__name__})")
+        return cancelled, f"verify resting orders failed ({type(exc).__name__})"
+    if remaining:
+        ids = ", ".join(str(order.get("order_id")) for order in remaining)
+        return cancelled, f"script orders still resting after cancel: {ids}"
+    return cancelled, None
 
 
 # ── exposure governor ──────────────────────────────────────────────────────────

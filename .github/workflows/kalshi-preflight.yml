@@ -19,7 +19,12 @@ name: Kalshi Preflight
 # cover the field. A simple lag — field and schedule agree on one live event
 # that sim_inputs.event_ids does not contain — is NOT READY YET: a ::warning,
 # exit 0, and no Telegram. That green run does not place orders.
-# kalshi_maker.py --live halts on the same lag before reconcile_and_post.
+# kalshi_maker.py --live quotes only when DataGolf positively confirms that
+# sim_inputs.event_ids contains the live event. The field-updates id wins on
+# Monday if the schedule still names the completed event. No API key, a failed
+# lookup, an empty config, or a schedule that does not narrow to one event
+# halts live quoting (exit non-zero). A DataGolf outage halts live quoting.
+# A quote pull that leaves an smk_ order resting also exits non-zero.
 # STALE CONFIG still fails when the configured event has settled and no live
 # or scheduled event can be confirmed, or when the field and the schedule
 # disagree. The names used for overlap are DataGolf field-updates, the current

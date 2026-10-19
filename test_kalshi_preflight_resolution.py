@@ -430,8 +430,11 @@ def test_field_and_schedule_disagreement_stays_stale_config():
     ok, reason = kp.inputs_ready_to_quote(
         [527], 528, "Butterfield Bermuda Championship",
         week_events=[{"event_id": 529, "event_name": "Other Championship"}])
-    assert ok is True
-    assert reason == ""
+    assert ok is False
+    assert reason == (
+        "NOT READY YET: sim_inputs is event 527, live event is 528 "
+        "(Butterfield Bermuda Championship); field-updates wins over "
+        "schedule event 529; advance sim_inputs")
 
 
 def test_lag_without_a_name_still_says_not_ready():
@@ -525,13 +528,19 @@ def test_schedule_only_lag_is_not_ready_and_blocks_quotes():
     assert reason == verdict["warning"]
 
 
-def test_unconfirmed_live_event_does_not_block_quotes():
-    ok, reason = kp.inputs_ready_to_quote([527], None, week_events=None)
-    assert ok is True
-    assert reason == ""
+def test_unconfirmed_live_event_blocks_quotes():
+    """A DataGolf outage, or a week with no event, does not fall through to overlap."""
+    ok, reason = kp.inputs_ready_to_quote(
+        [527], None, week_events=None, lookup_problem="no DATAGOLF_API_KEY")
+    assert ok is False
+    assert reason.startswith("LIVE EVENT UNCONFIRMED:")
+    assert "no DATAGOLF_API_KEY" in reason
     ok, reason = kp.inputs_ready_to_quote([527], None, week_events=[])
-    assert ok is True
-    assert reason == ""
+    assert ok is False
+    assert "no event scheduled this week" in reason
+    ok, reason = kp.inputs_ready_to_quote([], 528, week_events=[{"event_id": 528}])
+    assert ok is False
+    assert "event_ids is empty" in reason
 
 
 def _patch_preflight_io(monkeypatch, *, markets, fetch_error, field_event_id, event_ids,
@@ -634,6 +643,7 @@ def test_lagging_inputs_halt_before_scan_or_post(monkeypatch):
     monkeypatch.setattr(maker, "_live_event_for_orders", lambda: (
         528, "Butterfield Bermuda Championship",
         [{"event_id": 528, "event_name": "Butterfield Bermuda Championship"}],
+        None,
     ))
     called = {"should_trade": 0, "post": 0, "scan": 0}
 
@@ -652,8 +662,9 @@ def test_lagging_inputs_halt_before_scan_or_post(monkeypatch):
     monkeypatch.setattr(maker.maker_guard, "should_trade", should_trade)
     monkeypatch.setattr(maker, "reconcile_and_post", post)
     monkeypatch.setattr(maker, "scan", scan)
-    ok, reason = maker._check_live_preconditions()
+    ok, reason, confirmation_failed = maker._check_live_preconditions()
     assert ok is False
+    assert confirmation_failed is True
     assert reason == (
         "NOT READY YET: sim_inputs is event 527, live event is 528 "
         "(Butterfield Bermuda Championship); advance sim_inputs")
@@ -667,30 +678,38 @@ def test_matching_inputs_do_not_take_the_lag_halt(monkeypatch):
     monkeypatch.setattr(maker, "_live_event_for_orders", lambda: (
         528, "Butterfield Bermuda Championship",
         [{"event_id": 528, "event_name": "Butterfield Bermuda Championship"}],
+        None,
     ))
 
     def should_trade(*_a, **_k):
         return False, "kill switch test"
 
     monkeypatch.setattr(maker.maker_guard, "should_trade", should_trade)
-    ok, reason = maker._check_live_preconditions()
+    ok, reason, confirmation_failed = maker._check_live_preconditions()
+    assert confirmation_failed is False
     assert ok is False
     assert reason == "kill switch test"
     assert "NOT READY" not in reason
 
 
-def test_unconfirmed_live_event_does_not_newly_halt_the_maker(monkeypatch):
+def test_unconfirmed_live_event_halts_the_maker(monkeypatch):
     maker, sim_inputs = _load_maker(monkeypatch)
     monkeypatch.setattr(sim_inputs, "event_ids", [527])
-    monkeypatch.setattr(maker, "_live_event_for_orders", lambda: (None, None, None))
+    monkeypatch.setattr(
+        maker, "_live_event_for_orders",
+        lambda: (None, None, None, "no DATAGOLF_API_KEY"))
+    called = {"should_trade": 0}
 
     def should_trade(*_a, **_k):
+        called["should_trade"] += 1
         return False, "kill switch test"
 
     monkeypatch.setattr(maker.maker_guard, "should_trade", should_trade)
-    ok, reason = maker._check_live_preconditions()
+    ok, reason, confirmation_failed = maker._check_live_preconditions()
     assert ok is False
-    assert reason == "kill switch test"
+    assert confirmation_failed is True
+    assert "no DATAGOLF_API_KEY" in reason
+    assert called["should_trade"] == 0
 
 
 def test_live_event_lookup_stays_read_only_when_datagolf_fails(monkeypatch):
@@ -709,8 +728,10 @@ def test_live_event_lookup_stays_read_only_when_datagolf_fails(monkeypatch):
     monkeypatch.setattr(api_utils, "fetch_field_updates", field)
     monkeypatch.setattr(api_utils, "fetch_pga_events_this_week", week)
     monkeypatch.setenv("DATAGOLF_API_KEY", "synthetic")
-    field_id, name, week_events = maker._live_event_for_orders()
+    field_id, name, week_events, problem = maker._live_event_for_orders()
     assert field_id is None
     assert name is None
     assert week_events is None
+    assert "field-updates failed" in problem
+    assert "schedule failed" in problem
     assert calls == ["field", "week"]

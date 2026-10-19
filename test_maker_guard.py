@@ -58,14 +58,25 @@ resting = [
     {"order_id": "b", "ticker": "KXPGATOUR-X-B", "_script": False},  # manual
     {"order_id": "c", "ticker": "KXPGATOUR-X-C", "_script": True},
 ]
+book = list(resting)
 cancelled = []
-n = mg.pull_script_quotes(
-    lambda: resting,
-    lambda o: o["_script"],
-    lambda oid, tk, reason="": (cancelled.append(oid) or True),
-)
+
+
+def _list_book():
+    return list(book)
+
+
+def _cancel(oid, tk, reason=""):
+    cancelled.append(oid)
+    book[:] = [order for order in book if order["order_id"] != oid]
+    return True
+
+
+n, pull_err = mg.pull_script_quotes(_list_book, lambda o: o["_script"], _cancel)
 eq("pull cancels only script", n, 2)
+eq("pull verified clean", pull_err, None)
 eq("pull left manual alone", "b" in cancelled, False)
+eq("manual order still listed", any(order["order_id"] == "b" for order in book), True)
 
 # ── build_exposure ─────────────────────────────────────────────────────────────
 positions = [
