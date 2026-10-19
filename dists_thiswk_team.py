@@ -34,6 +34,8 @@ import numpy as np
 import pandas as pd
 import sim_inputs
 from sim_inputs import name_replacements, course_id
+from etr_only_mode import print_banner as _etr_banner
+_etr_banner()
 
 # Feed/database spellings -> DataGolf field display (getattr: older sim_inputs lack it).
 FEED_NAME_MAP = {**name_replacements, **getattr(sim_inputs, "feed_name_aliases", {})}

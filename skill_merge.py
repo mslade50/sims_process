@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 from api_utils import fetch_player_decompositions, get_round_dates
 from sim_inputs import tourney, name_replacements
 
+from etr_only_mode import print_banner as _etr_banner
+_etr_banner()
 load_dotenv()
 API_KEY = os.getenv("DATAGOLF_API_KEY")
 

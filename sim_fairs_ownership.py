@@ -86,6 +86,11 @@ def read_marker(root: Path = ROOT):
     origin/main is authoritative when reachable; the local file is the fallback. A git
     failure is an error, never 'absent' (the old guard failed open on any git error)."""
     root = Path(root)
+    # ETR-only mode (owner 2026-10-19): a git-less isolated copy must stand down, not
+    # look "absent". Fail closed before any git call.
+    from etr_only_mode import etr_only as _etr_only
+    if _etr_only():
+        return "error", ""
     try:
         _git(root, "fetch", "origin", "main")
         listed = _git(root, "ls-tree", "--name-only", "origin/main", "--", MARKER)
@@ -112,6 +117,11 @@ def read_marker(root: Path = ROOT):
 
 
 def resolve_ownership(event_id=None, *, root: Path = ROOT, now: datetime | None = None) -> Ownership:
+    from etr_only_mode import etr_only as _etr_only
+    if _etr_only():
+        # Not overridable by SIM_FAIRS_FORCE_PRODUCTION or SIM_FAIRS_OWNERSHIP_RESUME_ON_STALE.
+        return Ownership(True, "etr_only", "etr_only_mode",
+                         "temporary legacy ETR-only mode (owner 2026-10-19): never publishes sim_fairs")
     if _flag("SIM_FAIRS_FORCE_PRODUCTION"):
         return Ownership(False, "forced_production", None, "SIM_FAIRS_FORCE_PRODUCTION set")
     resume = _flag("SIM_FAIRS_OWNERSHIP_RESUME_ON_STALE")

@@ -986,6 +986,8 @@ def store_tournament_matchups(combined_df, tourney, event_id, dg_id_lookup=None,
         event_id:       DataGolf event ID (e.g. '014')
         dg_id_lookup:   Optional dict {player_name: dg_id} for grading joins
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage store_tournament_matchups')
     if combined_df is None or combined_df.empty:
         print("  [storage] No tournament matchups to store.")
         return
@@ -1155,6 +1157,8 @@ def store_finish_positions(combined_finish_df, tourney, event_id, dg_id_lookup=N
         dg_id_lookup:       Optional dict {player_name: dg_id}
         tab_name:           Override tab name (default: "Finish Positions")
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage store_finish_positions')
     tab = tab_name or TAB_FINISH_POS
     if combined_finish_df is None or combined_finish_df.empty:
         print("  [storage] No finish position bets to store.")
@@ -1291,6 +1295,8 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
         event_id:       DataGolf event ID
         dg_id_lookup:   Optional dict {player_name: dg_id}
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage store_round_matchups')
     if combined_df is None or combined_df.empty:
         print("  [storage] No round matchups to store.")
         return
@@ -1383,6 +1389,8 @@ def store_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup=N
         event_id:       DataGolf event ID
         dg_id_lookup:   Optional dict {player_name: dg_id}
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage store_round_3balls')
     if combined_df is None or combined_df.empty:
         print("  [storage] No round 3-balls to store.")
         return
@@ -1469,6 +1477,8 @@ def store_score_edges(score_edges_df, sim_round, tourney, event_id, spreadsheet=
         tourney: tournament slug
         event_id: DataGolf event ID
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage store_score_edges')
     if score_edges_df is None or score_edges_df.empty:
         print("  [storage] No score edges to store.")
         return
@@ -1706,6 +1716,8 @@ def _append_to_ledger(records):
     Append records to the Parquet ledger, deduplicating by LEDGER_DEDUP_COLS.
     Atomic write via temp file + os.replace().
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage _append_to_ledger')
     if not records:
         return
 
@@ -2021,6 +2033,8 @@ def update_ledger_grades(graded_bets):
             bet_type, bet_on, opponent (or player_1/player_2), bookmaker,
             round, event_id, result, units_wagered, units_won, etc.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage update_ledger_grades')
     if not graded_bets or not os.path.exists(LEDGER_PATH):
         if not os.path.exists(LEDGER_PATH):
             print("  [ledger] No ledger file found — skipping grade update")
@@ -2168,6 +2182,8 @@ def update_ledger_clv(clv_bets):
             (event_id, bet_type, round, bet_on, opponent, bookmaker)
             plus open_odds, close_odds, tot_clv, clv, clv_book.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('bet storage update_ledger_clv')
     if not clv_bets or not os.path.exists(LEDGER_PATH):
         if not os.path.exists(LEDGER_PATH):
             print("  [ledger] No ledger file found — skipping CLV update")

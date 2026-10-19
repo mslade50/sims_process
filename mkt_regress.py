@@ -34,6 +34,8 @@ _parser.add_argument(
     ),
 )
 _args = _parser.parse_args()
+from etr_only_mode import print_banner as _etr_banner
+_etr_banner()
 
 # ---------------------------------------------------------------------------
 # Tuning knobs

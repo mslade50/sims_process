@@ -76,6 +76,17 @@ def _slug_from(fname, pattern):
 
 def sweep_stale_transients(mid_tournament=False):
     """Delete prior-week per-tournament outputs from the repo root."""
+    from etr_only_mode import etr_only as _etr_only
+    if _etr_only():
+        # ETR-only mode: deletions are confined to the isolated workspace (cwd).
+        _cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+        _root = os.path.normcase(os.path.abspath(ROOT))
+        _iso = os.environ.get("ETR_LEGACY_ROOT")
+        if _cwd != _root or (_iso and not _root.startswith(os.path.normcase(os.path.abspath(_iso)) + os.sep)):
+            raise RuntimeError(
+                "ETR-only mode: init_weekly sweep refused; the repo root must equal the cwd "
+                "and sit under ETR_LEGACY_ROOT (temporary legacy ETR mode, owner 2026-10-19)"
+            )
     tourney = _current_tourney()
     if not tourney:
         print("  [init] no tourney slug — skipping stale-file sweep (refuse to guess)")
@@ -154,6 +165,8 @@ def _is_mid_tournament_rerun():
 
 
 if __name__ == "__main__":
+    from etr_only_mode import print_banner as _etr_banner
+    _etr_banner()
     mid_tournament = _is_mid_tournament_rerun()
     reset_for_new_week()
     sweep_stale_transients(mid_tournament=mid_tournament)

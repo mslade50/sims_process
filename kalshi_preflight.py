@@ -250,6 +250,8 @@ def format_field_source(info, tourney):
 
 
 def _telegram(text):
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram kalshi_preflight._telegram')
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat = os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat:

@@ -213,6 +213,9 @@ _AUTH_SLEEP = 0.12
 
 def _authed_request(method, path, json_body=None):
     """Sign + execute an authenticated request. Path includes query string."""
+    if str(method).upper() != "GET":
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse(f"Kalshi maker {str(method).upper()} request")
     from kalshi_auth import sign_headers
     headers = dict(_client.headers)
     headers.update(sign_headers(method, path))
@@ -1142,6 +1145,8 @@ def cancel_order(order_id, ticker, reason=""):
     raises if the ticker isn't a golf series ticker. Every caller passes
     the order's ticker so this assertion can't be skipped by accident.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Kalshi maker cancel_order')
     if not _is_golf_ticker(ticker):
         raise RuntimeError(
             f"REFUSING to cancel non-golf order: ticker={ticker!r} id={order_id}"
@@ -1177,6 +1182,8 @@ def post_limit(ticker, side, price_dollars, count, expiration_ts=None, client_or
     re-post at the same price); every other post keeps the deterministic id so
     Kalshi's duplicate rejection still guards against a missed reconciliation.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Kalshi maker post_limit')
     if not _is_golf_ticker(ticker):
         print(f"  [skip] {ticker} non-golf ticker — refusing")
         return (False, f"REFUSING to post non-golf ticker: {ticker!r}")
@@ -1260,6 +1267,8 @@ def reconcile_and_post(candidates):
        the same price level).
     4. Re-validate + POST the rest.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Kalshi maker reconcile_and_post')
     print("\n[live] reconciling against resting orders…")
     resting = list_resting_orders(golf_only=True)
     script_orders = [o for o in resting if _is_script_order(o)]
@@ -1366,6 +1375,8 @@ def cancel_all():
     """--cancel-all entry point: PANIC BUTTON — cancel every golf order,
     including manual hand-clicks. Non-golf orders never touched.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Kalshi maker cancel_all')
     all_orders = list_resting_orders(golf_only=False)
     golf = [o for o in all_orders if _is_golf_ticker(o.get("ticker", ""))]
     non_golf = len(all_orders) - len(golf)
