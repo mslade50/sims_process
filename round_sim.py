@@ -3645,13 +3645,21 @@ def load_score_lines(sim_round=None):
     """
     import json
     import os
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
 
     import requests
 
     filename = "round_scores_latest.json"
-    today_utc = datetime.now(timezone.utc).date()
+    # Staleness rule: no more than 24 hours old. Comparing UTC calendar dates
+    # wrongly rejected fresh evening lines right after midnight UTC, even though
+    # the local tournament day had not changed.
+    now_utc = datetime.now(timezone.utc)
+    max_age = timedelta(hours=24)
+
+    def _is_fresh(ts):
+        age = now_utc - ts
+        return timedelta(minutes=-5) <= age <= max_age
 
     def _round_ok(d):
         """Reject a round_scores file stamped for a different round than we price.
@@ -3676,8 +3684,8 @@ def load_score_lines(sim_round=None):
         if last_updated:
             try:
                 ts = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
-                if ts.date() < today_utc:
-                    print(f"  GitHub score lines from {ts.date()} (not today), skipping")
+                if not _is_fresh(ts):
+                    print(f"  GitHub score lines are stale ({last_updated}), skipping")
                 elif _round_ok(data):
                     lines = data.get("lines", [])
                     if lines:
@@ -3700,8 +3708,8 @@ def load_score_lines(sim_round=None):
         path = base / filename
         if path.exists():
             mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-            if mtime.date() < today_utc:
-                print(f"  Local score lines from {mtime.date()} (not today): {path}")
+            if not _is_fresh(mtime):
+                print(f"  Local score lines are stale ({mtime.isoformat()}): {path}")
                 continue
             with open(path) as f:
                 data = json.load(f)

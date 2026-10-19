@@ -334,6 +334,26 @@ def main():
 
     print(f"  Sheet round: R{detected_round} complete")
 
+    # SC-03/08: when golfprice owns the board the publish step is a no-op, so do not burn the
+    # runner on a full simulation whose output is discarded. Visible, green, cheap.
+    # SIM_FAIRS_OWNERSHIP_LEGACY=1 or SIM_FAIRS_FORCE_PRODUCTION=1 restores the full backup run.
+    try:
+        import sim_fairs_ownership as _own
+        if not _own.legacy_mode():
+            _decision = _own.resolve_ownership(_pre_config.get("event_id"), root=project_root)
+            print("  " + _decision.log_line())
+            if _decision.stand_down:
+                print(f"::notice title=Nightly backup stood down::golfprice owns sim_fairs.json "
+                      f"({_decision.status}); skipped the full simulation and publication.")
+                if _decision.status != "owned":
+                    print(f"::warning title=Ownership marker {_decision.status}::{_decision.detail}")
+                _write_github_outputs({"should_publish": False})
+                sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"  ownership check failed ({type(exc).__name__}: {exc}); continuing with the backup run")
+
     # Split-brain tripwire: the sheet (round_sim's cache dirs, bet event_ids)
     # and sim_inputs (publish target, odds scoping) must agree on the event.
     # A missed init_weekly used to leave them split: caches written under LAST

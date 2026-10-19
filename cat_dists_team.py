@@ -57,6 +57,7 @@ cols_needed = [
 # 1) Load & Preprocess
 # --------------------------
 _FA_SG_PATHS = [
+    *([os.environ["FIELD_ADJUSTED_SG_PATH"]] if os.environ.get("FIELD_ADJUSTED_SG_PATH") else []),  # SC-12
     "field_adjusted_sg.csv",
     "C:/Users/mckin/OneDrive/field_adjusted_sg.csv",
 ]

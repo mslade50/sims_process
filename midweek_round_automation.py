@@ -526,6 +526,15 @@ def _external_fairs_owner() -> str | None:
     is authoritative; origin/main is consulted as a fallback."""
     if (os.environ.get("SIM_FAIRS_FORCE_PRODUCTION") or "").strip().lower() in ("1", "true", "yes"):
         return None
+    try:
+        import sim_fairs_ownership as _own
+        if not _own.legacy_mode():
+            decision = _own.resolve_ownership(root=ROOT)
+            if decision.status != "none":
+                print(decision.log_line())
+            return (decision.owner or "external") if decision.stand_down else None
+    except Exception as exc:  # never let the guard itself break the run; fall through to presence check
+        print(f"  ownership resolver failed ({type(exc).__name__}); using presence-only marker check")
     marker = ROOT / "SIM_FAIRS_EXTERNAL.json"
     if marker.exists():
         try:

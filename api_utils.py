@@ -31,6 +31,47 @@ from img_shot_local import (
 DATAGOLF_BASE = "https://feeds.datagolf.com"
 IMG_SHOT_DEFAULT_URL = "https://golf-shot-ingest.mckinleyslade.workers.dev"
 
+
+class DataGolfRequestError(RuntimeError):
+    """Credential-safe error from :func:`fetch_datagolf_json`."""
+
+    def __init__(self, endpoint, message, status_code=None):
+        super().__init__(f"DataGolf {endpoint}: {message}")
+        self.endpoint = endpoint
+        self.status_code = status_code
+
+
+def fetch_datagolf_json(endpoint, params=None, api_key=None, session=None, timeout=45):
+    """Fetch a raw DataGolf JSON payload without ever logging its API key.
+
+    Low-level helper for resumable archive downloaders (archive/historical_odds_cache.py)
+    that need response fields the DataFrame helpers omit. Callers own pacing and
+    retry policy. Exceptions exclude the prepared URL and body because either can
+    echo credentials.
+    """
+    api_key = api_key or os.getenv("DATAGOLF_API_KEY")
+    if not api_key:
+        raise DataGolfRequestError(endpoint, "DATAGOLF_API_KEY is not set")
+    request_params = dict(params or {})
+    request_params.pop("key", None)
+    request_params["key"] = api_key
+    requester = session or requests
+    try:
+        response = requester.get(
+            f"{DATAGOLF_BASE}/{str(endpoint).lstrip('/')}",
+            params=request_params,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise DataGolfRequestError(endpoint, f"network failure ({type(exc).__name__})") from None
+    status_code = int(getattr(response, "status_code", 0))
+    if not 200 <= status_code < 300:
+        raise DataGolfRequestError(endpoint, f"HTTP {status_code}", status_code=status_code)
+    try:
+        return response.json()
+    except (TypeError, ValueError):
+        raise DataGolfRequestError(endpoint, "invalid JSON response") from None
+
 ALL_STATS = [
     "sg_putt", "sg_arg", "sg_app", "sg_ott", "sg_t2g", "sg_bs", "sg_total",
     "distance", "accuracy", "gir", "prox_fw", "prox_rgh", "scrambling",

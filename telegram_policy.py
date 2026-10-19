@@ -15,6 +15,16 @@ import urllib.request
 from pathlib import Path
 
 
+def load_state(path):
+    """Read the notification state; empty/corrupt/non-dict state counts as no state (SC-02)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("Notification state empty or unreadable; treating as no prior alert")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def should_alert(previous, now):
     return now - float(previous.get("sent_at", 0)) >= 24 * 3600 and now - float(previous.get("reserved_at", 0)) >= 3600
 
@@ -38,7 +48,7 @@ def main():
         if result.returncode and not any(s in ((result.stdout or "") + (result.stderr or "")).lower() for s in ("404", "does not exist", "not found")):
             print("Notification state unavailable; inspect workflow logs")
             return
-        previous = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        previous = load_state(path) if path.exists() else {}
         now = time.time()
         if not should_alert(previous, now):
             print("Unchanged/recent workflow failure: Telegram suppressed")

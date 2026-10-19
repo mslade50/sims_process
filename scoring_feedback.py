@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 import math
 import re
 from pathlib import Path
@@ -255,7 +256,17 @@ def record_actuals(spreadsheet, config, round_num, *, year=None, frame=None,
         # No exception strings from HTTP/auth failures (they can contain keys).
         failed = receipt(ctx, "actuals", "failed", reason=type(exc).__name__)
         save_receipt(spreadsheet, failed)
-        print(f"  [actuals] R{round_num} failed: {type(exc).__name__}")
+        # SC-10: say WHERE it failed (file:line:function, never the message: HTTP/auth
+        # exception text can contain keys) and surface it as an Actions warning.
+        try:
+            import traceback as _tb
+            _fr = _tb.extract_tb(exc.__traceback__)[-1]
+            _where = f"{os.path.basename(_fr.filename)}:{_fr.lineno} in {_fr.name}"
+        except Exception:
+            _where = "unknown"
+        print(f"  [actuals] R{round_num} failed: {type(exc).__name__} at {_where}")
+        print(f"::warning title=actuals receipt failed::R{round_num} {type(exc).__name__} at {_where}; "
+              "scoring feedback for this round was not recorded")
         return failed
     # A weather outage cannot prevent recording scores or supplying feedback.
     try:

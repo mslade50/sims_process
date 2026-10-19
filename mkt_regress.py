@@ -54,6 +54,15 @@ UP_DAMPEN = 0.75            # dampen upward regression (was 0.35 pre week-latent
 # ---------------------------------------------------------------------------
 # init_sim_skill carries DG-overridden predictions from the first-pass new_sim run.
 # pred = DG-overridden skill estimate; c_adj and sample from pre_sim_summary.
+import mkt_regress_guards as _guards
+
+# SC-05: fail loudly on stale core inputs. Matchup files are handled below by the desktop's
+# production guard (only files newer than init_sim_skill and inside the field are consumed;
+# otherwise the matchup adjustment is zero). No model math changes.
+_guards.check_inputs_fresh([
+    ("init_sim_skill", f'init_sim_skill_{tourney}.csv'),
+    ("finish_equity", f'finish_equity_{tourney}.csv'),
+])
 merged_df = pd.read_csv(f'init_sim_skill_{tourney}.csv')
 merged_df['player_name'] = merged_df['player_name'].str.lower().replace(name_replacements)
 
@@ -63,10 +72,24 @@ player_statistics = pd.read_csv(f'finish_equity_{tourney}.csv')
 player_statistics['top_1_pct'] = player_statistics['simulated_win_prob'] * 100
 player_statistics['player_name'] = player_statistics['player_name'].str.lower().replace(name_replacements)
 
-try:
-    mu_df = pd.read_csv(f'betcris_{tourney}.csv')
-except FileNotFoundError:
-    mu_df = pd.read_csv('betonline_odds_with_my_odds_tu.csv')
+# Generic sportsbook files can survive from prior events. Only consume files
+# generated after this calibration's init_sim_skill, with current-field names.
+mu_df = pd.DataFrame(columns=['Player 1', 'Player 2', 'edge_p1', 'edge_p2'])
+_current_names = set(merged_df['player_name'])
+_calibration_started = os.path.getmtime(f'init_sim_skill_{tourney}.csv')
+for _mu_path in [f'betcris_{tourney}.csv', 'betcris_odds_with_my_odds_tu.csv',
+                 'betonline_odds_with_my_odds_tu.csv']:
+    if not os.path.exists(_mu_path) or os.path.getmtime(_mu_path) < _calibration_started:
+        continue
+    _candidate = pd.read_csv(_mu_path)
+    _names = set(_candidate['Player 1'].str.lower().str.strip().replace(name_replacements)) | set(
+        _candidate['Player 2'].str.lower().str.strip().replace(name_replacements))
+    if not _names.issubset(_current_names):
+        raise RuntimeError(f'Matchup file contains players outside the current field: {_mu_path}')
+    mu_df = _candidate
+    break
+if mu_df.empty:
+    print('[mkt] No fresh sharp-book matchups; matchup adjustment is zero (outright regression remains active).')
 
 # ---------------------------------------------------------------------------
 # 1. Outright win odds (mkt_adj)
@@ -103,6 +126,12 @@ win_odds_df['win_odds'] = win_odds_df['pin_cris'].fillna(win_odds_df['fanduel'])
 win_odds_df['player_name'] = win_odds_df['player_name'].str.lower().replace(name_replacements)
 win_odds_df.to_csv('win_odds.csv', index=False)
 print(f"[mkt] Fetched outright win odds for {len(win_odds_df)} players")
+
+print(f"[mkt] DG outrights event: {data.get('event_name')!r} (sim_inputs tourney={tourney!r})")
+_guards.check_odds_coverage(
+    len(merged_df),
+    int(merged_df['player_name'].isin(win_odds_df.loc[win_odds_df['win_odds'].notna(), 'player_name']).sum()),
+)
 
 # Merge win odds + sim win probs
 merged_df = merged_df.merge(
@@ -259,6 +288,18 @@ slim = slim.merge(pcf, on='player_name', how='left')
 slim_path = f'final_predictions_{tourney}.csv'
 slim.to_csv(slim_path, index=False)
 print(f"[ok] Saved {slim_path} ({len(slim)} players, cols: {list(slim.columns)})")
+
+# SC-06: lineage sidecar checked by new_sim.py --final-pass.
+try:
+    from sim_inputs import event_ids as _event_ids
+except ImportError:
+    _event_ids = []
+_meta_out = _guards.write_final_meta(
+    slim_path, tourney=tourney, event_ids=_event_ids, n_players=len(slim),
+    input_paths=[("init_sim_skill", f'init_sim_skill_{tourney}.csv'),
+                 ("finish_equity", f'finish_equity_{tourney}.csv')],
+)
+print(f"[ok] Saved {_meta_out}")
 
 if _args.local_only:
     print(

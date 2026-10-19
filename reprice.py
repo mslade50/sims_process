@@ -248,6 +248,24 @@ def main():
     print(f"  REPRICE (cache-free) — {tourney} R{sim_round}")
     print(f"{'='*60}")
 
+    # SC-01: golfprice owns the board/pricing -> the legacy repricer stands down cleanly
+    # (ready=false, exit 0, logged) instead of passing --check-ready and then dying in the
+    # health gate on the golfprice manifest kind. SIM_FAIRS_OWNERSHIP_LEGACY=1 restores the old flow.
+    try:
+        import sim_fairs_ownership as _own
+        if not _own.legacy_mode():
+            decision = _own.resolve_ownership(event_id, root=root)
+            if decision.status != "none":
+                print("  " + decision.log_line())
+            if decision.stand_down:
+                print("  [skip] golfprice owns pricing for this event; legacy reprice stood down")
+                if decision.status != "owned":
+                    print(f"::warning title=Ownership marker {decision.status}::{decision.detail}")
+                _write_readiness_output(False)
+                return 0
+    except Exception as exc:
+        print(f"  ownership check failed ({type(exc).__name__}: {exc}); continuing with legacy readiness checks")
+
     reason = reprice_not_ready_reason(
         root, tourney=tourney, event_id=event_id, sim_round=sim_round
     )

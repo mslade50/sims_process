@@ -687,7 +687,10 @@ def scrape_betonline_live(market_type: str = "tournament_matchup") -> pd.DataFra
     P1 Odds, P2 Odds, source.
     """
     # Import scraper from golf_scraping repo
-    scraping_repo = Path(r"C:\Users\mckin\Documents\golf_scraping")
+    # SC-12: laptop default kept; GOLF_SCRAPING_REPO overrides on other machines.
+    scraping_repo = Path(os.environ.get("GOLF_SCRAPING_REPO") or r"C:\Users\mckin\Documents\golf_scraping")
+    if not scraping_repo.is_dir():
+        logger.warning(f"golf_scraping repo not found at {scraping_repo} (set GOLF_SCRAPING_REPO)")
     if str(scraping_repo) not in sys.path:
         sys.path.insert(0, str(scraping_repo))
 

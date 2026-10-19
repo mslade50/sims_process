@@ -3,6 +3,7 @@ Independent reproduction of compute_sg_category_variance_analysis.
 Does NOT import scoring_baseline. Recomputes category_mults & category_skew
 from the DB for the exact physical course configured in sim_inputs.py.
 """
+import os
 import sqlite3
 from datetime import datetime
 
@@ -15,7 +16,7 @@ try:
 except ImportError:
     tour_override = "pga"
 
-DG_HISTORICAL_DB = "C:/Users/mckin/OneDrive/dg_historical.db"
+DG_HISTORICAL_DB = os.environ.get("DG_HISTORICAL_DB") or "C:/Users/mckin/OneDrive/dg_historical.db"  # SC-12
 
 # ---- This-week inputs ----
 event_id_list = list(event_ids)  # reporting only; course_id is the history key

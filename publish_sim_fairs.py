@@ -313,8 +313,23 @@ def _alert(text: str) -> None:
 EXTERNAL_MARKER = "SIM_FAIRS_EXTERNAL.json"
 
 
-def _external_owner() -> str | None:
-    """golfprice cutover guard. When origin/main carries SIM_FAIRS_EXTERNAL.json (committed by
+def _external_owner(event_id=None) -> str | None:
+    """Ownership guard (SC-03). Delegates to sim_fairs_ownership.resolve_ownership: explicit
+    per-event / expiry aware, fails CLOSED when the marker cannot be read, and logs a visible
+    status line. SIM_FAIRS_OWNERSHIP_LEGACY=1 restores the old presence-only guard below."""
+    import sim_fairs_ownership as _own
+    if _own.legacy_mode():
+        return _external_owner_legacy()
+    decision = _own.resolve_ownership(event_id, root=PROJECT_ROOT)
+    if decision.status != "none":
+        (logger.info if decision.status == "owned" else logger.warning)(decision.log_line())
+        if decision.status in ("stale_event", "expired", "unreadable"):
+            print(f"::warning title=sim_fairs ownership {decision.status}::{decision.detail}")
+    return (decision.owner or "external") if decision.stand_down else None
+
+
+def _external_owner_legacy() -> str | None:
+    """golfprice cutover guard (presence-only; kept as the SIM_FAIRS_OWNERSHIP_LEGACY=1 path). When origin/main carries SIM_FAIRS_EXTERNAL.json (committed by
     `python -m golfprice.board publish`), another publisher owns sim_fairs.json and this module
     must not rebuild, overwrite or re-dispatch it. SIM_FAIRS_FORCE_PRODUCTION=1 overrides
     (manual rollback). Returns the owner name, or None when production owns the file. Uses the

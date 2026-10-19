@@ -921,6 +921,18 @@ try:
 except (FileNotFoundError, ValueError) as _pass_error:
     _parser.error(str(_pass_error))
 
+if RUN_PASS == "final":
+    # SC-06: a leftover/committed final_predictions_<slug>.csv is not authorization to price.
+    import mkt_regress_guards as _mrg
+    try:
+        _mrg.verify_final_meta(
+            _final_pred_path, tourney=tourney,
+            event_ids=getattr(_sim_inputs_mod, "event_ids", []),
+            init_skill_path=f"init_sim_skill_{tourney}.csv",
+        )
+    except _mrg.StaleInputError as _lineage_error:
+        _parser.error(str(_lineage_error))
+
 if args.price_only and RUN_PASS != "final":
     _parser.error(
         "--price-only/--reprice require --final-pass and regressed predictions"

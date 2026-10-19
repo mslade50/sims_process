@@ -811,6 +811,7 @@ def _apply_pin_high_adj(df):
         age = pd.Timestamp.now(tz="UTC") - generated
         if age > pd.Timedelta(hours=48):
             print(f"  [pin_high] pin_high_r1.csv is stale ({age}) — skipping")
+            print(f"::warning title=pin_high layer skipped::pin_high_r1.csv is stale ({age}) while LIVE_PIN_HIGH_ADJ=1")
             return df
         adj = clean_names(adj)
         if adj["player_name"].duplicated().any():
@@ -845,6 +846,7 @@ def _apply_pin_high_adj(df):
         df["total_adjustment"] = base_total_adjustment
         df["updated_pred"] = df["pred"] + df["total_adjustment"]
         print(f"  [pin_high] skipped ({exc})")
+        print(f"::warning title=pin_high layer skipped::LIVE_PIN_HIGH_ADJ=1 but the layer was not applied ({exc})")
     return df
 
 

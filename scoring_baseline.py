@@ -2858,6 +2858,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         description="Scoring baselines + expected scores + variance profiles.")
+    parser.add_argument("--no-sheet", action="store_true",
+                        help="Compute local results without updating Sheets")
     blend_grp = parser.add_mutually_exclusive_group()
     blend_grp.add_argument(
         "--blend-prewindow-course", dest="blend_prewindow_course",
@@ -2874,6 +2876,12 @@ def main():
     args = parser.parse_args()
 
     _BLEND_PREWINDOW_COURSE = args.blend_prewindow_course
+
+    # New venues with no usable history carry an owner-supplied profile in
+    # sim_inputs.manual_venue_profile; that path replaces the historical build.
+    from manual_venue_baseline import run_manual_venue_baseline
+    if run_manual_venue_baseline(sys.modules[__name__], write_sheet=not args.no_sheet):
+        return
 
     print(f"\n{'='*80}")
     print(f"  SCORING BASELINE PIPELINE")
@@ -2940,8 +2948,9 @@ def main():
     print_report(detail_df, final_estimates, weights, wind_factor, course_wind_effect,
                  dew_norm, course_par)
     save_csv(detail_df, final_estimates, weights)
-    save_to_sheets(detail_df, final_estimates, weights)
-    write_estimates_to_round_config(final_estimates, wind_factor, detail_df=detail_df)
+    if not args.no_sheet:
+        save_to_sheets(detail_df, final_estimates, weights)
+        write_estimates_to_round_config(final_estimates, wind_factor, detail_df=detail_df)
 
     print("\n  Done.")
 

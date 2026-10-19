@@ -149,11 +149,48 @@ def _telegram(text):
         print("  Warning: Telegram failed")
 
 
+def stale_config_reason(configured_event_ids, week_events):
+    """SC-07: why a failed resolution is NOT a real fault, or None when it is.
+
+    The field is pulled live from DataGolf, so when sim_inputs still names last week's
+    event (or there is no PGA event this week) a 0-overlap result is expected and alerting
+    daily teaches everyone to ignore the check.  Only a configured event that IS this
+    week's event can fail resolution loudly.  KALSHI_PREFLIGHT_STRICT=1 disables the skip."""
+    if (os.getenv("KALSHI_PREFLIGHT_STRICT") or "").strip().lower() in ("1", "true", "yes"):
+        return None
+    if week_events is None:      # schedule lookup failed: stay loud
+        return None
+    if not week_events:
+        return "no PGA event this week (off week)"
+    live = {str(e.get("event_id")) for e in week_events if e.get("event_id") is not None}
+    configured = {str(x) for x in (configured_event_ids or [])}
+    if live and configured and not (live & configured):
+        return (f"sim_inputs.event_ids {sorted(configured)} is not this week's PGA event "
+                f"{sorted(live)} (config not rolled forward)")
+    return None
+
+
+def _week_events():
+    key = os.getenv("DATAGOLF_API_KEY")
+    if not key:
+        return None
+    try:
+        from api_utils import fetch_pga_events_this_week
+        return fetch_pga_events_this_week(key)
+    except Exception as exc:
+        print(f"  PGA schedule lookup failed ({type(exc).__name__}); not skipping")
+        return None
+
+
 def main():
     try:
         from sim_inputs import tourney as _slug, name_replacements
     except Exception:
         _slug, name_replacements = "", {}
+    try:
+        from sim_inputs import event_ids as _cfg_event_ids
+    except Exception:
+        _cfg_event_ids = []
     tourney = sys.argv[1] if len(sys.argv) > 1 else _slug
     client = _client()
     field = load_field(tourney)
@@ -172,6 +209,11 @@ def main():
         print(f"\nRESOLUTION: event={resolved}  overlap={rep['leader']}  (raw={rep['raw']})")
         print(f"  overlap by event: {rep['counts']}")
         if resolved is None:
+            stale = stale_config_reason(_cfg_event_ids, _week_events())
+            if stale:
+                print(f"::notice title=Kalshi preflight skipped::{stale}")
+                print(f"  SKIP: {stale}; no resolution check this run.")
+                return 0
             issues.append("RESOLUTION FAILED: no Kalshi event overlaps our field — check "
                           "sim_inputs.tourney / name_replacements.")
         elif rep["leader"] < 10:
