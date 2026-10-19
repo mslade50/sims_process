@@ -16,12 +16,18 @@ name: Kalshi Preflight
 # "Not listed yet" is a ::warning and a green run only when the winner GET
 # succeeded, sim_inputs matches this week's DataGolf event (or an off week
 # whose Kalshi book has not settled), and that successful book truly does not
-# cover the field. A configured event that has settled (KXPGATOUR-BAC26) or is
-# not this week's DataGolf event fails with STALE CONFIG. The names used for
-# overlap are DataGolf field-updates, the current event, not the sim_inputs
-# tourney file, unless that live field is missing. KALSHI_PREFLIGHT_STRICT=1
-# restores the loud failure for a confirmed-current event that is not listed
-# yet. It does not hide STALE CONFIG, an unreadable book, or a failed fetch.
+# cover the field. A simple lag — field and schedule agree on one live event
+# that sim_inputs.event_ids does not contain — is NOT READY YET: a ::warning,
+# exit 0, and no Telegram. That green run does not place orders.
+# kalshi_maker.py --live halts on the same lag before reconcile_and_post.
+# STALE CONFIG still fails when the configured event has settled and no live
+# or scheduled event can be confirmed, or when the field and the schedule
+# disagree. The names used for overlap are DataGolf field-updates, the current
+# event, not the sim_inputs tourney file, unless that live field is missing.
+# KALSHI_PREFLIGHT_STRICT=1 restores the loud failure for a confirmed-current
+# event that is not listed yet, and for a simple lag. It does not hide
+# STALE CONFIG, an unreadable book, or a failed fetch, and it does not lift
+# the maker's lag halt.
 
 on:
   schedule:

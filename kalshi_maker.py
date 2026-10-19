@@ -37,6 +37,14 @@ Modes:
                      prefix); manual hand-clicked orders are left resting
 
 Automation safety layer (maker_guard.py) — applies to --live AND the dry-run:
+    INPUT LAG (halts --live before scan or POST, and pulls the bot's quotes):
+        DataGolf's current field and this week's schedule agree on one event
+        that is not in sim_inputs.event_ids. The Kalshi preflight reports that
+        lag as a green NOT READY YET warning; this check is what stops orders.
+        KALSHI_PREFLIGHT_STRICT does not turn it off. If the live event cannot
+        be confirmed, this check does not newly halt. The overlap fail-closed
+        filter below still quotes nothing when the open book does not match
+        the sim.
     KILL SWITCH (any halts --live; a halt also pulls the bot's own quotes):
         env  MAKER_KILL=1               hard override (CI / GitHub Actions var)
         file permanent_data/MAKER_HALT  local panic button
@@ -1936,10 +1944,76 @@ def _fetch_maker_config():
         return default
 
 
+def _live_event_for_orders():
+    """Read-only DataGolf field id, name, and this week's schedule.
+
+    (field_event_id, field_event_name, week_events). A missing key or a failed
+    lookup returns (None, None, None): the lag halt then treats the live event
+    as unconfirmed and does not newly stop the maker. No Kalshi call, and no
+    order or portfolio endpoint.
+    """
+    key = os.getenv("DATAGOLF_API_KEY")
+    if not key:
+        print("  [live-event] no DATAGOLF_API_KEY; lag halt not applied "
+              "(overlap gate remains)")
+        return None, None, None
+    try:
+        from api_utils import fetch_field_updates, fetch_pga_events_this_week
+    except Exception as exc:
+        print(f"  [live-event] lookup import failed ({type(exc).__name__}); "
+              "lag halt not applied (overlap gate remains)")
+        return None, None, None
+    field_id, field_name = None, None
+    try:
+        frame = fetch_field_updates(key)
+        attrs = getattr(frame, "attrs", {}) or {}
+        field_id = attrs.get("event_id")
+        field_name = attrs.get("event_name")
+    except Exception as exc:
+        print(f"  [live-event] field-updates failed ({type(exc).__name__}); "
+              "treating the field id as unconfirmed")
+    try:
+        week = fetch_pga_events_this_week(key)
+    except Exception as exc:
+        print(f"  [live-event] schedule failed ({type(exc).__name__}); "
+              "treating the schedule as unconfirmed")
+        week = None
+    return field_id, field_name, week
+
+
+def _inputs_lag_halt():
+    """(ok, reason). False only when DataGolf confirms sim_inputs lags.
+
+    Does not read KALSHI_PREFLIGHT_STRICT. A green preflight does not release
+    this halt.
+    """
+    try:
+        from sim_inputs import event_ids as configured
+    except Exception:
+        configured = []
+    field_id, field_name, week = _live_event_for_orders()
+    import kalshi_preflight
+    return kalshi_preflight.inputs_ready_to_quote(
+        configured, field_id, live_event_name=field_name, week_events=week)
+
+
+def _abort_live_post(trade_ok):
+    """True when --live must exit before scan() and reconcile_and_post()."""
+    return not trade_ok
+
+
 def _check_live_preconditions():
-    """Full --live gate: kill switch -> fairs fresh (round-aware) -> risk limits
-    (daily realized-loss breaker + balance-vs-caps) -> not live-round. Returns
-    (ok, reason); the first failure wins. Each is fail-closed."""
+    """Full --live gate. Returns (ok, reason); the first failure wins.
+
+    Order: confirmed sim_inputs lag, then kill switch, then fairs freshness
+    (round-aware), then risk limits (daily realized-loss breaker and
+    balance-vs-caps), then not a live round. The lag check is fail-closed
+    for a confirmed simple lag and does not newly halt when the live event
+    cannot be confirmed. Each later check is fail-closed on its own.
+    """
+    ok, reason = _inputs_lag_halt()
+    if not ok:
+        return (ok, reason)
     ok, reason = maker_guard.should_trade()
     if not ok:
         return (ok, reason)
@@ -2004,12 +2078,13 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(0)
 
-    # ── Live-trade preconditions: kill switch -> sim fairs fresh -> NOT a live
-    # round (schedule default + DataGolf override). Any failure halts --live and
-    # PULLS the bot's own resting quotes so live risk comes off; manual orders are
-    # left alone. (Computed before scan so a halted --live exits fast.) ──
+    # ── Live-trade preconditions: confirmed sim_inputs lag, then kill switch,
+    # sim fairs fresh, then NOT a live round. Any failure halts --live and
+    # PULLS the bot's own resting quotes so live risk comes off; manual orders
+    # are left alone. The lag halt runs even when preflight exited 0.
+    # (Computed before scan so a halted --live exits before reconcile_and_post.) ──
     trade_ok, trade_reason = _check_live_preconditions()
-    if args.live and not trade_ok:
+    if args.live and _abort_live_post(trade_ok):
         print(f"\n[HALT] not trading: {trade_reason}")
         print("[HALT] pulling the bot's resting script quotes (manual orders untouched)…")
         n = maker_guard.pull_script_quotes(
