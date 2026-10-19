@@ -192,6 +192,8 @@ cleanup_backup_*.tar.gz
 !cloudflare_dashboard/**
 !odds_screen/
 !odds_screen/**
+!docs/
+!scripts/
 
 # Auditable frozen-model rebuild utility (archive remains off the weekly path).
 !archive/

@@ -1,0 +1,34 @@
+name: review-check
+
+# Proof and Rollback must be filled in. This repo has no secret-free
+# application test or lint command, so this workflow only checks the PR body.
+# Nothing secret is read or printed. The body is passed only through env vars.
+# Dependabot and Renovate skip the template rule inside scripts/check_pr_body.py;
+# other bots and agents do not. Fork pull requests stay safe: pull_request
+# only, a read-only token, and ubuntu-latest. No repository secrets are read.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: review-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: PR body
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Proof and Rollback
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: python3 scripts/check_pr_body.py
