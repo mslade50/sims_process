@@ -132,3 +132,99 @@ def test_near_complete_listing_still_resolves():
     result = kp.assess_winner_resolution(_weekly(117), field, min_overlap=10)
     assert result["status"] == "resolved"
     assert result["leader"] == 117
+
+
+def _not_listed_assessment():
+    return kp.assess_winner_resolution(_futures(52), _field(120), min_overlap=10)
+
+
+def test_stale_settled_tourney_fails_instead_of_not_listed():
+    """Oct 17-18: config still baycurrent after KXPGATOUR-BAC26 settled.
+
+    The live field did not overlap the only open book (Masters futures). That
+    shape is 'not listed' only when sim_inputs is current. A settled configured
+    event is STALE CONFIG and fails.
+    """
+    assessment = _not_listed_assessment()
+    assert assessment["status"] == "not_listed"
+    settled = [{
+        "event_ticker": "KXPGATOUR-BAC26",
+        "title": "Baycurrent Classic Winner",
+        "sub_title": "2026 Baycurrent Classic",
+        "book": "settled",
+    }]
+    verdict = kp.classify_preflight(
+        assessment, configured_event_ids=[527], week_events=[],
+        field_event_id=None, tourney="baycurrent", winner_events=settled)
+    assert verdict["warning"] is None
+    assert len(verdict["issues"]) == 1
+    assert verdict["issues"][0].startswith("STALE CONFIG:")
+    assert "KXPGATOUR-BAC26" in verdict["issues"][0]
+    assert "not a missing listing" in verdict["issues"][0]
+    # Strict mode does not hide a forgotten config.
+    strict = kp.classify_preflight(
+        assessment, configured_event_ids=[527], week_events=[],
+        field_event_id=None, tourney="baycurrent", winner_events=settled, strict=True)
+    assert strict["issues"][0].startswith("STALE CONFIG:")
+
+
+def test_stale_event_id_mismatch_fails_even_if_the_live_field_resolves():
+    """Today's trap: DataGolf's current field overlaps Bermuda while sim_inputs
+    is still event 527. Overlap success must not print ALL CLEAR."""
+    assessment = kp.assess_winner_resolution(
+        _weekly(120, event="BUBC26", tournament="Weekly Open"), _field(120), min_overlap=10)
+    assert assessment["status"] == "resolved"
+    verdict = kp.classify_preflight(
+        assessment, configured_event_ids=[527],
+        week_events=[{"event_id": 528, "event_name": "Butterfield Bermuda Championship"}],
+        field_event_id=528, tourney="baycurrent", winner_events=[{
+            "event_ticker": "KXPGATOUR-BAC26",
+            "title": "Baycurrent Classic Winner",
+            "sub_title": "2026 Baycurrent Classic",
+            "book": "settled",
+        }])
+    assert verdict["warning"] is None
+    assert verdict["issues"][0].startswith("STALE CONFIG:")
+    assert "528" in verdict["issues"][0]
+    assert "527" in verdict["issues"][0]
+
+
+def test_current_config_not_listed_stays_a_warning():
+    assessment = _not_listed_assessment()
+    verdict = kp.classify_preflight(
+        assessment, configured_event_ids=[528],
+        week_events=[{"event_id": 528}], field_event_id=528, tourney="bermuda",
+        winner_events=[{
+            "event_ticker": "KXPGATOUR-BUBC26",
+            "title": "Butterfield Bermuda Championship Winner",
+            "sub_title": "2026 Butterfield Bermuda Championship",
+            "book": "open",
+        }])
+    assert verdict["issues"] == []
+    assert verdict["warning"]
+    assert "not listed yet" in verdict["warning"]
+
+
+def test_open_book_for_the_configured_tourney_is_not_stale():
+    reason = kp.settled_tourney_reason("baycurrent", [
+        {"event_ticker": "KXPGATOUR-BAC26", "title": "Baycurrent Classic Winner",
+         "sub_title": "2026 Baycurrent Classic", "book": "open"},
+    ])
+    assert reason is None
+
+
+def test_field_source_names_live_datagolf_not_the_configured_file():
+    text = kp.format_field_source({
+        "names": _field(120), "source": "datagolf_live",
+        "event_id": 528, "event_name": "Butterfield Bermuda Championship",
+        "detail": "DataGolf field-updates, the current event",
+    }, "baycurrent")
+    assert "DataGolf live current event" in text
+    assert "event_id=528" in text
+    assert "baycurrent" in text
+    local = kp.format_field_source({
+        "names": _field(72), "source": "local", "event_id": None,
+        "event_name": None, "detail": "player_names_live_baycurrent.json",
+    }, "baycurrent")
+    assert "local file" in local
+    assert "not available" in local
