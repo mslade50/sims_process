@@ -35,6 +35,12 @@ Catches (added or removed diff lines only):
   repo's secret-free runner (``secret_free_tests.py``, including
   ``scripts/secret_free_tests.py``).
 - A new collect_ignore or collect_ignore_glob entry in those pytest configs.
+- Any edit to a guard checker (``scripts/check_pr_body.py``,
+  ``scripts/check_test_weakening.py``, ``scripts/check_test_inventory.py``,
+  ``secret_free_tests.py`` at the repo root or under ``scripts/``) or to a
+  workflow that runs one of those programs. A comment-only edit counts. The
+  pull request needs a real ``## Test changes`` note so it cannot turn its
+  own check off quietly.
 - A removed assertion, an equality rewritten to a weaker form (assertTrue,
   assertIn, ordering, inequality, approx, bare truthiness), strictEqual
   rewritten to equal, or a looser rel/abs/delta/tolerance (larger) or places
@@ -1183,10 +1189,89 @@ def _exclusion_findings(file: FileDiff) -> list[Finding]:
     return found
 
 
+_GUARD_CHECKERS = {
+    "scripts/check_pr_body.py",
+    "scripts/check_test_weakening.py",
+    "scripts/check_test_inventory.py",
+    "secret_free_tests.py",
+    "scripts/secret_free_tests.py",
+}
+_GUARD_MARKERS = (
+    "check_pr_body.py",
+    "check_test_weakening.py",
+    "check_test_inventory.py",
+    "secret_free_tests.py",
+)
+
+
+def _is_workflow(path: str) -> bool:
+    if not path or path == "/dev/null":
+        return False
+    return path.startswith(".github/workflows/") and _basename(path).endswith((".yml", ".yaml"))
+
+
+def _mentions_guard(text: str) -> bool:
+    return any(marker in text for marker in _GUARD_MARKERS)
+
+
+def _file_changed(file: FileDiff) -> bool:
+    if file.deleted or file.renamed:
+        return True
+    return any(item.kind in "+-" for hunk in file.hunks for item in hunk.lines)
+
+
+def _changed_line(file: FileDiff) -> int:
+    for hunk in file.hunks:
+        for item in hunk.lines:
+            if item.kind in "+-":
+                return item.new_ln or item.old_ln or 1
+    return 1
+
+
+def _workflow_runs_guard(file: FileDiff) -> bool:
+    """True when this diff touches a workflow that runs a guard checker."""
+    paths = [path for path in (file.old_path, file.new_path) if _is_workflow(path)]
+    if not paths:
+        return False
+    if any(_basename(path) in {"review-check.yml", "review-check.yaml"} for path in paths):
+        return True
+    blob = "\n".join(item.text for hunk in file.hunks for item in hunk.lines)
+    if _mentions_guard(blob):
+        return True
+    for path in paths:
+        full = ROOT / path
+        if not full.is_file():
+            continue
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _mentions_guard(text):
+            return True
+    return False
+
+
+def _guard_edit_findings(files: list[FileDiff]) -> list[Finding]:
+    """Any edit to a guard checker or a workflow that runs one is a weakening."""
+    found: list[Finding] = []
+    for file in files:
+        if not _file_changed(file):
+            continue
+        line = _changed_line(file)
+        if file.new_path in _GUARD_CHECKERS:
+            found.append(Finding(file.new_path, line, "edited guard checker"))
+        elif file.old_path in _GUARD_CHECKERS:
+            found.append(Finding(file.old_path, line, "edited guard checker"))
+        if _workflow_runs_guard(file):
+            path = file.new_path if file.new_path and file.new_path != "/dev/null" else file.old_path
+            found.append(Finding(path, line, "edited guard workflow"))
+    return found
+
+
 def find_weakening(diff: str) -> list[Finding]:
     """Return weakening findings for a unified diff, stable and unique."""
     files = parse_diff(diff)
-    found = _deleted_findings(files) + _removed_test_findings(files)
+    found = _deleted_findings(files) + _removed_test_findings(files) + _guard_edit_findings(files)
     for file in files:
         if file.deleted or _renamed_out(file):
             continue

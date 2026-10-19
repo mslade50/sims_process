@@ -553,6 +553,84 @@ def test_policy_documents_the_check():
     assert "scripts/check_test_weakening.py" in text
     assert "## Test changes" in text
     assert "collect_ignore" in text
+    assert "persist-credentials: false" in text
+    assert "comment-only edit" in text
+    assert "scripts/check_pr_body.py" in text
+    assert "scripts/check_test_inventory.py" in text
+
+
+_GUARD_CHECKERS = [
+    "scripts/check_pr_body.py",
+    "scripts/check_test_weakening.py",
+    "scripts/check_test_inventory.py",
+    "secret_free_tests.py",
+    "scripts/secret_free_tests.py",
+]
+
+
+@pytest.mark.parametrize("path", _GUARD_CHECKERS)
+def test_edited_checker_script_is_a_weakening(path: str):
+    diff = udiff(path, "value = 1\n", "value = 1  # note\n")
+    findings = [(item.path, item.reason) for item in find_weakening(diff)]
+    assert findings == [(path, "edited guard checker")]
+
+
+def test_deleted_checker_script_is_a_weakening():
+    diff = udiff_delete("scripts/check_test_inventory.py", "def main():\n    return 0\n")
+    findings = find_weakening(diff)
+    assert any(item.path == "scripts/check_test_inventory.py" and item.reason == "edited guard checker" for item in findings)
+
+
+def test_edited_guard_workflow_is_a_weakening():
+    diff = udiff(
+        ".github/workflows/review-check.yml",
+        "    timeout-minutes: 10\n",
+        "    timeout-minutes: 15\n",
+    )
+    findings = [(item.path, item.reason) for item in find_weakening(diff)]
+    assert findings == [(".github/workflows/review-check.yml", "edited guard workflow")]
+
+
+def test_workflow_that_starts_running_a_checker_is_a_guard_workflow():
+    diff = udiff(
+        ".github/workflows/extra.yml",
+        "        run: echo ok\n",
+        "        run: python3 scripts/check_test_weakening.py\n",
+    )
+    reasons = _reasons(diff)
+    assert reasons == ["edited guard workflow"]
+
+
+def test_unrelated_workflow_edit_is_not_a_guard_edit():
+    comment = udiff(
+        ".github/workflows/ci.yml",
+        "    timeout-minutes: 10\n",
+        "    timeout-minutes: 15\n",
+    )
+    assert find_weakening(comment) == []
+    ignore = udiff(
+        ".github/workflows/ci.yml",
+        "        run: pytest\n",
+        "        run: pytest --ignore=tests/test_slow.py\n",
+    )
+    reasons = _reasons(ignore)
+    assert "edited guard workflow" not in reasons
+    assert "edited guard checker" not in reasons
+    assert any("--ignore" in reason for reason in reasons)
+
+
+def test_cli_flags_an_edited_checker_until_test_changes_explains_it():
+    diff = udiff("scripts/check_pr_body.py", "value = 1\n", "value = 2\n")
+    missing = _run_cli(diff, None)
+    assert missing.returncode == 1
+    assert "scripts/check_pr_body.py" in missing.stdout
+    assert "edited guard checker" in missing.stdout
+    explained = _run_cli(
+        diff,
+        "## Test changes\nEdited the body checker and said so here.\n",
+    )
+    assert explained.returncode == 0
+    assert "explained in ## Test changes" in explained.stdout
 
 
 def test_unfilled_test_changes_section_is_placeholder():

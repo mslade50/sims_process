@@ -155,6 +155,18 @@ def test_inventory_job_collects_base_and_head_without_shell_interpolation():
     assert head["env"]["PR_AUTHOR"] == "${{ github.event.pull_request.user.login }}"
 
 
+def test_guard_checkouts_do_not_persist_credentials():
+    jobs = _workflow()["jobs"]
+    assert list(jobs) == ["body", "test-weakening", "test-inventory", "tests"]
+    for name, job in jobs.items():
+        checkouts = [
+            step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        assert checkouts, name
+        for step in checkouts:
+            assert step["with"]["persist-credentials"] is False, name
+
+
 def test_secret_free_job_reads_contents_only_and_runs_the_suite():
     text = _workflow_text()
     job = _workflow()["jobs"]["tests"]

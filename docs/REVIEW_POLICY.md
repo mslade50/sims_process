@@ -61,8 +61,8 @@ output. Scrub tokens, chat ids, and API keys before you paste proof.
 `.github/workflows/review-check.yml` has four jobs. All of them use
 `ubuntu-latest` and the `pull_request` event. None of them reads secrets.
 
-The `body` job is unchanged. It fails the check when the Proof or Rollback
-section is missing, empty, or still placeholder text. It runs
+The `body` job fails the check when the Proof or Rollback section is
+missing, empty, or still placeholder text. It runs
 `python3 scripts/check_pr_body.py` only. `## Test changes` is not required
 by this job.
 
@@ -74,8 +74,16 @@ a new or wider exclusion (`--ignore`, `--deselect`, `-k`, a list-style
 `"--ignore", "x"` pair, or a conftest `collect_ignore` list), or a looser
 assertion. A rename, an equivalent assert rewrite, and a tighter tolerance
 are not weakenings. `secret_free_tests.py` is scanned as CI config, including
-`scripts/secret_free_tests.py`. Placeholder text does not count; that uses
+`scripts/secret_free_tests.py`. Any edit to a guard checker
+(`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`,
+`scripts/check_test_inventory.py`, or `secret_free_tests.py`) or to a
+workflow that runs one of them is itself a weakening, including a
+comment-only edit. That is what stops a pull request from turning its own
+check off without saying so. Placeholder text does not count; that uses
 `is_placeholder()` in `scripts/check_pr_body.py`.
+
+Each of the four jobs checks out with `persist-credentials: false`, so later
+steps do not keep the checkout token.
 
 The `test-inventory` job is the main protection. It installs that commit's
 `requirements.txt` and collects the secret-free suite on the base commit and
