@@ -60,8 +60,20 @@ CAT_ORDER = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
 CLIP_CAT = (-8.0, 8.0)
 RNG = np.random.default_rng(123)
 
+
+def require_datagolf_api_key():
+    """Return DATAGOLF_API_KEY or exit. There is no hardcoded fallback."""
+    key = (os.getenv("DATAGOLF_API_KEY") or "").strip()
+    if not key:
+        raise SystemExit(
+            "DATAGOLF_API_KEY is not set. Export it before running; "
+            "this script no longer has a hardcoded key."
+        )
+    return key
+
+
 # DataGolf API
-API_KEY = os.getenv('DATAGOLF_API_KEY', 'c05ee5fd8f2f3b14baab409bd83c')
+API_KEY = require_datagolf_api_key()
 MATCHUPS_URL = "https://feeds.datagolf.com/betting-tools/matchups"
 OUTRIGHTS_URL = "https://feeds.datagolf.com/betting-tools/outrights"
 
