@@ -20,7 +20,7 @@ test("the first route's initial JS (framework + shell) is within 150 KB gzip", (
 });
 
 test("the initial JS of the first route does not pull in a view or Recharts", () => {
-  const heavy = root.jsFiles.filter((f) => /(?:^|\/)(?:CartesianChart|PlayerProfilesView|InputsView|ScoringView|ExplainViews|views|WeatherEffectsView|WeatherEditsView|RunView)-/.test(f.path));
+  const heavy = root.jsFiles.filter((f) => /(?:^|\/)(?:CartesianChart|PlayerProfilesView|InputsView|ScoringView|ExplainViews|views|WeatherEffectsView|WeatherEditsView|RunView|BetBreakdownsView)-/.test(f.path));
   assert.deepEqual(heavy.map((f) => f.path), [], "views and chart libraries load lazily");
 });
 

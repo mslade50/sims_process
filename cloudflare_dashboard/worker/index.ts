@@ -5,7 +5,7 @@ import { runAlerts } from "./alerts";
 import { handleScheduled } from "./cron";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
-import { handleOwnerGate } from "./owner";
+import { handleOwnerGate, ownerEmails, viewerFor } from "./owner";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
@@ -99,6 +99,32 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
   if (weatherEditsResponse) return weatherEditsResponse;
   const jobsResponse = await handleJobsApi(request, env);
   if (jobsResponse) return jobsResponse;
+
+  // Owner-only research data (R2 owner/<key>, e.g. owner/bet_breakdowns.json). handleOwnerGate above has already refused anyone else;
+  // there is deliberately no packaged-asset fallback, so the file is never public.
+  if (url.pathname.startsWith("/api/owner-data/")) {
+    // Fail closed: unlike the shared gate (off while OWNER_EMAILS is unset), private data needs a configured owner list AND a verified owner.
+    if (!ownerEmails(env) || !(await viewerFor(request, env)).owner) {
+      return Response.json({ ok: false, error: "This part of the dashboard is for the owner only" }, { status: 403, headers: { "cache-control": "no-store" } });
+    }
+    let requested = "";
+    try {
+      requested = decodeURIComponent(url.pathname.slice("/api/owner-data/".length));
+    } catch {
+      return Response.json({ error: "Invalid data path" }, { status: 400 });
+    }
+    if (!requested || requested.includes("..") || !/^[A-Za-z0-9_./-]+\.json$/.test(requested)) {
+      return Response.json({ error: "Invalid data path" }, { status: 400 });
+    }
+    let object: R2ObjectBody | null = null;
+    try {
+      object = env.DASHBOARD_DATA ? await env.DASHBOARD_DATA.get(`owner/${requested}`) : null;
+    } catch {
+      object = null;
+    }
+    if (!object) return Response.json({ error: "Not published yet" }, { status: 404, headers: { "cache-control": "no-store" } });
+    return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: "private, no-cache" });
+  }
 
   if (url.pathname.startsWith("/api/data/")) {
     let requested = "";

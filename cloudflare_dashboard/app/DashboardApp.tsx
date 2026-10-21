@@ -28,7 +28,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
-export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced";
+export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns";
 
 type Manifest = {
   generated_at: string;
@@ -43,7 +43,7 @@ type Manifest = {
 /** Icons by view key; the labels, groups and order live in shell-rules.ts (NAVIGATION) so tests can read them. */
 const NAV_ICONS: Record<string, typeof CircleGauge> = {
   "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
-  inputs: SlidersHorizontal, run: Play, performance: TrendingUp, history: Archive, diagnostics: Microscope,
+  inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": TrendingUp, history: Archive, diagnostics: Microscope,
 };
 
 /** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
@@ -62,6 +62,7 @@ const WeatherView = lazy(() => import("./views").then((m) => ({ default: m.Weath
 const WeatherEffectsView = lazy(() => import("./WeatherEffectsView").then((m) => ({ default: m.WeatherEffectsView })));
 const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ default: m.WeatherEditsView })));
 const ThisWeekView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.ThisWeekView })));
+const BetBreakdownsView = lazy(() => import("./BetBreakdownsView").then((m) => ({ default: m.BetBreakdownsView })));
 const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.WhyPricedView })));
 
 const loaders: Record<string, () => Promise<unknown>> = {
@@ -81,6 +82,7 @@ const loaders: Record<string, () => Promise<unknown>> = {
   "weather-edits": () => import("./WeatherEditsView"),
   "this-week": () => import("./ExplainViews"),
   "why-priced": () => import("./ExplainViews"),
+  "bet-breakdowns": () => import("./BetBreakdownsView"),
 };
 
 const warmed = new Set<string>();
@@ -110,6 +112,7 @@ const views: Record<ViewKey, React.ComponentType> = {
   "weather-edits": WeatherEditsView,
   "this-week": ThisWeekView,
   "why-priced": WhyPricedView,
+  "bet-breakdowns": BetBreakdownsView,
 };
 
 function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {

@@ -6,8 +6,8 @@ import { NAVIGATION, OWNER_ONLY_VIEWS, navigationFor, ownerOnlyPath, viewerFrom 
 // Owner-only areas (owner, October 15, 2026): colleagues let in through Access never see or reach Run, weather edits or overrides.
 
 test("owner-only paths: Run, weather edits and the jobs/override APIs, however they are spelled", () => {
-  for (const path of ["/run", "/RUN", "/run/", "/run.rsc", "/weather-edits", "/weather-edits/"]) assert.equal(ownerOnlyPath(path), "page", path);
-  for (const path of ["/api/jobs", "/api/jobs/j-1/log", "/api/jobs/j-1/cancel", "/api/overrides", "/api/overrides/history", "/api/overrides/abc", "/api/weather-overrides/pga_1_2026", "/API/Jobs/"]) assert.equal(ownerOnlyPath(path), "api", path);
+  for (const path of ["/run", "/RUN", "/run/", "/run.rsc", "/weather-edits", "/weather-edits/", "/bet-breakdowns", "/Bet-Breakdowns/", "/bet-breakdowns.rsc"]) assert.equal(ownerOnlyPath(path), "page", path);
+  for (const path of ["/api/jobs", "/api/jobs/j-1/log", "/api/jobs/j-1/cancel", "/api/overrides", "/api/overrides/history", "/api/overrides/abc", "/api/weather-overrides/pga_1_2026", "/API/Jobs/", "/api/owner-data", "/api/owner-data/bet_breakdowns.json", "/API/Owner-Data/x.json"]) assert.equal(ownerOnlyPath(path), "api", path);
   for (const path of ["/", "/this-week", "/inputs", "/weather-effects", "/running", "/api/data/manifest.json", "/api/golfprice/index.json", "/api/overridesx", "/api/whoami"]) assert.equal(ownerOnlyPath(path), null, path);
 });
 
@@ -107,6 +107,7 @@ test("a colleague is refused every owner-only API before it reads or writes anyt
     ["/api/overrides/abc?mode=remove", "DELETE"],
     ["/api/weather-overrides/pga_1_2026-10-15", "GET"],
     ["/api/weather-overrides/pga_1_2026-10-15", "PUT", { phase: "pre", hours: [] }],
+    ["/api/owner-data/bet_breakdowns.json", "GET"],
   ];
   for (const [path, method, body] of cases) {
     for (const headers of [colleague, unsignedHeaders(OWNER), {}]) {
@@ -121,7 +122,7 @@ test("a colleague is refused every owner-only API before it reads or writes anyt
 test("owner-only pages redirect a colleague home; the owner and shared pages pass through", async () => {
   const worker = await loadWorker();
   const colleague = signedHeaders("colleague@example.com");
-  for (const path of ["/run", "/weather-edits?e=pga_1", "/Run/"]) {
+  for (const path of ["/run", "/weather-edits?e=pga_1", "/Run/", "/bet-breakdowns"]) {
     const res = await call(worker, path, { headers: colleague });
     assert.equal(res.status, 302, path);
     assert.equal(res.headers.get("location"), "https://golf.example/this-week");
