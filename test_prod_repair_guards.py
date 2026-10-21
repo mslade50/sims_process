@@ -67,8 +67,105 @@ def test_main_survives_empty_state_object(monkeypatch, capsys):
 
     monkeypatch.setattr(telegram_policy.urllib.request, "urlopen", lambda r, timeout=0: sent.append(r) or _Resp())
     monkeypatch.setattr(sys, "argv", ["telegram_policy.py", "--key", "k", "--message", "m"])
-    telegram_policy.main()  # must not raise JSONDecodeError
+    assert telegram_policy.main() == 0  # must not raise JSONDecodeError
     assert len(sent) == 1
+
+
+def _telegram_main(monkeypatch, urlopen, message="m"):
+    import subprocess
+    import sys
+
+    def fake_run(cmd, **kw):
+        assert kw.get("encoding") == "utf-8"
+        if "get" in cmd:
+            Path([a for a in cmd if a.startswith("--file=")][0][7:]).write_text("{}", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.delenv("ETR_ONLY_MODE", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(telegram_policy.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(sys, "argv", ["telegram_policy.py", "--key", "k", "--message", message])
+
+
+def test_send_failure_exits_nonzero(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise OSError("down")
+
+    _telegram_main(monkeypatch, boom)
+    assert telegram_policy.main() == 1
+
+
+def test_non_200_exits_nonzero(monkeypatch):
+    class _Resp:
+        status = 403
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    _telegram_main(monkeypatch, lambda r, timeout=0: _Resp())
+    assert telegram_policy.main() == 1
+
+
+def test_unicode_message_is_utf8_and_stdio_is_forced(monkeypatch):
+    sent = []
+
+    class _Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    _telegram_main(monkeypatch, lambda r, timeout=0: sent.append(r) or _Resp(), message="Åberg — lag")
+    assert telegram_policy.main() == 0
+    body = sent[0].data
+    assert "Åberg — lag".encode("utf-8") in body
+    assert b"\\u00c5" not in body
+
+    calls = []
+
+    class _Stream:
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(telegram_policy.sys, "stdin", _Stream())
+    monkeypatch.setattr(telegram_policy.sys, "stdout", _Stream())
+    monkeypatch.setattr(telegram_policy.sys, "stderr", _Stream())
+    telegram_policy.force_utf8_stdio()
+    assert calls == [{"encoding": "utf-8", "errors": "replace"}] * 3
+    assert os.environ["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_windows_reexec_only_when_utf8_mode_is_off(monkeypatch):
+    monkeypatch.setattr(telegram_policy.os, "name", "nt")
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+    assert telegram_policy.needs_windows_utf8_reexec() is True
+    monkeypatch.setenv("PYTHONUTF8", "1")
+    assert telegram_policy.needs_windows_utf8_reexec() is False
+    monkeypatch.setattr(telegram_policy.os, "name", "posix")
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+    assert telegram_policy.needs_windows_utf8_reexec() is False
+
+
+def test_state_read_failure_stays_exit_zero(monkeypatch):
+    import subprocess
+    import sys
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="auth failed")
+
+    monkeypatch.delenv("ETR_ONLY_MODE", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["telegram_policy.py", "--key", "k", "--message", "m"])
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("send should not be attempted")
+
+    monkeypatch.setattr(telegram_policy.urllib.request, "urlopen", boom)
+    assert telegram_policy.main() == 0
 
 
 # ---- SC-01/03/08 -----------------------------------------------------------
