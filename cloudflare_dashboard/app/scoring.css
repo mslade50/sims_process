@@ -32,3 +32,8 @@
 .score-wx-waves span{color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
 .score-wx-waves b{font-size:20px;font-variant-numeric:tabular-nums}.score-wx-waves b small,.score-wx-waves>div>small{color:var(--muted);font-size:10px;font-weight:500}
 .score-wx-venue{margin-top:14px;padding:11px 14px;border-radius:10px;background:var(--tint-1);font-size:12px;line-height:1.55}.score-wx-venue p{margin:4px 0 0}
+
+/* Course history: earlier editions round by round. */
+.score-hist-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}.score-hist-cards>div{display:grid;gap:3px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.score-hist-cards span{color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}.score-hist-cards b{font-size:20px;font-variant-numeric:tabular-nums}.score-hist-cards b small,.score-hist-cards small{color:var(--muted);font-size:10px;font-weight:500;font-variant-numeric:tabular-nums}
+.score-hist-chart{width:100%;height:240px}.score-segments{flex-wrap:wrap}
+@media(max-width:600px){.score-hist-cards{grid-template-columns:1fr 1fr}.score-hist-chart{height:210px}}
