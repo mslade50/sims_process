@@ -22,6 +22,7 @@ const VIEWS = [
   ["this-week", "ExplainViews.tsx", "ThisWeekView"],
   ["why-priced", "ExplainViews.tsx", "WhyPricedView"],
   ["bet-breakdowns", "BetBreakdownsView.tsx", "BetBreakdownsView"],
+  ["bet-card", "BetCardView.tsx", "BetCardView"],
 ];
 
 test("the smoke list covers every view key the dashboard registers", () => {

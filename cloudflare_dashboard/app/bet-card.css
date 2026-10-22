@@ -1,0 +1,25 @@
+/* Bet card (owner-only). Tokens only, so light and dark both work. Phone first. */
+.bc-banner { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); font-size: 13px; }
+.bc-banner strong { display: block; font-size: 14px; }
+.bc-banner small { color: var(--muted); }
+.bc-filters { display: grid; gap: 8px; }
+.bc-filters .segmented { flex-wrap: wrap; margin-bottom: 0; }
+.bc-filters label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.bc-filters select { min-height: 34px; }
+.bc-moment { margin: 0 0 8px; color: var(--muted-strong); font-size: 13px; }
+.bc-tier { margin: 14px 0 6px; color: var(--muted); font-size: 11px; font-weight: 780; letter-spacing: .06em; text-transform: uppercase; }
+.bc-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.bc-bet { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--surface-raised); }
+.bc-bet.small { border-left-color: var(--line-strong); }
+.bc-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+.bc-head strong { font-size: 15px; }
+.bc-badge { padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--surface); font-size: 10px; font-weight: 800; letter-spacing: .05em; }
+.bc-price { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.bc-price b { font-size: 15px; }
+.bc-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bc-bet details { font-size: 12px; color: var(--muted-strong); }
+.bc-bet summary { cursor: pointer; color: var(--muted); }
+.bc-totals { margin: 10px 0 0; color: var(--muted-strong); font-size: 13px; font-weight: 650; }
+.bc-cov table { width: 100%; font-size: 12px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.bc-cov th, .bc-cov td { padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+.bc-notes { margin: 8px 0 0; padding-left: 18px; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }

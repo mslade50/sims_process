@@ -68,6 +68,7 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { key: "performance", href: "/performance", label: "Scorecard and P&L", description: "Model scorecard and bet results" },
       { key: "bet-breakdowns", href: "/bet-breakdowns", label: "Bet breakdowns", description: "How our edges have paid, by market, book and edge size" },
+      { key: "bet-card", href: "/bet-card", label: "Bet card", description: "Current suggested bets and the lowest price worth taking" },
     ],
   },
   {
@@ -97,7 +98,7 @@ export function navEntryFor(viewKey: string): { item: NavItem; label: string; de
  * Colleagues may be let in through Cloudflare Access; these areas stay with the owner (OWNER_EMAILS on the Worker, worker/owner.ts).
  * The Worker enforces it (pages redirect home, APIs answer 403); the app only hides the links.
  */
-export const OWNER_ONLY_VIEWS: readonly string[] = ["run", "weather-edits", "bet-breakdowns"];
+export const OWNER_ONLY_VIEWS: readonly string[] = ["run", "weather-edits", "bet-breakdowns", "bet-card"];
 export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/jobs", "/api/overrides", "/api/weather-overrides", "/api/owner-data"];
 
 /** "page" or "api" when `pathname` is owner-only, else null. Case, a trailing slash and an `.rsc` suffix do not get around it. */

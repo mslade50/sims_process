@@ -68,13 +68,13 @@ test("every scheduled type is in the job allow-list and every slot is on a trigg
 
 test("the weekly table at New York times (EDT, October 2026)", () => {
   // Monday 2026-10-05
-  assert.deepEqual(types(et("2026-10-05T12:30:00Z")), ["monday_settle", "watch"]); // 08:30
-  assert.deepEqual(types(et("2026-10-05T15:30:00Z")), ["monday_settle", "watch"]); // 11:30 retry
-  assert.deepEqual(types(et("2026-10-05T19:30:00Z")), ["monday_week", "watch"]); // 15:30
+  assert.deepEqual(types(et("2026-10-05T12:30:00Z")), ["monday_settle", "watch", "odds_reprice"]); // 08:30 (odds + bet card all Monday, owner 2026-10-22)
+  assert.deepEqual(types(et("2026-10-05T15:30:00Z")), ["monday_settle", "watch", "odds_reprice"]); // 11:30 retry
+  assert.deepEqual(types(et("2026-10-05T19:30:00Z")), ["monday_week", "watch", "odds_reprice"]); // 15:30
   assert.deepEqual(types(et("2026-10-05T20:00:00Z")), ["watch", "odds_reprice"]); // 16:00: watch first, then the odds check
   assert.deepEqual(types(et("2026-10-05T20:15:00Z")), ["watch"]); // 16:15: watch every 15 minutes, odds every 30
   assert.deepEqual(types(et("2026-10-05T20:30:00Z")), ["watch", "odds_reprice"]); // 16:30
-  assert.deepEqual(types(et("2026-10-05T14:00:00Z")), ["watch"]); // 10:00 Monday: watch only (a Monday finish is still watched)
+  assert.deepEqual(types(et("2026-10-05T14:00:00Z")), ["watch", "odds_reprice"]); // 10:00 Monday: watch, then odds + bet card
   assert.deepEqual(types(et("2026-10-05T14:05:00Z")), []); // off the 15-minute grid: nothing
   // Tuesday 12:00, Wednesday 18:00 and 22:30
   assert.deepEqual(types(et("2026-10-06T16:00:00Z")), ["tuesday", "watch", "odds_reprice"]); // pricing first, then watch, then odds
@@ -99,6 +99,8 @@ test("the weekly table at New York times (EDT, October 2026)", () => {
   assert.deepEqual(slotTypes(et("2026-10-10T18:30:00Z")), ["after_round"]); // Sat 14:30
   assert.deepEqual(slotTypes(et("2026-10-11T18:30:00Z")), ["after_round"]); // Sun 14:30
   assert.deepEqual(slotTypes(et("2026-10-19T00:00:00Z")), ["sunday_week"]); // Sun 20:00 EDT: Sunday-night pricing (owner 2026-10-12)
+  assert.deepEqual(types(et("2026-10-18T22:00:00Z")), ["watch", "odds_reprice"]); // Sun 18:00 EDT: odds + bet card from Sunday evening (owner 2026-10-22)
+  assert.deepEqual(types(et("2026-10-18T21:30:00Z")), ["watch"]); // Sun 17:30: not yet
   assert.deepEqual(slotTypes(et("2026-10-08T05:00:00Z")), []); // Thu 01:00: no round slot on Thursday 01:00
 });
 

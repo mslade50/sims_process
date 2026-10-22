@@ -40,7 +40,8 @@ export const SLOTS: Slot[] = [
 /** Repeating windows (ET). `minutes` are the minutes past the hour. The watch job goes first so a re-simulation it starts is the base the odds reprice then reads. */
 export const WINDOWS: Window[] = [
   { type: "watch", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], from: "00:00", to: "23:59", minutes: [0, 15, 30, 45], note: "Every 15 minutes, all week (owner 2026-10-07, event weeks run by themselves): input changes, the per-event pre-tee close (30 minutes before each event's own first tee, any time zone), and the after-round pricing of each event as soon as the feed shows the round complete. Cheap when nothing is due; does nothing when no event is active." },
-  { type: "odds_reprice", days: ["Mon"], from: "16:00", to: "23:59", minutes: [0, 30], note: "No re-simulation: re-read odds, recompute signals against the existing fairs, publish, alert." },
+  { type: "odds_reprice", days: ["Sun"], from: "18:00", to: "23:59", minutes: [0, 30], note: "Sunday evening (owner 2026-10-22): the bet card catches the early 72-hole and make-cut lines (BetOnline opens first) on the Sunday-night prices." },
+  { type: "odds_reprice", days: ["Mon"], from: "00:00", to: "23:59", minutes: [0, 30], note: "No re-simulation: re-read odds, recompute signals against the existing fairs, publish, alert; then refresh the owner's bet card. All Monday (owner 2026-10-22: early lines)." },
   { type: "odds_reprice", days: ["Tue", "Wed"], from: "00:00", to: "23:59", minutes: [0, 30], note: "Overnight and in the betting window." },
   { type: "odds_reprice", days: ["Thu"], from: "00:00", to: "11:00", minutes: [0, 30], note: "Until the first tee (the job does nothing once every event has teed off)." },
 ];
