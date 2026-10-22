@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { historyChartRows, parseCourseHistory, signed } from "../app/course-history-rules.ts";
+import { historyRoundRows, parseCourseHistory, signed } from "../app/course-history-rules.ts";
 
 const doc = { schema: "golfprice.course_history.v1", status: "available", course: "Port Royal", by_round: [{ round: 1, editions: 2, vs_par: -0.5, wind: 15, weather_strokes: 1, field_skill: -0.8, adjusted_vs_par: -2.3 }],
   editions: [
@@ -18,13 +18,18 @@ test("parses the history document and drops malformed editions", () => {
   assert.equal(parseCourseHistory({ ...doc, editions: [] }).status, "unavailable");
 });
 
-test("chart rows run oldest first and player-weight multi-course rounds", () => {
-  const { rows, rounds } = historyChartRows(parseCourseHistory(doc), "vs_par");
+test("rows are rounds, bars are years oldest first, multi-course rounds player-weighted, hover cell keeps every course", () => {
+  const { rows, years, rounds } = historyRoundRows(parseCourseHistory(doc), "vs_par");
   assert.deepEqual(rounds, [1, 2]);
-  assert.deepEqual(rows.map((r) => r.year), [2024, 2025]);
-  assert.equal(rows[1].r1, 2.5);          // (1*100 + 3*300) / 400
-  assert.equal(rows[1].r2, null);
-  assert.equal(rows[0].r2, null);
+  assert.deepEqual(years, [2024, 2025]);
+  assert.equal(rows[0].label, "Round 1");
+  assert.equal(rows[0].y2025, 2.5);                    // (1*100 + 3*300) / 400
+  assert.equal(rows[0].c2025.players, 400);
+  assert.equal(rows[0].c2025.courses.length, 2);
+  assert.equal(rows[0].c2025.wind, 20);                // only the course with wind counts
+  assert.equal(rows[1].y2025, null);                   // round 2 has no score: bar value null, cell kept
+  assert.equal(rows[1].y2024, null);
+  assert.equal(rows[1].c2024, undefined);              // 2024 had no round 2
 });
 
 test("signed numbers never show a negative zero", () => {

@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useDashboardData } from "./data";
 import { Panel } from "./components";
-import { historyChartRows, parseCourseHistory, signed, type HistoryMetric } from "./course-history-rules";
+import { historyRoundRows, parseCourseHistory, signed, type HistoryMetric, type RoundCell } from "./course-history-rules";
 
-const COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-2)", "var(--chart-4)"];
+/** One hue, light (oldest year) to full strength (most recent): years are ordered, so a sequential ramp, never a rainbow. */
+const yearColor = (i: number, n: number) => `color-mix(in oklab, var(--chart-1) ${n <= 1 ? 100 : Math.round(28 + (72 * i) / (n - 1))}%, var(--surface))`;
 const fmt = (n: number | null, d = 1) => n == null ? "—" : n.toFixed(d);
 const METRICS: Array<{ key: HistoryMetric; label: string; unit: string; hint: string }> = [
   { key: "vs_par", label: "Score vs par", unit: "strokes", hint: "Field average score minus par, as it actually happened." },
@@ -26,10 +27,9 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
   if (src.loading) return null;
   if (!doc || doc.status !== "available") return <Panel title={title} eyebrow={eyebrow}><p className="score-footnote">{doc?.reason ?? src.error ?? "Course history is unavailable for this event."}</p></Panel>;
   const m = METRICS.find((x) => x.key === metric)!;
-  const { rows, rounds } = historyChartRows(doc, metric);
+  const { rows, years } = historyRoundRows(doc, metric);
   const multiCourse = new Set(doc.editions.flatMap((e) => e.rounds.map((r) => r.course))).size > 1;
   const otherEvents = doc.editions.filter((e) => !e.same_event);
-  const years = doc.editions.map((e) => e.year);
   return <Panel title={title} eyebrow={eyebrow}>
     {doc.by_round.length > 0 && <div className="score-hist-cards">{doc.by_round.map((r) => <div key={r.round}>
       <span>Round {r.round} · {r.editions} edition{r.editions === 1 ? "" : "s"}</span>
@@ -37,14 +37,14 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
       <small title={METRICS[1].hint}>Adjusted {signed(r.adjusted_vs_par)} · weather {signed(r.weather_strokes)} · field {signed(r.field_skill)}</small>
       {(r.wind != null || r.temp != null) && <small>{[r.wind != null ? `Wind ${r.wind.toFixed(1)} mph` : null, r.temp != null ? `${r.temp.toFixed(0)}°F` : null].filter(Boolean).join(" · ")}</small>}
     </div>)}</div>}
-    <div className="score-chart-tools"><div className="score-segments" role="group" aria-label="History measure">{METRICS.map((x) => <button key={x.key} type="button" title={x.hint} className={metric === x.key ? "active" : ""} aria-pressed={metric === x.key} onClick={() => setMetric(x.key)}>{x.label}</button>)}</div><span>{Math.min(...years)}–{Math.max(...years)} · {m.unit}</span></div>
-    <div className="score-hist-chart" role="img" aria-label={`${m.label} by year for each round`}><ResponsiveContainer width="100%" height="100%"><LineChart data={rows} margin={{ top: 10, right: 16, left: 0, bottom: 4 }}>
-      <CartesianGrid vertical={false} stroke="var(--line)" /><XAxis dataKey="year" tick={{ fontSize: 11 }} stroke="var(--muted)" /><YAxis width={42} tick={{ fontSize: 11 }} stroke="var(--muted)" tickFormatter={(v) => m.unit === "mph" ? String(v) : signed(Number(v), 1)} domain={["auto", "auto"]} />
-      {m.unit !== "mph" && <ReferenceLine y={0} stroke="var(--muted)" strokeDasharray="3 4" />}
-      <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--line)", borderRadius: 10 }} formatter={(v, k) => [v == null ? "—" : m.unit === "mph" ? `${Number(v).toFixed(1)} mph` : `${signed(Number(v))} strokes`, String(k)]} />
-      {rounds.map((rn, i) => <Line key={rn} dataKey={`r${rn}`} name={`Round ${rn}`} stroke={COLORS[i % COLORS.length]} strokeWidth={2.2} dot={{ r: 3 }} connectNulls isAnimationActive={false} />)}
-    </LineChart></ResponsiveContainer></div>
-    <div className="score-chart-legend">{rounds.map((rn, i) => <span key={rn}><i style={{ background: COLORS[i % COLORS.length] }} />Round {rn}</span>)}</div>
+    <div className="score-chart-tools"><div className="score-segments" role="group" aria-label="History measure">{METRICS.map((x) => <button key={x.key} type="button" title={x.hint} className={metric === x.key ? "active" : ""} aria-pressed={metric === x.key} onClick={() => setMetric(x.key)}>{x.label}</button>)}</div><span>{years[0]}–{years[years.length - 1]} · {m.unit} · hover a bar for that day</span></div>
+    <div className="score-hist-chart" role="img" aria-label={`${m.label} by round, one bar per year`}><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} margin={{ top: 10, right: 16, left: 0, bottom: 4 }} barGap={2} barCategoryGap="18%">
+      <CartesianGrid vertical={false} stroke="var(--line)" /><XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--muted)" /><YAxis width={42} tick={{ fontSize: 11 }} stroke="var(--muted)" tickFormatter={(v) => m.unit === "mph" ? String(v) : signed(Number(v), 1)} domain={([lo, hi]: readonly number[]) => [Math.min(0, lo), Math.max(0, hi)]} />
+      {m.unit !== "mph" && <ReferenceLine y={0} stroke="var(--muted)" />}
+      <Tooltip shared={false} cursor={{ fill: "var(--tint-1)" }} content={<RoundCard metric={metric} />} />
+      {years.map((y, i) => <Bar key={y} dataKey={`y${y}`} name={String(y)} fill={yearColor(i, years.length)} radius={[3, 3, 0, 0]} minPointSize={(v: number | null | undefined) => (v == null ? 0 : 2)} isAnimationActive={false} />)}
+    </BarChart></ResponsiveContainer></div>
+    <div className="score-chart-legend score-hist-legend">{years.map((y, i) => <span key={y}><i style={{ background: yearColor(i, years.length) }} />{y}</span>)}</div>
     <p className="score-footnote">{m.hint}</p>
     <details className="score-details"><summary>Every past round</summary><div className="score-table-scroll"><table className="score-observed-table">
       <caption>Newest first. Adjusted = score vs par + field skill − weather cost: the score an average tour field would post in typical weather.</caption>
@@ -57,4 +57,26 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
     {doc.weather_model && <p className="score-footnote">{doc.weather_model}</p>}
     <p className="score-footnote">Round averages above use this course only, weighted by players. Field skill is the model&rsquo;s skill estimate for those players at the time; weather cost comes from the weather model. Shown for context; nothing on this panel changes the prices.</p>
   </Panel>;
+}
+
+type CardProps = { metric: HistoryMetric; active?: boolean; payload?: Array<{ dataKey?: unknown; payload?: Record<string, unknown> }> };
+/** Hover card for one bar: everything about that year's round (per course when it was played on more than one). */
+function RoundCard({ active, payload }: CardProps) {
+  const hit = active && payload?.length ? payload[0] : null;
+  const year = hit ? String(hit.dataKey ?? "").slice(1) : "";
+  const cell = hit?.payload?.[`c${year}`] as RoundCell | undefined;
+  if (!cell) return null;
+  const row = (k: string, v: string) => <div><span>{k}</span><b>{v}</b></div>;
+  return <div className="score-hist-card">
+    <strong>{cell.year} · {String(hit?.payload?.label ?? "")}{cell.same_event ? "" : " *"}</strong>
+    {row("Field average", cell.field_avg == null ? "—" : `${cell.field_avg.toFixed(2)} (${signed(cell.vs_par)} vs par)`)}
+    {row("Wind", cell.wind == null ? "—" : `${cell.wind.toFixed(1)} mph`)}
+    {row("Temperature", cell.temp == null ? "—" : `${cell.temp.toFixed(0)}°F`)}
+    {row("Rain", cell.rain == null ? "—" : `${cell.rain.toFixed(2)} in`)}
+    {row("Weather cost", `${signed(cell.weather_strokes)} strokes`)}
+    {row("Field skill", `${signed(cell.field_skill)} strokes`)}
+    {row("Adjusted vs par", `${signed(cell.adjusted_vs_par)} strokes`)}
+    {row("Players", cell.players == null ? "—" : String(cell.players))}
+    {cell.courses.length > 1 && <small>{cell.courses.map((c) => `${c.course ?? "?"}: ${signed(c.vs_par)} vs par`).join(" · ")}</small>}
+  </div>;
 }

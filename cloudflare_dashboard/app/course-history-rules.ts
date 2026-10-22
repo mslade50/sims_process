@@ -40,19 +40,40 @@ export function parseCourseHistory(raw: unknown): CourseHistoryDoc | null {
 }
 
 export type HistoryMetric = "vs_par" | "adjusted_vs_par" | "wind" | "weather_strokes" | "field_skill";
-/** One chart row per year (oldest first), one column per round number ("r1".."r4"); multi-course rounds are player-weighted. */
-export function historyChartRows(doc: CourseHistoryDoc, metric: HistoryMetric): { rows: Array<Record<string, number | null>>; rounds: number[] } {
-  const rounds = [...new Set(doc.editions.flatMap((e) => e.rounds.map((r) => r.round)))].sort((a, b) => a - b);
-  const rows = [...doc.editions].sort((a, b) => a.year - b.year || (a.start ?? "").localeCompare(b.start ?? "")).map((e) => {
-    const row: Record<string, number | null> = { year: e.year };
-    for (const rn of rounds) {
-      const rs = e.rounds.filter((r) => r.round === rn && r[metric] != null);
-      const w = rs.reduce((s, r) => s + (r.players ?? 1), 0);
-      row[`r${rn}`] = rs.length && w > 0 ? rs.reduce((s, r) => s + (r[metric] as number) * (r.players ?? 1), 0) / w : null;
+/** One edition's round, with every course it was played on merged (player-weighted) for the bar, and the per-course rows kept for the tooltip. */
+export type RoundCell = { year: number; name: string | null; same_event: boolean; players: number | null; field_avg: number | null; vs_par: number | null; wind: number | null; temp: number | null;
+  rain: number | null; weather_strokes: number | null; field_skill: number | null; adjusted_vs_par: number | null; courses: HistoryRound[] };
+const KEYS = ["field_avg", "vs_par", "wind", "temp", "rain", "weather_strokes", "field_skill", "adjusted_vs_par"] as const;
+
+function mergeCourses(rs: HistoryRound[]): Omit<RoundCell, "year" | "name" | "same_event" | "courses"> {
+  const out: Record<string, number | null> = { players: rs.reduce((s, r) => s + (r.players ?? 0), 0) || null };
+  for (const k of KEYS) {
+    const have = rs.filter((r) => r[k] != null);
+    const w = have.reduce((s, r) => s + (r.players ?? 1), 0);
+    out[k] = have.length && w > 0 ? have.reduce((s, r) => s + (r[k] as number) * (r.players ?? 1), 0) / w : null;
+  }
+  return out as Omit<RoundCell, "year" | "name" | "same_event" | "courses">;
+}
+
+/** One chart row per round number; per edition year a bar value `y<year>` (the chosen measure) and the full cell `c<year>` for the hover card.
+ * years run oldest first so colours step light (old) to dark (recent). */
+export function historyRoundRows(doc: CourseHistoryDoc, metric: HistoryMetric): { rows: Array<Record<string, unknown>>; years: number[]; rounds: number[] } {
+  const eds = [...doc.editions].sort((a, b) => a.year - b.year || (a.start ?? "").localeCompare(b.start ?? ""));
+  const years = [...new Set(eds.map((e) => e.year))];
+  const rounds = [...new Set(eds.flatMap((e) => e.rounds.map((r) => r.round)))].sort((a, b) => a - b);
+  const rows = rounds.map((rn) => {
+    const row: Record<string, unknown> = { round: rn, label: `Round ${rn}` };
+    for (const y of years) {
+      const rs = eds.filter((e) => e.year === y).flatMap((e) => e.rounds.filter((r) => r.round === rn));
+      if (!rs.length) { row[`y${y}`] = null; continue; }
+      const e = eds.find((x) => x.year === y)!;
+      const cell: RoundCell = { year: y, name: e.name, same_event: eds.filter((x) => x.year === y).every((x) => x.same_event), ...mergeCourses(rs), courses: rs };
+      row[`c${y}`] = cell;
+      row[`y${y}`] = cell[metric];
     }
     return row;
   });
-  return { rows, rounds };
+  return { rows, years, rounds };
 }
 
 export const signed = (n: number | null, d = 2): string => n == null ? "—" : `${n > 0 && Number(n.toFixed(d)) !== 0 ? "+" : ""}${Number(n.toFixed(d)) === 0 ? (0).toFixed(d) : n.toFixed(d)}`;
