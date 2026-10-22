@@ -55,6 +55,25 @@ test("edge buckets: 0-3%, 3-5%, ... lower bound in, upper bound out, 20%+ open-e
   assert.equal(bucketOf(-0.2), -1);
 });
 
+test("opponent history: optional column, filter keeps only matching single-opponent matchups, row dimension (owner 2026-10-22)", () => {
+  const rows = [row({ po: 1 }), row({ po: -1 }), row({ po: 1, market: 2 })];
+  const old = decodeDataset(doc(rows));
+  assert.equal(old.hasOppHist, false);
+  const x = doc(rows); x.cols.opp_hist = enc(Uint8Array, [0, 3, 255]);
+  const d = decodeDataset(x);
+  assert.equal(d.hasOppHist, true);
+  const f = { ...defaultFilters(META), markets: [0, 2], seasons: [0, 1] };
+  assert.equal(breakdown(d, f).grand.n, 3, "no opponent filter = every bet");
+  const thin = breakdown(d, { ...f, oppHist: [0] });
+  assert.equal(thin.grand.n, 1);
+  assert.equal(thin.grand.roi, 1);
+  assert.equal(breakdown(d, { ...f, oppHist: [0, 3] }).grand.n, 2, "finish-market rows (no opponent) drop out once a bucket is chosen");
+  const byOpp = breakdown(d, { ...f, rowDim: "opp_hist" });
+  assert.deepEqual(byOpp.rows.map((r) => r.label).sort(), ["No single opponent", "vs 300+", "vs <60 rounds"]);
+  const { oppHist, ...legacy } = f;
+  assert.equal(breakdown(d, legacy).grand.n, 3, "filters saved without oppHist still work");
+});
+
 test("in-sample flag: optional column, sample filter, fit seasons and example tag (owner 2026-10-22)", () => {
   const rows = [row({ season: 0, po: 1 }), row({ season: 1, po: -1 }), row({ season: 1, po: 1, market: 1 })];
   const old = decodeDataset(doc(rows));

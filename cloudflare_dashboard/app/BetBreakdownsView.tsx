@@ -73,7 +73,7 @@ const SAMPLE_OPTIONS: Array<{ value: Sample; label: string }> = [
 ];
 const ROW_OPTIONS: Array<{ value: RowDim; label: string }> = [
   { value: "book", label: "Book" }, { value: "market", label: "Market" }, { value: "season", label: "Season" },
-  { value: "hist", label: "History" }, { value: "skill", label: "Skill" }, { value: "tour", label: "Tour" },
+  { value: "hist", label: "History" }, { value: "skill", label: "Skill" }, { value: "tour", label: "Tour" }, { value: "opp_hist", label: "Opponent history" },
 ];
 
 function Detail({ data, filters, rowKey, rowLabel, bucket, cell, onClose }: { data: Dataset; filters: Filters; rowKey: number | null; rowLabel: string; bucket: number; cell: Cell; onClose: () => void }) {
@@ -171,6 +171,9 @@ function Explorer({ data }: { data: Dataset }) {
           <Chips label="Seasons" options={meta.seasons.map((s, i) => ({ value: i, label: data.fitSeasons.has(i) ? `${s} (fit year)` : String(s) }))} selected={filters.seasons} onChange={(seasons) => set({ seasons })} />
           <Chips label="History" allLabel="Any" options={meta.hist_buckets.map((h, i) => ({ value: i, label: h }))} selected={filters.hist} onChange={(hist) => set({ hist })} />
           <Chips label="Skill" allLabel="Any" options={meta.skill_buckets.map((h, i) => ({ value: i, label: h }))} selected={filters.skill} onChange={(skill) => set({ skill })} />
+          {data.hasOppHist && (
+            <Chips label="Opponent history (2-balls, 72-hole)" allLabel="Any" options={meta.hist_buckets.map((h, i) => ({ value: i, label: h }))} selected={filters.oppHist} onChange={(oppHist) => set({ oppHist })} />
+          )}
           <div className="bb-line">
             <span className="bb-chips-label">Decimal odds</span>
             <label className="bb-num"><span>from</span><input type="number" min="1" step="0.05" inputMode="decimal" value={filters.minDec ?? ""} placeholder="any" onChange={(e) => set({ minDec: e.target.value === "" ? null : Number(e.target.value) })} /></label>
@@ -183,7 +186,7 @@ function Explorer({ data }: { data: Dataset }) {
       <Panel
         eyebrow={`1-unit flat bets at the ${filters.basis} · range = 95%, events counted as clusters`}
         title="Return by edge bucket"
-        actions={<label className="select-control bb-rows"><span>Rows</span><select value={filters.rowDim} onChange={(e) => set({ rowDim: e.target.value as RowDim })}>{ROW_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
+        actions={<label className="select-control bb-rows"><span>Rows</span><select value={filters.rowDim} onChange={(e) => set({ rowDim: e.target.value as RowDim })}>{ROW_OPTIONS.filter((o) => o.value !== "opp_hist" || data.hasOppHist).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
       >
         {result.considered === 0 ? (
           <EmptyState title="No bets match these filters" detail="Widen the filters: add a market, a book or a season." />

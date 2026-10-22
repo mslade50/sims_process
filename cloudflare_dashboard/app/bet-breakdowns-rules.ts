@@ -33,7 +33,10 @@ export type Dataset = {
   p: Uint16Array; pTie: Uint16Array; voidTie: Uint8Array; decOpen: Uint16Array; decClose: Uint16Array; profitOpen: Int32Array; profitClose: Int32Array; hist: Uint8Array; skill: Uint8Array;
   /** In-sample flags per bet: bit 1 = season used to fit parts of the model, bit 2 = R3/R4 market (leaderboard layer fitted on every season); 0 = out of sample. */
   fit: Uint8Array;
-  hasFit: boolean;            // false for files built before the flag existed (every bet then reads as 0)
+  hasFit: boolean;
+  /** Opponent's history bucket (2-ball and 72-hole matchups; 255 = none). All 255 for files built before the column existed. */
+  oppHist: Uint8Array;
+  hasOppHist: boolean;            // false for files built before the flag existed (every bet then reads as 0)
   fitSeasons: Set<number>;    // season indexes with any bit-1 bet
 };
 
@@ -69,12 +72,14 @@ export function decodeDataset(json: unknown): Dataset {
   }
   const { n, cols } = doc;
   const hasFit = typeof cols.fit === "string";
+  const hasOppHist = typeof cols.opp_hist === "string";
+  const oppHist = hasOppHist ? typed(cols.opp_hist, Uint8Array, n, "opp_hist") : new Uint8Array(n).fill(NONE_BUCKET);
   const fit = hasFit ? typed(cols.fit, Uint8Array, n, "fit") : new Uint8Array(n);
   const season = typed(cols.season, Uint8Array, n, "season");
   const fitSeasons = new Set<number>();
   for (let i = 0; i < n; i += 1) if (fit[i] & 1) fitSeasons.add(season[i]);
   return {
-    fit, hasFit, fitSeasons,
+    fit, hasFit, fitSeasons, oppHist, hasOppHist,
     builtAt: String(doc.built_at ?? ""), meta: doc.meta, n,
     market: typed(cols.market, Uint8Array, n, "market"), tour: typed(cols.tour, Uint8Array, n, "tour"), book: typed(cols.book, Uint8Array, n, "book"),
     season, event: typed(cols.event, Uint16Array, n, "event"), player: typed(cols.player, Uint16Array, n, "player"),
@@ -88,7 +93,7 @@ export function decodeDataset(json: unknown): Dataset {
 /* ------------------------------------------------------------------ filters */
 export type Basis = "open" | "close";
 export type Move = "all" | "toward" | "flat" | "against" | "flat_or_against";
-export type RowDim = "book" | "market" | "season" | "hist" | "skill" | "tour";
+export type RowDim = "book" | "market" | "season" | "hist" | "skill" | "tour" | "opp_hist";
 export type Sample = "all" | "oos" | "ins";
 
 export type Filters = {
@@ -99,6 +104,7 @@ export type Filters = {
   seasons: number[];
   hist: number[];             // empty = any (rows without a bucket included)
   skill: number[];
+  oppHist: number[];          // opponent's history bucket; empty = any. Selecting any bucket keeps only 2-ball and 72-hole matchups
   move: Move;
   minDec: number | null;
   maxDec: number | null;
@@ -136,7 +142,7 @@ export function defaultFilters(meta: Meta): Filters {
   return {
     basis: "open", markets: idx(meta.markets, ["t72_match"]), tours: [meta.tours.indexOf("pga")].filter((i) => i >= 0),
     books: books.length ? books : meta.books.map((_, i) => i), seasons: meta.seasons.map((_, i) => i),
-    hist: [], skill: [], move: "all", minDec: null, maxDec: null, rowDim: "book", sample: "all",
+    hist: [], skill: [], oppHist: [], move: "all", minDec: null, maxDec: null, rowDim: "book", sample: "all",
   };
 }
 
@@ -207,6 +213,7 @@ export function rowView(d: Dataset, f: Filters, sets: ReturnType<typeof filterSe
   if (!sets.markets.has(d.market[i]) || !sets.tours.has(d.tour[i]) || !sets.books.has(d.book[i]) || !sets.seasons.has(d.season[i])) return null;
   if (sets.hist.size && !sets.hist.has(d.hist[i])) return null;
   if (sets.skill.size && !sets.skill.has(d.skill[i])) return null;
+  if (sets.oppHist.size && !sets.oppHist.has(d.oppHist[i])) return null;
   if (f.sample === "oos" && d.fit[i] !== 0) return null;
   if (f.sample === "ins" && d.fit[i] === 0) return null;
   const decOpen = d.decOpen[i] / 100;
@@ -239,7 +246,7 @@ export function edgeAt(d: Dataset, i: number, dec: number): number {
 }
 
 export function filterSets(f: Filters) {
-  return { markets: setOf(f.markets), tours: setOf(f.tours), books: setOf(f.books), seasons: setOf(f.seasons), hist: setOf(f.hist), skill: setOf(f.skill) };
+  return { markets: setOf(f.markets), tours: setOf(f.tours), books: setOf(f.books), seasons: setOf(f.seasons), hist: setOf(f.hist), skill: setOf(f.skill), oppHist: setOf(f.oppHist ?? []) };
 }
 
 function rowKey(d: Dataset, dim: RowDim, i: number): number {
@@ -250,16 +257,19 @@ function rowKey(d: Dataset, dim: RowDim, i: number): number {
     case "hist": return d.hist[i];
     case "skill": return d.skill[i];
     case "tour": return d.tour[i];
+    case "opp_hist": return d.oppHist[i];
   }
 }
 
 export function rowLabel(meta: Meta, dim: RowDim, key: number): string {
+  if (dim === "opp_hist" && key === NONE_BUCKET) return "No single opponent";
   if ((dim === "hist" || dim === "skill") && key === NONE_BUCKET) return "Unknown";
   switch (dim) {
     case "book": return bookLabel(meta.books[key] ?? String(key));
     case "market": return meta.market_labels[meta.markets[key]] ?? meta.markets[key] ?? String(key);
     case "season": return String(meta.seasons[key] ?? key);
     case "hist": return meta.hist_buckets[key] ?? String(key);
+    case "opp_hist": return `vs ${meta.hist_buckets[key] ?? String(key)}`;
     case "skill": return meta.skill_buckets[key] ?? String(key);
     case "tour": return ({ pga: "PGA Tour", euro: "DP World Tour" } as Record<string, string>)[meta.tours[key]] ?? String(key);
   }
