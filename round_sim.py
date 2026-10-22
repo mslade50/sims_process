@@ -2172,6 +2172,35 @@ def price_kalshi_outrights(finish_probs, pred_lookup, sample_lookup):
     return df
 
 
+def select_novig_tournament(events, tourney_name, min_ratio=50):
+    """Pick the open NoVig tournament whose description matches ``tourney_name``.
+
+    Returns ``(event, note)``. ``event`` is None when nothing matches. The
+    busiest open event is not a fallback; the caller prices no rows.
+    """
+    from difflib import SequenceMatcher
+
+    name = str(tourney_name or "").strip().lower()
+    if not events or not name:
+        return None, (
+            f"NoVig: no tournament matches '{tourney_name}'; pricing no rows"
+        )
+    scored = []
+    for event in events:
+        description = str(event.get("description") or "")
+        ratio = SequenceMatcher(None, name, description.lower()).ratio() * 100
+        scored.append((event, ratio, description))
+    scored.sort(key=lambda item: item[1], reverse=True)
+    best, ratio, description = scored[0]
+    if ratio >= min_ratio:
+        return best, f"NoVig tournament: {description} (fuzzy={ratio:.0f})"
+    shown = ", ".join(item[2] for item in scored[:5] if item[2])
+    return None, (
+        f"NoVig: no tournament matches '{tourney_name}' "
+        f"(best {ratio:.0f} < {min_ratio}: {shown}); pricing no rows"
+    )
+
+
 def price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name=None):
     """Price NoVig outright markets using live GraphQL API (no auth needed).
 
@@ -2248,20 +2277,11 @@ def price_novig_outrights(finish_probs, pred_lookup, sample_lookup, tourney_name
             print("  No open PGA tournament on NoVig")
             return pd.DataFrame()
 
-        # Fuzzy-match to tourney name from sim_inputs if provided
-        best = None
-        if tourney_name:
-            from difflib import SequenceMatcher
-            scored = [(e, SequenceMatcher(None, tourney_name.lower(),
-                       e.get("description", "").lower()).ratio() * 100) for e in events]
-            scored.sort(key=lambda x: x[1], reverse=True)
-            if scored[0][1] >= 50:
-                best = scored[0][0]
-                print(f"  NoVig tournament: {best['description']} (fuzzy={scored[0][1]:.0f})")
+        best, note = select_novig_tournament(events, tourney_name)
+        print(f"  {note}")
         if best is None:
-            best = max(events, key=lambda e: e.get("child_events_aggregate", {})
-                       .get("aggregate", {}).get("count", 0))
-            print(f"  NoVig tournament: {best['description']}")
+            client.close()
+            return pd.DataFrame()
 
         tourn_id = best["id"]
     except Exception as e:

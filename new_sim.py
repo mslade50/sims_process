@@ -4257,6 +4257,109 @@ def price_novig_outrights_tourney(finish_probs, pred_lookup, sample_lookup):
 # KALSHI MATCHUP PRICING
 # ============================================================
 
+def scope_kalshi_h2h_markets(markets, tourney, player_names, name_replacements=None,
+                             event_tag=None, min_overlap=3):
+    """Keep KXPGAH2H markets for this tournament.
+
+    A title that names the configured event is kept. When no title matches,
+    ``kalshi_match.match_markets`` selects the event by sim-player overlap.
+    Returns ``([], report)`` when nothing matches. The busiest open event
+    is never used, and the caller must price no rows.
+    """
+    import re
+    from collections import Counter
+
+    import kalshi_match as km
+
+    markets = list(markets or [])
+    name_replacements = name_replacements or {}
+
+    def detect(title):
+        text = title or ""
+        match = re.search(r"(?:at|in|win) the (.+?)\?", text)
+        if match:
+            return match.group(1).strip()
+        match = re.match(r"(.+?):\s*Will", text)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    generic = {
+        "the", "a", "an", "of", "at", "in", "tournament", "championship",
+        "open", "classic", "invitational", "cup", "pga", "tour",
+    }
+    all_words = {word for word in re.split(r"[\s_]+", str(tourney or "").lower()) if word}
+    distinct = all_words - generic
+
+    def matches_target(detected_title):
+        text = detected_title.lower()
+        if distinct:
+            return any(word in text for word in distinct)
+        return bool(all_words) and all(word in text for word in all_words)
+
+    tourn_counts = Counter()
+    for market in markets:
+        detected = detect(market.get("title", ""))
+        if detected:
+            tourn_counts[detected] += 1
+
+    report = {
+        "path": "",
+        "reason": "",
+        "target": None,
+        "matched": 0,
+        "counts": dict(tourn_counts),
+    }
+    if tourn_counts:
+        matched_titles = [title for title in tourn_counts if matches_target(title)]
+        if matched_titles:
+            matched_lower = {title.lower() for title in matched_titles}
+            kept = [
+                market for market in markets
+                if detect(market.get("title", "")).lower() in matched_lower
+                or detect(market.get("title", "")) == ""
+            ]
+            report.update(
+                path="title",
+                target=", ".join(matched_titles),
+                matched=len(kept),
+                reason="",
+            )
+            return kept, report
+
+    field = {
+        str(name).strip().lower()
+        for name in (player_names or [])
+        if str(name).strip()
+    }
+    filtered, overlap = km.match_markets(
+        markets,
+        field,
+        name_replacements,
+        kind="title",
+        event_tag=event_tag,
+        min_overlap=min_overlap,
+    )
+    reason = overlap.get("reason") or ""
+    if not filtered or not overlap.get("target") or reason:
+        report.update(
+            path="overlap",
+            reason=reason or "no kalshi event matched the sim field",
+            target=overlap.get("target"),
+            matched=0,
+            counts=overlap.get("counts") or report["counts"],
+        )
+        return [], report
+    report.update(
+        path="overlap",
+        reason="",
+        target=overlap.get("target"),
+        matched=len(filtered),
+        counts=overlap.get("counts") or {},
+    )
+    return filtered, report
+
+
 def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_names_list=None):
     """Price Kalshi H2H matchups using live API with 1000-contract orderbook walk.
 
@@ -4264,7 +4367,6 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
     """
     import re as _re
     import time as _time
-    from collections import Counter
 
     import httpx as _kalshi_httpx_mu
     _KALSHI_API_MU = "https://api.elections.kalshi.com/trade-api/v2"
@@ -4312,50 +4414,24 @@ def price_kalshi_matchups_tourney(model_preds_df, final_scores_arr=None, player_
     if not all_mkts:
         return pd.DataFrame()
 
-    # Detect current tournament
-    def _detect(title):
-        m = _re.search(r"(?:at|in|win) the (.+?)\?", title)
-        if m:
-            return m.group(1).strip()
-        m = _re.match(r"(.+?):\s*Will", title)
-        if m:
-            return m.group(1).strip()
-        return ""
-
-    # Match against the configured `tourney` so simultaneously-open events
-    # (e.g. PGA Championship + Cadillac) don't get confused.
-    _GENERIC_MU = {"the", "a", "an", "of", "at", "in", "tournament", "championship",
-                   "open", "classic", "invitational", "cup", "pga", "tour"}
-    _all_target_words_mu = {w for w in _re.split(r"[\s_]+", tourney.lower()) if w}
-    _distinct_target_words_mu = _all_target_words_mu - _GENERIC_MU
-
-    def _matches_target_mu(detected_title):
-        t = detected_title.lower()
-        if _distinct_target_words_mu:
-            return any(w in t for w in _distinct_target_words_mu)
-        return all(w in t for w in _all_target_words_mu)
-
-    tourn_counts = Counter()
-    for m in all_mkts:
-        t = _detect(m.get("title", ""))
-        if t:
-            tourn_counts[t] += 1
-    if tourn_counts:
-        matched = [t for t in tourn_counts.keys() if _matches_target_mu(t)]
-        if matched:
-            matched_lower = {t.lower() for t in matched}
-            all_mkts = [m for m in all_mkts
-                        if _detect(m.get("title", "")).lower() in matched_lower
-                        or _detect(m.get("title", "")) == ""]
-            print(f"  Kalshi H2H: matched on tourney='{tourney}' -> {', '.join(matched)} ({len(all_mkts)} markets)")
-        else:
-            current_tourney = tourn_counts.most_common(1)[0][0]
-            all_mkts = [m for m in all_mkts if _detect(m.get("title", "")) in (current_tourney, "")]
-            print(f"  Kalshi H2H: WARNING no match for tourney='{tourney}', falling back to most-common: {current_tourney}")
-            print(f"  Kalshi H2H: detected tournaments in raw feed: {dict(tourn_counts)}")
-    else:
-        print(f"  Kalshi H2H: WARNING no titles parsed for tournament name. Sample titles: "
-              f"{[m.get('title', '')[:80] for m in all_mkts[:3]]}")
+    _names = list(player_names_list) if player_names_list else list(
+        model_preds_df["player_name"]
+    )
+    all_mkts, _scope = scope_kalshi_h2h_markets(
+        all_mkts, tourney, _names, name_replacements,
+    )
+    if not all_mkts:
+        print(
+            f"  Kalshi H2H: no match for tourney='{tourney}' "
+            f"({_scope.get('reason') or 'no markets'}); pricing no rows"
+        )
+        if _scope.get("counts"):
+            print(f"  Kalshi H2H: detected {_scope['counts']}")
+        return pd.DataFrame()
+    print(
+        f"  Kalshi H2H: {_scope['path']} match -> {_scope['target']} "
+        f"({_scope['matched']} markets)"
+    )
 
     if not all_mkts:
         print(f"  Kalshi H2H: 0 markets after tournament filter — nothing to price")
