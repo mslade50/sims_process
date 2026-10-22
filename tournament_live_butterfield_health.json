@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "gate_version": "golfprice.board_seal/1",
+  "kind": "live_tournament_tape",
+  "generated_at": "2026-10-22 21:47:00 UTC",
+  "simulation_manifest": {
+    "schema_version": 1,
+    "gate_version": "golfprice.board_seal/1",
+    "kind": "golfprice_live_simulation",
+    "producer": {
+      "name": "golfprice",
+      "run_id": "pga:528:2026-10-22/R1_20261022T214700Z",
+      "model_version": "B8+v2.6 in-play",
+      "after_round": 1,
+      "run_manifest_sha256": "d67f979d76ef5744b0e84a1adeec985bb098435a0d4c936890f3c0a5375ea50b",
+      "base_run_as_of": "2026-10-22 09:31:00 UTC"
+    },
+    "event": {
+      "event_id": "528",
+      "tourney": "butterfield",
+      "round": 2
+    },
+    "source": {
+      "generated_at": "2026-10-22 21:47:00 UTC",
+      "root_generated_at": "2026-10-22 21:47:00 UTC"
+    },
+    "simulation": {
+      "num_players": 120,
+      "num_sims": 150000,
+      "player_set_sha256": "ee6d4c09230216c1046458f9201af8459a2fc01308e4e8ccc0eea7d376e8de32",
+      "seeds": [
+        20250929,
+        20250930,
+        20250931,
+        20250932,
+        20250933
+      ]
+    },
+    "approval": {
+      "status": "approved",
+      "by": "golfprice.board_seal",
+      "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
+      "at": "2026-10-22 21:47:00 UTC"
+    },
+    "checks": {
+      "passed": true,
+      "n_checks": 8
+    },
+    "manifest_sha256": "eec067673f290bcafea80ad1ce185ed3514dee785dac5e40c221df887fa9904f"
+  },
+  "files": {
+    "final_scores": {
+      "path": "final_scores_live_butterfield.npy",
+      "sha256": "63cbda1f0dad415f235b8d4997b29589e1f8095caf387654a246090986d46343"
+    },
+    "finish_probs": {
+      "path": "simulated_probs_live.csv",
+      "sha256": "5442d85db0179e053b96d9f9a9586762187c1103735d5f83d311005de57f7f95"
+    },
+    "finish_probs_event": {
+      "path": "top_finish_probs_live_butterfield.csv",
+      "sha256": "d1850357473165a79975a239515c6701639a9deca7943a891e022c2af025a741"
+    },
+    "made_cut": {
+      "path": "made_cut_live_butterfield.npy",
+      "sha256": "a425c47165075107f07e2b8c073f0cbe399a76b74f8997c5b02fe37325ba566c"
+    },
+    "player_names": {
+      "path": "player_names_live_butterfield.json",
+      "sha256": "4ba6420254a411b2c6a0c9db11ff5abd87a237fab1ae28be7816618e89d54bb0"
+    }
+  },
+  "extra": {
+    "num_players": 120,
+    "num_sims": 150000
+  },
+  "manifest_sha256": "2c7f3800f9a69a6c720833809aa98b58ded3d557b066b50026f2fdc599f1bee8"
+}
