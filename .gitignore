@@ -299,6 +299,7 @@ docs/*
 !docs/REVIEW_POLICY.md
 !scripts/
 scripts/*
+!scripts/golf_sim_heartbeat.py
 !scripts/check_pr_body.py
 !scripts/check_test_inventory.py
 !scripts/check_test_weakening.py
