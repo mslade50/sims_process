@@ -43,13 +43,38 @@ test("decodes the published document and refuses a malformed one", () => {
   assert.throws(() => decodeDataset(bad), /wrong length/);
 });
 
-test("edge buckets: lower bound in, upper bound out, 20%+ open-ended, below -5% excluded", () => {
+test("edge buckets: 0-3%, 3-5%, ... lower bound in, upper bound out, 20%+ open-ended, negative edges excluded (owner 2026-10-22)", () => {
+  assert.deepEqual(EDGE_BUCKETS.map((b) => b.label), ["0-3%", "3-5%", "5-10%", "10-15%", "15-20%", "20%+"]);
   assert.equal(EDGE_BUCKETS[bucketOf(0)].key, "0");
+  assert.equal(EDGE_BUCKETS[bucketOf(0.0299)].key, "0");
+  assert.equal(EDGE_BUCKETS[bucketOf(0.03)].key, "3");
   assert.equal(EDGE_BUCKETS[bucketOf(0.0999)].key, "5");
   assert.equal(EDGE_BUCKETS[bucketOf(0.1)].key, "10");
   assert.equal(EDGE_BUCKETS[bucketOf(3)].key, "20");
-  assert.equal(EDGE_BUCKETS[bucketOf(-0.01)].key, "neg");
+  assert.equal(bucketOf(-0.01), -1);
   assert.equal(bucketOf(-0.2), -1);
+});
+
+test("in-sample flag: optional column, sample filter, fit seasons and example tag (owner 2026-10-22)", () => {
+  const rows = [row({ season: 0, po: 1 }), row({ season: 1, po: -1 }), row({ season: 1, po: 1, market: 1 })];
+  const old = decodeDataset(doc(rows));
+  assert.equal(old.hasFit, false);
+  assert.equal(breakdown(old, { ...defaultFilters(META), markets: [0, 1], seasons: [0, 1], sample: "oos" }).grand.n, 3, "files without the flag read as out of sample");
+  const withFit = doc(rows); withFit.cols.fit = enc(Uint8Array, [1, 0, 2]);
+  const d = decodeDataset(withFit);
+  assert.equal(d.hasFit, true);
+  assert.deepEqual([...d.fitSeasons], [0]);
+  const f = { ...defaultFilters(META), markets: [0, 1], seasons: [0, 1] };
+  assert.equal(breakdown(d, { ...f, sample: "all" }).grand.n, 3);
+  const oos = breakdown(d, { ...f, sample: "oos" });
+  assert.equal(oos.grand.n, 1);
+  assert.equal(oos.grand.roi, -1);
+  assert.equal(breakdown(d, { ...f, sample: "ins" }).grand.n, 2);
+  const ex = examples(d, { ...f, sample: "all" }, null, bucketOf(0.12));
+  assert.deepEqual(ex.list.map((e) => e.inSample).sort(), [false, true, true]);
+  assert.equal(defaultFilters(META).sample, "all");
+  const short = doc(rows); short.cols.fit = enc(Uint8Array, [1]);
+  assert.throws(() => decodeDataset(short), /wrong length/);
 });
 
 test("open vs close basis uses that price for the edge and that result", () => {
@@ -78,7 +103,7 @@ test("void-on-tie matchups: edge is (1 - P(tie)) x (p x dec - 1), so a tie refun
   assert.ok(Math.abs(b.total[bucketOf(0.054)].meanEdge - (0.054 + 0.06) / 2) < 1e-4);
   const edge = edgeAt(d, 0, 1.95);
   assert.ok(Math.abs(edge - 0.9 * (0.53 * 1.95 - 1)) < 1e-4);
-  assert.equal(bucketOf(edgeAt(d, 0, 1.92)), bucketOf(0.0158), "0.9 x 1.76% stays in 0-5%");
+  assert.equal(bucketOf(edgeAt(d, 0, 1.92)), bucketOf(0.0158), "0.9 x 1.76% stays in 0-3%");
 });
 
 test("line move filter: shorter close price = toward us", () => {
@@ -124,7 +149,7 @@ test("rows by dimension, totals, seasons and the 'all edges >= 0' column", () =>
   assert.equal(pin.total.n, 2);
   assert.deepEqual(pin.total.bySeason.map((s) => s.season), [2024, 2025]);
   const bo = b.rows.find((r) => r.label === "BetOnline");
-  assert.equal(bo.total.n, 1, "the -2% edge row is in the -5..0 bucket, not in 'all edges >= 0'");
+  assert.equal(bo.total.n, 1, "the -2% edge row is in no bucket and not in 'all edges >= 0'");
   assert.equal(b.grand.n, 3);
   const bySeason = breakdown(d, { ...f, rowDim: "season" });
   assert.deepEqual(bySeason.rows.map((r) => r.label), ["2024", "2025"]);

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import {
   BET_BREAKDOWNS_KEY, EDGE_BUCKETS, MARKET_GROUPS, OWNER_BOOKS, OWNER_DATA_PREFIX, bookLabel, breakdown, decodeDataset, defaultFilters, examples, pct, verdict,
-  type Basis, type Cell, type Dataset, type Filters, type Move, type RowDim,
+  type Basis, type Cell, type Dataset, type Filters, type Move, type RowDim, type Sample,
 } from "./bet-breakdowns-rules";
 import "./bet-breakdowns.css";
 
@@ -68,6 +68,9 @@ const MOVE_OPTIONS: Array<{ value: Move; label: string }> = [
   { value: "flat", label: "Flat" },
   { value: "against", label: "Against us" },
 ];
+const SAMPLE_OPTIONS: Array<{ value: Sample; label: string }> = [
+  { value: "all", label: "All bets" }, { value: "oos", label: "Out of sample only" }, { value: "ins", label: "In-sample only" },
+];
 const ROW_OPTIONS: Array<{ value: RowDim; label: string }> = [
   { value: "book", label: "Book" }, { value: "market", label: "Market" }, { value: "season", label: "Season" },
   { value: "hist", label: "History" }, { value: "skill", label: "Skill" }, { value: "tour", label: "Tour" },
@@ -97,7 +100,7 @@ function Detail({ data, filters, rowKey, rowLabel, bucket, cell, onClose }: { da
           <tbody>
             {ex.list.map((e, k) => (
               <tr key={k}>
-                <td>{e.season}</td><td>{e.event}</td><td>{e.market}</td><td>{e.book}</td>
+                <td>{e.season}{e.inSample ? <small className="bb-ins" title="In-sample: this bet's season or market was used to fit part of the model"> in-sample</small> : null}</td><td>{e.event}</td><td>{e.market}</td><td>{e.book}</td>
                 <td>{e.player}{e.opponent ? <small> vs {e.opponent}</small> : null}</td>
                 <td>{e.decOpen.toFixed(2)}</td><td>{e.decClose === null ? "–" : e.decClose.toFixed(2)}</td>
                 <td>{(e.p * 100).toFixed(1)}%</td><td>{pct(e.edge)}</td>
@@ -133,6 +136,13 @@ function Explorer({ data }: { data: Dataset }) {
             <span className="bb-chips-label">Line move</span>
             <SegmentedControl<Move> label="Line move" value={filters.move} onChange={(move) => set({ move })} options={MOVE_OPTIONS} />
           </div>
+          {data.hasFit && (
+            <div className="bb-line">
+              <span className="bb-chips-label">Sample</span>
+              <SegmentedControl<Sample> label="Sample" value={filters.sample} onChange={(sample) => set({ sample })} options={SAMPLE_OPTIONS} />
+              <small className="bb-hint">Out of sample = 2025-26, excluding R3/R4 2-balls and 3-balls.</small>
+            </div>
+          )}
           <div className="bb-market-groups">
             {MARKET_GROUPS.map((g) => {
               const idx = marketIdx(g.keys);
@@ -158,7 +168,7 @@ function Explorer({ data }: { data: Dataset }) {
             ))}
           </div>
           <Chips label="Tour" options={meta.tours.map((t, i) => ({ value: i, label: t === "pga" ? "PGA Tour" : "DP World Tour" }))} selected={filters.tours} onChange={(tours) => set({ tours })} />
-          <Chips label="Seasons" options={meta.seasons.map((s, i) => ({ value: i, label: String(s) }))} selected={filters.seasons} onChange={(seasons) => set({ seasons })} />
+          <Chips label="Seasons" options={meta.seasons.map((s, i) => ({ value: i, label: data.fitSeasons.has(i) ? `${s} (fit year)` : String(s) }))} selected={filters.seasons} onChange={(seasons) => set({ seasons })} />
           <Chips label="History" allLabel="Any" options={meta.hist_buckets.map((h, i) => ({ value: i, label: h }))} selected={filters.hist} onChange={(hist) => set({ hist })} />
           <Chips label="Skill" allLabel="Any" options={meta.skill_buckets.map((h, i) => ({ value: i, label: h }))} selected={filters.skill} onChange={(skill) => set({ skill })} />
           <div className="bb-line">

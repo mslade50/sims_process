@@ -21,6 +21,7 @@ export type Meta = {
   hist_buckets: string[];
   skill_buckets: string[];
   notes?: string[];
+  fit_flags?: Record<string, string>;    // bit -> plain-words reason a bet is in-sample (owner 2026-10-22)
 };
 type RawDoc = { schema: string; built_at: string; meta: Meta; n: number; cols: Record<string, string> };
 
@@ -30,6 +31,10 @@ export type Dataset = {
   n: number;
   market: Uint8Array; tour: Uint8Array; book: Uint8Array; season: Uint8Array; event: Uint16Array; player: Uint16Array; opp: Uint16Array;
   p: Uint16Array; pTie: Uint16Array; voidTie: Uint8Array; decOpen: Uint16Array; decClose: Uint16Array; profitOpen: Int32Array; profitClose: Int32Array; hist: Uint8Array; skill: Uint8Array;
+  /** In-sample flags per bet: bit 1 = season used to fit parts of the model, bit 2 = R3/R4 market (leaderboard layer fitted on every season); 0 = out of sample. */
+  fit: Uint8Array;
+  hasFit: boolean;            // false for files built before the flag existed (every bet then reads as 0)
+  fitSeasons: Set<number>;    // season indexes with any bit-1 bet
 };
 
 export const SCHEMA = "golfprice.bet_breakdowns.v2";
@@ -63,10 +68,16 @@ export function decodeDataset(json: unknown): Dataset {
     throw new Error("The bet breakdown file is not in the expected format");
   }
   const { n, cols } = doc;
+  const hasFit = typeof cols.fit === "string";
+  const fit = hasFit ? typed(cols.fit, Uint8Array, n, "fit") : new Uint8Array(n);
+  const season = typed(cols.season, Uint8Array, n, "season");
+  const fitSeasons = new Set<number>();
+  for (let i = 0; i < n; i += 1) if (fit[i] & 1) fitSeasons.add(season[i]);
   return {
+    fit, hasFit, fitSeasons,
     builtAt: String(doc.built_at ?? ""), meta: doc.meta, n,
     market: typed(cols.market, Uint8Array, n, "market"), tour: typed(cols.tour, Uint8Array, n, "tour"), book: typed(cols.book, Uint8Array, n, "book"),
-    season: typed(cols.season, Uint8Array, n, "season"), event: typed(cols.event, Uint16Array, n, "event"), player: typed(cols.player, Uint16Array, n, "player"),
+    season, event: typed(cols.event, Uint16Array, n, "event"), player: typed(cols.player, Uint16Array, n, "player"),
     opp: typed(cols.opp, Uint16Array, n, "opp"), p: typed(cols.p, Uint16Array, n, "p"),
     pTie: typed(cols.p_tie, Uint16Array, n, "p_tie"), voidTie: typed(cols.void_tie, Uint8Array, n, "void_tie"), decOpen: typed(cols.dec_open, Uint16Array, n, "dec_open"),
     decClose: typed(cols.dec_close, Uint16Array, n, "dec_close"), profitOpen: typed(cols.profit_open, Int32Array, n, "profit_open"),
@@ -78,6 +89,7 @@ export function decodeDataset(json: unknown): Dataset {
 export type Basis = "open" | "close";
 export type Move = "all" | "toward" | "flat" | "against" | "flat_or_against";
 export type RowDim = "book" | "market" | "season" | "hist" | "skill" | "tour";
+export type Sample = "all" | "oos" | "ins";
 
 export type Filters = {
   basis: Basis;
@@ -91,12 +103,13 @@ export type Filters = {
   minDec: number | null;
   maxDec: number | null;
   rowDim: RowDim;
+  sample: Sample;             // all bets, out of sample only (fit flag 0), in-sample only
 };
 
 /** Edge buckets (fractions): [lo, hi). The last is open-ended. */
 export const EDGE_BUCKETS: Array<{ key: string; label: string; lo: number; hi: number }> = [
-  { key: "neg", label: "-5 to 0%", lo: -0.05, hi: 0 },
-  { key: "0", label: "0-5%", lo: 0, hi: 0.05 },
+  { key: "0", label: "0-3%", lo: 0, hi: 0.03 },
+  { key: "3", label: "3-5%", lo: 0.03, hi: 0.05 },
   { key: "5", label: "5-10%", lo: 0.05, hi: 0.1 },
   { key: "10", label: "10-15%", lo: 0.1, hi: 0.15 },
   { key: "15", label: "15-20%", lo: 0.15, hi: 0.2 },
@@ -123,7 +136,7 @@ export function defaultFilters(meta: Meta): Filters {
   return {
     basis: "open", markets: idx(meta.markets, ["t72_match"]), tours: [meta.tours.indexOf("pga")].filter((i) => i >= 0),
     books: books.length ? books : meta.books.map((_, i) => i), seasons: meta.seasons.map((_, i) => i),
-    hist: [], skill: [], move: "all", minDec: null, maxDec: null, rowDim: "book",
+    hist: [], skill: [], move: "all", minDec: null, maxDec: null, rowDim: "book", sample: "all",
   };
 }
 
@@ -194,6 +207,8 @@ export function rowView(d: Dataset, f: Filters, sets: ReturnType<typeof filterSe
   if (!sets.markets.has(d.market[i]) || !sets.tours.has(d.tour[i]) || !sets.books.has(d.book[i]) || !sets.seasons.has(d.season[i])) return null;
   if (sets.hist.size && !sets.hist.has(d.hist[i])) return null;
   if (sets.skill.size && !sets.skill.has(d.skill[i])) return null;
+  if (f.sample === "oos" && d.fit[i] !== 0) return null;
+  if (f.sample === "ins" && d.fit[i] === 0) return null;
   const decOpen = d.decOpen[i] / 100;
   const decClose = d.decClose[i] ? d.decClose[i] / 100 : null;
   const clv = decClose ? decOpen / decClose - 1 : null;
@@ -287,7 +302,7 @@ export function breakdown(d: Dataset, f: Filters): Breakdown {
 /* ------------------------------------------------------------------ examples */
 export type Example = {
   event: string; season: number; market: string; book: string; player: string; opponent: string | null;
-  decOpen: number; decClose: number | null; p: number; edge: number; profit: number;
+  decOpen: number; decClose: number | null; p: number; edge: number; profit: number; inSample: boolean;
 };
 
 /** Bets in one cell (row key + edge bucket; row key null = all rows), biggest edge first, at most `limit`. */
@@ -308,7 +323,7 @@ export function examples(d: Dataset, f: Filters, rowKeyValue: number | null, buc
       event: m.event_names[d.event[i]] ?? m.events[d.event[i]] ?? "", season: m.seasons[d.season[i]] ?? 0,
       market: m.market_labels[m.markets[d.market[i]]] ?? m.markets[d.market[i]], book: bookLabel(m.books[d.book[i]] ?? ""),
       player: displayName(m.players[d.player[i]] ?? ""), opponent: d.opp[i] === NONE_OPP ? null : displayName(m.players[d.opp[i]] ?? ""),
-      decOpen: d.decOpen[i] / 100, decClose: d.decClose[i] ? d.decClose[i] / 100 : null, p: d.p[i] / 65535, edge, profit,
+      decOpen: d.decOpen[i] / 100, decClose: d.decClose[i] ? d.decClose[i] / 100 : null, p: d.p[i] / 65535, edge, profit, inSample: d.fit[i] !== 0,
     })),
   };
 }
