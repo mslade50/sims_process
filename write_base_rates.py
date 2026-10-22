@@ -40,7 +40,8 @@ BASE_CAT_SKEW = {
     "sg_putt": -0.05,
 }
 
-DB_PATH = os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
+# DG_HISTORICAL_DB env overrides the (possibly stale) OneDrive copy (ETR-only mode points it at the fresh ingest DB)
+DB_PATH = os.environ.get("DG_HISTORICAL_DB") or os.path.join(os.path.expanduser("~"), "OneDrive", "dg_historical.db")
 WIND_TEST_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "wind_test.csv")
 COURSE_COORDS_CSV = os.path.join(os.path.dirname(__file__), "permanent_data", "course_coordinates.csv")
 
@@ -559,6 +560,8 @@ def _update_etr_sim_config(cat_mults, cat_skew, reset_skill_docks=False):
 
 
 def main(reset_skill_docks=False):
+    from etr_only_mode import print_banner as _etr_banner
+    _etr_banner()
     print(f"\n{'='*70}")
     print(f"  BASE RATES REFERENCE")
     print(f"  Tournament: {sim_inputs.tourney} | Event IDs: {sim_inputs.event_ids}")

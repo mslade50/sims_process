@@ -82,6 +82,13 @@ _parser.add_argument(
           "times for both passes. Retained tee-time columns are never reused."),
 )
 args = _parser.parse_args()
+# TEMPORARY legacy ETR-only mode (owner 2026-10-19): the final pass is the only
+# step that emails, stores bets, pushes dashboard data and publishes sim_fairs.
+# Checked first, before any network/git/ownership call.
+from etr_only_mode import print_banner as _etr_banner, refuse as _etr_refuse
+_etr_banner()
+if args.final_pass or args.price_only or args.reprice:
+    _etr_refuse("new_sim.py --final-pass/--price-only/--reprice")
 if args.reprice:
     args.price_only = True
 if args.sim_only and args.price_only:
@@ -1354,6 +1361,8 @@ def _store_tournament_bet_frames(
 
 def _publish_sim_fairs_required(publisher=None):
     """Require both the sim-fairs git push and pinned board-build dispatch."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('sim_fairs publish (_publish_sim_fairs_required)')
     previous = os.environ.get("REQUIRE_SIM_FAIRS_PUBLISH")
     os.environ["REQUIRE_SIM_FAIRS_PUBLISH"] = "1"
     try:
@@ -5160,6 +5169,8 @@ def send_tournament_email(sharp_mu_df, finish_df, sample_lookup, my_pred_lookup,
                           attachment_paths=None, wx_lookup=None, kalshi_df=None,
                           novig_df=None, kalshi_mu_df=None, novig_mu_df=None,
                           arch_map=None, sb_lines_lookup=None, required=False):
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_tournament_email')
     if not EMAIL_PASSWORD:
         message = "EMAIL_PASSWORD not set; tournament report cannot be sent"
         if required:
@@ -5303,6 +5314,8 @@ def send_sportsbook_priority_email(combined_finish_df, kalshi_df=None, novig_df=
         sb_best_edge >= 0.5 AND
         (exch_best_edge is None OR sb_best_edge - exch_best_edge > 0.5)
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_sportsbook_priority_email')
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
     if combined_finish_df is None or combined_finish_df.empty:
@@ -5523,6 +5536,8 @@ def send_exchange_email(kalshi_df=None, novig_df=None, kalshi_mu_df=None, novig_
     the player is dropped entirely — surface SB bets in the SB priority email instead.
     Matchup edges are NOT filtered by sb_priority_keys (no SB matchup comparison).
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_exchange_email')
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
     sb_priority_keys = sb_priority_keys or set()
@@ -5760,6 +5775,8 @@ def send_outrights_email(sb_outrights_df=None, kalshi_df=None, novig_df=None):
     (betcris / betonline / pinnacle) PLUS Kalshi/NoVig YES outrights.
     Table 2: Kalshi/NoVig NO-side edges (edge > 0) — the fade side.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_outrights_email')
     if not EMAIL_PASSWORD or not EMAIL_FROM or not EMAIL_TO or EMAIL_TO == ['']:
         return
     SHARP = {'betcris', 'betonline', 'pinnacle'}
@@ -6267,6 +6284,7 @@ if args.reprice:
     print("\n[reprice] Skipping Sheets storage (re-priced rows not re-appended).")
     sys.exit(0)
 
+_etr_refuse("final-pass bet storage block")  # ETR-only guard (defence in depth)
 from sheets_storage import (
     is_valid_run_time,
     get_spreadsheet,
@@ -6365,6 +6383,7 @@ else:
         raise
 
 # Push dashboard data to Render
+_etr_refuse("final-pass dashboard data push")  # ETR-only guard, outside the try so it cannot be swallowed
 try:
     from push_dashboard_data import copy_files, git_push
     print(f"\n{'='*60}")

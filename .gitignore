@@ -300,4 +300,8 @@ docs/*
 !scripts/
 scripts/*
 !scripts/check_pr_body.py
+!scripts/check_test_inventory.py
+!scripts/check_test_weakening.py
 !scripts/test_review_check.py
+!scripts/test_test_inventory.py
+!scripts/test_test_weakening.py

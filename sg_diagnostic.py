@@ -1562,6 +1562,8 @@ def build_diagnostic_email_html(event_name, analysis, recurring, is_adjusted=Tru
 # ---------------------------------------------------------------------------
 def send_diagnostic_email(html, event_name):
     """Send diagnostic email via Gmail SMTP."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_diagnostic_email')
     if not EMAIL_PASSWORD:
         print("  EMAIL_PASSWORD not set -- skipping email")
         return False

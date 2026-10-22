@@ -30,6 +30,8 @@ def should_alert(previous, now):
 
 
 def main():
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram telegram_policy.main')
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", required=True)
     ap.add_argument("--message", required=True)

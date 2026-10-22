@@ -28,6 +28,8 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def main() -> int:
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('maker state push main')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--state", type=Path, default=STATE_PATH)
     ap.add_argument("--url", default=os.getenv("KALSHI_EXEC_URL", DEFAULT_URL))

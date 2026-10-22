@@ -335,6 +335,9 @@ def _external_owner_legacy() -> str | None:
     (manual rollback). Returns the owner name, or None when production owns the file. Uses the
     last fetched origin/main when the fetch fails (fail-safe: a marker already seen stays honoured)."""
     import subprocess
+    from etr_only_mode import etr_only as _etr_only
+    if _etr_only():
+        return "etr_only_mode"
     if (os.environ.get("SIM_FAIRS_FORCE_PRODUCTION") or "").strip().lower() in ("1", "true", "yes"):
         return None
 
@@ -1019,6 +1022,8 @@ def _upload_full_tape_release(
     solve — no R2, no cross-account creds, no per-machine setup, no git-history bloat
     (release assets are stored separately). No-op (warns) if GH_TOKEN / requests /
     final_scores are missing."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('release tape upload (_upload_full_tape_release)')
     import os
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -1059,6 +1064,8 @@ def _upload_release_asset(
 ) -> None:
     """Replace one asset on this repo's `sim-data` release (created if absent).
     Delete-then-upload — asset names must be unique on a release."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('GitHub release asset upload (_upload_release_asset)')
     import requests
     api = "https://api.github.com"
     H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
@@ -1297,6 +1304,8 @@ def _upload_matchup_tape_release(tourney, event_id, repl) -> bool:
     """Upload the live matchup tape as a release asset so the maker can price
     H2H matchups on machines that never ran round_sim (final_scores_live is
     tens of MB and gitignored — git transport is the wrong channel)."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('release tape upload (_upload_matchup_tape_release)')
     import os
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -1336,6 +1345,8 @@ def _upload_release_tape_family(
     tapes during a partial replacement. In strict nightly mode, any failed asset
     aborts before the new git fairs commit/board dispatch can advance.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('release tape upload (_upload_release_tape_family)')
     import io
     import pyarrow.parquet as pq
 
@@ -2699,6 +2710,8 @@ def _dispatch_board_build(sha: str | None = None) -> bool:
     gap; every Sunday run then gate-skipped mid-play, so the board served R3-era
     fairs all day.) The dispatched run still goes through the board's own mid-play
     gate, so extra fires are harmless. Never breaks a publish."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('board repository_dispatch (_dispatch_board_build)')
     import subprocess
     import time
 
@@ -2789,6 +2802,8 @@ def _git_push(
 
     Note: local main is left behind by the published commit (working-tree files
     match what was pushed); a routine `git pull` fast-forwards it."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('sim_fairs git push (_git_push)')
     import subprocess
     import tempfile
     import time
@@ -3142,6 +3157,8 @@ def publish(
     """Build sim_fairs.json (+ round_samples.parquet when live round data exists),
     write them, and (optionally) commit+push so the board can fetch them. Safe to
     call from new_sim.py / round_sim.py inside a try/except."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('sim_fairs publish()')
     owner = _external_owner()
     if owner:
         logger.warning(f"sim publish skipped: sim_fairs.json is owned by '{owner}' "

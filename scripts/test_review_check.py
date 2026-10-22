@@ -88,15 +88,119 @@ def test_body_is_passed_by_env_not_interpolated_into_the_script():
                 assert "${{" not in run
 
 
-def test_workflow_checks_the_pr_body_only():
-    text = _workflow_text()
+def test_body_job_only_checks_the_pr_body():
     wf = _workflow()
-    assert list(wf["jobs"]) == ["body"]
-    runs = [step.get("run", "") for step in wf["jobs"]["body"]["steps"] if "run" in step]
+    assert list(wf["jobs"]) == ["body", "test-weakening", "test-inventory", "tests"]
+    body = wf["jobs"]["body"]
+    dumped = yaml.safe_dump(body)
+    assert "pip install" not in dumped
+    assert "pytest" not in dumped
+    assert "ruff" not in dumped
+    runs = [step.get("run", "") for step in body["steps"] if "run" in step]
     assert runs == ["python3 scripts/check_pr_body.py"]
-    assert "pip install" not in text
-    assert "pytest" not in text
+    assert body["runs-on"] == "ubuntu-latest"
+    assert "permissions" not in body
+
+
+def test_unfilled_template_does_not_require_test_changes():
+    result = _run(TEMPLATE.read_text(encoding="utf-8"))
+    assert "Test changes" not in result.stderr
+
+
+def test_test_weakening_job_is_read_only_and_fetches_history():
+    text = _workflow_text()
+    job = _workflow()["jobs"]["test-weakening"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "permissions" not in job
+    checkout = job["steps"][0]
+    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["with"]["fetch-depth"] == 0
+    step = next(item for item in job["steps"] if item.get("name") == "Check test weakening")
+    assert step["env"]["PR_BODY"] == "${{ github.event.pull_request.body }}"
+    assert step["env"]["PR_AUTHOR"] == "${{ github.event.pull_request.user.login }}"
+    assert step["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    assert step["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert step["run"].strip() == "python3 scripts/check_test_weakening.py"
+    assert "pull_request_target" not in text
+    assert "secrets." not in text
+
+
+def test_inventory_job_collects_base_and_head_without_shell_interpolation():
+    job = _workflow()["jobs"]["test-inventory"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["COEFFS_FROM_CACHE"] == "1"
+    checkout = job["steps"][0]
+    assert checkout["with"]["fetch-depth"] == 0
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    joined = "\n".join(runs)
+    assert "${{" not in joined
+    assert 'python -m pip install -r /tmp/inv-base/requirements.txt "pytest>=8.1,<10"' in joined
+    assert 'python -m pip install -r /tmp/inv-head/requirements.txt "pytest>=8.1,<10"' in joined
+    assert 'git fetch --no-tags origin "$BASE_REF"' in joined
+    assert "git worktree add --detach /tmp/inv-base" in joined
+    assert "git worktree add --detach /tmp/inv-head" in joined
+    assert "python3 scripts/check_test_inventory.py --collect /tmp/inv-base --out /tmp/inventory-base.json" in joined
+    assert "python3 scripts/check_test_inventory.py --collect /tmp/inv-head --out /tmp/inventory-head.json" in joined
+    assert "python3 scripts/check_test_inventory.py --compare /tmp/inventory-base.json /tmp/inventory-head.json" in joined
+    checkout = job["steps"][0]
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha }}"
+    base = next(step for step in job["steps"] if step.get("name") == "Collect base inventory")
+    assert base["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert base["env"]["BASE_REF"] == "${{ github.base_ref }}"
+    head = next(step for step in job["steps"] if step.get("name") == "Collect head inventory and compare")
+    assert head["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert head["env"]["PR_BODY"] == "${{ github.event.pull_request.body }}"
+    assert head["env"]["PR_AUTHOR"] == "${{ github.event.pull_request.user.login }}"
+
+
+def test_guard_checkouts_do_not_persist_credentials():
+    jobs = _workflow()["jobs"]
+    assert list(jobs) == ["body", "test-weakening", "test-inventory", "tests"]
+    for name, job in jobs.items():
+        checkouts = [
+            step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        assert checkouts, name
+        for step in checkouts:
+            assert step["with"]["persist-credentials"] is False, name
+
+
+def test_secret_free_job_reads_contents_only_and_runs_the_suite():
+    text = _workflow_text()
+    job = _workflow()["jobs"]["tests"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["COEFFS_FROM_CACHE"] == "1"
     assert "ruff" not in text
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    assert 'python -m pip install -r requirements.txt "pytest>=8.1,<10"' in runs
+    assert "python secret_free_tests.py" in runs
+
+
+def test_pytest_summary_parser_ignores_subtests():
+    import secret_free_tests
+
+    text = "1 failed, 606 passed, 11 warnings, 434 subtests passed in 13.31s\n"
+    assert secret_free_tests.parse_pytest_summary(text) == {
+        "passed": 606,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+    }
+
+
+def test_exclusion_list_is_explicit():
+    import conftest
+
+    assert "test_round_score_reprice.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_reprice_alert_delivery.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_finish_probs_real.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_env_setup.py" in conftest.CREDENTIAL_IMPORTS
+    assert "test_cascade_parity.py" in conftest.KERNEL_IMPORTS
+    assert "test_maker_guard.py" in conftest.SCRIPT_MODULES
+    assert "test_live_stats_engine_exposes_no_sheet_write_mode" in conftest.SKIP_TESTS
 
 
 def test_empty_body_fails():
@@ -111,6 +215,7 @@ def test_unfilled_template_fails():
     assert result.returncode == 1
     assert "Proof section is empty or still placeholder text" in result.stderr
     assert "Rollback section is empty or still placeholder text" in result.stderr
+    assert "Test changes" not in result.stderr
 
 
 def test_placeholder_words_fail():

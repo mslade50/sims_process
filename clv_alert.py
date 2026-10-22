@@ -49,6 +49,8 @@ def implied_to_american(prob):
 
 
 def send_telegram(text):
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram clv_alert.send_telegram')
     if os.getenv("TELEGRAM_CLV_ENABLED") != "1":
         print("CLV report retained in logs; routine Telegram summaries are disabled.")
         return

@@ -667,6 +667,8 @@ def send_telegram(text, chat_id=None, *, required=False):
     Diagnostic notices retain their historical best-effort behavior by leaving
     ``required=False``.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Telegram reprice_core.send_telegram')
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:

@@ -35,6 +35,9 @@ from pathlib import Path
 
 import pandas as pd
 
+# Run by path (`python kalshi_exec/push_proposals.py`): make the repo root importable for etr_only_mode.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 DEFAULT_URL = "https://kalshi-exec.pages.dev"
 DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "permanent_data" / "maker_proposals.parquet"
 
@@ -91,6 +94,8 @@ def build_rows(df: pd.DataFrame) -> list[dict]:
 
 
 def main() -> int:
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('kalshi proposals push main')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET)
     ap.add_argument("--url", default=os.getenv("KALSHI_EXEC_URL", DEFAULT_URL))

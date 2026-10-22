@@ -70,6 +70,9 @@ class KalshiClient:
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
         """Make an authenticated request."""
+        if method.upper() != "GET":
+            from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+            _etr_refuse(f"Kalshi {method.upper()} request")
         url = API_BASE + path
         # Sign with full path including /trade-api/v2 prefix
         sign_path = "/trade-api/v2" + path
@@ -138,6 +141,8 @@ class KalshiClient:
         Returns:
             Order response dict with order_id, status, etc.
         """
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Kalshi place_order')
         body = {
             "ticker": ticker,
             "action": "buy",
@@ -152,6 +157,8 @@ class KalshiClient:
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel a single order. Returns True if successful."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Kalshi cancel_order')
         try:
             self._delete(f"/portfolio/orders/{order_id}")
             return True
@@ -160,6 +167,8 @@ class KalshiClient:
 
     def cancel_all_orders(self) -> int:
         """Cancel all open orders. Returns count cancelled."""
+        from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+        _etr_refuse('Kalshi cancel_all_orders')
         orders = self.get_open_orders()
         cancelled = 0
         for order in orders:

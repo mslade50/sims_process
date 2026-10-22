@@ -143,6 +143,8 @@ def _write_sync_manifest(root_files, tourney, event_id, dry_run=False):
 
 def copy_files(dry_run=False):
     """Copy pipeline outputs into dashboard_data/."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('dashboard data copy_files')
     tourney = get_tourney()
     copied = []
     skipped = []
@@ -279,6 +281,8 @@ def git_push(dry_run=False):
     changes to the explicit dashboard pathspec are overlaid on the remote tip;
     unrelated local staging and remote-only dashboard changes are preserved.
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('dashboard data git_push')
     import subprocess
     import tempfile
     import time
@@ -490,6 +494,8 @@ def git_push(dry_run=False):
 
 def publish_cloudflare(dry_run=False):
     """Export the browser JSON contract and publish it to the dashboard's R2 bucket."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('dashboard data publish_cloudflare')
     import subprocess
 
     command = [sys.executable, CLOUDFLARE_PUBLISHER]
@@ -513,6 +519,8 @@ def publish_cloudflare(dry_run=False):
 
 
 def main():
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('dashboard data push main')
     parser = argparse.ArgumentParser(description="Publish dashboard data to GitHub and Cloudflare")
     parser.add_argument("--dry-run", action="store_true", help="Preview files without copying or pushing")
     args = parser.parse_args()

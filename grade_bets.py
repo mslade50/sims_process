@@ -2041,6 +2041,8 @@ def send_results_email(metrics, graded_bets, event_name, filter_label=None, clv_
         filter_label: Optional filter description for subject line
         clv_stats: Optional CLV summary dict (from clv.clv_summary_stats)
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_results_email')
     if not EMAIL_PASSWORD:
         print("  Warning: EMAIL_PASSWORD not set. Skipping email.")
         return False
@@ -2099,6 +2101,8 @@ def send_filtered_results_email(all_graded_bets, event_name, event_id, year, pre
         year: Year
         pred_threshold: Minimum pred value to include (default 0.75)
     """
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('email send_filtered_results_email')
     # Filter bets by pred value
     filtered_bets = []
     for bet in all_graded_bets:

@@ -480,6 +480,8 @@ def prompt_approval(orders: list[dict]) -> list[dict]:
 
 def submit_orders(client: KalshiClient, orders: list[dict]) -> list[dict]:
     """Submit approved orders and return results."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('Kalshi submit_orders')
     results = []
     for o in orders:
         try:

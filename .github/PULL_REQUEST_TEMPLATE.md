@@ -4,8 +4,12 @@
 
 ## Proof
 
-<!-- Paste the real checker-test output here. If the change touches a page or an alert, also attach sample alert text, a screenshot, or a JSON sample. -->
+<!-- Paste the real `python secret_free_tests.py` summary here. If the change touches a page or an alert, also attach sample alert text, a screenshot, or a JSON sample. -->
 
 ## Rollback steps
 
 <!-- Plain words: what to revert, which flag to turn off, or what to redeploy. -->
+
+## Test changes
+
+<!-- Optional. Required only when this PR deletes or weakens tests, or the inventory shows a dropped test, a newly skipped test, or a lower script check count. Say which tests and why. A renamed test needs an explicit old -> new mapping. -->
