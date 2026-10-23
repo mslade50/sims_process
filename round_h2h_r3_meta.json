@@ -1,1 +1,1 @@
-{"event_id": "527", "tourney": "baycurrent", "round": "3", "num_players": 72, "source_manifest_sha256": "a8aa6b89fcb7b985164bb94a5024b32dea602c03593337ed0fa3f7b2b13c76f6", "generated_at": "2026-10-09 23:03:00 UTC", "sim_run_at": "2026-10-09 23:03:00 UTC", "producer": "golfprice"}
+{"event_id": "528", "tourney": "butterfield", "round": "3", "num_players": 72, "source_manifest_sha256": "66769d2c9ea1afa9b41bc28059bb195d86f06d2ecbb20d9484d523f3ba63e06d", "generated_at": "2026-10-23 22:15:00 UTC", "sim_run_at": "2026-10-23 22:15:00 UTC", "producer": "golfprice"}
