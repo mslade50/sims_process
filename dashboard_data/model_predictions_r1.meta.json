@@ -1,20 +1,14 @@
 {
   "schema_version": 1,
-  "event_id": "528",
-  "tourney": "butterfield",
-  "sim_run_at": "2026-10-22 09:31:00 UTC",
-  "prediction_count": 120,
-  "active_field_count": 120,
-  "prediction_field_sha256": "3b33579cb943eb14e7151bb4f3bd61a4ca3138db7e3dd0c8782f410963376f6e",
-  "active_field_sha256": "3b33579cb943eb14e7151bb4f3bd61a4ca3138db7e3dd0c8782f410963376f6e",
-  "withdrawn_or_extra_players": [],
-  "source": "golfprice",
-  "golfprice_run_id": "pga:528:2026-10-22/20261022T093100Z",
-  "golfprice_as_of": "2026-10-22T09:31:00Z",
-  "skill_column": "field_table.h_mu (challenger/hole-engine arm mean that priced the board; field-centred)",
-  "tee_times": "DataGolf field-updates fetched 2026-10-22T04:00:04Z (golfprice ingest/field.parquet)",
-  "weather": "open-meteo:ecmwf_ifs+aifs+aigfs (best_match fallback) via api_utils.fetch_event_weather_forecast, fetched 2026-10-23 UTC (backfill); climo weight 0.05",
-  "wind_factor": 0.157,
-  "dew_factor": 0.0,
-  "backfilled": true
+  "event_id": "527",
+  "tourney": "baycurrent",
+  "sim_run_at": "2026-10-06 19:54:40 UTC",
+  "prediction_count": 72,
+  "active_field_count": 70,
+  "prediction_field_sha256": "f2ac0bacbb50e380909eb791abfc356f767ab460b9f9efd58e4f80951f532cf5",
+  "active_field_sha256": "27068c5e531159e3bf301bde6c7370d74e6f7502eeb9ed84a25680b335c0faca",
+  "withdrawn_or_extra_players": [
+    "iwasaki, aguri",
+    "nagasaki, koshin"
+  ]
 }
