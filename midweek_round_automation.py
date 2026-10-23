@@ -14,7 +14,11 @@ The coordinator is intentionally fail-closed on inputs the simulation consumes:
   4. Fetch all remaining-round Open-Meteo dewpoint + AI multi-model wind.
   5. Batch-write weather, advance the Sheet round pointer exactly once, and
      leave a durable Sheet status so a failed run can resume.
-  6. Run live_stats_engine.py --automation, then the full round_sim.py.
+  6. Run live_stats_engine.py --automation, verify predictions, then the full
+     round_sim.py. When SIM_FAIRS_EXTERNAL.json names an external owner, skip
+     that live-skill step, prediction verification, and round_sim.py.
+     SIM_FAIRS_FORCE_PRODUCTION=1 runs them. The odds gate, Sheet round
+     pointer, weather advance, and status write still run.
 
 Normal "not ready yet" checks exit 0 because the odds board will dispatch again.
 Pipeline failures after a transition starts exit non-zero and are retried on the
@@ -565,6 +569,58 @@ def _run_complete_live_round_sim():
     )
 
 
+def _run_live_skill_and_round_sim(
+    target_round: int,
+    tourney: str,
+    *,
+    provisional_mode: bool,
+) -> str | None:
+    """Run legacy live skill and round sim, or stand down for an external owner.
+
+    When ``_external_fairs_owner()`` reports an owner (``SIM_FAIRS_EXTERNAL.json``),
+    skip ``live_stats_engine.py --automation`` (and the provisional R1/R2 rebuild
+    that only exists to seed it), ``_verify_predictions``, and ``round_sim.py``.
+    ``SIM_FAIRS_FORCE_PRODUCTION=1`` makes ``_external_fairs_owner()`` return
+    None, so the production path runs. Returns the owner name when skipped.
+    """
+    fairs_owner = _external_fairs_owner()
+    if fairs_owner:
+        # golfprice owns the odds-board fairs. The Sheet round pointer and weather
+        # were already advanced by the caller; live skill, prediction verification,
+        # and round_sim.py (round fairs, round_*_meta.json, report email, publish)
+        # are skipped. SIM_FAIRS_FORCE_PRODUCTION=1 runs the production path.
+        print(
+            f"\n  live_stats_engine.py --automation skipped: round fairs owned by {fairs_owner} "
+            "(owned by golfprice; SIM_FAIRS_EXTERNAL.json). "
+            "Prediction verification skipped with the live-skill step. "
+            "Set SIM_FAIRS_FORCE_PRODUCTION=1 to override."
+        )
+        print(
+            f"\n  round_sim.py skipped: round fairs owned by {fairs_owner} "
+            "(owned by golfprice; SIM_FAIRS_EXTERNAL.json). "
+            "Set SIM_FAIRS_FORCE_PRODUCTION=1 to override."
+        )
+        return fairs_owner
+
+    if provisional_mode:
+        # Rebuild the full R1 -> R2 skill chain; stale prior-event root files
+        # must never seed the provisional R3 estimates.
+        _run(
+            [sys.executable, "live_stats_engine.py", "--round", "1",
+             "--dry-run", "--no-sheet-writes"],
+            "Rebuild current-event R1/R2 skill chain",
+        )
+    _run(
+        [sys.executable, "live_stats_engine.py", "--automation"],
+        "live_stats_engine.py --automation",
+    )
+    _verify_predictions(target_round)
+    sim_started_at = datetime.now(timezone.utc).timestamp()
+    _run_complete_live_round_sim()
+    _verify_outputs(target_round, tourney, started_at=sim_started_at)
+    return None
+
+
 def _verify_predictions(target_round: int):
     prediction = ROOT / f"model_predictions_r{target_round}.csv"
     if not prediction.exists() or prediction.stat().st_size == 0:
@@ -893,36 +949,18 @@ def run_pipeline(args) -> int:
             f"target sim R{target_round}"
         )
 
-        if provisional_mode:
-            # Rebuild the full R1 -> R2 skill chain; stale prior-event root files
-            # must never seed the provisional R3 estimates.
-            _run([sys.executable, "live_stats_engine.py", "--round", "1",
-                  "--dry-run", "--no-sheet-writes"], "Rebuild current-event R1/R2 skill chain")
-        _run(
-            [sys.executable, "live_stats_engine.py", "--automation"],
-            "live_stats_engine.py --automation",
+        fairs_owner = _run_live_skill_and_round_sim(
+            target_round,
+            tourney,
+            provisional_mode=provisional_mode,
         )
-        _verify_predictions(target_round)
-        fairs_owner = _external_fairs_owner()
-        if fairs_owner:
-            # golfprice owns the odds-board fairs: the Sheet round pointer, weather and
-            # live skill/prediction refresh above still ran; round_sim.py (round fairs,
-            # round_*_meta.json, report email, publish) is skipped cleanly.
-            print(
-                f"\n  round_sim.py skipped: round fairs owned by {fairs_owner} "
-                "(owned by golfprice; SIM_FAIRS_EXTERNAL.json). "
-                "Set SIM_FAIRS_FORCE_PRODUCTION=1 to override."
-            )
-        else:
-            sim_started_at = datetime.now(timezone.utc).timestamp()
-            _run_complete_live_round_sim()
-            _verify_outputs(target_round, tourney, started_at=sim_started_at)
         if provisional_mode and not fairs_owner:
             receipts = json.loads(provisional_path.with_suffix(".email.json").read_text(encoding="utf-8"))
             if not any("R3 Round Sim" in item["subject"] for item in receipts):
                 raise PipelineFailure("Provisional R3 report has no SMTP acceptance receipt")
         completion_message = (
-            f"R{target_round} predictions completed; round sim/fairs owned by {fairs_owner}"
+            f"R{target_round} sheet and weather advanced; live skill and round sim "
+            f"skipped (fairs owned by {fairs_owner})"
             if fairs_owner
             else f"R{target_round} predictions, simulation, and fairs completed"
         )
