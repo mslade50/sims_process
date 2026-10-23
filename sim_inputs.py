@@ -18,7 +18,7 @@ from datetime import datetime
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 71
-CUT_LINE      = 65  # Butterfield: 120-player field, top 65 and ties after 36 holes
+CUT_LINE      = 65  # golfprice rule pga_top65 (etr_week_config)
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -48,18 +48,20 @@ start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
 event_ids = [528]
 # Butterfield Bermuda Championship, October 22-25, 2026.
-# DataGolf event 528 / PGA Tour R2026528: Port Royal Golf Course; par 71.
-# Published field is 120. Cut is top 65 and ties after 36 holes.
+# DataGolf: Port Royal Golf Course; par 71. Derived by tools/etr_week_config.py (TEMPORARY ETR-only mode).
 course_id = 765
 tourney = 'butterfield'
 
-# Port Royal is course 765 in permanent_data/course_coordinates.csv.
-lat_override = 32.3500
-lon_override = -64.8000
+# Yokohama has course history; no new-venue prior is needed.
+lat_override = None
+lon_override = None
 manual_venue_profile = None
 
-# Port Royal has multi-year history, so this event has no extra shrinkage.
-course_adjustment_scale_overrides = {}
+# Owner-approved extra shrinkage for Yokohama's single year of history.
+# Exact event/venue/date scope prevents carrying this into another weekly run.
+course_adjustment_scale_overrides = {
+    'pga:527:936:2026-10-08': {'fit': 0.5, 'history': 0.5},
+}
 
 # Betting validation did not support allowing the 0.65 category-profile
 # calibration to change production prices yet. False writes the original,
@@ -83,7 +85,7 @@ ingest_events = []
 ingest_event_ids = [28]
 ingest_tour = 'pga'
 ingest_years = [2026]
-course_par = 71  # Port Royal Golf Course
+course_par = 71
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
