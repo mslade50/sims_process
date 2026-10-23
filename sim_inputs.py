@@ -18,7 +18,7 @@ from datetime import datetime
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 71
-CUT_LINE      = 72  # Baycurrent: all 72 players play four rounds (no cut)
+CUT_LINE      = 65  # golfprice rule pga_top65 (etr_week_config)
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.155  # must match your main script
 TOP_K = 20
@@ -46,15 +46,15 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [527]
-# Baycurrent Classic, October 8-11, 2026.
-# DataGolf / PGA TOUR: Yokohama Country Club (West Course); par 71.
-course_id = 936
-tourney = 'baycurrent'
+event_ids = [528]
+# Butterfield Bermuda Championship, October 22-25, 2026.
+# DataGolf: Port Royal Golf Course; par 71. Derived by tools/etr_week_config.py (TEMPORARY ETR-only mode).
+course_id = 765
+tourney = 'butterfield'
 
 # Yokohama has course history; no new-venue prior is needed.
-lat_override = 35.446
-lon_override = 139.549
+lat_override = None
+lon_override = None
 manual_venue_profile = None
 
 # Owner-approved extra shrinkage for Yokohama's single year of history.
@@ -90,7 +90,7 @@ course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
 #for multiple course setups in the showdown sim
-course_id_1=936
+course_id_1=765
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
