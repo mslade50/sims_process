@@ -1,8 +1,11 @@
+import io
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -539,6 +542,184 @@ class WeatherForecastTests(unittest.TestCase):
             self.assertEqual(result["ai_hours_by_round"][rnd], 15)
             self.assertEqual(result["rounds"][rnd]["wind"], [12.0] * 15)
             self.assertEqual(len(result["rounds"][rnd]["dew"]), 15)
+
+
+class ExternalOwnerLiveSkillSkipTests(unittest.TestCase):
+    """golfprice ownership skips legacy live skill; force-production still runs it."""
+
+    def _run_pipeline(self, *, force: bool):
+        import sim_inputs
+
+        readiness = automation.OddsReadiness(
+            target_round=2,
+            last_updated="2026-10-23 12:00:00 UTC",
+            counts={"betcris": 8, "betonline": 8},
+            scoped_rows=8,
+        )
+        spreadsheet = MagicMock(name="spreadsheet")
+        gate = {
+            "action": "advance",
+            "config": {
+                "event_id": 528,
+                "tourney": sim_inputs.tourney,
+                "course_id": int(sim_inputs.course_id),
+                "course_latitude": 32.3,
+                "course_longitude": -64.8,
+            },
+            "readiness": readiness,
+            "spreadsheet": spreadsheet,
+        }
+        forecast = {
+            "rounds": {
+                rnd: {"wind": [5.0] * 15, "dew": [10.0] * 15}
+                for rnd in range(1, 5)
+            },
+            "provider": "open-meteo-test",
+            "ai_hours": 60,
+            "ai_hours_by_round": {rnd: 15 for rnd in range(1, 5)},
+            "timezone": "Atlantic/Bermuda",
+        }
+        env = {
+            "SIM_FAIRS_FORCE_PRODUCTION": "1" if force else "",
+            "SIM_FAIRS_OWNERSHIP_LEGACY": "",
+            "ETR_ONLY_MODE": "",
+            "SIM_FAIRS_OWNERSHIP_RESUME_ON_STALE": "",
+            "LIVE_PIN_HIGH_ADJ": "0",
+            "DATAGOLF_API_KEY": "test-key",
+            "COEFFS_FROM_CACHE": "1",
+        }
+        args = SimpleNamespace(
+            dry_run=False,
+            provisional_r3=False,
+            min_datagolf_rows=10,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "SIM_FAIRS_EXTERNAL.json").write_text(
+                '{"owner": "golfprice"}', encoding="utf-8"
+            )
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(automation, "ROOT", root))
+                stack.enter_context(patch.dict(os.environ, env, clear=False))
+                gate_mock = stack.enter_context(
+                    patch.object(automation, "_load_gate_context", return_value=gate)
+                )
+                stack.enter_context(
+                    patch.object(
+                        automation, "_check_datagolf_ready", return_value=pd.DataFrame()
+                    )
+                )
+                stack.enter_context(patch("official_round_history.reconcile"))
+                stack.enter_context(
+                    patch(
+                        "api_utils.fetch_event_weather_forecast",
+                        return_value=forecast,
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "api_utils.get_round_dates",
+                        return_value=[datetime(2026, 10, 22)],
+                    )
+                )
+                weather = stack.enter_context(
+                    patch("sheets_storage.update_round_config_weather")
+                )
+                params = stack.enter_context(
+                    patch("sheets_storage.update_round_config_params")
+                )
+                run = stack.enter_context(patch.object(automation, "_run"))
+                verify = stack.enter_context(
+                    patch.object(automation, "_verify_predictions")
+                )
+                outputs = stack.enter_context(
+                    patch.object(automation, "_verify_outputs")
+                )
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = automation.run_pipeline(args)
+        return {
+            "code": code,
+            "log": buf.getvalue(),
+            "gate": gate_mock,
+            "weather": weather,
+            "params": params,
+            "run": run,
+            "verify": verify,
+            "outputs": outputs,
+            "spreadsheet": spreadsheet,
+            "forecast": forecast,
+            "tourney": sim_inputs.tourney,
+        }
+
+    def test_external_owner_skips_live_skill_and_still_advances_sheet(self):
+        result = self._run_pipeline(force=False)
+
+        self.assertEqual(result["code"], 0)
+        result["gate"].assert_called_once()
+        result["run"].assert_not_called()
+        result["verify"].assert_not_called()
+        result["outputs"].assert_not_called()
+        result["weather"].assert_called_once_with(
+            result["forecast"]["rounds"],
+            2,
+            spreadsheet=result["spreadsheet"],
+        )
+        statuses = [
+            call.args[0].get("automation_status")
+            for call in result["params"].call_args_list
+        ]
+        self.assertEqual(statuses, ["running", "complete"])
+        advance = result["params"].call_args_list[0].args[0]
+        self.assertEqual(advance["round"], 1)
+        self.assertEqual(advance["automation_target_round"], 2)
+        self.assertIs(
+            result["params"].call_args_list[0].kwargs["spreadsheet"],
+            result["spreadsheet"],
+        )
+        complete = result["params"].call_args_list[1].args[0]
+        self.assertIn("live skill and round sim skipped", complete["automation_message"])
+        self.assertIn("golfprice", complete["automation_message"])
+        self.assertIn("live_stats_engine.py --automation skipped", result["log"])
+        self.assertIn("Prediction verification skipped", result["log"])
+        self.assertIn("round_sim.py skipped", result["log"])
+        self.assertIn("golfprice", result["log"])
+        self.assertIn("SIM_FAIRS_FORCE_PRODUCTION=1", result["log"])
+
+    def test_force_production_still_runs_live_skill_verify_and_round_sim(self):
+        result = self._run_pipeline(force=True)
+
+        self.assertEqual(result["code"], 0)
+        result["gate"].assert_called_once()
+        commands = [call.args[0] for call in result["run"].call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                [automation.sys.executable, "live_stats_engine.py", "--automation"],
+                [
+                    automation.sys.executable,
+                    "round_sim.py",
+                    "--require-complete-live-publish",
+                ],
+            ],
+        )
+        result["verify"].assert_called_once_with(2)
+        result["outputs"].assert_called_once()
+        self.assertEqual(result["outputs"].call_args.args[0], 2)
+        self.assertEqual(result["outputs"].call_args.args[1], result["tourney"])
+        self.assertIn("started_at", result["outputs"].call_args.kwargs)
+        statuses = [
+            call.args[0].get("automation_status")
+            for call in result["params"].call_args_list
+        ]
+        self.assertEqual(statuses, ["running", "complete"])
+        complete = result["params"].call_args_list[1].args[0]
+        self.assertEqual(
+            complete["automation_message"],
+            "R2 predictions, simulation, and fairs completed",
+        )
+        self.assertNotIn("live_stats_engine.py --automation skipped", result["log"])
+        self.assertNotIn("round_sim.py skipped", result["log"])
 
 
 if __name__ == "__main__":
