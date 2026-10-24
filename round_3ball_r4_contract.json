@@ -2,32 +2,32 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-10 22:46:00 UTC",
+  "generated_at": "2026-10-24 20:45:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:527:2026-10-08/R3_20261010T224600Z",
+      "run_id": "pga:528:2026-10-22/R3_20261024T204500Z",
       "model_version": "v2.4+v2.6 in-play",
       "after_round": 3,
-      "run_manifest_sha256": "529611cea0cd2f7b028e55607bb1e569d87a07fc9767ec32acfafba5f867be20",
-      "base_run_as_of": "2026-10-07 22:05:00 UTC"
+      "run_manifest_sha256": "d377290c7a5c6b51d08070062dba11330f67ac4cda0e6d5a32ce89abcff782fa",
+      "base_run_as_of": "2026-10-22 09:31:00 UTC"
     },
     "event": {
-      "event_id": "527",
-      "tourney": "baycurrent",
+      "event_id": "528",
+      "tourney": "butterfield",
       "round": 4
     },
     "source": {
-      "generated_at": "2026-10-10 22:46:00 UTC",
-      "root_generated_at": "2026-10-10 22:46:00 UTC"
+      "generated_at": "2026-10-24 20:45:00 UTC",
+      "root_generated_at": "2026-10-24 20:45:00 UTC"
     },
     "simulation": {
       "num_players": 72,
       "num_sims": 150000,
-      "player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a",
+      "player_set_sha256": "ef093c43e0311fae64283820945edfd37d8eda5bc6ffea965962e0d8a3069c3c",
       "seeds": [
         20250929,
         20250930,
@@ -40,154 +40,154 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-10 22:46:00 UTC"
+      "at": "2026-10-24 20:45:00 UTC"
     },
     "checks": {
       "passed": true,
-      "n_checks": 9
+      "n_checks": 10
     },
-    "manifest_sha256": "a784d4c968140763d5c882c20dbbb0ba59da10c08dfcd4750b79ba5db39c12aa"
+    "manifest_sha256": "5c892e630e201924508d2370e5e08630526f79f328c1caf8e59cc4657a357e52"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r4_meta.json",
-      "sha256": "d1ec89674226852a70391dade132ba54c52a1e71a610921829bfd221855193b4"
+      "sha256": "736c6b2111a63974a35fedec1fed25f9865ef0d6f4f9fdc8472b0fef7f7c4b5e"
     },
     "threeball_parquet": {
       "path": "round_3ball_r4.parquet",
-      "sha256": "ad1a03f48537e3e051896907c94c2d2b376c377f2566a5dd4b1d1bbeb09cb07d"
+      "sha256": "418adcb43c1a8b4ee4081ba2b1672dd8964de04680bcf15456187ba9aae2368f"
     }
   },
   "extra": {
     "status": "groups",
-    "event_id": "527",
+    "event_id": "528",
     "round": 4,
     "num_groups": 24,
     "tee_group_source": {
       "status": "groups",
       "groups": [
         [
-          "bauchou, zach",
-          "brennan, michael",
-          "bridgeman, jacob"
+          "akina, kihei",
+          "garnett, brice",
+          "noh, s.y."
         ],
         [
-          "bezuidenhout, christiaan",
-          "kohles, ben",
-          "lee, min woo"
+          "blair, zac",
+          "ford, david",
+          "malnati, peter"
         ],
         [
-          "bradley, keegan",
-          "ghim, doug",
-          "thorbjornsen, michael"
+          "blanchet, chandler",
+          "clanton, luke",
+          "davis, cameron"
         ],
         [
-          "castillo, ricky",
-          "ishizaka, tomohiro",
-          "taylor, nick"
+          "byrd, jonathan",
+          "lebioda, hank",
+          "norlander, henrik"
         ],
         [
-          "clark, wyndham",
-          "mcnealy, maverick",
-          "smalley, alex"
+          "campos, rafael",
+          "hirata, kensei",
+          "mack iii, willie"
         ],
         [
-          "coody, pierceson",
-          "keefer, johnny",
-          "kozuma, jinichiro"
+          "chatfield, davis",
+          "eckroat, austin",
+          "grillo, emiliano"
         ],
         [
-          "echavarria, nicolas",
-          "morikawa, collin",
+          "cole, eric",
+          "hughes, mackenzie",
+          "svensson, jesper"
+        ],
+        [
+          "conners, corey",
+          "hoge, tom",
+          "silverman, ben"
+        ],
+        [
+          "crowe, trace",
+          "martin, ben",
           "ventura, kristoffer"
         ],
         [
-          "finau, tony",
-          "lipsky, david",
-          "wallace, matt"
+          "dahmen, joel",
+          "mcgreevy, max",
+          "novak, andrew"
         ],
         [
-          "fisk, steven",
-          "hoge, tom",
-          "potgieter, aldrich"
-        ],
-        [
-          "fowler, rickie",
-          "nagasaki, koshin",
-          "theegala, sahith"
-        ],
-        [
-          "fujimoto, yoshinori",
-          "phillips, chandler",
+          "dou, zecheng",
+          "hubbard, mark",
           "thompson, davis"
         ],
         [
-          "gerard, ryan",
-          "jaeger, stephan",
-          "mitchell, keith"
+          "dumont de chassart, adrien",
+          "kohles, ben",
+          "sautron, rudy"
         ],
         [
-          "greyserman, max",
-          "iwasaki, aguri",
-          "mccarty, matt"
+          "dunlap, nick",
+          "ewart, a.j.",
+          "laird, martin"
         ],
         [
-          "harman, brian",
-          "im, sungjae",
-          "kim, michael"
+          "frittelli, dylan",
+          "hardy, nick",
+          "paul, jeremy"
         ],
         [
-          "hisatsune, ryo",
-          "hossler, beau",
-          "kanaya, takumi"
+          "glover, lucas",
+          "shipley, neal",
+          "springer, hayden"
+        ],
+        [
+          "hadwin, adam",
+          "mccarthy, denny",
+          "wu, dylan"
         ],
         [
           "hodges, lee",
-          "mccarthy, denny",
-          "putnam, andrew"
-        ],
-        [
-          "homa, max",
-          "meissner, mac",
-          "schauffele, xander"
-        ],
-        [
-          "horschel, billy",
-          "hosono, yusaku",
+          "kanaya, takumi",
           "yonezawa, ren"
         ],
         [
-          "iwata, hiroshi",
-          "kitayama, kurt",
-          "lee, sanghee"
+          "hoey, rico",
+          "riley, davis",
+          "streb, robert"
         ],
         [
-          "matsuyama, hideki",
-          "parry, john",
-          "rodgers, patrick"
+          "kang, jeffrey",
+          "ramey, chad",
+          "whaley, vince"
+        ],
+        [
+          "kim, chan",
+          "kirk, chris",
+          "walker, danny"
         ],
         [
           "moore, taylor",
-          "neergaard-petersen, rasmus",
-          "suber, jackson"
+          "power, seamus",
+          "smotherman, austin"
         ],
         [
-          "nakajima, keita",
-          "pendrith, taylor",
-          "yu, kevin"
+          "peterson, paul",
+          "svensson, adam",
+          "van rooyen, erik"
         ],
         [
           "roy, kevin",
-          "spieth, jordan",
-          "sunagawa, kosuke"
+          "russell, miles",
+          "todd, brendon"
         ],
         [
-          "scott, adam",
-          "smith, jordan",
-          "thomas, justin"
+          "salinda, isaiah",
+          "sigg, greyson",
+          "skinns, david"
         ]
       ],
-      "field_players": 72,
+      "field_players": 120,
       "tee_time_players": 72,
       "group_sizes": [
         3,
@@ -216,16 +216,16 @@
         3
       ],
       "round": 4,
-      "requested_event_id": "527",
-      "source_event_id": "527",
+      "requested_event_id": "528",
+      "source_event_id": "528",
       "event_identity_basis": "datagolf_event_id",
       "tour": "pga",
       "attempts": 1,
       "event_identity_verified": true,
       "simulation_field_overlap": 1.0,
       "simulation_tee_time_coverage": 1.0,
-      "field_player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a"
+      "field_player_set_sha256": "ee6d4c09230216c1046458f9201af8459a2fc01308e4e8ccc0eea7d376e8de32"
     }
   },
-  "manifest_sha256": "35099218dfb4806b0806feacba3db496b514b33b5d9de3867bec05400385c0f8"
+  "manifest_sha256": "6306c37856821b74cd862e901dc568281d4785cd039a8a5af1189de97dc6b541"
 }
