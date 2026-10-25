@@ -1,74 +1,74 @@
 {
   "schema_version": "complete-live-package/v1",
-  "generation": "event-528-r4-5c892e630e20-fcf833cbb213",
-  "generated_at": "2026-10-24 20:45:00 UTC",
+  "generation": "event-528-r4-70bd0049db5c-3e44c8c5d782",
+  "generated_at": "2026-10-25 10:00:00 UTC",
   "event_id": "528",
   "tourney": "butterfield",
   "round": 4,
-  "simulation_manifest_sha256": "5c892e630e201924508d2370e5e08630526f79f328c1caf8e59cc4657a357e52",
-  "live_tournament_manifest_sha256": "fcf833cbb213c1fdc2ee776730c407850e79f27e85fbb2a77b8222bc9e54b702",
+  "simulation_manifest_sha256": "70bd0049db5c6d549901db010abea764095b0786b1965117eb3e4ecc6085a968",
+  "live_tournament_manifest_sha256": "3e44c8c5d7820f010931bc2064600d8b240165974132490b33674af6301e8260",
   "release_assets": {
     "matchup_scores_live": {
-      "name": "matchup_scores_live.event-528-r4-5c892e630e20-fcf833cbb213.1db2ffa0efbf4434.parquet",
-      "sha256": "1db2ffa0efbf443499ac06e38124e05c0c325d4a0f97be4c10953833992840ac",
-      "size": 15061700
+      "name": "matchup_scores_live.event-528-r4-70bd0049db5c-3e44c8c5d782.e8a9b4ce76b0fdcd.parquet",
+      "sha256": "e8a9b4ce76b0fdcd717fac7d7274a275eff573c766e560e29418293d6eda177f",
+      "size": 15062121
     },
     "tournament_made_cut_full": {
-      "name": "tournament_made_cut_full.event-528-r4-5c892e630e20-fcf833cbb213.98b3c3b05de01684.parquet",
-      "sha256": "98b3c3b05de01684206d6323a6ffc742f98418728b160466749cf228aefc6a23",
+      "name": "tournament_made_cut_full.event-528-r4-70bd0049db5c-3e44c8c5d782.03e2db5e662dd075.parquet",
+      "sha256": "03e2db5e662dd075db61263d19eef7039f453dead5a4877b213f585a19ef3da9",
       "size": 77684394
     },
     "tournament_samples_full": {
-      "name": "tournament_samples_full.event-528-r4-5c892e630e20-fcf833cbb213.4dcab34cb60888f7.parquet",
-      "sha256": "4dcab34cb60888f782e354c05dbad1b9eb3c3321e194a5912eb1790c507a08fc",
-      "size": 91143002
+      "name": "tournament_samples_full.event-528-r4-70bd0049db5c-3e44c8c5d782.7bdfc4c78a75fd8b.parquet",
+      "sha256": "7bdfc4c78a75fd8b73703d0328c7adedd6cfa988760b99b9816dcbe430977993",
+      "size": 91144745
     }
   },
   "git_files": {
     "round_3ball_r4.parquet": {
-      "sha256": "418adcb43c1a8b4ee4081ba2b1672dd8964de04680bcf15456187ba9aae2368f",
+      "sha256": "d30a779128d5899f8ee19f6b8142767f80f09c118a72a28569296cd18c6bb1a7",
       "size": 5570
     },
     "round_3ball_r4_contract.json": {
-      "sha256": "b90069a66a6f22794b61392fbd891bc5f1a7655343a7e3249bd8fb229f6bda9d",
+      "sha256": "a7e218e4d2d047236bc3d3f2ac4c5c2c8aa70787822a76f3346ab0dea3d1e061",
       "size": 5325
     },
     "round_3ball_r4_meta.json": {
-      "sha256": "736c6b2111a63974a35fedec1fed25f9865ef0d6f4f9fdc8472b0fef7f7c4b5e",
+      "sha256": "a27a64fbb62a4a722d14c0a6b3e05ab5a7f04e579953a68f4ee61427da7aa95d",
       "size": 2022
     },
     "round_h2h_r4.parquet": {
-      "sha256": "cf8ab53635276c404fb7c83ccafc2e1558631a336a76eef2af4c2a56340c452f",
-      "size": 46313
+      "sha256": "eeb88fa8d6e49badc8a9779564ff223cafa5069f1d415a2766d8a44e161b4956",
+      "size": 46153
     },
     "round_h2h_r4_health.json": {
-      "sha256": "9ef8c644fb7ab1a3be436234defa0c8cb7fa0688558a94f5bea87b3aa1fbe3fe",
+      "sha256": "dd0f41656ebeae05cd4ad62e6ef44be2374526167991f5e287ed18a0e16ff69e",
       "size": 1933
     },
     "round_h2h_r4_meta.json": {
-      "sha256": "cbc85e1932be2c86346ad49674ad61f67a95f20854bf8c58728b70e68210cc5f",
+      "sha256": "2dc6d5889dd64049f2f6e779ff1eaa43bf4550b3ef8632524bcea9726d8491d6",
       "size": 281
     },
     "round_samples.parquet": {
-      "sha256": "a5fc8d8207853858216a40d6582b3c82027f74843aee5b078647ef4d82c31e43",
-      "size": 1180758
+      "sha256": "b02c55484cc98a4e222179668a7cbed3a858ec8fcd95565476ad91db780ec673",
+      "size": 1180486
     },
     "sim_fairs.json": {
-      "sha256": "633f418c35ff0d574a7ffa93db88fda8ac5e23608203fa31163e74ef177aae6e",
-      "size": 313008
+      "sha256": "b46f288c10600bf55f41c6964b74b26862ab7bacec925052c872ae1c34b0de31",
+      "size": 312967
     },
     "tournament_live_butterfield_health.json": {
-      "sha256": "93dfcd87dfd6ea477be84a011097bd1bb75484820d095b184317e185ab511b4c",
+      "sha256": "67ec1b4337c06f877ffb4162b40387f9562b60f4c518f9342a68b39fc371d042",
       "size": 2495
     },
     "tournament_made_cut.parquet": {
-      "sha256": "ffa61de56f13554f4e01aa0dc36fe1d0fd94c9aebd61055045f26bef97fb5419",
+      "sha256": "bc049323a78a7a412e9a9e8ea9cd9f3eb1d449f3c08c5f3bf6901fd33ddccf67",
       "size": 10340966
     },
     "tournament_samples.parquet": {
-      "sha256": "904d84d52060f72562fb7dc9fde488bf95996d154d7e62c93d8094c9ee96f438",
-      "size": 12144838
+      "sha256": "ecd49d5e42335eda8c09b61a1f970419b36c388ed271fb197ff53f682b0bb703",
+      "size": 12145562
     }
   },
-  "manifest_sha256": "a5de183d0b13aca2e776f6bca7fd92853f5076b212af92846439aacfc09f7d6e"
+  "manifest_sha256": "7c22295d6b5649cb83371151f38fdaffed0d6d182c0c990d66a264d4740be9e0"
 }
