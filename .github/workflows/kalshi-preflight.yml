@@ -17,8 +17,11 @@ name: Kalshi Preflight
 # succeeded, sim_inputs matches this week's DataGolf event (or an off week
 # whose Kalshi book has not settled), and that successful book truly does not
 # cover the field. A simple lag — field and schedule agree on one live event
-# that sim_inputs.event_ids does not contain — is NOT READY YET: a ::warning,
-# exit 0, and no Telegram. That green run does not place orders.
+# that sim_inputs.event_ids does not contain — is NOT READY YET: a ::warning
+# and exit 0 from kalshi_preflight.py, plus a Telegram alert from
+# telegram_policy.py. That green preflight does not place orders. The alert
+# step runs only after the preflight step succeeds, so the lag itself stays
+# green.
 # kalshi_maker.py --live quotes only when DataGolf positively confirms that
 # sim_inputs.event_ids contains the live event. The field-updates id wins on
 # Monday if the schedule still names the completed event. No API key, a failed
@@ -63,4 +66,22 @@ jobs:
           DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python kalshi_preflight.py
+        run: |
+          set -o pipefail
+          python kalshi_preflight.py 2>&1 | tee "$RUNNER_TEMP/kalshi-preflight.txt"
+
+      # Config lag stays green. Telegram only when the log says NOT READY YET.
+      # A grep miss is inside `if`, so a clear book still ends green.
+      - name: Telegram when config lags
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          if grep -F -q "NOT READY YET" "$RUNNER_TEMP/kalshi-preflight.txt"; then
+            python telegram_policy.py \
+              --key legacy-kalshi-preflight-lag \
+              --message "NOT READY YET: sim_inputs lags the confirmed live event. Advance sim_inputs.event_ids. ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
