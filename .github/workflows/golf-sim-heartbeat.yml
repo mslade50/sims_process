@@ -1,0 +1,51 @@
+name: Golf-sim runner heartbeat
+
+# ubuntu-latest on purpose: this check must run when the self-hosted golf-sim
+# runner is offline. It lists successful Actions jobs with GITHUB_TOKEN and
+# fails when none labeled golf-sim completed within HEARTBEAT_MAX_HOURS
+# (default 36). The cron is every 6 hours, so a stall is noticed within 6
+# hours of crossing that window. It does not dispatch another workflow.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      max_hours:
+        description: "Fail when no golf-sim job has succeeded within this many hours"
+        required: false
+        default: "36"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Fail if the golf-sim runner has no recent success
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEARTBEAT_MAX_HOURS: ${{ github.event.inputs.max_hours || vars.HEARTBEAT_MAX_HOURS || '36' }}
+        run: python scripts/golf_sim_heartbeat.py
+
+      - name: Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          python telegram_policy.py --key legacy-golf-sim-heartbeat --message "FAILED golf-sim heartbeat: no successful job on the self-hosted golf-sim runner within the configured window. ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
