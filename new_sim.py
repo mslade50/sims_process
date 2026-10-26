@@ -3207,8 +3207,9 @@ if args.sim_only:
 
 EDGE_THRESHOLD_WIN   = 2.0
 EDGE_THRESHOLD_TOPN  = 2.0
+from kelly_config import KELLY_FRACTION
+
 BANKROLL             = 10000.0
-KELLY_FRACTION       = 0.25
 RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','wynnbet','unibet','betway','betfred','betrivers']
 
 _all_sb_lines_raw = []  # accumulate ALL sportsbook lines (pre-edge-filter) for exchange comparison

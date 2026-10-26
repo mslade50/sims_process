@@ -14,6 +14,8 @@ Pure math module — no API calls, no sheets logic, no side effects.
 import numpy as np
 from scipy.optimize import minimize
 
+from kelly_config import KELLY_FRACTION
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -26,7 +28,7 @@ def optimize_correlated_kelly(
     player_names,       # list mapping row index -> player name (lowercase)
     finish_probs=None,  # unused, kept for interface compat
     bankroll=30_000.0,
-    kelly_fraction=0.60,
+    kelly_fraction=KELLY_FRACTION,
     golfer_cap=0.15,    # max fraction on one golfer (pre-fractional)
     portfolio_cap=0.35, # max total deployment (pre-fractional)
     min_bet=0.0,

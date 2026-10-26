@@ -38,6 +38,8 @@ import pandas as pd
 
 import kalshi_match as km
 
+from kelly_config import KELLY_FRACTION
+
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 TAKER_TARGET = 300         # contracts we want filled as a taker
@@ -47,15 +49,15 @@ DEFAULT_EDGE = 2.0         # min edge in percentage points (matches outright thr
 MIN_LEG_COST = 0.02        # drop sub-2c legs: Kelly + the 7% fee model are unreliable there
 PRICE_EPS = 1e-4
 
-# Kalshi position sizing: 0.4 fractional Kelly on a $50k bankroll, 1 unit = $500.
+# Kalshi position sizing: shared KELLY_FRACTION on a $50k bankroll, 1 unit = $500.
 KALSHI_BANKROLL = 50_000.0
-KALSHI_KELLY = 0.4
+KALSHI_KELLY = KELLY_FRACTION
 KALSHI_UNIT = 500.0
 KALSHI_MAX_RISK_FRAC = 0.05   # cap any single bet's risk at 5% of bankroll ($2,500 = 5u)
 
 
 def kelly_contracts(fair_prob, cost):
-    """0.4-Kelly stake on a $50k bankroll, expressed as Kalshi contracts.
+    """KELLY_FRACTION stake on a $50k bankroll, expressed as Kalshi contracts.
 
     fair_prob = our probability the position resolves in our favor.
     cost       = price paid per contract ($0-1) — also the per-contract risk.
