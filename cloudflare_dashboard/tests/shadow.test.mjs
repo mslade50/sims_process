@@ -332,7 +332,7 @@ test("rules: an unreadable status suppresses only the 6 h after its own request,
   const before = { id: "j-before", type: "watch", requested_at: iso(slot - 10 * MIN) };
   assert.deepEqual(missed([before]), [], "requested 10 min before: both ticks fall in its 6 h window");
   assert.deepEqual(missed([{ ...before, type: "tuesday" }]), ["missed-watch-20261007T150000Z", "missed-watch-20261007T151500Z"], "other types are unaffected");
-  assert.ok(evaluateShadow({ ...base, unreadable: [near] }).some((f) => f.key === "status-unreadable-j-near" && f.kind === "status_unreadable"));
+  assert.ok(evaluateShadow({ ...base, unreadable: [{ ...near, corrupt: true }] }).some((f) => f.key === "status-unreadable-j-near" && f.kind === "status_unreadable"));
 });
 
 test("Tuesday due slot through the Worker: an unreadable status for that type suppresses its slot and is reported; a readable finished one does not", async () => {
@@ -360,7 +360,8 @@ test("Tuesday due slot through the Worker: an unreadable status for that type su
   failing.failGet.add(`jobs/status/${tuesdayJob.id}.json`);
   await tick(worker, env(failing), T);
   assert.equal(failing.store.has(key), false);
-  assert.ok(failing.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`));
+  assert.equal(failing.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`), false, "an R2 read failure is not a permanent incident");
+  assert.ok(JSON.parse(failing.store.get("ops/shadow/summary.json").body).degraded.includes("status_read_error:1"));
 });
 
 test("the per-tick cap never loses a perishable finding: missed slots are written first and every finding is eventually written", async () => {
@@ -443,4 +444,57 @@ test("roles problems are logged by shadow and alerts for malformed JSON and for 
   } finally {
     console.log = log;
   }
+});
+
+/* ------------------------------------------------------------------ review round 3 regressions */
+test("rules: only a corrupt status is an incident; an R2 read failure keeps the suppression without a permanent finding", () => {
+  const slot = Date.parse("2026-10-07T15:00:00Z");
+  const base = { now: slot + 12 * MIN, jobs: [], created: [], beats: [], dueAt: (ms) => (ms === slot ? [{ type: "watch" }] : []) };
+  const readError = { id: "j-e", type: "watch", requested_at: iso(slot - 10 * MIN), corrupt: false };
+  assert.deepEqual(evaluateShadow({ ...base, unreadable: [readError] }), [], "no incident, and the slot it may have blocked is still suppressed");
+  const found = evaluateShadow({ ...base, unreadable: [{ ...readError, corrupt: true }] });
+  assert.deepEqual(found.map((f) => f.key), ["status-unreadable-j-e"]);
+  assert.ok(evaluateShadow({ now: slot, jobs: [{ id: "j-1", type: "t", requested_at: iso(slot - MIN), state: "failed" }], created: [], beats: [], dueAt: () => [] })[0].expires_at > slot, "every finding carries an expiry");
+});
+
+test("deferred findings survive the 48 h scan cutoff through ops/shadow/pending.json", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const jobs = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T1215${String(i).padStart(2, "0")}-d${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
+    ...Object.fromEntries(jobs.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
+    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T0 - MIN) },
+    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T0 - MIN) },
+  });
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  const failedKeys = () => [...bucket.store.keys()].filter((k) => k.includes("/job-failed-"));
+  await tick(worker, env, T0);
+  assert.ok(failedKeys().length <= 25);
+  const pending = JSON.parse(bucket.store.get("ops/shadow/pending.json").body);
+  assert.ok(pending.findings.length >= 35 - 0, "the overflow is persisted");
+  // Past the 48 h cutoff the jobs are no longer scanned, yet the pending findings still drain (and not before the cap allows).
+  for (let i = 1; i <= 6; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
+  assert.equal(failedKeys().length, 60, "every deferred finding was eventually written");
+  assert.equal(JSON.parse(bucket.store.get("ops/shadow/pending.json").body).findings.length, 0, "pending is drained");
+});
+
+test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue) and the heartbeat check still runs", async () => {
+  const worker = await loadWorker();
+  for (const body of ["{broken", "{}", { schema: "x", jobs: {} }, [], "null", { jobs: "nope" }]) {
+    const bucket = seeded();
+    bucket.store.set("jobs/queue.json", { body: typeof body === "string" ? body : JSON.stringify(body), v: 1 });
+    bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
+    await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
+    const keys = [...bucket.store.keys()];
+    assert.ok(keys.includes("ops/shadow/incidents/2026-10-07/queue-unreadable.json"), JSON.stringify(body));
+    assert.equal(keys.some((k) => k.includes("missed-") || k.includes("job-failed-")), false, "no job or slot findings from an unusable queue");
+    assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "a dead primary is still reported");
+    const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
+    assert.deepEqual([summary.checked.jobs, summary.checked.machines], [0, 2]);
+  }
+  const ok = seeded();
+  ok.store.set("jobs/queue.json", { body: JSON.stringify({ schema: "golfprice.job_queue.v1", jobs: [] }), v: 1 });
+  await tick(worker, { DASHBOARD_DATA: ok, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.equal(ok.store.has("ops/shadow/incidents/2026-10-07/queue-unreadable.json"), false, "an empty jobs array is a valid queue");
 });

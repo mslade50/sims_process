@@ -5,11 +5,12 @@
  * etag-guarded ops/shadow/summary.json that an older overlapping run can never overwrite.
  *
  * OFF unless the var OPS_SHADOW_ENABLED is exactly "1" (declared "0" in wrangler.jsonc, so enabling is a reviewed config change).
- * Reads are three-way: absent (null), unreadable content (JSON parse error: a finding is written) and an R2 failure (no finding, the affected
- * check is skipped for the tick and the gap is noted). An R2 failure is never treated as "absent".
+ * Reads are three-way: absent (null), unreadable content (JSON parse error or wrong shape: a finding is written) and an R2 failure (no
+ * finding; the gap is noted as degraded coverage and, for a status object, its slot window stays suppressed). An R2 failure is never "absent".
+ * Findings deferred by the per-tick write cap are kept in ops/shadow/pending.json and drained first next tick, even after their job left the scan.
  */
 import { dueJobs } from "./cron-rules.ts";
-import { SHADOW_PREFIX, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
+import { MISSED_LOOKBACK_MS, SHADOW_PREFIX, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
 import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, loadRoles, machinesWithRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
 
 export interface ShadowEnv {
@@ -21,6 +22,8 @@ export type ShadowOutcome = { enabled: boolean; findings: Finding[]; written: nu
 
 export const MONITOR_HORIZON_MS = 48 * 3_600_000; // covers the 3 h missed-slot window plus the 6 h rate-limit lookback, and the failed-job window
 export const MAX_NEW_INCIDENTS_PER_TICK = 25;
+export const SHADOW_PENDING_KEY = "ops/shadow/pending.json";
+const MAX_PENDING = 500;
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
 type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
@@ -79,11 +82,14 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   let evaluate = true;
   if (queueRead.kind === "parse_error") {
     evaluate = false;
-    degraded.push("queue_unreadable");
-    extra.push({ key: "queue-unreadable", kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not valid JSON; job and missed-slot checks are skipped" });
   } else if (queueRead.kind === "ok") {
     const queue = queueRead.value as { jobs?: unknown } | null;
-    records = Array.isArray(queue?.jobs) ? (queue.jobs as JobRecord[]) : [];
+    if (queue && typeof queue === "object" && Array.isArray(queue.jobs)) records = queue.jobs as JobRecord[];
+    else evaluate = false; // valid JSON of the wrong shape is not an empty queue
+  }
+  if (!evaluate) {
+    degraded.push("queue_unreadable");
+    extra.push({ key: "queue-unreadable", kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not a valid queue object; job and missed-slot checks are skipped (heartbeats are still checked)", expires_at: now + MISSED_LOOKBACK_MS });
   }
 
   const registryRead = await readObject(bucket, SHADOW_REGISTRY_KEY);
@@ -98,12 +104,12 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
 
   // Independent of the Run page's list limits: every queue record inside the monitoring horizon, whatever its type or requester.
   const inHorizon = records.filter((j) => now - (parseUtc(j.requested_at) ?? 0) <= MONITOR_HORIZON_MS);
-  const unreadable: { id: string; type: string; requested_at: string }[] = [];
+  const unreadable: { id: string; type: string; requested_at: string; corrupt: boolean }[] = [];
   const resolved = await Promise.all(
     inHorizon.map(async (job): Promise<ShadowJob | null> => {
       const read = await readObject(bucket, `${STATUS_PREFIX}${job.id}.json`);
       if (read.kind === "read_error" || read.kind === "parse_error") {
-        unreadable.push({ id: job.id, type: job.type, requested_at: job.requested_at });
+        unreadable.push({ id: job.id, type: job.type, requested_at: job.requested_at, corrupt: read.kind === "parse_error" });
         return null;
       }
       const status = read.kind === "ok" ? (read.value as JobStatus | null) : null;
@@ -113,8 +119,10 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   );
   const jobs = resolved.filter((j): j is ShadowJob => j !== null);
   if (unreadable.length) {
-    degraded.push(`status_unreadable:${unreadable.length}`);
-    outcome.notes.push(`${unreadable.length} job status object(s) unreadable; their missed-slot windows are suppressed`);
+    const corrupt = unreadable.filter((u) => u.corrupt).length;
+    if (corrupt) degraded.push(`status_unreadable:${corrupt}`);
+    if (unreadable.length - corrupt) degraded.push(`status_read_error:${unreadable.length - corrupt}`);
+    outcome.notes.push(`${unreadable.length} job status object(s) unreadable (${corrupt} corrupt); their missed-slot windows are suppressed`);
   }
 
   const beats: ShadowBeat[] = [];
@@ -125,7 +133,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       outcome.notes.push(`heartbeat read failed for ${m.name}; not evaluated`);
     } else if (read.kind === "parse_error") {
       degraded.push(`heartbeat_unreadable:${m.name}`);
-      extra.push({ key: `heartbeat-unreadable-${m.name}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON` });
+      extra.push({ key: `heartbeat-unreadable-${m.name}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON`, expires_at: now + MISSED_LOOKBACK_MS });
     } else {
       beats.push({ machine: m.name, role: m.role, beat: read.kind === "ok" ? (read.value as { at?: string } | null) : null });
     }
@@ -133,16 +141,30 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
 
   outcome.findings = [
     ...extra,
-    ...(evaluate ? evaluateShadow({ now, jobs, created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at })), beats, unreadable, dueAt: dueJobs }) : []),
+    // With an unusable queue only the heartbeat check can run: no jobs, no creation evidence, no expected occurrences.
+    ...evaluateShadow(
+      evaluate
+        ? { now, jobs, created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at })), beats, unreadable, dueAt: dueJobs }
+        : { now, jobs: [], created: [], beats, unreadable: [], dueAt: () => [] },
+    ),
   ];
 
   // Create-only: list each date prefix once and PUT just the keys that are not there yet, bounded per tick. Findings that expire soonest
   // (missed slots about to leave the lookback) go first, so the cap can delay a durable finding but never lose a perishable one.
+  const pendingRead = await readObject(bucket, SHADOW_PENDING_KEY);
+  const carried = pendingRead.kind === "ok" && Array.isArray((pendingRead.value as { findings?: unknown })?.findings) ? ((pendingRead.value as { findings: Finding[] }).findings.filter((f) => f && typeof f.key === "string" && typeof f.date === "string")) : [];
+  if (pendingRead.kind === "read_error") {
+    degraded.push("pending_read_error");
+    outcome.notes.push("ops/shadow/pending.json could not be read; deferred findings not drained this tick");
+  }
+  const byId = new Map<string, Finding>();
+  for (const f of [...carried, ...outcome.findings]) byId.set(`${f.date}/${f.key}`, f);
+  const candidates = [...byId.values()];
   const known = new Set<string>();
-  for (const date of new Set(outcome.findings.map((f) => f.date))) {
+  for (const date of new Set(candidates.map((f) => f.date))) {
     for (const key of await listKeys(bucket, `${SHADOW_PREFIX}incidents/${date}/`)) known.add(key);
   }
-  const fresh = outcome.findings
+  const fresh = candidates
     .filter((f) => !known.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`))
     .sort((a, b) => (a.expires_at ?? Number.POSITIVE_INFINITY) - (b.expires_at ?? Number.POSITIVE_INFINITY));
   for (const finding of fresh.slice(0, MAX_NEW_INCIDENTS_PER_TICK)) {
@@ -151,9 +173,19 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     const written = await bucket.put(`${SHADOW_PREFIX}incidents/${finding.date}/${finding.key}.json`, JSON.stringify(body, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
     if (written !== null) outcome.written += 1;
   }
+  const deferred = fresh.slice(MAX_NEW_INCIDENTS_PER_TICK, MAX_NEW_INCIDENTS_PER_TICK + MAX_PENDING);
   if (fresh.length > MAX_NEW_INCIDENTS_PER_TICK) {
     degraded.push(`write_capped:${fresh.length - MAX_NEW_INCIDENTS_PER_TICK}`);
-    outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick`);
+    outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick (pending object)`);
+    if (fresh.length - MAX_NEW_INCIDENTS_PER_TICK > MAX_PENDING) outcome.notes.push(`pending object full; ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK - MAX_PENDING} finding(s) not retained`);
+  }
+  // Persist what was deferred (replace the version read; skip when unchanged or when it could not be read).
+  if (pendingRead.kind !== "read_error" && (deferred.length > 0 || carried.length > 0)) {
+    const put = await bucket.put(SHADOW_PENDING_KEY, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: deferred }, null, 1), {
+      httpMetadata: JSON_PUT,
+      onlyIf: pendingRead.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: pendingRead.etag },
+    });
+    if (put === null) outcome.notes.push("pending.json changed during this run (lost the race); deferred list not updated");
   }
 
   // Rolling summary: replace only the version we read (a corrupt one included), and never an object that is already newer than this run.

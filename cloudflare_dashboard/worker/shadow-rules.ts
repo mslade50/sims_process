@@ -18,6 +18,8 @@ export const SHADOW_SCHEMA = "golf_ops.shadow.v1";
 export const TICK_MS = 15 * 60_000;
 export const MISSED_GRACE_MS = 10 * 60_000;
 export const MISSED_LOOKBACK_MS = 3 * 3_600_000;
+/** How long a job stays in the observer's scan (worker/shadow.ts MONITOR_HORIZON_MS); a job finding expires with it. */
+export const JOB_HORIZON_MS = 48 * 3_600_000;
 export const STUCK_RUNNING_MS = 3 * 3_600_000;
 const RATE_LIMIT_MS = 6 * 3_600_000; // same-type jobs still queued/claimed/running inside this window legitimately suppress a new enqueue
 
@@ -53,7 +55,7 @@ export type ShadowInput = {
   created: { type: string; requested_at: string }[];
   beats: ShadowBeat[];
   /** Queue records whose status object could not be read (state unknown). */
-  unreadable?: { id: string; type: string; requested_at: string }[];
+  unreadable?: { id: string; type: string; requested_at: string; corrupt?: boolean }[];
   /** cron-rules.dueJobs, injected so this module stays import-light. */
   dueAt: (ms: number) => { type: string }[];
 };
@@ -64,18 +66,20 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
 
   for (const job of failedJobs(input.jobs)) {
     const at = parseMs(job.requested_at) ?? now;
-    out.push({ key: `job-failed-${slug(job.id)}`, kind: "job_failed", severity: "high", date: day(at), subject: job.id, detail: `${job.type} failed` });
+    out.push({ key: `job-failed-${slug(job.id)}`, kind: "job_failed", severity: "high", date: day(at), subject: job.id, detail: `${job.type} failed`, expires_at: at + JOB_HORIZON_MS });
   }
   for (const job of input.jobs) {
     const at = parseMs(job.requested_at);
     if (at === null) continue;
     const age = now - at;
     const stuck = (job.state === "queued" && age > P1_STALE_MS) || ((job.state === "claimed" || job.state === "running") && age > STUCK_RUNNING_MS);
-    if (stuck) out.push({ key: `job-stuck-${slug(job.id)}`, kind: "job_stuck", severity: "warn", date: day(at), subject: job.id, detail: `${job.type} ${job.state} for ${Math.round(age / 60_000)} min` });
+    if (stuck) out.push({ key: `job-stuck-${slug(job.id)}`, kind: "job_stuck", severity: "warn", date: day(at), subject: job.id, detail: `${job.type} ${job.state} for ${Math.round(age / 60_000)} min`, expires_at: at + JOB_HORIZON_MS });
   }
 
   for (const u of input.unreadable ?? []) {
-    out.push({ key: `status-unreadable-${slug(u.id)}`, kind: "status_unreadable", severity: "warn", date: day(parseMs(u.requested_at) ?? now), subject: u.id, detail: `status of ${u.type} job could not be read; missed-slot checks for it are suppressed for 6 h after its request` });
+    // Only a status that is present but not valid JSON is an incident; an R2 read failure is transient (degraded coverage in the summary only).
+    if (!u.corrupt) continue;
+    out.push({ key: `status-unreadable-${slug(u.id)}`, kind: "status_unreadable", severity: "warn", date: day(parseMs(u.requested_at) ?? now), subject: u.id, detail: `status of ${u.type} job could not be read; missed-slot checks for it are suppressed for 6 h after its request`, expires_at: (parseMs(u.requested_at) ?? now) + JOB_HORIZON_MS });
   }
 
   for (const { machine, role, beat } of input.beats) {
@@ -89,6 +93,7 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
       date: day(last ?? now),
       subject: machine,
       detail: `${role} heartbeat ${last === null ? "missing" : `${Math.round(age / 60_000)} min old`}`,
+      expires_at: now + MISSED_LOOKBACK_MS,
     });
   }
 
