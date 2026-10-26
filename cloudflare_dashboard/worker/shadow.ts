@@ -89,13 +89,13 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       const bad = all.length - records.length;
       if (bad > 0) {
         degraded.push(`queue_entry_invalid:${bad}`);
-        extra.push({ key: "queue-entry-invalid", kind: "queue_entry_invalid", severity: "warn", date: utcDay(now), subject: QUEUE_KEY, detail: `${bad} entr${bad === 1 ? "y" : "ies"} in jobs/queue.json are not job records and were skipped`, expires_at: now + MISSED_LOOKBACK_MS });
+        extra.push({ key: `queue-entry-invalid-${utcDay(now)}`, kind: "queue_entry_invalid", severity: "warn", date: utcDay(now), subject: QUEUE_KEY, detail: `${bad} entr${bad === 1 ? "y" : "ies"} in jobs/queue.json are not job records and were skipped`, expires_at: now + MISSED_LOOKBACK_MS });
       }
     } else evaluate = false; // valid JSON of the wrong shape is not an empty queue
   }
   if (!evaluate) {
     degraded.push("queue_unreadable");
-    extra.push({ key: "queue-unreadable", kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not a valid queue object; job and missed-slot checks are skipped (heartbeats are still checked)", expires_at: now + MISSED_LOOKBACK_MS });
+    extra.push({ key: `queue-unreadable-${utcDay(now)}`, kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not a valid queue object; job and missed-slot checks are skipped (heartbeats are still checked)", expires_at: now + MISSED_LOOKBACK_MS });
   }
 
   const registryRead = await readObject(bucket, SHADOW_REGISTRY_KEY);
@@ -139,7 +139,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       outcome.notes.push(`heartbeat read failed for ${m.name}; not evaluated`);
     } else if (read.kind === "parse_error") {
       degraded.push(`heartbeat_unreadable:${m.name}`);
-      extra.push({ key: `heartbeat-unreadable-${m.name}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON`, expires_at: now + MISSED_LOOKBACK_MS });
+      extra.push({ key: `heartbeat-unreadable-${m.name}-${utcDay(now)}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON`, expires_at: now + MISSED_LOOKBACK_MS });
     } else {
       beats.push({ machine: m.name, role: m.role, beat: read.kind === "ok" ? (read.value as { at?: string } | null) : null });
     }
@@ -166,6 +166,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   };
   indexes.forEach((read, n) => {
     if (read.kind === "read_error") degraded.push(`index_read_error:${days[n]}`);
+    if (read.kind === "parse_error") degraded.push(`index_unreadable:${days[n]}`);
     for (const key of Object.keys(keysOf(read))) recorded.add(key);
   });
   const fresh = outcome.findings.filter((f) => !recorded.has(f.key));
@@ -182,15 +183,16 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       outcome.written = fresh.length;
       const mine: Record<string, string> = Object.fromEntries(fresh.map((f) => [f.key, batchKey as string]));
       let current: Read = indexes[0];
-      indexConflict = true;
-      for (let attempt = 0; attempt < INDEX_ATTEMPTS && current.kind !== "read_error"; attempt += 1) {
+      // A corrupt index is never replaced with only this tick's keys (that would forget everything else it recorded): skip the update, accept duplicates.
+      indexConflict = current.kind !== "parse_error";
+      for (let attempt = 0; attempt < INDEX_ATTEMPTS && indexConflict && current.kind !== "read_error"; attempt += 1) {
         const merged = { schema: SHADOW_SCHEMA, keys: { ...mine, ...keysOf(current) } };
         const put = await bucket.put(`${INDEX_PREFIX}${today}.json`, JSON.stringify(merged), { httpMetadata: JSON_PUT, onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag } });
         if (put !== null) {
           indexConflict = false;
           break;
         }
-        current = await readObject(bucket, `${INDEX_PREFIX}${today}.json`);
+        if (attempt < INDEX_ATTEMPTS - 1) current = await readObject(bucket, `${INDEX_PREFIX}${today}.json`);
       }
       if (indexConflict) {
         degraded.push("index_conflict");

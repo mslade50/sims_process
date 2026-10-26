@@ -34,7 +34,7 @@ export type Finding = {
   date: string;
   subject: string;
   detail: string;
-  /** Epoch ms after which the condition can no longer be re-derived (a missed slot leaves the lookback); drives the per-tick write priority. */
+  /** Epoch ms after which the condition can no longer be re-derived (a missed slot leaves the lookback). Informational; not stored. */
   expires_at?: number;
 };
 

@@ -364,12 +364,12 @@ test("queue / heartbeat / summary: parse failures become findings, R2 failures d
   const q = seeded();
   q.store.set("jobs/queue.json", { body: "{broken", v: 1 });
   await tick(worker, env(q), NOW);
-  assert.ok(hasIncident(q, "queue-unreadable"));
+  assert.ok(hasIncident(q, "queue-unreadable-2026-10-07"));
   assert.equal(recordedKeys(q).some((k) => k.includes("missed-")), false, "no false missed slots from an unparsable queue");
   const h = seeded();
   h.store.set("jobs/heartbeat/mckinley_home.json", { body: "nope", v: 1 });
   await tick(worker, env(h), NOW);
-  assert.ok(hasIncident(h, "heartbeat-unreadable-mckinley_home"));
+  assert.ok(hasIncident(h, "heartbeat-unreadable-mckinley_home-2026-10-07"));
   const e = seeded();
   e.failGet.add("jobs/heartbeat/mckinley_home.json");
   await tick(worker, env(e), NOW);
@@ -438,7 +438,7 @@ test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue)
     bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
     await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
     const keys = recordedKeys(bucket);
-    assert.ok(keys.includes("queue-unreadable"), JSON.stringify(body));
+    assert.ok(keys.includes("queue-unreadable-2026-10-07"), JSON.stringify(body));
     assert.equal(keys.some((k) => k.includes("missed-") || k.includes("job-failed-")), false, "no job or slot findings from an unusable queue");
     assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "a dead primary is still reported");
     const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
@@ -447,7 +447,7 @@ test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue)
   const ok = seeded();
   ok.store.set("jobs/queue.json", { body: JSON.stringify({ schema: "golfprice.job_queue.v1", jobs: [] }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: ok, OPS_SHADOW_ENABLED: "1" }, NOW);
-  assert.equal(hasIncident(ok, "queue-unreadable"), false, "an empty jobs array is a valid queue");
+  assert.equal(hasIncident(ok, "queue-unreadable-2026-10-07"), false, "an empty jobs array is a valid queue");
 });
 
 /* ------------------------------------------------------------------ review round 4 regressions */
@@ -460,7 +460,7 @@ test("invalid queue entries are dropped and reported; valid jobs, heartbeats and
   bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
   const keys = recordedKeys(bucket);
-  assert.ok(keys.includes("queue-entry-invalid"));
+  assert.ok(keys.includes("queue-entry-invalid-2026-10-07"));
   assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "stale primary still reported");
   assert.ok(keys.includes(`job-failed-${failedJob.id}`), "the valid job is still checked");
   const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
@@ -536,6 +536,7 @@ test("index CAS exhausted: no finding is lost, the next tick only duplicates it,
   bucket.failPut.add("ops/shadow/index/2026-10-14.json"); // every conditional index update loses
   await tick(worker, env, T0);
   assert.equal(bucket.puts.filter((k) => k === "ops/shadow/index/2026-10-14.json").length, 3, "bounded to three attempts");
+  assert.equal(bucket.gets.filter((k) => k === "ops/shadow/index/2026-10-14.json").length, 3, "one read plus two re-reads, none after the last failed PUT");
   assert.equal(batchKeys(bucket).length, 1);
   for (const j of jobs) assert.ok(recordedKeys(bucket).includes(`job-failed-${j.id}`));
   assert.equal(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).index_conflict, true);
@@ -550,4 +551,58 @@ test("index CAS exhausted: no finding is lost, the next tick only duplicates it,
   await tick(worker, env, T0 + 45 * MIN);
   const added = recordedKeys(bucket).slice(before.length);
   assert.ok(added.length > 0 && added.every((k) => !before.includes(k)), "once the index is writable, dedup resumes: only genuinely new keys are recorded");
+});
+
+/* ------------------------------------------------------------------ round 6 */
+test("a recurring condition on a later day is a new incident: corrupt queue Monday, fixed, corrupt again Tuesday", async () => {
+  const worker = await loadWorker();
+  const MON = Date.parse("2026-10-26T12:00:00Z");
+  const good = { schema: "golfprice.job_queue.v1", jobs: [] };
+  const bucket = queueWith([], MON);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  bucket.store.set("jobs/queue.json", { body: "{broken", v: 1 });
+  await tick(worker, env, MON);
+  bucket.store.set("jobs/queue.json", { body: JSON.stringify(good), v: 2 });
+  await tick(worker, env, MON + 3 * 3_600_000);
+  bucket.store.set("jobs/queue.json", { body: "{broken again", v: 3 });
+  const TUE = MON + 24 * 3_600_000;
+  bucket.store.set("jobs/heartbeat/mckinley_home.json", { body: "nope", v: 9 });
+  await tick(worker, env, TUE);
+  const keys = recordedKeys(bucket);
+  assert.ok(keys.includes("queue-unreadable-2026-10-26"));
+  assert.ok(keys.includes("queue-unreadable-2026-10-27"), "the Tuesday recurrence is recorded");
+  assert.ok(keys.includes("heartbeat-unreadable-mckinley_home-2026-10-27"));
+  await tick(worker, env, TUE + 15 * MIN);
+  assert.equal(recordedKeys(bucket).filter((k) => k === "queue-unreadable-2026-10-27").length, 1, "but still once per day");
+});
+
+test("a corrupt today index is not replaced with only this tick's keys: the batch is written, the index is left alone, duplicates only", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const jobs = manyFailed(4, T0);
+  const bucket = queueWith(jobs, T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  bucket.store.set("ops/shadow/index/2026-10-14.json", { body: "corrupt{", v: 1 });
+  await tick(worker, env, T0);
+  assert.equal(bucket.store.get("ops/shadow/index/2026-10-14.json").body, "corrupt{");
+  assert.equal(bucket.puts.includes("ops/shadow/index/2026-10-14.json"), false);
+  assert.equal(batchKeys(bucket).length, 1);
+  for (const j of jobs) assert.ok(recordedKeys(bucket).includes(`job-failed-${j.id}`));
+  assert.ok(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).degraded.includes("index_unreadable:2026-10-14"));
+  await tick(worker, env, T0 + 15 * MIN);
+  assert.equal(batchKeys(bucket).length, 2, "duplicates, never loss");
+});
+
+test("day boundary: a finding recorded on day D is not re-recorded when re-detected on D+2 (three-day index window)", async () => {
+  const worker = await loadWorker();
+  const D = Date.parse("2026-10-12T23:50:00Z");
+  const job = { id: "j-20261012T230000-dddddd", type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-12T23:00:00Z", verified: true };
+  const bucket = queueWith([job], D);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  await tick(worker, env, D);
+  const D2 = Date.parse("2026-10-14T12:00:00Z"); // job is 37 h old: still scanned; D's index is two days back
+  bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(D2 - MIN) }), v: 5 });
+  bucket.store.set("jobs/heartbeat/mckinley_home.json", { body: JSON.stringify({ machine: "mckinley_home", at: iso(D2 - MIN) }), v: 5 });
+  await tick(worker, env, D2);
+  assert.equal(recordedKeys(bucket).filter((k) => k === `job-failed-${job.id}`).length, 1);
 });
