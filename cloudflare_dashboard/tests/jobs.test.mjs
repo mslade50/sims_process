@@ -367,3 +367,17 @@ test("GET /api/jobs: a job with no status object is queued; an empty queue and a
   assert.equal(listed.jobs[0].id, "j-c029", "newest first");
   assert.ok(listed.jobs.every((j) => j.state === "queued"));
 });
+
+test("GET /api/jobs reports roles and flags an invalid jobs/roles.json instead of silently looking like no file", async () => {
+  const worker = await loadWorker();
+  const get = async (roles) => {
+    const bucket = fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] }, ...(roles === undefined ? {} : { "jobs/roles.json": roles }) });
+    return (await call(worker, bucket, "/api/jobs")).json();
+  };
+  const none = await get(undefined);
+  assert.deepEqual([none.roles, none.roles_invalid], [null, false]);
+  const ok = await get({ primary: "mckinley_home", backup: "desktop-2ki41v6" });
+  assert.deepEqual([ok.roles, ok.roles_invalid], [{ primary: "mckinley_home", backup: "desktop-2ki41v6" }, false]);
+  const bad = await get({ primary: "mckinley_home", backup: "typo" });
+  assert.deepEqual([bad.roles, bad.roles_invalid], [null, true]);
+});

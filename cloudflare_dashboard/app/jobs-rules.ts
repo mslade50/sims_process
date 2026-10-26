@@ -36,6 +36,9 @@ export function parseRoles(value: unknown): Roles | null {
   return { primary, backup };
 }
 
+/** True when jobs/roles.json holds something (not null/absent) that parseRoles rejects, e.g. a typo in a machine name. */
+export const rolesInvalid = (value: unknown): boolean => value !== null && value !== undefined && parseRoles(value) === null;
+
 /** MACHINES with the roles from jobs/roles.json applied. Null roles = the constants. */
 export function machinesWithRoles(roles: Roles | null | undefined): MachineSpec[] {
   if (!roles) return MACHINES;

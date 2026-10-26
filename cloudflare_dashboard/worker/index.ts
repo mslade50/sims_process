@@ -73,7 +73,8 @@ const worker = {
     ctx.waitUntil(
       runShadow(env, controller.scheduledTime)
         .then((outcome) => {
-          if (outcome.enabled) console.log(`shadow: ${outcome.findings.length} finding(s), ${outcome.written} new incident object(s)${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
+          if (!outcome.enabled) console.log(`shadow: ${outcome.notes.join("; ") || "disabled"}`);
+          else console.log(`shadow: ${outcome.findings.length} finding(s), ${outcome.written} new incident object(s)${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
         })
         .catch((error: unknown) => {
           console.error(`shadow failed: ${error instanceof Error ? error.message : String(error)}`);

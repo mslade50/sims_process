@@ -8,6 +8,7 @@
  *
  * Every finding has a stable key, so writing it twice produces the same R2 object name (worker/shadow.ts writes it only if absent).
  */
+import { isTerminal } from "../app/jobs-rules.ts";
 import { P1_STALE_MS, beatAgeMs, failedJobs, type BeatLike, type JobLike } from "./alerts-rules.ts";
 
 export const SHADOW_PREFIX = "ops/shadow/";
@@ -20,7 +21,8 @@ export const MISSED_LOOKBACK_MS = 3 * 3_600_000;
 export const STUCK_RUNNING_MS = 3 * 3_600_000;
 const RATE_LIMIT_MS = 6 * 3_600_000; // same-type jobs still queued/claimed/running inside this window legitimately suppress a new enqueue
 
-export type ShadowJob = JobLike & { requested_by?: string };
+/** `finished_at` = when the job reached a terminal state (status finished_at, else updated_at, else cancelled_at), epoch ms; null if unknown. */
+export type ShadowJob = JobLike & { requested_by?: string; finished_at?: number | null };
 export type ShadowBeat = { machine: string; role: "primary" | "backup"; beat: BeatLike };
 export type Finding = {
   key: string;
@@ -82,8 +84,7 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
     });
   }
 
-  const liveStates = new Set(["queued", "claimed", "running"]);
-  const firstTick = Math.floor((now - MISSED_LOOKBACK_MS) / TICK_MS) * TICK_MS;
+    const firstTick = Math.floor((now - MISSED_LOOKBACK_MS) / TICK_MS) * TICK_MS;
   for (let tick = firstTick; tick + MISSED_GRACE_MS <= now; tick += TICK_MS) {
     for (const due of input.dueAt(tick)) {
       const made = input.created.some((j) => {
@@ -91,10 +92,12 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
         return j.type === due.type && at !== null && at >= tick - 60_000 && at <= tick + MISSED_GRACE_MS;
       });
       if (made) continue;
-      // A same-type job still live inside the rate-limit window blocks the enqueue by design; that is not a miss.
+      // A same-type job requested before the tick, under 6 h old and not yet terminal AT THE TICK blocks the enqueue by design (appendJob /
+      // rateLimitProblem); that is not a miss. Non-terminal now, or finished after the tick (or finish time unknown), means it was live then.
       const blocked = input.jobs.some((j) => {
         const at = parseMs(j.requested_at);
-        return j.type === due.type && liveStates.has(j.state) && at !== null && at < tick && tick - at < RATE_LIMIT_MS;
+        if (j.type !== due.type || at === null || at >= tick || tick - at >= RATE_LIMIT_MS) return false;
+        return !isTerminal(j.state) || j.finished_at == null || j.finished_at > tick;
       });
       if (blocked) continue;
       out.push({ key: `missed-${slug(due.type)}-${stamp(tick)}`, kind: "occurrence_missed", severity: "warn", date: day(tick), subject: due.type, detail: `no ${due.type} job created for the ${new Date(tick).toISOString()} slot` });

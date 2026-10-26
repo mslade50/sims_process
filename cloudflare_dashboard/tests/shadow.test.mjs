@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateShadow, buildSummary, MISSED_GRACE_MS } from "../worker/shadow-rules.ts";
 import { dueJobs } from "../worker/cron-rules.ts";
-import { MACHINES, machinesWithRoles, parseRoles } from "../app/jobs-rules.ts";
+import { MACHINES, machinesWithRoles, parseRoles, rolesInvalid } from "../app/jobs-rules.ts";
 
 const MIN = 60_000;
 const NOW = Date.parse("2026-10-07T16:07:00Z"); // Wed 12:07 EDT
@@ -81,12 +81,17 @@ function fakeBucket(initial = {}) {
   return {
     store,
     puts: [],
-    get: async (key) => {
+    lists: [],
+    failGet: new Set(),
+    failPut: new Set(),
+    get: async function (key) {
+      if (this.failGet.has(key)) throw new Error(`simulated R2 failure for ${key}`);
       const o = store.get(key);
       return o ? { key, etag: `e${o.v}`, text: async () => o.body } : null;
     },
     async put(key, body, options = {}) {
       this.puts.push(key);
+      if (this.failPut.has(key)) return null;
       const existing = store.get(key);
       const cond = options.onlyIf;
       if (cond?.etagMatches && (!existing || `e${existing.v}` !== cond.etagMatches)) return null;
@@ -94,7 +99,10 @@ function fakeBucket(initial = {}) {
       store.set(key, { body: String(body), v: (existing?.v ?? 0) + 1 });
       return { key, etag: `e${store.get(key).v}` };
     },
-    list: async () => ({ objects: [], truncated: false }),
+    async list(options = {}) {
+      this.lists.push(options.prefix);
+      return { objects: [...store.keys()].filter((k) => k.startsWith(options.prefix ?? "")).map((key) => ({ key })), truncated: false };
+    },
   };
 }
 
@@ -199,4 +207,114 @@ test("P1 uses jobs/roles.json: swapping primary/backup changes which heartbeat m
   } finally {
     globalThis.fetch = saved;
   }
+});
+
+/* ------------------------------------------------------------------ review round 1 regressions */
+test("rules: a blocker is judged at the tick, not now (finished between the tick and the evaluation still blocked it)", () => {
+  const slot = Date.parse("2026-10-07T15:00:00Z");
+  const dueAt = (ms) => (ms === slot ? [{ type: "watch" }] : []);
+  const base = { now: slot + 15 * MIN, created: [], beats: [], dueAt };
+  const blocker = (over) => ({ id: "j-b", type: "watch", requested_at: iso(slot - 5 * MIN), state: "done", requested_by: "cron", ...over });
+  assert.deepEqual(evaluateShadow({ ...base, jobs: [blocker({ finished_at: slot + 5 * MIN })] }), [], "finished after the tick: it was running at the tick");
+  assert.equal(evaluateShadow({ ...base, jobs: [blocker({ finished_at: slot - MIN })] }).length, 1, "finished before the tick: no excuse");
+  assert.deepEqual(evaluateShadow({ ...base, jobs: [blocker({ finished_at: null })] }), [], "unknown finish time is not turned into an incident");
+  for (const state of ["queued", "claimed", "running"]) assert.deepEqual(evaluateShadow({ ...base, jobs: [blocker({ state, finished_at: null })] }), [], state);
+  assert.equal(evaluateShadow({ ...base, jobs: [blocker({ state: "failed", finished_at: slot - MIN })] }).filter((f) => f.kind === "occurrence_missed").length, 1, "a job finished before the tick blocks nothing");
+  assert.equal(evaluateShadow({ ...base, jobs: [blocker({ state: "running", requested_at: iso(slot - 7 * 3_600_000) })] }).filter((f) => f.kind === "occurrence_missed").length, 1, "older than 6 h no longer blocks");
+});
+
+test("rules: DST fall-back repeats the 01:00 ET slot (Nov 1 2026) and both occurrences are expected separately", () => {
+  const now = Date.parse("2026-11-01T06:10:00Z"); // 01:10 EST, second pass through 01:00 ET
+  const f = evaluateShadow({ now, jobs: [], created: [], beats: [], dueAt: dueJobs }).filter((x) => x.subject === "after_round");
+  assert.deepEqual(f.map((x) => x.key).sort(), ["missed-after_round-20261101T050000Z", "missed-after_round-20261101T060000Z"]);
+  const covered = evaluateShadow({ now, jobs: [], created: [{ type: "after_round", requested_at: "2026-11-01T05:00:20Z" }], beats: [], dueAt: dueJobs }).filter((x) => x.subject === "after_round");
+  assert.deepEqual(covered.map((x) => x.key), ["missed-after_round-20261101T060000Z"], "the first pass does not cover the second");
+});
+
+test("observer selects records independent of the Run page limits: an old failure survives 30 later cron jobs", async () => {
+  const worker = await loadWorker();
+  const old = { id: "j-20261007T020000-oldfail", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: iso(NOW - 14 * 60 * MIN), verified: true };
+  const cron = Array.from({ length: 30 }, (_, i) => ({ id: `j-20261007T1${String(i).padStart(5, "0")}-c${i}`, type: "odds_reprice", params: {}, requested_by: "cron", requested_at: iso(NOW - (300 - i * 5) * MIN), verified: true }));
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [old, ...cron] },
+    [`jobs/status/${old.id}.json`]: { id: old.id, state: "failed" },
+    ...Object.fromEntries(cron.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "done", finished_at: iso(Date.parse(j.requested_at) + MIN) }])),
+    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(NOW - MIN) },
+    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(NOW - MIN) },
+  });
+  await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.ok(bucket.store.has(`ops/shadow/incidents/2026-10-07/job-failed-${old.id}.json`));
+});
+
+test("summary.json is etag-guarded: a newer summary is not replaced, and a lost race writes nothing", async () => {
+  const worker = await loadWorker();
+  const newer = { schema: "golf_ops.shadow.v1", updated_at: iso(NOW + 5 * MIN), open: 99 };
+  const a = seeded();
+  a.store.set("ops/shadow/summary.json", { body: JSON.stringify(newer), v: 1 });
+  await tick(worker, { DASHBOARD_DATA: a, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.equal(JSON.parse(a.store.get("ops/shadow/summary.json").body).open, 99);
+  assert.equal(a.puts.includes("ops/shadow/summary.json"), false);
+  const b = seeded();
+  b.failPut.add("ops/shadow/summary.json"); // the conditional PUT reports a lost race
+  await tick(worker, { DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.equal(b.store.has("ops/shadow/summary.json"), false);
+  const c = seeded();
+  await tick(worker, { DASHBOARD_DATA: c, OPS_SHADOW_ENABLED: "1" }, NOW);
+  const first = JSON.parse(c.store.get("ops/shadow/summary.json").body).updated_at;
+  await tick(worker, { DASHBOARD_DATA: c, OPS_SHADOW_ENABLED: "1" }, NOW - 5 * MIN); // an older overlapping run finishing late
+  assert.equal(JSON.parse(c.store.get("ops/shadow/summary.json").body).updated_at, first);
+});
+
+test("R2 read errors are not absence: a failed queue GET skips the tick; a failed status GET omits only that job", async () => {
+  const worker = await loadWorker();
+  const q = seeded();
+  q.failGet.add("jobs/queue.json");
+  await tick(worker, { DASHBOARD_DATA: q, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.equal(q.puts.some((k) => k.startsWith("ops/")), false, "nothing written, no false occurrence_missed");
+  const s = seeded();
+  s.failGet.add(`jobs/status/${failedJob.id}.json`);
+  await tick(worker, { DASHBOARD_DATA: s, OPS_SHADOW_ENABLED: "1" }, NOW);
+  assert.equal([...s.store.keys()].some((k) => k.includes("job-failed-") || k.includes("job-stuck-")), false, "the unreadable job yields no finding");
+  assert.equal([...s.store.keys()].some((k) => k.includes("missed-tuesday-")), false, "and no missed slot for its type");
+});
+
+test("known incidents are listed, not re-PUT; new findings per tick are capped with a note", async () => {
+  const worker = await loadWorker();
+  const bucket = seeded();
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  await tick(worker, env, NOW);
+  assert.ok(bucket.puts.filter((k) => k.startsWith("ops/shadow/incidents/")).length >= 1 && bucket.lists.length >= 1);
+  bucket.puts.length = 0;
+  await tick(worker, env, NOW + 2 * MIN);
+  assert.deepEqual(bucket.puts.filter((k) => k.startsWith("ops/shadow/incidents/")), [], "second tick PUTs no known incident");
+  const lines = [];
+  const log = console.log;
+  console.log = (...a) => lines.push(a.join(" "));
+  try {
+    const empty = fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] } });
+    await tick(worker, { DASHBOARD_DATA: empty, OPS_SHADOW_ENABLED: "1" }, Date.parse("2026-10-14T16:07:00Z"));
+    assert.ok(empty.puts.filter((k) => k.startsWith("ops/shadow/incidents/")).length <= 25);
+  } finally {
+    console.log = log;
+  }
+});
+
+test("disabled shadow logs once per tick; invalid roles are reported by the shadow and alerts logs", async () => {
+  const worker = await loadWorker();
+  const lines = [];
+  const log = console.log;
+  console.log = (...a) => lines.push(a.join(" "));
+  try {
+    await tick(worker, { DASHBOARD_DATA: seeded() }, NOW);
+    assert.equal(lines.filter((l) => l.startsWith("shadow:") && l.includes("disabled")).length, 1);
+    lines.length = 0;
+    const bucket = seeded();
+    bucket.store.set("jobs/roles.json", { body: JSON.stringify({ primary: "desktop-2ki41v6", backup: "mckinley-home" }), v: 1 });
+    await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
+    assert.ok(lines.some((l) => l.startsWith("shadow:") && l.includes("roles_invalid")));
+    assert.ok(lines.some((l) => l.startsWith("alerts:") && l.includes("roles_invalid")));
+  } finally {
+    console.log = log;
+  }
+  assert.deepEqual([rolesInvalid(null), rolesInvalid(undefined), rolesInvalid({ primary: "desktop-2ki41v6", backup: "mckinley_home" }), rolesInvalid({ primary: "x", backup: "y" }), rolesInvalid("junk")], [false, false, false, true, true]);
 });
