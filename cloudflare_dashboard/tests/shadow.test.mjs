@@ -87,7 +87,9 @@ function fakeBucket(initial = {}) {
     get: async function (key) {
       if (this.failGet.has(key)) throw new Error(`simulated R2 failure for ${key}`);
       const o = store.get(key);
-      return o ? { key, etag: `e${o.v}`, text: async () => o.body } : null;
+      const result = o ? { key, etag: `e${o.v}`, text: async () => o.body } : null;
+      if (this.onGet) await this.onGet(key);
+      return result;
     },
     async put(key, body, options = {}) {
       this.puts.push(key);
@@ -98,6 +100,9 @@ function fakeBucket(initial = {}) {
       if (cond?.etagDoesNotMatch === "*" && existing) return null;
       store.set(key, { body: String(body), v: (existing?.v ?? 0) + 1 });
       return { key, etag: `e${store.get(key).v}` };
+    },
+    async delete(key) {
+      store.delete(key);
     },
     async list(options = {}) {
       this.lists.push(options.prefix);
@@ -497,4 +502,69 @@ test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue)
   ok.store.set("jobs/queue.json", { body: JSON.stringify({ schema: "golfprice.job_queue.v1", jobs: [] }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: ok, OPS_SHADOW_ENABLED: "1" }, NOW);
   assert.equal(ok.store.has("ops/shadow/incidents/2026-10-07/queue-unreadable.json"), false, "an empty jobs array is a valid queue");
+});
+
+/* ------------------------------------------------------------------ review round 4 regressions */
+function nearCutoffBucket(T0) {
+  const near = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T1210${String(i).padStart(2, "0")}-n${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
+  const recent = Array.from({ length: 40 }, (_, i) => ({ id: `j-20261014T1000${String(i).padStart(2, "0")}-r${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - 120 * MIN), verified: true }));
+  const jobs = [...near, ...recent];
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
+    ...Object.fromEntries(jobs.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
+    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T0 - MIN) },
+    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T0 - MIN) },
+  });
+  return { bucket, jobs };
+}
+const failedIncidents = (bucket) => [...bucket.store.keys()].filter((k) => k.includes("/job-failed-"));
+
+test("pending.json CAS conflict: an interleaved newer tick wins the race, the older tick merges and retries, nothing near the cutoff is lost", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const { bucket, jobs } = nearCutoffBucket(T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  let fired = false;
+  bucket.onGet = async (key) => {
+    if (key !== "ops/shadow/pending.json" || fired) return;
+    fired = true; // tick A has just read pending.json; tick B (later, with its own findings) now runs to completion and writes it first
+    await tick(worker, env, T0 + 15 * MIN);
+  };
+  await tick(worker, env, T0);
+  assert.equal(fired, true);
+  assert.ok(bucket.puts.filter((k) => k === "ops/shadow/pending.json").length >= 3, "tick B wrote first, tick A lost its conditional PUT and retried");
+  for (let i = 2; i <= 9; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
+  assert.equal(failedIncidents(bucket).length, jobs.length, "every finding, including A's near-cutoff overflow, was written");
+  assert.equal([...bucket.store.keys()].some((k) => k.startsWith("ops/shadow/pending-overflow/")), false);
+});
+
+test("pending.json that cannot be updated falls back to a unique overflow object that the next tick drains and deletes", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const { bucket, jobs } = nearCutoffBucket(T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  bucket.failPut.add("ops/shadow/pending.json"); // every conditional update loses
+  await tick(worker, env, T0);
+  const overflow = () => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/pending-overflow/"));
+  assert.equal(overflow().length, 1);
+  assert.ok(JSON.parse(bucket.store.get(overflow()[0]).body).findings.length > 25);
+  bucket.failPut.delete("ops/shadow/pending.json");
+  for (let i = 1; i <= 9; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
+  assert.equal(failedIncidents(bucket).length, jobs.length);
+  assert.deepEqual(overflow(), [], "drained overflow is deleted");
+});
+
+test("invalid queue entries are dropped and reported; valid jobs, heartbeats and the summary still work", async () => {
+  const worker = await loadWorker();
+  const bucket = seeded();
+  const queue = { schema: "golfprice.job_queue.v1", jobs: [null, 5, "x", {}, { id: "j-1" }, failedJob] };
+  bucket.store.set("jobs/queue.json", { body: JSON.stringify(queue), v: 1 });
+  bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
+  await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
+  const keys = [...bucket.store.keys()];
+  assert.ok(keys.includes("ops/shadow/incidents/2026-10-07/queue-entry-invalid.json"));
+  assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "stale primary still reported");
+  assert.ok(keys.includes(`ops/shadow/incidents/2026-10-07/job-failed-${failedJob.id}.json`), "the valid job is still checked");
+  const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
+  assert.ok(summary.degraded.includes("queue_entry_invalid:5"));
 });

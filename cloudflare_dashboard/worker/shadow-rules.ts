@@ -28,7 +28,7 @@ export type ShadowJob = JobLike & { requested_by?: string; finished_at?: number 
 export type ShadowBeat = { machine: string; role: "primary" | "backup"; beat: BeatLike };
 export type Finding = {
   key: string;
-  kind: "job_failed" | "job_stuck" | "heartbeat_stale" | "occurrence_missed" | "status_unreadable" | "queue_unreadable" | "heartbeat_unreadable";
+  kind: "job_failed" | "job_stuck" | "heartbeat_stale" | "occurrence_missed" | "status_unreadable" | "queue_unreadable" | "queue_entry_invalid" | "heartbeat_unreadable";
   severity: "high" | "warn";
   /** UTC yyyy-mm-dd of the subject event; part of the R2 object path. */
   date: string;

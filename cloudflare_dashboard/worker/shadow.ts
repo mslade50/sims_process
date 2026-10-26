@@ -24,6 +24,9 @@ export const MONITOR_HORIZON_MS = 48 * 3_600_000; // covers the 3 h missed-slot 
 export const MAX_NEW_INCIDENTS_PER_TICK = 25;
 export const SHADOW_PENDING_KEY = "ops/shadow/pending.json";
 const MAX_PENDING = 500;
+const PENDING_RETRIES = 3;
+export const OVERFLOW_PREFIX = "ops/shadow/pending-overflow/";
+const validFindings = (value: unknown): Finding[] => (Array.isArray(value) ? (value as Finding[]).filter((f) => f && typeof f.key === "string" && typeof f.date === "string") : []);
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
 type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
@@ -84,8 +87,16 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     evaluate = false;
   } else if (queueRead.kind === "ok") {
     const queue = queueRead.value as { jobs?: unknown } | null;
-    if (queue && typeof queue === "object" && Array.isArray(queue.jobs)) records = queue.jobs as JobRecord[];
-    else evaluate = false; // valid JSON of the wrong shape is not an empty queue
+    if (queue && typeof queue === "object" && Array.isArray(queue.jobs)) {
+      // Entries that are not job records are dropped (and reported) so the valid jobs and the heartbeats are still checked.
+      const all = queue.jobs as unknown[];
+      records = all.filter((j): j is JobRecord => !!j && typeof j === "object" && typeof (j as JobRecord).id === "string" && typeof (j as JobRecord).type === "string" && typeof (j as JobRecord).requested_at === "string");
+      const bad = all.length - records.length;
+      if (bad > 0) {
+        degraded.push(`queue_entry_invalid:${bad}`);
+        extra.push({ key: "queue-entry-invalid", kind: "queue_entry_invalid", severity: "warn", date: utcDay(now), subject: QUEUE_KEY, detail: `${bad} entr${bad === 1 ? "y" : "ies"} in jobs/queue.json are not job records and were skipped`, expires_at: now + MISSED_LOOKBACK_MS });
+      }
+    } else evaluate = false; // valid JSON of the wrong shape is not an empty queue
   }
   if (!evaluate) {
     degraded.push("queue_unreadable");
@@ -152,13 +163,27 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   // Create-only: list each date prefix once and PUT just the keys that are not there yet, bounded per tick. Findings that expire soonest
   // (missed slots about to leave the lookback) go first, so the cap can delay a durable finding but never lose a perishable one.
   const pendingRead = await readObject(bucket, SHADOW_PENDING_KEY);
-  const carried = pendingRead.kind === "ok" && Array.isArray((pendingRead.value as { findings?: unknown })?.findings) ? ((pendingRead.value as { findings: Finding[] }).findings.filter((f) => f && typeof f.key === "string" && typeof f.date === "string")) : [];
+  const carried = pendingRead.kind === "ok" ? validFindings((pendingRead.value as { findings?: unknown })?.findings) : [];
   if (pendingRead.kind === "read_error") {
     degraded.push("pending_read_error");
     outcome.notes.push("ops/shadow/pending.json could not be read; deferred findings not drained this tick");
   }
+  // Overflow objects hold findings a contended pending update could not store; they are merged here and removed once safely re-persisted.
+  const overflowKeys: string[] = [];
+  const overflowFindings: Finding[] = [];
+  try {
+    for (const key of await listKeys(bucket, OVERFLOW_PREFIX)) {
+      const read = await readObject(bucket, key);
+      if (read.kind === "ok") {
+        overflowKeys.push(key);
+        overflowFindings.push(...validFindings((read.value as { findings?: unknown })?.findings));
+      }
+    }
+  } catch {
+    outcome.notes.push("pending-overflow could not be listed; not drained this tick");
+  }
   const byId = new Map<string, Finding>();
-  for (const f of [...carried, ...outcome.findings]) byId.set(`${f.date}/${f.key}`, f);
+  for (const f of [...carried, ...overflowFindings, ...outcome.findings]) byId.set(`${f.date}/${f.key}`, f);
   const candidates = [...byId.values()];
   const known = new Set<string>();
   for (const date of new Set(candidates.map((f) => f.date))) {
@@ -179,13 +204,51 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick (pending object)`);
     if (fresh.length - MAX_NEW_INCIDENTS_PER_TICK > MAX_PENDING) outcome.notes.push(`pending object full; ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK - MAX_PENDING} finding(s) not retained`);
   }
-  // Persist what was deferred (replace the version read; skip when unchanged or when it could not be read).
-  if (pendingRead.kind !== "read_error" && (deferred.length > 0 || carried.length > 0)) {
-    const put = await bucket.put(SHADOW_PENDING_KEY, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: deferred }, null, 1), {
-      httpMetadata: JSON_PUT,
-      onlyIf: pendingRead.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: pendingRead.etag },
-    });
-    if (put === null) outcome.notes.push("pending.json changed during this run (lost the race); deferred list not updated");
+  // Persist what was deferred. A lost etag race is retried after re-reading and merging (union by incident key, minus what is already written);
+  // if the retries run out, or pending.json cannot be read, the findings go to a unique create-only overflow object instead of being dropped.
+  let saved = true;
+  if (deferred.length > 0 || carried.length > 0) {
+    saved = false;
+    let current: Read = pendingRead;
+    let toSave = deferred;
+    for (let attempt = 0; attempt < PENDING_RETRIES && current.kind !== "read_error"; attempt += 1) {
+      const put = await bucket.put(SHADOW_PENDING_KEY, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: toSave }, null, 1), {
+        httpMetadata: JSON_PUT,
+        onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag },
+      });
+      if (put !== null) {
+        saved = true;
+        break;
+      }
+      current = await readObject(bucket, SHADOW_PENDING_KEY);
+      if (current.kind === "read_error") break;
+      const merged = new Map<string, Finding>();
+      for (const f of [...(current.kind === "ok" ? validFindings((current.value as { findings?: unknown })?.findings) : []), ...toSave]) merged.set(`${f.date}/${f.key}`, f);
+      const written = new Set<string>();
+      for (const date of new Set([...merged.values()].map((f) => f.date))) for (const key of await listKeys(bucket, `${SHADOW_PREFIX}incidents/${date}/`)) written.add(key);
+      toSave = [...merged.values()]
+        .filter((f) => !written.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`))
+        .sort((a, b) => (a.expires_at ?? Number.POSITIVE_INFINITY) - (b.expires_at ?? Number.POSITIVE_INFINITY))
+        .slice(0, MAX_PENDING);
+    }
+    if (!saved && toSave.length > 0) {
+      const name = `${OVERFLOW_PREFIX}${new Date(now).toISOString().replace(/[-:.]/g, "")}-${Math.random().toString(36).slice(2, 10)}.json`;
+      const put = await bucket.put(name, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: toSave }, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
+      saved = put !== null;
+      outcome.notes.push(saved ? "pending.json contended or unreadable; deferred findings stored in a pending-overflow object" : "deferred findings could not be stored");
+      degraded.push("pending_overflow");
+    } else if (!saved) {
+      saved = true; // nothing outstanding after the merge: everything was already written
+    }
+  }
+  if (saved) {
+    for (const key of overflowKeys) {
+      try {
+        await bucket.delete(key);
+      } catch {
+        outcome.notes.push(`could not remove drained ${key}`);
+      }
+    }
   }
 
   // Rolling summary: replace only the version we read (a corrupt one included), and never an object that is already newer than this run.
