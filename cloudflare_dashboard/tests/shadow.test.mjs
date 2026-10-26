@@ -606,3 +606,24 @@ test("day boundary: a finding recorded on day D is not re-recorded when re-detec
   await tick(worker, env, D2);
   assert.equal(recordedKeys(bucket).filter((k) => k === `job-failed-${job.id}`).length, 1);
 });
+
+test("index retry path: valid at first read, the CAS loses, the re-read is corrupt -> no further PUT, object preserved, index_unreadable reported", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const jobs = manyFailed(3, T0);
+  const bucket = queueWith(jobs, T0);
+  bucket.store.set("ops/shadow/index/2026-10-14.json", { body: JSON.stringify({ keys: {} }), v: 1 });
+  let fired = false;
+  bucket.onGet = async (key) => {
+    if (key !== "ops/shadow/index/2026-10-14.json" || fired) return;
+    fired = true; // after tick A read a valid index: another writer replaces it with garbage (new etag)
+    bucket.store.set(key, { body: "corrupt{", v: 7 });
+  };
+  await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, T0);
+  assert.equal(fired, true);
+  assert.equal(bucket.puts.filter((k) => k === "ops/shadow/index/2026-10-14.json").length, 1, "one lost PUT, then no overwrite of the corrupt object");
+  assert.equal(bucket.store.get("ops/shadow/index/2026-10-14.json").body, "corrupt{");
+  assert.equal(batchKeys(bucket).length, 1);
+  for (const j of jobs) assert.ok(recordedKeys(bucket).includes(`job-failed-${j.id}`));
+  assert.ok(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).degraded.includes("index_unreadable:2026-10-14"));
+});

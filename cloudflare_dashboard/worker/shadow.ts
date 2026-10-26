@@ -185,7 +185,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       let current: Read = indexes[0];
       // A corrupt index is never replaced with only this tick's keys (that would forget everything else it recorded): skip the update, accept duplicates.
       indexConflict = current.kind !== "parse_error";
-      for (let attempt = 0; attempt < INDEX_ATTEMPTS && indexConflict && current.kind !== "read_error"; attempt += 1) {
+      for (let attempt = 0; attempt < INDEX_ATTEMPTS && indexConflict && current.kind !== "read_error" && current.kind !== "parse_error"; attempt += 1) {
         const merged = { schema: SHADOW_SCHEMA, keys: { ...mine, ...keysOf(current) } };
         const put = await bucket.put(`${INDEX_PREFIX}${today}.json`, JSON.stringify(merged), { httpMetadata: JSON_PUT, onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag } });
         if (put !== null) {
@@ -194,6 +194,8 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
         }
         if (attempt < INDEX_ATTEMPTS - 1) current = await readObject(bucket, `${INDEX_PREFIX}${today}.json`);
       }
+      // A re-read can turn up a corrupt object (another writer, or damage): preserve it and say so.
+      if (current.kind === "parse_error" && !degraded.includes(`index_unreadable:${today}`)) degraded.push(`index_unreadable:${today}`);
       if (indexConflict) {
         degraded.push("index_conflict");
         outcome.notes.push("index_conflict: today's index could not be updated; the next tick may record the same incident_key again (consumers dedupe by incident_key)");
