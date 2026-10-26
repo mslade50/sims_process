@@ -2,6 +2,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { runAlerts } from "./alerts";
+import { runShadow } from "./shadow";
 import { handleScheduled } from "./cron";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
@@ -21,6 +22,10 @@ interface Env {
   /** Optional Worker secrets (owner action). While either is absent the alert tick only logs what it would send. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  /** Kill switch for the legacy alerts above: must be exactly "1" (plus both secrets) to send. Unset = dark. */
+  LEGACY_ALERTS_ENABLED?: string;
+  /** "1" enables the passive shadow observer (worker/shadow.ts): R2 writes under ops/shadow/ only, sends nothing. Unset = off. */
+  OPS_SHADOW_ENABLED?: string;
   DB: D1Database;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -62,6 +67,16 @@ const worker = {
         })
         .catch((error: unknown) => {
           console.error(`alerts failed: ${error instanceof Error ? error.message : String(error)}`);
+        }),
+    );
+    // Passive ops shadow observer (worker/shadow.ts). OFF unless OPS_SHADOW_ENABLED === "1"; reads R2, writes ops/shadow/** only, sends nothing.
+    ctx.waitUntil(
+      runShadow(env, controller.scheduledTime)
+        .then((outcome) => {
+          if (outcome.enabled) console.log(`shadow: ${outcome.findings.length} finding(s), ${outcome.written} new incident object(s)${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
+        })
+        .catch((error: unknown) => {
+          console.error(`shadow failed: ${error instanceof Error ? error.message : String(error)}`);
         }),
     );
     // Daily retention of old job status/log/claim objects (worker/retention.ts). OFF unless jobs/retention/config.json exists; independent of the two above.

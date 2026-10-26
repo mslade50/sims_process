@@ -5,12 +5,12 @@ import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
 import { etTime } from "./lib";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { suggestedGroup } from "./shell-rules";
-import { GROUPS, JOB_TYPES, MACHINES, isTerminal, machineLabel, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus } from "./jobs-rules";
+import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
 type Heartbeat = MachineBeat & { version?: string };
 type Target = "auto" | string;
-type JobsResponse = { ok: boolean; now: string; jobs: JobRow[]; heartbeats: Heartbeat[]; error?: string };
+type JobsResponse = { ok: boolean; now: string; jobs: JobRow[]; heartbeats: Heartbeat[]; roles?: Roles | null; error?: string };
 type ApiResult<T> = { ok: boolean; status: number; body: T & { error?: string; problems?: string[] } };
 
 async function api<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
@@ -121,7 +121,7 @@ export function RunView() {
   const [target, setTarget] = useState<Target>("auto");
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string; problems?: string[] } | null>(null);
 
-  const machines: MachineStatus[] = MACHINES.map((spec) => machineStatus(spec, data?.heartbeats, now));
+  const machines: MachineStatus[] = machinesWithRoles(data?.roles).map((spec) => machineStatus(spec, data?.heartbeats, now));
   const targetOffline = target !== "auto" && machines.find((m) => m.name === target)?.status === "offline";
 
   const reload = useCallback(async () => {

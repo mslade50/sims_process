@@ -13,6 +13,8 @@
 import { accessIdentity, type AccessEnv } from "./access";
 import {
   HEARTBEAT_PREFIX,
+  ROLES_KEY,
+  parseRoles,
   JOB_ID_RE,
   LOG_PREFIX,
   MAX_AGE_MS,
@@ -127,6 +129,7 @@ export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.n
         now: isoSeconds(now),
         jobs: recent.map((job, index) => ({ ...job, status: statuses[index], state: effectiveState(job, statuses[index]) })),
         heartbeats,
+        roles: parseRoles((await readJson(bucket, ROLES_KEY).catch(() => null))?.value),
       });
     }
 

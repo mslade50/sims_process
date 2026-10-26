@@ -23,6 +23,25 @@ export const MACHINES: MachineSpec[] = [
 export const isKnownMachine = (name: unknown): name is string => typeof name === "string" && MACHINES.some((m) => m.name === name);
 export const machineLabel = (name: string | undefined | null): string => MACHINES.find((m) => m.name === name)?.label ?? name ?? "";
 
+/** Optional R2 override of which machine is primary/backup (owner/ops action; the constants above are the fallback). */
+export const ROLES_KEY = "jobs/roles.json";
+export type Roles = { primary: string; backup: string };
+
+/** Valid only when both names are allow-listed machines and they differ; anything else returns null so the caller keeps the constants. */
+export function parseRoles(value: unknown): Roles | null {
+  if (!value || typeof value !== "object") return null;
+  const { primary, backup } = value as Partial<Roles>;
+  if (typeof primary !== "string" || typeof backup !== "string" || primary === backup) return null;
+  if (!isKnownMachine(primary) || !isKnownMachine(backup)) return null;
+  return { primary, backup };
+}
+
+/** MACHINES with the roles from jobs/roles.json applied. Null roles = the constants. */
+export function machinesWithRoles(roles: Roles | null | undefined): MachineSpec[] {
+  if (!roles) return MACHINES;
+  return MACHINES.map((m) => ({ ...m, role: m.name === roles.primary ? "primary" : m.name === roles.backup ? "backup" : m.role }));
+}
+
 export type MachineBeat = { machine?: string; at?: string; state?: string; job_id?: string | null; commit?: string | null; code?: string | null; role?: string | null };
 export type MachineStatus = { name: string; label: string; role: "primary" | "backup"; status: "offline" | "idle" | "running"; lastSeen: string | null; jobId: string | null; commit: string | null };
 

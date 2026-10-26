@@ -99,7 +99,8 @@ async function tick(worker, env, scheduledTime) {
   await Promise.all(pending);
 }
 
-const SECRETS = { TELEGRAM_BOT_TOKEN: "test-token-not-real", TELEGRAM_CHAT_ID: "123" };
+const SECRETS = { TELEGRAM_BOT_TOKEN: "test-token-not-real", TELEGRAM_CHAT_ID: "123", LEGACY_ALERTS_ENABLED: "1" };
+const SECRETS_ONLY = { TELEGRAM_BOT_TOKEN: "test-token-not-real", TELEGRAM_CHAT_ID: "123" };
 const heartbeat = (machine, at) => ({ machine, at: iso(at), state: "idle" });
 const outageBucket = (extra = {}) => fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] }, ...extra });
 const WED = Date.parse("2026-10-07T16:07:00Z"); // 12:07 ET: no fixed slot, only the watch window
@@ -116,6 +117,25 @@ test("E5 dark: with no Telegram secrets a dead primary is evaluated and logged, 
   await tick(worker, { DASHBOARD_DATA: bucket, TELEGRAM_CHAT_ID: "1" }, WED + 30 * MIN);
   assert.equal(telegram.length, 0);
   assert.equal(bucket.store.has("jobs/alerts/state.json"), false);
+});
+
+test("kill switch fails closed: secrets present with LEGACY_ALERTS_ENABLED unset (or not exactly \"1\") never reach api.telegram.org and write no state", async () => {
+  const worker = await loadWorker();
+  const bucket = outageBucket(); // dead primary: an alert is due
+  let t = WED;
+  for (const flag of [undefined, "", "0", "true", "yes", " 1", "1 "]) {
+    await tick(worker, { DASHBOARD_DATA: bucket, ...SECRETS_ONLY, ...(flag === undefined ? {} : { LEGACY_ALERTS_ENABLED: flag }) }, t);
+    t += 15 * MIN;
+  }
+  assert.equal(telegram.length, 0, "no fetch to api.telegram.org");
+  assert.equal(bucket.store.has("jobs/alerts/state.json"), false);
+  // Var "1" without the secrets is still dark.
+  await tick(worker, { DASHBOARD_DATA: bucket, LEGACY_ALERTS_ENABLED: "1" }, t);
+  assert.equal(telegram.length, 0);
+  // Var "1" plus both secrets sends (existing behavior).
+  await tick(worker, { DASHBOARD_DATA: bucket, ...SECRETS_ONLY, LEGACY_ALERTS_ENABLED: "1" }, t + 15 * MIN);
+  assert.equal(telegram.length, 1);
+  assert.match(telegram[0].body.text, /Golf runner ALERT/);
 });
 
 test("E5 dark: a failed job and the 07:30 digest are also silent without secrets", async () => {
