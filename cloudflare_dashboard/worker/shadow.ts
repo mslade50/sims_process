@@ -1,16 +1,24 @@
 /**
  * Passive shadow observer on the 15-minute cron (golf_ops docs/OBSERVABILITY.md section 8). Sends NOTHING: no Telegram, no email, no repair, no
  * network call at all. It only reads R2 (ops/registry.json if present, jobs/queue.json, jobs/status/*, jobs/heartbeat/*, jobs/roles.json) and
- * writes ops/shadow/incidents/<yyyy-mm-dd>/<incident_key>.json (create-only, listed first so a known key costs no PUT) plus a rolling,
- * etag-guarded ops/shadow/summary.json that an older overlapping run can never overwrite.
+ * writes under ops/shadow/ only.
+ *
+ * Storage model (no cap, no deletes, bounded R2 operations per tick whatever the finding volume):
+ *   - Every tick writes ALL findings it has not yet recorded in ONE create-only object ops/shadow/batches/<yyyy-mm-dd>/<tickISO>-<rand>.json
+ *     (a single PUT). Findings are durable in the tick that detects them, and the observer never deletes anything.
+ *   - Dedup uses a per-day index ops/shadow/index/<yyyy-mm-dd>.json = { keys: { <incident_key>: <batch key> } }. A tick reads the indexes of
+ *     today and the two previous UTC days (a job finding can be re-detected for 48 h) with 3 GETs, then adds its new keys to today's index by
+ *     etag compare-and-swap (union merge, up to 3 attempts). The batch is written BEFORE the index, so the index never names a missing batch.
+ *   - If the index update loses all attempts, nothing is lost: the next tick may record the same incident_key again in a new batch.
+ *     CONSUMERS MUST DEDUPE BY incident_key (the earliest first_seen wins). summary.json reports `index_conflict` when that happened.
+ *   - ops/shadow/summary.json is an etag-guarded rolling summary (never replaced by an older run), with the count of new findings this tick.
  *
  * OFF unless the var OPS_SHADOW_ENABLED is exactly "1" (declared "0" in wrangler.jsonc, so enabling is a reviewed config change).
  * Reads are three-way: absent (null), unreadable content (JSON parse error or wrong shape: a finding is written) and an R2 failure (no
  * finding; the gap is noted as degraded coverage and, for a status object, its slot window stays suppressed). An R2 failure is never "absent".
- * Findings deferred by the per-tick write cap are kept in ops/shadow/pending.json and drained first next tick, even after their job left the scan.
  */
 import { dueJobs } from "./cron-rules.ts";
-import { MISSED_LOOKBACK_MS, SHADOW_PREFIX, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
+import { MISSED_LOOKBACK_MS, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
 import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, loadRoles, machinesWithRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
 
 export interface ShadowEnv {
@@ -21,12 +29,10 @@ export interface ShadowEnv {
 export type ShadowOutcome = { enabled: boolean; findings: Finding[]; written: number; notes: string[] };
 
 export const MONITOR_HORIZON_MS = 48 * 3_600_000; // covers the 3 h missed-slot window plus the 6 h rate-limit lookback, and the failed-job window
-export const MAX_NEW_INCIDENTS_PER_TICK = 25;
-export const SHADOW_PENDING_KEY = "ops/shadow/pending.json";
-const MAX_PENDING = 500;
-const PENDING_RETRIES = 3;
-export const OVERFLOW_PREFIX = "ops/shadow/pending-overflow/";
-const validFindings = (value: unknown): Finding[] => (Array.isArray(value) ? (value as Finding[]).filter((f) => f && typeof f.key === "string" && typeof f.date === "string") : []);
+export const INDEX_PREFIX = "ops/shadow/index/";
+export const BATCH_PREFIX = "ops/shadow/batches/";
+const INDEX_ATTEMPTS = 3;
+const INDEX_DAYS = 3;
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
 type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
@@ -46,17 +52,6 @@ async function readObject(bucket: R2Bucket, key: string): Promise<Read> {
   } catch {
     return { kind: "parse_error", etag: object.etag };
   }
-}
-
-async function listKeys(bucket: R2Bucket, prefix: string): Promise<Set<string>> {
-  const keys = new Set<string>();
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({ prefix, cursor, limit: 1000 });
-    for (const o of page.objects) keys.add(o.key);
-    cursor = page.truncated ? (page as { cursor?: string }).cursor : undefined;
-  } while (cursor);
-  return keys;
 }
 
 const finishedAt = (job: JobRecord, status: JobStatus | null): number | null => parseUtc(status?.finished_at) ?? parseUtc(status?.updated_at) ?? parseUtc(job.cancelled_at) ?? null;
@@ -160,99 +155,52 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     ),
   ];
 
-  // Create-only: list each date prefix once and PUT just the keys that are not there yet, bounded per tick. Findings that expire soonest
-  // (missed slots about to leave the lookback) go first, so the cap can delay a durable finding but never lose a perishable one.
-  const pendingRead = await readObject(bucket, SHADOW_PENDING_KEY);
-  const carried = pendingRead.kind === "ok" ? validFindings((pendingRead.value as { findings?: unknown })?.findings) : [];
-  if (pendingRead.kind === "read_error") {
-    degraded.push("pending_read_error");
-    outcome.notes.push("ops/shadow/pending.json could not be read; deferred findings not drained this tick");
-  }
-  // Overflow objects hold findings a contended pending update could not store; they are merged here and removed once safely re-persisted.
-  const overflowKeys: string[] = [];
-  const overflowFindings: Finding[] = [];
-  try {
-    for (const key of await listKeys(bucket, OVERFLOW_PREFIX)) {
-      const read = await readObject(bucket, key);
-      if (read.kind === "ok") {
-        overflowKeys.push(key);
-        overflowFindings.push(...validFindings((read.value as { findings?: unknown })?.findings));
+  // One batch object with every finding not yet in the indexes of the last three UTC days, then today's index updated by CAS.
+  const today = utcDay(now);
+  const days = Array.from({ length: INDEX_DAYS }, (_, n) => utcDay(now - n * 86_400_000));
+  const indexes = await Promise.all(days.map((d) => readObject(bucket, `${INDEX_PREFIX}${d}.json`)));
+  const recorded = new Set<string>();
+  const keysOf = (read: Read): Record<string, string> => {
+    const keys = read.kind === "ok" ? (read.value as { keys?: unknown } | null)?.keys : null;
+    return keys && typeof keys === "object" && !Array.isArray(keys) ? (keys as Record<string, string>) : {};
+  };
+  indexes.forEach((read, n) => {
+    if (read.kind === "read_error") degraded.push(`index_read_error:${days[n]}`);
+    for (const key of Object.keys(keysOf(read))) recorded.add(key);
+  });
+  const fresh = outcome.findings.filter((f) => !recorded.has(f.key));
+  let batchKey: string | null = null;
+  let indexConflict = false;
+  if (fresh.length > 0) {
+    batchKey = `${BATCH_PREFIX}${today}/${new Date(now).toISOString().replace(/[-:.]/g, "")}-${Math.random().toString(36).slice(2, 10)}.json`;
+    const body = { schema: SHADOW_SCHEMA, tick: new Date(now).toISOString(), findings: fresh.map(({ expires_at: _expires, ...stored }) => ({ ...stored, first_seen: new Date(now).toISOString() })) };
+    const stored = await bucket.put(batchKey, JSON.stringify(body, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
+    if (stored === null) {
+      outcome.notes.push("batch object name collided; findings will be retried next tick");
+      batchKey = null;
+    } else {
+      outcome.written = fresh.length;
+      const mine: Record<string, string> = Object.fromEntries(fresh.map((f) => [f.key, batchKey as string]));
+      let current: Read = indexes[0];
+      indexConflict = true;
+      for (let attempt = 0; attempt < INDEX_ATTEMPTS && current.kind !== "read_error"; attempt += 1) {
+        const merged = { schema: SHADOW_SCHEMA, keys: { ...mine, ...keysOf(current) } };
+        const put = await bucket.put(`${INDEX_PREFIX}${today}.json`, JSON.stringify(merged), { httpMetadata: JSON_PUT, onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag } });
+        if (put !== null) {
+          indexConflict = false;
+          break;
+        }
+        current = await readObject(bucket, `${INDEX_PREFIX}${today}.json`);
       }
-    }
-  } catch {
-    outcome.notes.push("pending-overflow could not be listed; not drained this tick");
-  }
-  const byId = new Map<string, Finding>();
-  for (const f of [...carried, ...overflowFindings, ...outcome.findings]) byId.set(`${f.date}/${f.key}`, f);
-  const candidates = [...byId.values()];
-  const known = new Set<string>();
-  for (const date of new Set(candidates.map((f) => f.date))) {
-    for (const key of await listKeys(bucket, `${SHADOW_PREFIX}incidents/${date}/`)) known.add(key);
-  }
-  const fresh = candidates
-    .filter((f) => !known.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`))
-    .sort((a, b) => (a.expires_at ?? Number.POSITIVE_INFINITY) - (b.expires_at ?? Number.POSITIVE_INFINITY));
-  for (const finding of fresh.slice(0, MAX_NEW_INCIDENTS_PER_TICK)) {
-    const { expires_at: _expires, ...stored } = finding;
-    const body = { schema: SHADOW_SCHEMA, ...stored, first_seen: new Date(now).toISOString() };
-    const written = await bucket.put(`${SHADOW_PREFIX}incidents/${finding.date}/${finding.key}.json`, JSON.stringify(body, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
-    if (written !== null) outcome.written += 1;
-  }
-  const deferred = fresh.slice(MAX_NEW_INCIDENTS_PER_TICK, MAX_NEW_INCIDENTS_PER_TICK + MAX_PENDING);
-  if (fresh.length > MAX_NEW_INCIDENTS_PER_TICK) {
-    degraded.push(`write_capped:${fresh.length - MAX_NEW_INCIDENTS_PER_TICK}`);
-    outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick (pending object)`);
-    if (fresh.length - MAX_NEW_INCIDENTS_PER_TICK > MAX_PENDING) outcome.notes.push(`pending object full; ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK - MAX_PENDING} finding(s) not retained`);
-  }
-  // Persist what was deferred. A lost etag race is retried after re-reading and merging (union by incident key, minus what is already written);
-  // if the retries run out, or pending.json cannot be read, the findings go to a unique create-only overflow object instead of being dropped.
-  let saved = true;
-  if (deferred.length > 0 || carried.length > 0) {
-    saved = false;
-    let current: Read = pendingRead;
-    let toSave = deferred;
-    for (let attempt = 0; attempt < PENDING_RETRIES && current.kind !== "read_error"; attempt += 1) {
-      const put = await bucket.put(SHADOW_PENDING_KEY, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: toSave }, null, 1), {
-        httpMetadata: JSON_PUT,
-        onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag },
-      });
-      if (put !== null) {
-        saved = true;
-        break;
-      }
-      current = await readObject(bucket, SHADOW_PENDING_KEY);
-      if (current.kind === "read_error") break;
-      const merged = new Map<string, Finding>();
-      for (const f of [...(current.kind === "ok" ? validFindings((current.value as { findings?: unknown })?.findings) : []), ...toSave]) merged.set(`${f.date}/${f.key}`, f);
-      const written = new Set<string>();
-      for (const date of new Set([...merged.values()].map((f) => f.date))) for (const key of await listKeys(bucket, `${SHADOW_PREFIX}incidents/${date}/`)) written.add(key);
-      toSave = [...merged.values()]
-        .filter((f) => !written.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`))
-        .sort((a, b) => (a.expires_at ?? Number.POSITIVE_INFINITY) - (b.expires_at ?? Number.POSITIVE_INFINITY))
-        .slice(0, MAX_PENDING);
-    }
-    if (!saved && toSave.length > 0) {
-      const name = `${OVERFLOW_PREFIX}${new Date(now).toISOString().replace(/[-:.]/g, "")}-${Math.random().toString(36).slice(2, 10)}.json`;
-      const put = await bucket.put(name, JSON.stringify({ schema: SHADOW_SCHEMA, updated_at: new Date(now).toISOString(), findings: toSave }, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
-      saved = put !== null;
-      outcome.notes.push(saved ? "pending.json contended or unreadable; deferred findings stored in a pending-overflow object" : "deferred findings could not be stored");
-      degraded.push("pending_overflow");
-    } else if (!saved) {
-      saved = true; // nothing outstanding after the merge: everything was already written
-    }
-  }
-  if (saved) {
-    for (const key of overflowKeys) {
-      try {
-        await bucket.delete(key);
-      } catch {
-        outcome.notes.push(`could not remove drained ${key}`);
+      if (indexConflict) {
+        degraded.push("index_conflict");
+        outcome.notes.push("index_conflict: today's index could not be updated; the next tick may record the same incident_key again (consumers dedupe by incident_key)");
       }
     }
   }
 
   // Rolling summary: replace only the version we read (a corrupt one included), and never an object that is already newer than this run.
-  const summary = buildSummary(now, outcome.findings, registry, { jobs: jobs.length, machines: beats.length }, degraded);
+  const summary = buildSummary(now, outcome.findings, registry, { jobs: jobs.length, machines: beats.length }, degraded, { new_findings: outcome.written, batch: batchKey, index_conflict: indexConflict });
   const current = await readObject(bucket, SHADOW_SUMMARY_KEY);
   if (current.kind === "read_error") {
     outcome.notes.push("summary.json could not be read; summary not updated");

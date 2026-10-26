@@ -82,9 +82,12 @@ function fakeBucket(initial = {}) {
     store,
     puts: [],
     lists: [],
+    gets: [],
+    delete_calls: 0,
     failGet: new Set(),
     failPut: new Set(),
     get: async function (key) {
+      this.gets.push(key);
       if (this.failGet.has(key)) throw new Error(`simulated R2 failure for ${key}`);
       const o = store.get(key);
       const result = o ? { key, etag: `e${o.v}`, text: async () => o.body } : null;
@@ -102,6 +105,7 @@ function fakeBucket(initial = {}) {
       return { key, etag: `e${store.get(key).v}` };
     },
     async delete(key) {
+      this.delete_calls += 1;
       store.delete(key);
     },
     async list(options = {}) {
@@ -132,6 +136,12 @@ async function tick(worker, env, scheduledTime) {
   await Promise.all(pending);
 }
 
+function recordedFindings(bucket) {
+  return [...bucket.store.entries()].filter(([k]) => k.startsWith("ops/shadow/batches/")).flatMap(([, v]) => JSON.parse(v.body).findings);
+}
+const recordedKeys = (bucket) => recordedFindings(bucket).map((f) => f.key);
+const hasIncident = (bucket, key) => recordedKeys(bucket).includes(key);
+
 const failedJob = { id: "j-20261007T150000-aaaaaa", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: iso(NOW - 60 * MIN), verified: true };
 const seeded = () =>
   fakeBucket({
@@ -151,22 +161,22 @@ test("shadow observer is off unless OPS_SHADOW_ENABLED is exactly 1: no ops/ wri
   }
 });
 
-test("shadow observer on: writes idempotent incident objects and a summary, sends nothing, makes no network call", async () => {
+test("shadow observer on: records findings in a batch, dedupes by index, sends nothing, makes no network call", async () => {
   const worker = await loadWorker();
   const bucket = seeded();
   const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1", TELEGRAM_BOT_TOKEN: "t", TELEGRAM_CHAT_ID: "1" }; // secrets without the kill-switch var
   await tick(worker, env, NOW);
-  const incident = bucket.store.get("ops/shadow/incidents/2026-10-07/job-failed-j-20261007T150000-aaaaaa.json");
-  assert.ok(incident, "failed job incident written under its date");
-  const first = JSON.parse(incident.body);
+  const first = recordedFindings(bucket).find((f) => f.key === `job-failed-${failedJob.id}`);
+  assert.ok(first, "failed job recorded");
   assert.deepEqual([first.kind, first.subject], ["job_failed", failedJob.id]);
   const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
   assert.deepEqual([summary.registry.present, summary.registry.jobs, summary.checked.machines], [true, 1, 2]);
-  assert.ok(summary.open >= 1);
-  const objectsAfterFirst = [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/incidents/")).length;
+  assert.ok(summary.open >= 1 && summary.new_findings >= 1 && summary.index_conflict === false);
+  const batchesAfterFirst = batchKeys(bucket).length;
   await tick(worker, env, NOW + 2 * MIN);
-  assert.equal([...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/incidents/")).length, objectsAfterFirst, "no duplicate incident objects");
-  assert.equal(JSON.parse(bucket.store.get("ops/shadow/incidents/2026-10-07/job-failed-j-20261007T150000-aaaaaa.json").body).first_seen, first.first_seen, "first_seen is preserved");
+  assert.equal(recordedKeys(bucket).filter((k) => k === `job-failed-${failedJob.id}`).length, 1, "recorded once");
+  assert.equal(recordedFindings(bucket).find((f) => f.key === `job-failed-${failedJob.id}`).first_seen, first.first_seen, "first_seen is preserved");
+  assert.ok(batchKeys(bucket).length - batchesAfterFirst <= 1);
   assert.deepEqual(fetched, [], "no outbound network call of any kind");
   assert.ok([...bucket.puts].every((k) => k.startsWith("ops/shadow/") || k.startsWith("jobs/")), "writes only ops/shadow/ plus the existing cron/queue keys");
   assert.equal(bucket.puts.some((k) => k.startsWith("jobs/alerts/")), false);
@@ -248,7 +258,7 @@ test("observer selects records independent of the Run page limits: an old failur
     "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(NOW - MIN) },
   });
   await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
-  assert.ok(bucket.store.has(`ops/shadow/incidents/2026-10-07/job-failed-${old.id}.json`));
+  assert.ok(hasIncident(bucket, `job-failed-${old.id}`));
 });
 
 test("summary.json is etag-guarded: a newer summary is not replaced, and a lost race writes nothing", async () => {
@@ -279,28 +289,7 @@ test("R2 read errors are not absence: a failed queue GET skips the tick; a faile
   const s = seeded();
   s.failGet.add(`jobs/status/${failedJob.id}.json`);
   await tick(worker, { DASHBOARD_DATA: s, OPS_SHADOW_ENABLED: "1" }, NOW);
-  assert.equal([...s.store.keys()].some((k) => k.includes("job-failed-") || k.includes("job-stuck-")), false, "the unreadable job yields no finding");
-});
-
-test("known incidents are listed, not re-PUT; new findings per tick are capped with a note", async () => {
-  const worker = await loadWorker();
-  const bucket = seeded();
-  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
-  await tick(worker, env, NOW);
-  assert.ok(bucket.puts.filter((k) => k.startsWith("ops/shadow/incidents/")).length >= 1 && bucket.lists.length >= 1);
-  bucket.puts.length = 0;
-  await tick(worker, env, NOW + 2 * MIN);
-  assert.deepEqual(bucket.puts.filter((k) => k.startsWith("ops/shadow/incidents/")), [], "second tick PUTs no known incident");
-  const lines = [];
-  const log = console.log;
-  console.log = (...a) => lines.push(a.join(" "));
-  try {
-    const empty = fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] } });
-    await tick(worker, { DASHBOARD_DATA: empty, OPS_SHADOW_ENABLED: "1" }, Date.parse("2026-10-14T16:07:00Z"));
-    assert.ok(empty.puts.filter((k) => k.startsWith("ops/shadow/incidents/")).length <= 25);
-  } finally {
-    console.log = log;
-  }
+  assert.equal(recordedKeys(s).some((k) => k.includes("job-failed-") || k.includes("job-stuck-")), false, "the unreadable job yields no finding");
 });
 
 test("disabled shadow logs once per tick; invalid roles are reported by the shadow and alerts logs", async () => {
@@ -352,42 +341,21 @@ test("Tuesday due slot through the Worker: an unreadable status for that type su
       ...(status === undefined ? {} : { [`jobs/status/${tuesdayJob.id}.json`]: status }),
     });
   const env = (bucket) => ({ DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" });
-  const key = "ops/shadow/incidents/2026-10-13/missed-tuesday-20261013T160000Z.json";
+  const key = "missed-tuesday-20261013T160000Z";
   const readable = make({ id: tuesdayJob.id, state: "done", finished_at: "2026-10-13T15:55:00Z" });
   await tick(worker, env(readable), T);
-  assert.ok(readable.store.has(key), "a job that finished before the slot does not excuse it");
+  assert.ok(hasIncident(readable, key), "a job that finished before the slot does not excuse it");
   const corrupt = make("{not json");
   await tick(worker, env(corrupt), T);
-  assert.equal(corrupt.store.has(key), false, "unreadable status suppresses the slot it may have blocked");
-  assert.ok(corrupt.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`));
+  assert.equal(hasIncident(corrupt, key), false, "unreadable status suppresses the slot it may have blocked");
+  assert.ok(hasIncident(corrupt, `status-unreadable-${tuesdayJob.id}`));
   assert.ok(JSON.parse(corrupt.store.get("ops/shadow/summary.json").body).degraded.includes("status_unreadable:1"));
   const failing = make({ id: tuesdayJob.id, state: "done" });
   failing.failGet.add(`jobs/status/${tuesdayJob.id}.json`);
   await tick(worker, env(failing), T);
-  assert.equal(failing.store.has(key), false);
-  assert.equal(failing.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`), false, "an R2 read failure is not a permanent incident");
+  assert.equal(hasIncident(failing, key), false);
+  assert.equal(hasIncident(failing, `status-unreadable-${tuesdayJob.id}`), false, "an R2 read failure is not a permanent incident");
   assert.ok(JSON.parse(failing.store.get("ops/shadow/summary.json").body).degraded.includes("status_read_error:1"));
-});
-
-test("the per-tick cap never loses a perishable finding: missed slots are written first and every finding is eventually written", async () => {
-  const worker = await loadWorker();
-  const T0 = Date.parse("2026-10-12T16:07:00Z"); // Monday: many due slots, empty cron history
-  const failed = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T14${String(i).padStart(4, "0")}-f${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - 120 * MIN), verified: true }));
-  const bucket = fakeBucket({
-    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: failed },
-    ...Object.fromEntries(failed.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
-  });
-  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
-  const expectedMissed = evaluateShadow({ now: T0, jobs: [], created: [], beats: [], dueAt: dueJobs }).filter((f) => f.kind === "occurrence_missed");
-  assert.ok(expectedMissed.length > 5);
-  await tick(worker, env, T0);
-  const incidentKeys = () => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/incidents/"));
-  assert.ok(incidentKeys().length <= 25, "capped");
-  for (const f of expectedMissed) assert.ok(bucket.store.has(`ops/shadow/incidents/${f.date}/${f.key}.json`), `perishable ${f.key} written first`);
-  for (let i = 1; i <= 6; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
-  const have = incidentKeys().join("\n");
-  for (const j of failed) assert.ok(have.includes(`job-failed-${j.id}.json`), j.id);
-  for (const f of expectedMissed) assert.ok(have.includes(`${f.key}.json`));
 });
 
 test("queue / heartbeat / summary: parse failures become findings, R2 failures do not", async () => {
@@ -396,16 +364,16 @@ test("queue / heartbeat / summary: parse failures become findings, R2 failures d
   const q = seeded();
   q.store.set("jobs/queue.json", { body: "{broken", v: 1 });
   await tick(worker, env(q), NOW);
-  assert.ok(q.store.has("ops/shadow/incidents/2026-10-07/queue-unreadable.json"));
-  assert.equal([...q.store.keys()].some((k) => k.includes("missed-")), false, "no false missed slots from an unparsable queue");
+  assert.ok(hasIncident(q, "queue-unreadable"));
+  assert.equal(recordedKeys(q).some((k) => k.includes("missed-")), false, "no false missed slots from an unparsable queue");
   const h = seeded();
   h.store.set("jobs/heartbeat/mckinley_home.json", { body: "nope", v: 1 });
   await tick(worker, env(h), NOW);
-  assert.ok(h.store.has("ops/shadow/incidents/2026-10-07/heartbeat-unreadable-mckinley_home.json"));
+  assert.ok(hasIncident(h, "heartbeat-unreadable-mckinley_home"));
   const e = seeded();
   e.failGet.add("jobs/heartbeat/mckinley_home.json");
   await tick(worker, env(e), NOW);
-  assert.equal([...e.store.keys()].some((k) => k.includes("heartbeat-")), false, "an R2 error on a heartbeat is not a finding and not a stale heartbeat");
+  assert.equal(recordedKeys(e).some((k) => k.includes("heartbeat-")), false, "an R2 error on a heartbeat is not a finding and not a stale heartbeat");
   assert.ok(JSON.parse(e.store.get("ops/shadow/summary.json").body).degraded.includes("heartbeat_read_error:mckinley_home"));
   const s = seeded();
   s.store.set("ops/shadow/summary.json", { body: "corrupt{", v: 1 });
@@ -462,28 +430,6 @@ test("rules: only a corrupt status is an incident; an R2 read failure keeps the 
   assert.ok(evaluateShadow({ now: slot, jobs: [{ id: "j-1", type: "t", requested_at: iso(slot - MIN), state: "failed" }], created: [], beats: [], dueAt: () => [] })[0].expires_at > slot, "every finding carries an expiry");
 });
 
-test("deferred findings survive the 48 h scan cutoff through ops/shadow/pending.json", async () => {
-  const worker = await loadWorker();
-  const T0 = Date.parse("2026-10-14T12:00:00Z");
-  const jobs = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T1215${String(i).padStart(2, "0")}-d${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
-  const bucket = fakeBucket({
-    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
-    ...Object.fromEntries(jobs.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
-    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T0 - MIN) },
-    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T0 - MIN) },
-  });
-  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
-  const failedKeys = () => [...bucket.store.keys()].filter((k) => k.includes("/job-failed-"));
-  await tick(worker, env, T0);
-  assert.ok(failedKeys().length <= 25);
-  const pending = JSON.parse(bucket.store.get("ops/shadow/pending.json").body);
-  assert.ok(pending.findings.length >= 35 - 0, "the overflow is persisted");
-  // Past the 48 h cutoff the jobs are no longer scanned, yet the pending findings still drain (and not before the cap allows).
-  for (let i = 1; i <= 6; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
-  assert.equal(failedKeys().length, 60, "every deferred finding was eventually written");
-  assert.equal(JSON.parse(bucket.store.get("ops/shadow/pending.json").body).findings.length, 0, "pending is drained");
-});
-
 test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue) and the heartbeat check still runs", async () => {
   const worker = await loadWorker();
   for (const body of ["{broken", "{}", { schema: "x", jobs: {} }, [], "null", { jobs: "nope" }]) {
@@ -491,8 +437,8 @@ test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue)
     bucket.store.set("jobs/queue.json", { body: typeof body === "string" ? body : JSON.stringify(body), v: 1 });
     bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
     await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
-    const keys = [...bucket.store.keys()];
-    assert.ok(keys.includes("ops/shadow/incidents/2026-10-07/queue-unreadable.json"), JSON.stringify(body));
+    const keys = recordedKeys(bucket);
+    assert.ok(keys.includes("queue-unreadable"), JSON.stringify(body));
     assert.equal(keys.some((k) => k.includes("missed-") || k.includes("job-failed-")), false, "no job or slot findings from an unusable queue");
     assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "a dead primary is still reported");
     const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
@@ -501,58 +447,10 @@ test("a corrupt or wrong-shaped queue is queue_unreadable (never an empty queue)
   const ok = seeded();
   ok.store.set("jobs/queue.json", { body: JSON.stringify({ schema: "golfprice.job_queue.v1", jobs: [] }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: ok, OPS_SHADOW_ENABLED: "1" }, NOW);
-  assert.equal(ok.store.has("ops/shadow/incidents/2026-10-07/queue-unreadable.json"), false, "an empty jobs array is a valid queue");
+  assert.equal(hasIncident(ok, "queue-unreadable"), false, "an empty jobs array is a valid queue");
 });
 
 /* ------------------------------------------------------------------ review round 4 regressions */
-function nearCutoffBucket(T0) {
-  const near = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T1210${String(i).padStart(2, "0")}-n${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
-  const recent = Array.from({ length: 40 }, (_, i) => ({ id: `j-20261014T1000${String(i).padStart(2, "0")}-r${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - 120 * MIN), verified: true }));
-  const jobs = [...near, ...recent];
-  const bucket = fakeBucket({
-    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
-    ...Object.fromEntries(jobs.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
-    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T0 - MIN) },
-    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T0 - MIN) },
-  });
-  return { bucket, jobs };
-}
-const failedIncidents = (bucket) => [...bucket.store.keys()].filter((k) => k.includes("/job-failed-"));
-
-test("pending.json CAS conflict: an interleaved newer tick wins the race, the older tick merges and retries, nothing near the cutoff is lost", async () => {
-  const worker = await loadWorker();
-  const T0 = Date.parse("2026-10-14T12:00:00Z");
-  const { bucket, jobs } = nearCutoffBucket(T0);
-  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
-  let fired = false;
-  bucket.onGet = async (key) => {
-    if (key !== "ops/shadow/pending.json" || fired) return;
-    fired = true; // tick A has just read pending.json; tick B (later, with its own findings) now runs to completion and writes it first
-    await tick(worker, env, T0 + 15 * MIN);
-  };
-  await tick(worker, env, T0);
-  assert.equal(fired, true);
-  assert.ok(bucket.puts.filter((k) => k === "ops/shadow/pending.json").length >= 3, "tick B wrote first, tick A lost its conditional PUT and retried");
-  for (let i = 2; i <= 9; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
-  assert.equal(failedIncidents(bucket).length, jobs.length, "every finding, including A's near-cutoff overflow, was written");
-  assert.equal([...bucket.store.keys()].some((k) => k.startsWith("ops/shadow/pending-overflow/")), false);
-});
-
-test("pending.json that cannot be updated falls back to a unique overflow object that the next tick drains and deletes", async () => {
-  const worker = await loadWorker();
-  const T0 = Date.parse("2026-10-14T12:00:00Z");
-  const { bucket, jobs } = nearCutoffBucket(T0);
-  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
-  bucket.failPut.add("ops/shadow/pending.json"); // every conditional update loses
-  await tick(worker, env, T0);
-  const overflow = () => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/pending-overflow/"));
-  assert.equal(overflow().length, 1);
-  assert.ok(JSON.parse(bucket.store.get(overflow()[0]).body).findings.length > 25);
-  bucket.failPut.delete("ops/shadow/pending.json");
-  for (let i = 1; i <= 9; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
-  assert.equal(failedIncidents(bucket).length, jobs.length);
-  assert.deepEqual(overflow(), [], "drained overflow is deleted");
-});
 
 test("invalid queue entries are dropped and reported; valid jobs, heartbeats and the summary still work", async () => {
   const worker = await loadWorker();
@@ -561,10 +459,95 @@ test("invalid queue entries are dropped and reported; valid jobs, heartbeats and
   bucket.store.set("jobs/queue.json", { body: JSON.stringify(queue), v: 1 });
   bucket.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" }, NOW);
-  const keys = [...bucket.store.keys()];
-  assert.ok(keys.includes("ops/shadow/incidents/2026-10-07/queue-entry-invalid.json"));
+  const keys = recordedKeys(bucket);
+  assert.ok(keys.includes("queue-entry-invalid"));
   assert.ok(keys.some((k) => k.includes("heartbeat-stale-desktop-2ki41v6")), "stale primary still reported");
-  assert.ok(keys.includes(`ops/shadow/incidents/2026-10-07/job-failed-${failedJob.id}.json`), "the valid job is still checked");
+  assert.ok(keys.includes(`job-failed-${failedJob.id}`), "the valid job is still checked");
   const summary = JSON.parse(bucket.store.get("ops/shadow/summary.json").body);
   assert.ok(summary.degraded.includes("queue_entry_invalid:5"));
+});
+
+/* ------------------------------------------------------------------ round 5: batch + index storage model */
+const batchKeys = (bucket) => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/batches/"));
+const manyFailed = (count, T0, agoMin = 120) => Array.from({ length: count }, (_, i) => ({ id: `j-20261014T10${String(i).padStart(5, "0")}-m${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - agoMin * MIN), verified: true }));
+const queueWith = (jobs, T0) =>
+  fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
+    ...Object.fromEntries(jobs.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
+    "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T0 - MIN) },
+    "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T0 - MIN) },
+  });
+
+test("600 findings in one tick all land in ONE batch object with a bounded number of R2 operations; a repeat tick records nothing", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const jobs = manyFailed(600, T0);
+  const bucket = queueWith(jobs, T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  await tick(worker, env, T0);
+  assert.equal(batchKeys(bucket).length, 1, "one batch, no cap");
+  const keys = recordedKeys(bucket);
+  for (const j of jobs) assert.ok(keys.includes(`job-failed-${j.id}`), j.id);
+  const opsPuts = bucket.puts.filter((k) => k.startsWith("ops/"));
+  assert.equal(opsPuts.filter((k) => k.startsWith("ops/shadow/batches/")).length, 1);
+  assert.equal(opsPuts.filter((k) => k.startsWith("ops/shadow/index/")).length, 1);
+  assert.ok(opsPuts.length <= 5, `ops puts ${opsPuts.length}`);
+  assert.equal(bucket.gets.filter((k) => k.startsWith("ops/shadow/index/")).length, 3, "three index GETs");
+  assert.equal(bucket.lists.length, 0, "no listing");
+  assert.equal(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).new_findings, keys.length);
+  bucket.puts.length = 0;
+  bucket.gets.length = 0;
+  await tick(worker, env, T0 + 2 * MIN);
+  assert.equal(batchKeys(bucket).length, 1);
+  assert.deepEqual(bucket.puts.filter((k) => k.startsWith("ops/shadow/batches/") || k.startsWith("ops/shadow/index/")), [], "nothing new: no batch, no index write");
+  assert.equal(bucket.gets.filter((k) => k.startsWith("ops/shadow/index/")).length, 3);
+  assert.equal(bucket.delete_calls, 0, "the observer never deletes");
+});
+
+test("overlapping ticks that read the same index etag: both batches are durable, the index is the union, nothing is lost", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const near = Array.from({ length: 10 }, (_, i) => ({ id: `j-20261012T1210${String(i).padStart(2, "0")}-n${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
+  const recent = manyFailed(5, T0);
+  const bucket = queueWith([...near, ...recent], T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  let fired = false;
+  bucket.onGet = async (key) => {
+    if (key !== "ops/shadow/index/2026-10-14.json" || fired) return;
+    fired = true; // tick A has read today's (absent) index; the later tick B now runs to completion and writes first
+    await tick(worker, env, T0 + 15 * MIN);
+  };
+  await tick(worker, env, T0);
+  assert.equal(fired, true);
+  assert.equal(batchKeys(bucket).length, 2, "both ticks' batches are durable");
+  const keys = recordedKeys(bucket);
+  for (const j of near) assert.ok(keys.includes(`job-failed-${j.id}`), "A-only finding (job left B's scan window) survives");
+  const index = JSON.parse(bucket.store.get("ops/shadow/index/2026-10-14.json").body).keys;
+  for (const k of new Set(keys)) assert.ok(index[k], `index has ${k}`);
+  assert.ok(batchKeys(bucket).every((b) => Object.values(index).includes(b)), "the index names both batches");
+});
+
+test("index CAS exhausted: no finding is lost, the next tick only duplicates it, and summary reports index_conflict", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-14T12:00:00Z");
+  const jobs = manyFailed(8, T0);
+  const bucket = queueWith(jobs, T0);
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  bucket.failPut.add("ops/shadow/index/2026-10-14.json"); // every conditional index update loses
+  await tick(worker, env, T0);
+  assert.equal(bucket.puts.filter((k) => k === "ops/shadow/index/2026-10-14.json").length, 3, "bounded to three attempts");
+  assert.equal(batchKeys(bucket).length, 1);
+  for (const j of jobs) assert.ok(recordedKeys(bucket).includes(`job-failed-${j.id}`));
+  assert.equal(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).index_conflict, true);
+  await tick(worker, env, T0 + 15 * MIN);
+  assert.equal(batchKeys(bucket).length, 2, "the same keys are recorded again in a new batch");
+  const keys = recordedKeys(bucket);
+  assert.ok(keys.length > new Set(keys).size, "duplicates only");
+  for (const j of jobs) assert.ok(keys.includes(`job-failed-${j.id}`));
+  bucket.failPut.delete("ops/shadow/index/2026-10-14.json");
+  await tick(worker, env, T0 + 30 * MIN);
+  const before = recordedKeys(bucket);
+  await tick(worker, env, T0 + 45 * MIN);
+  const added = recordedKeys(bucket).slice(before.length);
+  assert.ok(added.length > 0 && added.every((k) => !before.includes(k)), "once the index is writable, dedup resumes: only genuinely new keys are recorded");
 });

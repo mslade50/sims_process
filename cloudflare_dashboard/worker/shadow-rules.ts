@@ -137,7 +137,7 @@ export type ShadowSummary = {
   incidents: { key: string; kind: string; severity: string; date: string; detail: string }[];
 };
 
-export function buildSummary(now: number, findings: Finding[], registry: unknown, checked: { jobs: number; machines: number }, degraded: string[] = []): ShadowSummary {
+export function buildSummary(now: number, findings: Finding[], registry: unknown, checked: { jobs: number; machines: number }, degraded: string[] = [], extra: Record<string, unknown> = {}): ShadowSummary {
   const by_kind: Record<string, number> = {};
   for (const f of findings) by_kind[f.kind] = (by_kind[f.kind] ?? 0) + 1;
   const reg = registry && typeof registry === "object" ? (registry as { jobs?: unknown }) : null;
@@ -147,6 +147,7 @@ export function buildSummary(now: number, findings: Finding[], registry: unknown
     updated_at: new Date(now).toISOString(),
     registry: { present: !!reg, jobs },
     checked,
+    ...extra,
     degraded,
     open: findings.length,
     by_kind,
