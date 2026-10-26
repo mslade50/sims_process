@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateShadow, buildSummary, MISSED_GRACE_MS } from "../worker/shadow-rules.ts";
 import { dueJobs } from "../worker/cron-rules.ts";
-import { MACHINES, machinesWithRoles, parseRoles, rolesInvalid } from "../app/jobs-rules.ts";
+import { MACHINES, loadRoles, machinesWithRoles, parseRoles, rolesInvalid } from "../app/jobs-rules.ts";
 
 const MIN = 60_000;
 const NOW = Date.parse("2026-10-07T16:07:00Z"); // Wed 12:07 EDT
@@ -275,7 +275,6 @@ test("R2 read errors are not absence: a failed queue GET skips the tick; a faile
   s.failGet.add(`jobs/status/${failedJob.id}.json`);
   await tick(worker, { DASHBOARD_DATA: s, OPS_SHADOW_ENABLED: "1" }, NOW);
   assert.equal([...s.store.keys()].some((k) => k.includes("job-failed-") || k.includes("job-stuck-")), false, "the unreadable job yields no finding");
-  assert.equal([...s.store.keys()].some((k) => k.includes("missed-tuesday-")), false, "and no missed slot for its type");
 });
 
 test("known incidents are listed, not re-PUT; new findings per tick are capped with a note", async () => {
@@ -317,4 +316,131 @@ test("disabled shadow logs once per tick; invalid roles are reported by the shad
     console.log = log;
   }
   assert.deepEqual([rolesInvalid(null), rolesInvalid(undefined), rolesInvalid({ primary: "desktop-2ki41v6", backup: "mckinley_home" }), rolesInvalid({ primary: "x", backup: "y" }), rolesInvalid("junk")], [false, false, false, true, true]);
+});
+
+/* ------------------------------------------------------------------ review round 2 regressions */
+test("rules: an unreadable status suppresses only the 6 h after its own request, and is itself a finding", () => {
+  const slot = Date.parse("2026-10-07T15:00:00Z");
+  const dueAt = (ms) => (ms === slot || ms === slot + 15 * MIN ? [{ type: "watch" }] : []);
+  const base = { now: slot + 30 * MIN, jobs: [], created: [], beats: [], dueAt };
+  const missed = (u) => evaluateShadow({ ...base, unreadable: u }).filter((f) => f.kind === "occurrence_missed").map((f) => f.key);
+  assert.deepEqual(missed([]), ["missed-watch-20261007T150000Z", "missed-watch-20261007T151500Z"]);
+  const old = { id: "j-old", type: "watch", requested_at: iso(slot - 20 * 3_600_000) };
+  assert.deepEqual(missed([old]), ["missed-watch-20261007T150000Z", "missed-watch-20261007T151500Z"], "a corrupt status requested 20 h ago suppresses nothing today");
+  const near = { id: "j-near", type: "watch", requested_at: iso(slot + 10 * MIN) };
+  assert.deepEqual(missed([near]), ["missed-watch-20261007T150000Z"], "requested 10 min after the first slot: suppresses the 15:15 tick only");
+  const before = { id: "j-before", type: "watch", requested_at: iso(slot - 10 * MIN) };
+  assert.deepEqual(missed([before]), [], "requested 10 min before: both ticks fall in its 6 h window");
+  assert.deepEqual(missed([{ ...before, type: "tuesday" }]), ["missed-watch-20261007T150000Z", "missed-watch-20261007T151500Z"], "other types are unaffected");
+  assert.ok(evaluateShadow({ ...base, unreadable: [near] }).some((f) => f.key === "status-unreadable-j-near" && f.kind === "status_unreadable"));
+});
+
+test("Tuesday due slot through the Worker: an unreadable status for that type suppresses its slot and is reported; a readable finished one does not", async () => {
+  const worker = await loadWorker();
+  const T = Date.parse("2026-10-13T16:12:00Z"); // Tue 12:12 EDT, the 12:00 ET tuesday slot (16:00Z) is past its grace
+  const tuesdayJob = { id: "j-20261013T155000-tttttt", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-13T15:50:00Z", verified: true };
+  const make = (status) =>
+    fakeBucket({
+      "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [tuesdayJob] },
+      "jobs/heartbeat/desktop-2ki41v6.json": { machine: "desktop-2ki41v6", at: iso(T - MIN) },
+      "jobs/heartbeat/mckinley_home.json": { machine: "mckinley_home", at: iso(T - MIN) },
+      ...(status === undefined ? {} : { [`jobs/status/${tuesdayJob.id}.json`]: status }),
+    });
+  const env = (bucket) => ({ DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" });
+  const key = "ops/shadow/incidents/2026-10-13/missed-tuesday-20261013T160000Z.json";
+  const readable = make({ id: tuesdayJob.id, state: "done", finished_at: "2026-10-13T15:55:00Z" });
+  await tick(worker, env(readable), T);
+  assert.ok(readable.store.has(key), "a job that finished before the slot does not excuse it");
+  const corrupt = make("{not json");
+  await tick(worker, env(corrupt), T);
+  assert.equal(corrupt.store.has(key), false, "unreadable status suppresses the slot it may have blocked");
+  assert.ok(corrupt.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`));
+  assert.ok(JSON.parse(corrupt.store.get("ops/shadow/summary.json").body).degraded.includes("status_unreadable:1"));
+  const failing = make({ id: tuesdayJob.id, state: "done" });
+  failing.failGet.add(`jobs/status/${tuesdayJob.id}.json`);
+  await tick(worker, env(failing), T);
+  assert.equal(failing.store.has(key), false);
+  assert.ok(failing.store.has(`ops/shadow/incidents/2026-10-13/status-unreadable-${tuesdayJob.id}.json`));
+});
+
+test("the per-tick cap never loses a perishable finding: missed slots are written first and every finding is eventually written", async () => {
+  const worker = await loadWorker();
+  const T0 = Date.parse("2026-10-12T16:07:00Z"); // Monday: many due slots, empty cron history
+  const failed = Array.from({ length: 60 }, (_, i) => ({ id: `j-20261012T14${String(i).padStart(4, "0")}-f${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - 120 * MIN), verified: true }));
+  const bucket = fakeBucket({
+    "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: failed },
+    ...Object.fromEntries(failed.map((j) => [`jobs/status/${j.id}.json`, { id: j.id, state: "failed" }])),
+  });
+  const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
+  const expectedMissed = evaluateShadow({ now: T0, jobs: [], created: [], beats: [], dueAt: dueJobs }).filter((f) => f.kind === "occurrence_missed");
+  assert.ok(expectedMissed.length > 5);
+  await tick(worker, env, T0);
+  const incidentKeys = () => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/incidents/"));
+  assert.ok(incidentKeys().length <= 25, "capped");
+  for (const f of expectedMissed) assert.ok(bucket.store.has(`ops/shadow/incidents/${f.date}/${f.key}.json`), `perishable ${f.key} written first`);
+  for (let i = 1; i <= 6; i += 1) await tick(worker, env, T0 + i * 15 * MIN);
+  const have = incidentKeys().join("\n");
+  for (const j of failed) assert.ok(have.includes(`job-failed-${j.id}.json`), j.id);
+  for (const f of expectedMissed) assert.ok(have.includes(`${f.key}.json`));
+});
+
+test("queue / heartbeat / summary: parse failures become findings, R2 failures do not", async () => {
+  const worker = await loadWorker();
+  const env = (bucket) => ({ DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" });
+  const q = seeded();
+  q.store.set("jobs/queue.json", { body: "{broken", v: 1 });
+  await tick(worker, env(q), NOW);
+  assert.ok(q.store.has("ops/shadow/incidents/2026-10-07/queue-unreadable.json"));
+  assert.equal([...q.store.keys()].some((k) => k.includes("missed-")), false, "no false missed slots from an unparsable queue");
+  const h = seeded();
+  h.store.set("jobs/heartbeat/mckinley_home.json", { body: "nope", v: 1 });
+  await tick(worker, env(h), NOW);
+  assert.ok(h.store.has("ops/shadow/incidents/2026-10-07/heartbeat-unreadable-mckinley_home.json"));
+  const e = seeded();
+  e.failGet.add("jobs/heartbeat/mckinley_home.json");
+  await tick(worker, env(e), NOW);
+  assert.equal([...e.store.keys()].some((k) => k.includes("heartbeat-")), false, "an R2 error on a heartbeat is not a finding and not a stale heartbeat");
+  assert.ok(JSON.parse(e.store.get("ops/shadow/summary.json").body).degraded.includes("heartbeat_read_error:mckinley_home"));
+  const s = seeded();
+  s.store.set("ops/shadow/summary.json", { body: "corrupt{", v: 1 });
+  await tick(worker, env(s), NOW);
+  assert.equal(JSON.parse(s.store.get("ops/shadow/summary.json").body).schema, "golf_ops.shadow.v1", "a corrupt summary is replaced");
+  const f = seeded();
+  f.store.set("ops/shadow/summary.json", { body: "corrupt{", v: 1 });
+  f.failPut.add("ops/shadow/summary.json");
+  await tick(worker, env(f), NOW);
+  assert.equal(f.store.get("ops/shadow/summary.json").body, "corrupt{");
+});
+
+test("loadRoles separates absent, invalid content (including a parse error) and a read failure; the fallback is unchanged", async () => {
+  const obj = (text) => ({ get: async () => (text === null ? null : { text: async () => text }) });
+  const roles = JSON.stringify({ primary: "mckinley_home", backup: "desktop-2ki41v6" });
+  assert.deepEqual(await loadRoles(obj(null)), { roles: null, problem: null });
+  assert.deepEqual(await loadRoles(obj(roles)), { roles: { primary: "mckinley_home", backup: "desktop-2ki41v6" }, problem: null });
+  assert.deepEqual(await loadRoles(obj("{oops")), { roles: null, problem: "roles_invalid" });
+  assert.deepEqual(await loadRoles(obj(JSON.stringify({ primary: "a", backup: "b" }))), { roles: null, problem: "roles_invalid" });
+  assert.deepEqual(await loadRoles({ get: async () => { throw new Error("r2 down"); } }), { roles: null, problem: "roles_read_error" });
+  assert.equal(machinesWithRoles(null), MACHINES);
+});
+
+test("roles problems are logged by shadow and alerts for malformed JSON and for read failures", async () => {
+  const worker = await loadWorker();
+  const lines = [];
+  const log = console.log;
+  console.log = (...a) => lines.push(a.join(" "));
+  try {
+    const bad = seeded();
+    bad.store.set("jobs/roles.json", { body: "{typo", v: 1 });
+    await tick(worker, { DASHBOARD_DATA: bad, OPS_SHADOW_ENABLED: "1" }, NOW);
+    assert.ok(lines.some((l) => l.startsWith("shadow:") && l.includes("roles_invalid")));
+    assert.ok(lines.some((l) => l.startsWith("alerts:") && l.includes("roles_invalid")));
+    lines.length = 0;
+    const err = seeded();
+    err.failGet.add("jobs/roles.json");
+    await tick(worker, { DASHBOARD_DATA: err, OPS_SHADOW_ENABLED: "1" }, NOW);
+    assert.ok(lines.some((l) => l.startsWith("shadow:") && l.includes("roles_read_error")));
+    assert.ok(lines.some((l) => l.startsWith("alerts:") && l.includes("roles_read_error")));
+  } finally {
+    console.log = log;
+  }
 });

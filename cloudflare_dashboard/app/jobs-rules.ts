@@ -39,6 +39,30 @@ export function parseRoles(value: unknown): Roles | null {
 /** True when jobs/roles.json holds something (not null/absent) that parseRoles rejects, e.g. a typo in a machine name. */
 export const rolesInvalid = (value: unknown): boolean => value !== null && value !== undefined && parseRoles(value) === null;
 
+export type RolesProblem = "roles_invalid" | "roles_read_error";
+/**
+ * Read jobs/roles.json and tell the three non-roles outcomes apart: absent (no problem, constants apply), unusable content including a JSON
+ * parse error ("roles_invalid"), and an R2 read failure ("roles_read_error"). The fallback to the constants is the same in every case.
+ */
+export async function loadRoles(bucket: { get(key: string): Promise<{ text(): Promise<string> } | null> }): Promise<{ roles: Roles | null; problem: RolesProblem | null }> {
+  let text: string | null;
+  try {
+    const object = await bucket.get(ROLES_KEY);
+    text = object ? await object.text() : null;
+  } catch {
+    return { roles: null, problem: "roles_read_error" };
+  }
+  if (text === null) return { roles: null, problem: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { roles: null, problem: "roles_invalid" };
+  }
+  const roles = parseRoles(value);
+  return { roles, problem: roles ? null : "roles_invalid" };
+}
+
 /** MACHINES with the roles from jobs/roles.json applied. Null roles = the constants. */
 export function machinesWithRoles(roles: Roles | null | undefined): MachineSpec[] {
   if (!roles) return MACHINES;

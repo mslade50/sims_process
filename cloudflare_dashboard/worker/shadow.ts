@@ -5,11 +5,12 @@
  * etag-guarded ops/shadow/summary.json that an older overlapping run can never overwrite.
  *
  * OFF unless the var OPS_SHADOW_ENABLED is exactly "1" (declared "0" in wrangler.jsonc, so enabling is a reviewed config change).
- * A failed R2 read is never treated as an absent object: a queue read failure skips the tick, a failed status/heartbeat read omits that record.
+ * Reads are three-way: absent (null), unreadable content (JSON parse error: a finding is written) and an R2 failure (no finding, the affected
+ * check is skipped for the tick and the gap is noted). An R2 failure is never treated as "absent".
  */
 import { dueJobs } from "./cron-rules.ts";
 import { SHADOW_PREFIX, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
-import { HEARTBEAT_PREFIX, QUEUE_KEY, ROLES_KEY, STATUS_PREFIX, effectiveState, machinesWithRoles, parseRoles, parseUtc, rolesInvalid, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
+import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, loadRoles, machinesWithRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
 
 export interface ShadowEnv {
   DASHBOARD_DATA?: R2Bucket;
@@ -22,19 +23,22 @@ export const MONITOR_HORIZON_MS = 48 * 3_600_000; // covers the 3 h missed-slot 
 export const MAX_NEW_INCIDENTS_PER_TICK = 25;
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
-/** null = the object does not exist. Any R2 or parse error throws, so the caller can tell "absent" from "could not read". */
-async function readJson(bucket: R2Bucket, key: string): Promise<{ value: unknown; etag: string } | null> {
-  const object = await bucket.get(key);
-  if (!object) return null;
-  return { value: JSON.parse(await object.text()), etag: object.etag };
-}
+type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
 
-async function optional(bucket: R2Bucket, key: string, notes: string[]): Promise<{ value: unknown; etag: string } | null> {
+async function readObject(bucket: R2Bucket, key: string): Promise<Read> {
+  let object: R2ObjectBody | null;
+  let text = "";
   try {
-    return await readJson(bucket, key);
+    object = await bucket.get(key);
+    if (object) text = await object.text();
   } catch {
-    notes.push(`could not read ${key}`);
-    return null;
+    return { kind: "read_error" };
+  }
+  if (!object) return { kind: "absent" };
+  try {
+    return { kind: "ok", value: JSON.parse(text), etag: object.etag };
+  } catch {
+    return { kind: "parse_error", etag: object.etag };
   }
 }
 
@@ -50,6 +54,7 @@ async function listKeys(bucket: R2Bucket, prefix: string): Promise<Set<string>> 
 }
 
 const finishedAt = (job: JobRecord, status: JobStatus | null): number | null => parseUtc(status?.finished_at) ?? parseUtc(status?.updated_at) ?? parseUtc(job.cancelled_at) ?? null;
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutcome> {
   const outcome: ShadowOutcome = { enabled: env.OPS_SHADOW_ENABLED === "1", findings: [], written: 0, notes: [] };
@@ -62,90 +67,112 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     outcome.notes.push("dashboard bucket is not bound");
     return outcome;
   }
+  const degraded: string[] = [];
+  const extra: Finding[] = [];
 
-  let records: JobRecord[];
-  try {
-    const queue = (await readJson(bucket, QUEUE_KEY))?.value as { jobs?: unknown } | null | undefined;
-    records = Array.isArray(queue?.jobs) ? (queue.jobs as JobRecord[]) : [];
-  } catch {
-    outcome.notes.push("jobs/queue.json could not be read; tick skipped, nothing written");
+  const queueRead = await readObject(bucket, QUEUE_KEY);
+  if (queueRead.kind === "read_error") {
+    outcome.notes.push("jobs/queue.json could not be read (R2 error); tick skipped, nothing written");
     return outcome;
   }
+  let records: JobRecord[] = [];
+  let evaluate = true;
+  if (queueRead.kind === "parse_error") {
+    evaluate = false;
+    degraded.push("queue_unreadable");
+    extra.push({ key: "queue-unreadable", kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not valid JSON; job and missed-slot checks are skipped" });
+  } else if (queueRead.kind === "ok") {
+    const queue = queueRead.value as { jobs?: unknown } | null;
+    records = Array.isArray(queue?.jobs) ? (queue.jobs as JobRecord[]) : [];
+  }
 
-  const registry = (await optional(bucket, SHADOW_REGISTRY_KEY, outcome.notes))?.value ?? null;
-  const rolesValue = (await optional(bucket, ROLES_KEY, outcome.notes))?.value ?? null;
-  if (rolesInvalid(rolesValue)) outcome.notes.push("roles_invalid: jobs/roles.json is not a valid {primary, backup}; using the built-in roles");
-  const machines = machinesWithRoles(parseRoles(rolesValue));
+  const registryRead = await readObject(bucket, SHADOW_REGISTRY_KEY);
+  if (registryRead.kind === "read_error" || registryRead.kind === "parse_error") outcome.notes.push(`ops/registry.json ${registryRead.kind === "read_error" ? "could not be read" : "is not valid JSON"}`);
+  const registry = registryRead.kind === "ok" ? registryRead.value : null;
+  const loaded = await loadRoles(bucket);
+  if (loaded.problem) {
+    outcome.notes.push(`${loaded.problem}: jobs/roles.json ${loaded.problem === "roles_read_error" ? "could not be read" : "is not a valid {primary, backup}"}; using the built-in roles`);
+    degraded.push(loaded.problem);
+  }
+  const machines = machinesWithRoles(loaded.roles);
 
   // Independent of the Run page's list limits: every queue record inside the monitoring horizon, whatever its type or requester.
   const inHorizon = records.filter((j) => now - (parseUtc(j.requested_at) ?? 0) <= MONITOR_HORIZON_MS);
-  let omitted = 0;
-  const omittedTypes = new Set<string>();
+  const unreadable: { id: string; type: string; requested_at: string }[] = [];
   const resolved = await Promise.all(
     inHorizon.map(async (job): Promise<ShadowJob | null> => {
-      try {
-        const status = (await readJson(bucket, `${STATUS_PREFIX}${job.id}.json`))?.value as JobStatus | null | undefined;
-        const st = status && typeof status === "object" ? status : null;
-        return { id: job.id, type: job.type, requested_at: job.requested_at, requested_by: job.requested_by, state: effectiveState(job, st), finished_at: finishedAt(job, st) };
-      } catch {
-        omitted += 1;
-        omittedTypes.add(job.type);
+      const read = await readObject(bucket, `${STATUS_PREFIX}${job.id}.json`);
+      if (read.kind === "read_error" || read.kind === "parse_error") {
+        unreadable.push({ id: job.id, type: job.type, requested_at: job.requested_at });
         return null;
       }
+      const status = read.kind === "ok" ? (read.value as JobStatus | null) : null;
+      const st = status && typeof status === "object" ? status : null;
+      return { id: job.id, type: job.type, requested_at: job.requested_at, requested_by: job.requested_by, state: effectiveState(job, st), finished_at: finishedAt(job, st) };
     }),
   );
   const jobs = resolved.filter((j): j is ShadowJob => j !== null);
-  if (omitted) outcome.notes.push(`${omitted} job status read(s) failed; those jobs are omitted this tick`);
+  if (unreadable.length) {
+    degraded.push(`status_unreadable:${unreadable.length}`);
+    outcome.notes.push(`${unreadable.length} job status object(s) unreadable; their missed-slot windows are suppressed`);
+  }
 
   const beats: ShadowBeat[] = [];
   for (const m of machines) {
-    try {
-      beats.push({ machine: m.name, role: m.role, beat: (await readJson(bucket, `${HEARTBEAT_PREFIX}${m.name}.json`))?.value as { at?: string } | null });
-    } catch {
+    const read = await readObject(bucket, `${HEARTBEAT_PREFIX}${m.name}.json`);
+    if (read.kind === "read_error") {
+      degraded.push(`heartbeat_read_error:${m.name}`);
       outcome.notes.push(`heartbeat read failed for ${m.name}; not evaluated`);
+    } else if (read.kind === "parse_error") {
+      degraded.push(`heartbeat_unreadable:${m.name}`);
+      extra.push({ key: `heartbeat-unreadable-${m.name}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON` });
+    } else {
+      beats.push({ machine: m.name, role: m.role, beat: read.kind === "ok" ? (read.value as { at?: string } | null) : null });
     }
   }
 
-  outcome.findings = evaluateShadow({
-    now,
-    jobs,
-    created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at })),
-    beats,
-    dueAt: dueJobs,
-  });
-  // An omitted job might have been the rate-limit blocker of its type, so no missed-slot finding is made for that type this tick.
-  outcome.findings = outcome.findings.filter((f) => !(f.kind === "occurrence_missed" && omittedTypes.has(f.subject)));
+  outcome.findings = [
+    ...extra,
+    ...(evaluate ? evaluateShadow({ now, jobs, created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at })), beats, unreadable, dueAt: dueJobs }) : []),
+  ];
 
-  // Create-only: list each date prefix once and PUT just the keys that are not there yet (bounded per tick).
+  // Create-only: list each date prefix once and PUT just the keys that are not there yet, bounded per tick. Findings that expire soonest
+  // (missed slots about to leave the lookback) go first, so the cap can delay a durable finding but never lose a perishable one.
   const known = new Set<string>();
   for (const date of new Set(outcome.findings.map((f) => f.date))) {
     for (const key of await listKeys(bucket, `${SHADOW_PREFIX}incidents/${date}/`)) known.add(key);
   }
-  const fresh = outcome.findings.filter((f) => !known.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`));
+  const fresh = outcome.findings
+    .filter((f) => !known.has(`${SHADOW_PREFIX}incidents/${f.date}/${f.key}.json`))
+    .sort((a, b) => (a.expires_at ?? Number.POSITIVE_INFINITY) - (b.expires_at ?? Number.POSITIVE_INFINITY));
   for (const finding of fresh.slice(0, MAX_NEW_INCIDENTS_PER_TICK)) {
-    const body = { schema: SHADOW_SCHEMA, ...finding, first_seen: new Date(now).toISOString() };
+    const { expires_at: _expires, ...stored } = finding;
+    const body = { schema: SHADOW_SCHEMA, ...stored, first_seen: new Date(now).toISOString() };
     const written = await bucket.put(`${SHADOW_PREFIX}incidents/${finding.date}/${finding.key}.json`, JSON.stringify(body, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
     if (written !== null) outcome.written += 1;
   }
-  if (fresh.length > MAX_NEW_INCIDENTS_PER_TICK) outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick`);
+  if (fresh.length > MAX_NEW_INCIDENTS_PER_TICK) {
+    degraded.push(`write_capped:${fresh.length - MAX_NEW_INCIDENTS_PER_TICK}`);
+    outcome.notes.push(`capped: ${fresh.length - MAX_NEW_INCIDENTS_PER_TICK} new finding(s) deferred to the next tick`);
+  }
 
-  // Rolling summary: replace only the version we read, and never an object that is already newer than this run.
-  const summary = buildSummary(now, outcome.findings, registry, { jobs: jobs.length, machines: beats.length });
-  let current: { value: unknown; etag: string } | null;
-  try {
-    current = await readJson(bucket, SHADOW_SUMMARY_KEY);
-  } catch {
+  // Rolling summary: replace only the version we read (a corrupt one included), and never an object that is already newer than this run.
+  const summary = buildSummary(now, outcome.findings, registry, { jobs: jobs.length, machines: beats.length }, degraded);
+  const current = await readObject(bucket, SHADOW_SUMMARY_KEY);
+  if (current.kind === "read_error") {
     outcome.notes.push("summary.json could not be read; summary not updated");
     return outcome;
   }
-  const existingAt = Date.parse(String((current?.value as { updated_at?: unknown } | undefined)?.updated_at ?? ""));
-  if (Number.isFinite(existingAt) && existingAt > now) {
-    outcome.notes.push("summary.json is newer than this run; not overwritten");
-    return outcome;
+  if (current.kind === "ok") {
+    const existingAt = Date.parse(String((current.value as { updated_at?: unknown } | null)?.updated_at ?? ""));
+    if (Number.isFinite(existingAt) && existingAt > now) {
+      outcome.notes.push("summary.json is newer than this run; not overwritten");
+      return outcome;
+    }
   }
   const put = await bucket.put(SHADOW_SUMMARY_KEY, JSON.stringify(summary, null, 1), {
     httpMetadata: JSON_PUT,
-    onlyIf: current ? { etagMatches: current.etag } : { etagDoesNotMatch: "*" },
+    onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag },
   });
   if (put === null) outcome.notes.push("summary.json changed during this run (lost the race); not overwritten");
   return outcome;

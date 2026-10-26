@@ -21,7 +21,7 @@ import {
   type AlertState,
   type JobLike,
 } from "./alerts-rules";
-import { HEARTBEAT_PREFIX, QUEUE_KEY, ROLES_KEY, STATUS_PREFIX, effectiveState, listWindow, machinesWithRoles, parseRoles, parseUtc, rolesInvalid, type JobRecord, type JobStatus } from "../app/jobs-rules";
+import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, listWindow, machinesWithRoles, loadRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules";
 
 export interface AlertEnv {
   DASHBOARD_DATA?: R2Bucket;
@@ -79,8 +79,8 @@ async function collect(bucket: R2Bucket, now: number) {
     }),
   );
   const beat = async (name: string) => (await readJson(bucket, `${HEARTBEAT_PREFIX}${name}.json`).catch(() => ({ value: null }))).value as { at?: string } | null;
-  const rolesValue = (await readJson(bucket, ROLES_KEY).catch(() => ({ value: null }))).value;
-  const machines = machinesWithRoles(parseRoles(rolesValue));
+  const loaded = await loadRoles(bucket);
+  const machines = machinesWithRoles(loaded.roles);
   const primary = machines.find((m) => m.role === "primary");
   const backup = machines.find((m) => m.role === "backup");
   return {
@@ -88,7 +88,7 @@ async function collect(bucket: R2Bucket, now: number) {
     jobs24h: likes.filter((j) => now - (parseUtc(j.requested_at) ?? 0) <= 24 * 3_600_000),
     primary: primary ? await beat(primary.name) : null,
     backup: backup ? await beat(backup.name) : null,
-    rolesInvalid: rolesInvalid(rolesValue),
+    rolesProblem: loaded.problem,
   };
 }
 
@@ -106,7 +106,7 @@ export async function runAlerts(env: AlertEnv, now: number, fetcher: typeof fetc
   const etDate = new Date(now).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   const data = await collect(bucket, now);
-  if (data.rolesInvalid) outcome.notes.push("roles_invalid: jobs/roles.json is not a valid {primary, backup}; using the built-in roles");
+  if (data.rolesProblem) outcome.notes.push(`${data.rolesProblem}: jobs/roles.json ${data.rolesProblem === "roles_read_error" ? "could not be read" : "is not a valid {primary, backup}"}; using the built-in roles`);
   // Dark mode never touches the state object; the stored state only matters once sending is on.
   const read = outcome.enabled ? await readState(bucket) : { state: emptyAlertState(), etag: null as string | null };
   let initial = read.state;

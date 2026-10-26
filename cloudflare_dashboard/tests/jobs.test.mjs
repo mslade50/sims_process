@@ -380,4 +380,16 @@ test("GET /api/jobs reports roles and flags an invalid jobs/roles.json instead o
   assert.deepEqual([ok.roles, ok.roles_invalid], [{ primary: "mckinley_home", backup: "desktop-2ki41v6" }, false]);
   const bad = await get({ primary: "mckinley_home", backup: "typo" });
   assert.deepEqual([bad.roles, bad.roles_invalid], [null, true]);
+  assert.equal(bad.roles_read_error, false);
+  const corrupt = fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] }, "jobs/roles.json": "{typo" });
+  const c = await (await call(worker, corrupt, "/api/jobs")).json();
+  assert.deepEqual([c.roles, c.roles_invalid, c.roles_read_error], [null, true, false], "malformed JSON is invalid, not absent");
+  const failing = fakeBucket({ "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [] } });
+  const realGet = failing.get;
+  failing.get = async (key) => {
+    if (key === "jobs/roles.json") throw new Error("r2 down");
+    return realGet.call(failing, key);
+  };
+  const f = await (await call(worker, failing, "/api/jobs")).json();
+  assert.deepEqual([f.roles, f.roles_invalid, f.roles_read_error], [null, false, true], "a read failure is reported as such");
 });
