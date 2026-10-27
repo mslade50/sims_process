@@ -7,6 +7,7 @@ import { renderView } from "./helpers/render-harness.mjs";
 const VIEWS = [
   ["players", "PlayerProfilesView.tsx", "PlayersView"],
   ["weekly-players", "WeeklyPlayersView.tsx", "WeeklyPlayersView"],
+  ["ops", "OpsView.tsx", "OpsView"],
   ["run", "RunView.tsx", "RunView"],
   ["inputs", "InputsView.tsx", "InputsView"],
   ["research", "ResearchView.tsx", "ResearchView"],
@@ -43,14 +44,19 @@ for (const [key, file, exportName] of VIEWS) {
   });
 }
 
-test("the built Worker serves every view route with 200 HTML", async () => {
+test("the built Worker serves existing routes and protects the new operations route", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const worker = (await import(workerUrl.href)).default;
   const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
   for (const [key] of VIEWS) {
     const response = await worker.fetch(new Request(`https://golf.example/${key}`, { headers: { accept: "text/html" } }), env, { waitUntil() {}, passThroughOnException() {} });
-    assert.equal(response.status, 200, key);
-    assert.match(await response.text(), /Golf Model/, key);
+    if (key === "ops") {
+      assert.equal(response.status, 302, "the private operations page fails closed without owner configuration");
+      assert.equal(response.headers.get("location"), "https://golf.example/this-week");
+    } else {
+      assert.equal(response.status, 200, key);
+      assert.match(await response.text(), /Golf Model/, key);
+    }
   }
 });

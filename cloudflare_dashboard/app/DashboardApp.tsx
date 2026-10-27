@@ -28,7 +28,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
-export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
+export type ViewKey = "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
 
 type Manifest = {
   generated_at: string;
@@ -43,12 +43,13 @@ type Manifest = {
 /** Icons by view key; the labels, groups and order live in shell-rules.ts (NAVIGATION) so tests can read them. */
 const NAV_ICONS: Record<string, typeof CircleGauge> = {
   "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
-  inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": TrendingUp, "bet-card": TrendingUp, history: Archive, diagnostics: Microscope,
+  ops: Settings2, inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": TrendingUp, "bet-card": TrendingUp, history: Archive, diagnostics: Microscope,
 };
 
 /** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
 const PlayersView = lazy(() => import("./PlayerProfilesView").then((m) => ({ default: m.PlayersView })));
 const WeeklyPlayersView = lazy(() => import("./WeeklyPlayersView").then((m) => ({ default: m.WeeklyPlayersView })));
+const OpsView = lazy(() => import("./OpsView").then((m) => ({ default: m.OpsView })));
 const RunView = lazy(() => import("./RunView").then((m) => ({ default: m.RunView })));
 const InputsView = lazy(() => import("./InputsView").then((m) => ({ default: m.InputsView })));
 const ResearchView = lazy(() => import("./ResearchView").then((m) => ({ default: m.ResearchView })));
@@ -69,6 +70,7 @@ const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default
 const loaders: Record<string, () => Promise<unknown>> = {
   "players": () => import("./PlayerProfilesView"),
   "weekly-players": () => import("./WeeklyPlayersView"),
+  "ops": () => import("./OpsView"),
   "run": () => import("./RunView"),
   "inputs": () => import("./InputsView"),
   "research": () => import("./ResearchView"),
@@ -100,6 +102,7 @@ const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
 const views: Record<ViewKey, React.ComponentType> = {
   players: PlayersView,
   "weekly-players": WeeklyPlayersView,
+  ops: OpsView,
   run: RunView,
   inputs: InputsView,
   research: ResearchView,

@@ -86,3 +86,7 @@ export default async function Home() {
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
+
+## Owner weekly workflow
+
+The owner-only `/ops` page shows the weekly chain, schedule, retained rollout tasks and authenticated owner decisions. Future agents: read [OPS_HANDOFF.md](docs/OPS_HANDOFF.md) and the authenticated `/api/ops/bootstrap` before claiming work. Unknown output health remains unverified; task notes never override measured health.
