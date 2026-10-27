@@ -7,7 +7,7 @@ the preview pipeline.
 Design contract (from 2026-05-13 discussion):
     1. Bankroll       = Kalshi's `balance_dollars` (cash actually available,
                          already net of cash reserved for resting orders).
-    2. Kelly fraction = 0.5  (half-Kelly).
+    2. Kelly fraction = kelly_config.KELLY_FRACTION (0.4).
     3. Correlation    = handled per-player via discrete-outcome Kelly
                          over 5 mutually-exclusive finish-position buckets.
     4. Existing       = filled positions + ALL resting golf orders
@@ -26,6 +26,8 @@ from __future__ import annotations
 from collections import defaultdict
 
 import numpy as np
+
+from kelly_config import KELLY_FRACTION
 
 
 # Mutually-exclusive finish buckets per player.
@@ -78,14 +80,14 @@ def bet_return_vector(market, side, post_price):
     ])
 
 
-def optimize_player_kelly(candidates, bucket_probs, kelly_fraction=0.5,
+def optimize_player_kelly(candidates, bucket_probs, kelly_fraction=KELLY_FRACTION,
                           max_total_fraction=0.25):
     """Solve discrete-outcome Kelly for one player's candidate bets.
 
     Args:
         candidates: list of dicts with market, side, post_price.
         bucket_probs: length-5 array.
-        kelly_fraction: post-solve haircut (0.5 = half-Kelly).
+        kelly_fraction: post-solve haircut. Defaults to kelly_config.KELLY_FRACTION.
         max_total_fraction: hard cap on Σ f_i per player (25% of bankroll).
 
     Returns:
@@ -201,7 +203,7 @@ def compute_optimal_outright_sizing(
     outright_candidates,           # list of candidate dicts from kalshi_maker.scan
     matchup_candidates,            # list — used only to net out matchup cash
     prob_lookup,                   # {player_lower: {winner, top_5, top_10, top_20}}
-    kelly_fraction=0.5,
+    kelly_fraction=KELLY_FRACTION,
     max_total_fraction_per_player=0.25,
     verbose=False,
 ):

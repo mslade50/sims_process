@@ -724,8 +724,9 @@ print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
 # --- Config for betting outputs ---
 EDGE_THRESHOLD_WIN   = 2.0     # minimum edge (pp) for WIN market (sim_prob - implied_prob)
 EDGE_THRESHOLD_TOPN  = 2.0     # minimum edge (pp) for Top-N markets (sim_prob - implied_prob)
+from kelly_config import KELLY_FRACTION
+
 BANKROLL             = 10000.0
-KELLY_FRACTION       = 0.25
 RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','pointsbet','wynnbet','unibet','betway','betfred','betrivers']
 BANKROLLS            = {'pinnacle': 10000, 'betcris': 10000, 'betonline': 8000, 'retail': 4000, 'bovada': 3000}
 

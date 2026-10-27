@@ -2187,7 +2187,6 @@ if __name__ == "__main__":
                 outright_candidates=outright_cands,
                 matchup_candidates=matchup_cands,
                 prob_lookup=prob_lookup,
-                kelly_fraction=0.5,
                 max_total_fraction_per_player=0.25,
                 verbose=True,
             )
