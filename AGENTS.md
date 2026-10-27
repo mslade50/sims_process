@@ -234,3 +234,7 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - Graceful degradation for missing files (warn, don't crash)
 - Follow existing print-statement debugging patterns
 - Email reports → HTML tables with confidence thresholds
+
+## Golf rollout handoff
+
+For the authorized golf operations rollout, read `cloudflare_dashboard/docs/OPS_HANDOFF.md` and the live authenticated `/api/ops/bootstrap`, `/api/ops/tasks` and `/api/ops/workflow` before changing a task. The reviewed scope and dependencies are in `golf_ops/docs/ROLLOUT_BRIEF.md`. Claim the task, retain provenance and exact revision, keep owner decisions separate from agent notes, and leave missing output evidence unverified. Exact owner answers for D01/D02 are retained in golf_ops/docs/ROLLOUT_DECISIONS_20261027.json; implementation verification remains pending. These pointers do not authorize model changes or real bet actions.

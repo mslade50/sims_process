@@ -62,7 +62,7 @@ export const NAVIGATION: NavGroup[] = [
       { key: "weather-edits", href: "/weather-edits", label: "Weather edits", description: "Replace forecast hours with your own numbers, then reprice" },
     ],
   },
-  { label: "Operate", items: [{ key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
+  { label: "Operate", items: [{ key: "ops", href: "/ops", label: "Weekly workflow", description: "The week, verified outputs, open work and agent handoffs" }, { key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
   {
     label: "Review",
     items: [
@@ -98,8 +98,8 @@ export function navEntryFor(viewKey: string): { item: NavItem; label: string; de
  * Colleagues may be let in through Cloudflare Access; these areas stay with the owner (OWNER_EMAILS on the Worker, worker/owner.ts).
  * The Worker enforces it (pages redirect home, APIs answer 403); the app only hides the links.
  */
-export const OWNER_ONLY_VIEWS: readonly string[] = ["run", "weather-edits", "bet-breakdowns", "bet-card"];
-export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/jobs", "/api/overrides", "/api/weather-overrides", "/api/owner-data"];
+export const OWNER_ONLY_VIEWS: readonly string[] = ["ops", "run", "weather-edits", "bet-breakdowns", "bet-card"];
+export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/ops", "/api/jobs", "/api/overrides", "/api/weather-overrides", "/api/owner-data"];
 
 /** "page" or "api" when `pathname` is owner-only, else null. Case, a trailing slash and an `.rsc` suffix do not get around it. */
 export function ownerOnlyPath(pathname: string): "page" | "api" | null {
