@@ -153,8 +153,10 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   }
   if (failed.length) notes.push(`inbox not written for: ${failed.join(", ")}`);
   const bad = statuses.filter((s) => s.state === "stale" || s.state === "missing");
+  const judgedCount = statuses.filter((s) => s.state === "ok" || s.state === "stale" || s.state === "missing").length;
+  if (judgedCount === 0) notes.push("Nothing could be judged this tick (off week, or reads failed).");
   const doc: FreshnessDoc = {
-    schema: FRESHNESS_SCHEMA, checked_at: nowIso, ok: bad.length === 0, stale_count: bad.length, sources: statuses, notes,
+    schema: FRESHNESS_SCHEMA, checked_at: nowIso, ok: bad.length === 0 && judgedCount > 0, not_judged: judgedCount === 0, stale_count: bad.length, sources: statuses, notes,
     inbox: { bound: !!inbox, written, failed },
   };
   try {

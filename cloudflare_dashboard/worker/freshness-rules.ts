@@ -106,14 +106,17 @@ export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean
 
 const ACTIVE_BEFORE_DAYS = 11;
 const ACTIVE_AHEAD_DAYS = 7;
-/** True when some event starts within 11 days back to 7 days ahead of `now`; null when there are no events to read. */
+/** Once the newest indexed event started this long ago, silence is treated as a dead pipeline (the index only lists published events), so judging resumes. */
+const LAPSED_AFTER_DAYS = 21;
+/** True when some event starts within 11 days back to 7 days ahead of `now`, or when the newest indexed event is so old that publishing has evidently stopped (judge). False = a short gap between events. Null when there are no events to read. */
 export function eventsActive(events: Array<{ date_start?: string | null }> | null, now: number): boolean | null {
   if (!events || events.length === 0) return null;
   const day = 86_400_000;
-  return events.some((e) => {
-    const ms = timestampMs(typeof e.date_start === "string" ? e.date_start.slice(0, 10) : null);
-    return ms !== null && ms >= now - ACTIVE_BEFORE_DAYS * day && ms <= now + ACTIVE_AHEAD_DAYS * day;
-  });
+  const starts = events.map((e) => timestampMs(typeof e.date_start === "string" ? e.date_start.slice(0, 10) : null)).filter((ms): ms is number => ms !== null);
+  if (starts.length === 0) return null;
+  if (starts.some((ms) => ms >= now - ACTIVE_BEFORE_DAYS * day && ms <= now + ACTIVE_AHEAD_DAYS * day)) return true;
+  const newestPast = Math.max(...starts.filter((ms) => ms < now), -Infinity);
+  return newestPast < now - LAPSED_AFTER_DAYS * day; // lapsed pipeline: judge, so a missed week shows as stale
 }
 
 /** Judge one read of one source. `ageOverrideMs`: for sources whose observed time is a calendar date, the caller passes the reading itself. */
@@ -220,6 +223,8 @@ export type FreshnessDoc = {
   schema: string;
   checked_at: string;
   ok: boolean;
+  /** True when no source could be judged this tick (everything skipped or unreadable): not the same as healthy. */
+  not_judged: boolean;
   stale_count: number;
   sources: SourceStatus[];
   notes: string[];
@@ -240,7 +245,7 @@ export function parseFreshness(raw: unknown): FreshnessDoc | null {
   });
   const inbox = (d.inbox && typeof d.inbox === "object" ? d.inbox : {}) as Record<string, unknown>;
   return {
-    schema: FRESHNESS_SCHEMA, checked_at: d.checked_at, ok: d.ok === true, stale_count: typeof d.stale_count === "number" ? d.stale_count : sources.filter((s) => s.state === "stale" || s.state === "missing").length,
+    schema: FRESHNESS_SCHEMA, checked_at: d.checked_at, ok: d.ok === true, not_judged: d.not_judged === true, stale_count: typeof d.stale_count === "number" ? d.stale_count : sources.filter((s) => s.state === "stale" || s.state === "missing").length,
     sources, notes: Array.isArray(d.notes) ? d.notes.filter((n): n is string => typeof n === "string") : [],
     inbox: { bound: inbox.bound === true, written: Array.isArray(inbox.written) ? inbox.written.filter((n): n is string => typeof n === "string") : [], failed: Array.isArray(inbox.failed) ? inbox.failed.filter((n): n is string => typeof n === "string") : [] },
   };

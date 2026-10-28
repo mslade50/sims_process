@@ -244,18 +244,26 @@ test("bet_breakdowns has no scheduled producer and is not judged", () => {
   assert.ok(!SOURCES.some((s) => s.id === "bet_breakdowns" || s.key === "owner/bet_breakdowns.json"));
 });
 
-test("off weeks are not judged: no event near today means nothing stale is reported", async () => {
+test("off weeks are not judged, but a dead pipeline is: a short gap skips, a lapsed index judges", async () => {
   const data = healthyData();
-  data["golfprice/index.json"] = { schema: "x", published_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-01", tour: "pga", date_start: "2026-10-01", date_end: "2026-10-04" }, { event_uid: "pga:9:2027-01-07", tour: "pga", date_start: "2027-01-07", date_end: "2027-01-10" }] };
+  data["golfprice/index.json"] = { schema: "x", published_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-10", tour: "pga", date_start: "2026-10-10", date_end: "2026-10-13" }] };
   data["owner/bet_card.json"] = fresh("2026-10-01T04:00:00Z");
   data["golfprice/odds_signals/latest.json"] = fresh("2026-10-01T04:00:00Z");
   data["data/manifest.json"] = fresh("2026-09-01T00:00:00Z");
   const out = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
-  assert.equal(out.doc.ok, true);
   assert.ok(out.doc.sources.every((s) => s.state === "skipped"));
+  assert.equal(out.doc.not_judged, true);
+  assert.equal(out.doc.ok, false); // all skipped is never reported as healthy
+  // the last event is 27 days old: publishing has stopped, so the stale weekly sources are reported
+  data["golfprice/index.json"].events[0].date_start = "2026-10-01";
+  const lapsed = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(lapsed.doc.not_judged, false);
+  assert.ok(lapsed.doc.stale_count > 0);
   assert.equal(eventsActive([], NOW), null);
   assert.equal(eventsActive(null, NOW), null);
   assert.equal(eventsActive([{ date_start: "2026-10-30" }], NOW), true);
+  assert.equal(eventsActive([{ date_start: "2026-10-01" }], NOW), true);
+  assert.equal(eventsActive([{ date_start: "2026-10-10" }], NOW), false);
 });
 
 test("orphaned episodes: a rolled-over history id is closed with a recovered record; an unjudged scorecard_lag stays open", () => {

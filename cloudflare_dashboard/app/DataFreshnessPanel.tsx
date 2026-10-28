@@ -35,9 +35,9 @@ export function DataFreshnessPanel() {
         : state.phase === "none" ? <EmptyState title="No freshness check recorded yet" detail="The check runs every 15 minutes once it is deployed. If this stays empty, the check is not running." />
         : state.phase === "error" || !doc ? <EmptyState title="The freshness check could not be read" detail="Reload in a minute. If it keeps failing, the status object or the check itself is broken." />
         : <>
-          <p className={doc.ok && !checkerLate ? "data-through" : "data-through warn"} role="status" data-testid="fresh-summary">
+          <p className={doc.ok && !doc.not_judged && !checkerLate ? "data-through" : "data-through warn"} role="status" data-testid="fresh-summary">
             {checkerLate ? `The check last ran ${etTime(doc.checked_at)}, more than 45 minutes ago: it may not be running. ` : ""}
-            {doc.ok ? "Every source checked is within its normal age." : `${doc.stale_count} source${doc.stale_count === 1 ? " is" : "s are"} stale or missing. This panel is the record; nothing is sent to your phone.`} Checked {etTime(doc.checked_at)}.
+            {doc.not_judged ? "Not judged: no source could be checked this tick (off week, or the reads failed). This is not the same as healthy." : doc.ok ? "Every source checked is within its normal age." : `${doc.stale_count} source${doc.stale_count === 1 ? " is" : "s are"} stale or missing. This panel is the record; nothing is sent to your phone.`} Checked {etTime(doc.checked_at)}.
           </p>
           <table>
             <thead><tr><th>Source</th><th>State</th><th>Last updated</th><th>Normal maximum</th></tr></thead>
