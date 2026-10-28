@@ -166,19 +166,18 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
       return Response.json({ error: "Invalid data path" }, { status: 400 });
     }
     const key = `data/${requested}`;
+    // No packaged-snapshot fallback: public/data/*.json is a frozen 2026-08-18 (BMW) copy, and serving it here would show
+    // months-old data as current. A miss is an explicit "not published" (404); an R2 failure is an outage (503). The client
+    // already words both (app/data-rules.ts classifyFailure).
     let object: R2ObjectBody | null = null;
     try {
       object = env.DASHBOARD_DATA ? await env.DASHBOARD_DATA.get(key) : null;
     } catch {
-      // Local preview and a newly provisioned bucket intentionally fall back
-      // to the packaged snapshot until the first R2 publish completes.
+      return Response.json({ error: "Data service unavailable" }, { status: 503, headers: { "cache-control": "no-store" } });
     }
-    if (object) {
-      // manifest.json is the publish pointer (short max-age + revalidate); If-None-Match answers 304 so unchanged files cost no body.
-      return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: cacheControlFor(requested) });
-    }
-    const assetUrl = new URL(`/data/${requested}`, request.url);
-    return env.ASSETS.fetch(new Request(assetUrl, request));
+    if (!object) return Response.json({ error: "Not published yet" }, { status: 404, headers: { "cache-control": "no-store" } });
+    // manifest.json is the publish pointer (short max-age + revalidate); If-None-Match answers 304 so unchanged files cost no body.
+    return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: cacheControlFor(requested) });
   }
 
   if (url.pathname === "/_vinext/image") {

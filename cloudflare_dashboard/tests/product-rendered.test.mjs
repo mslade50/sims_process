@@ -116,25 +116,20 @@ test("weights diagnostic player-event averages by their played rounds", async ()
   assert.match(diagnosticsView, /diagnosticRoundCount\(playerRows\)/);
 });
 
-test("serves dashboard data from R2 and falls back to packaged assets", async () => {
+test("serves dashboard data from R2 and never falls back to the packaged snapshot", async () => {
   const worker = await loadWorker();
   const context = { waitUntil() {}, passThroughOnException() {} };
   const assetPaths = [];
-  const assetResponse = await worker.fetch(
-    new Request("https://golf.example/api/data/manifest.json"),
-    {
-      ASSETS: {
-        fetch: async (request) => {
-          assetPaths.push(new URL(request.url).pathname);
-          return Response.json({ source: "asset" });
-        },
-      },
-    },
-    context,
-  );
-  assert.equal(assetResponse.status, 200);
-  assert.deepEqual(await assetResponse.json(), { source: "asset" });
-  assert.deepEqual(assetPaths, ["/data/manifest.json"]);
+  const ASSETS = { fetch: async (request) => { assetPaths.push(new URL(request.url).pathname); return Response.json({ source: "asset" }); } };
+  const missing = await worker.fetch(new Request("https://golf.example/api/data/manifest.json"), { ASSETS, DASHBOARD_DATA: { get: async () => null } }, context);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get("cache-control"), "no-store");
+  assert.match((await missing.json()).error, /Not published/);
+  const noBucket = await worker.fetch(new Request("https://golf.example/api/data/manifest.json"), { ASSETS }, context);
+  assert.equal(noBucket.status, 404);
+  const outage = await worker.fetch(new Request("https://golf.example/api/data/manifest.json"), { ASSETS, DASHBOARD_DATA: { get: async () => { throw new Error("r2 down"); } } }, context);
+  assert.equal(outage.status, 503);
+  assert.deepEqual(assetPaths, [], "the bundled snapshot is never read for /api/data");
 
   const r2Response = await worker.fetch(
     new Request("https://golf.example/api/data/manifest.json"),
