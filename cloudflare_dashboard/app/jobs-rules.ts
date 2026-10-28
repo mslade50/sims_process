@@ -72,6 +72,23 @@ export function machinesWithRoles(roles: Roles | null | undefined): MachineSpec[
 export type MachineBeat = { machine?: string; at?: string; state?: string; job_id?: string | null; commit?: string | null; code?: string | null; role?: string | null };
 export type MachineStatus = { name: string; label: string; role: "primary" | "backup"; status: "offline" | "idle" | "running"; lastSeen: string | null; jobId: string | null; commit: string | null };
 
+export type RoleEvidence = { configured_role: "primary" | "backup" | null; reported_role: "primary" | "backup" | null; role_source: "configured" | "built_in" | "unknown"; message: string };
+/** Configuration describes intent; only a fresh, matching heartbeat describes the reported role. Neither proves takeover readiness. */
+export function machineRoleEvidence(machine: string, roles: Roles | null, problem: RolesProblem | null, beats: MachineBeat[], now: number): RoleEvidence {
+  const parsed = parseRoles(roles);
+  const invalid = problem !== null || (roles !== null && parsed === null);
+  const role_source = invalid ? "unknown" : parsed ? "configured" : "built_in";
+  const configured_role = invalid ? null : machinesWithRoles(parsed).find((m) => m.name === machine)?.role ?? null;
+  const beat = beats.find((b) => b && b.machine === machine);
+  const at = parseUtc(beat?.at);
+  const fresh = at !== null && now - at >= -60_000 && now - at <= STALE_HEARTBEAT_MS;
+  const reported_role = fresh && (beat?.role === "primary" || beat?.role === "backup") ? beat.role : null;
+  const configured = invalid ? "Role configuration is unreadable; configured role unknown." : `${parsed ? "Configured" : "Built-in default"}: ${configured_role ?? "unknown"}.`;
+  const reported = reported_role ? `Reported: ${reported_role}.` : "No fresh reported role.";
+  const mismatch = configured_role && reported_role && configured_role !== reported_role ? " Role mismatch; investigate before switching machines." : "";
+  return { configured_role, reported_role, role_source, message: `${configured} ${reported}${mismatch}` };
+}
+
 /** Live status of one allow-listed machine from its heartbeat object: offline = no heartbeat or older than STALE_HEARTBEAT_MS. */
 export function machineStatus(spec: MachineSpec, beats: MachineBeat[] | undefined, now: number): MachineStatus {
   const beat = (beats ?? []).find((b) => b && b.machine === spec.name);

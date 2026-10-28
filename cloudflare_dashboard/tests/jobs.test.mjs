@@ -393,3 +393,26 @@ test("GET /api/jobs reports roles and flags an invalid jobs/roles.json instead o
   const f = await (await call(worker, failing, "/api/jobs")).json();
   assert.deepEqual([f.roles, f.roles_invalid, f.roles_read_error], [null, false, true], "a read failure is reported as such");
 });
+
+test("role evidence distinguishes configured, built-in, unknown and fresh reported roles", async () => {
+  const { machineRoleEvidence } = await import("../app/jobs-rules.ts");
+  const small = "desktop-2ki41v6", big = "mckinley_home";
+  const beats = [{machine:small, at:new Date(NOW).toISOString(), role:"backup"}];
+  const configured = machineRoleEvidence(small, {primary:big,backup:small}, null, beats, NOW);
+  assert.equal(configured.configured_role,"backup"); assert.equal(configured.reported_role,"backup");
+  assert.equal(configured.role_source,"configured"); assert.match(configured.message,/Configured: backup/);
+  const defaults = machineRoleEvidence(small, null, null, beats, NOW);
+  assert.equal(defaults.role_source,"built_in"); assert.equal(defaults.configured_role,"primary");
+  assert.match(defaults.message,/Built-in default: primary/); assert.match(defaults.message,/Role mismatch/);
+  for (const problem of ["roles_invalid","roles_read_error"]) {
+    const unknown = machineRoleEvidence(small, null, problem, beats, NOW);
+    assert.equal(unknown.configured_role,null); assert.equal(unknown.reported_role,"backup");
+    assert.equal(unknown.role_source,"unknown"); assert.match(unknown.message,/configured role unknown/);
+  }
+  for (const at of ["invalid",new Date(NOW-600_001).toISOString(),new Date(NOW+60_001).toISOString()]) {
+    const expired = machineRoleEvidence(small, null, null, [{...beats[0],at}], NOW);
+    assert.equal(expired.reported_role,null); assert.match(expired.message,/No fresh reported role/);
+  }
+  assert.equal(machineRoleEvidence(small,null,null,[{...beats[0],machine:big}],NOW).reported_role,null);
+  assert.equal(machineRoleEvidence(small,null,null,[{...beats[0],role:"unexpected"}],NOW).reported_role,null);
+});

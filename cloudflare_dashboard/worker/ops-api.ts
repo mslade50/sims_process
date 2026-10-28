@@ -2,6 +2,7 @@
 import { accessIdentity, accessServiceIdentity, type AccessEnv } from "./access";
 import { ownerEmails } from "./owner";
 import { attachExecutions, cleanText, STATE_LABEL, STAGES, isTaskState, OPS_SCHEMA, publicTask, safeProof, sameActor, stageSummaries, summarizeMachines, validWeek, weekSchedule, weekStart, type Actor, type EventScope, type JobEvidence, type OpsTask, type StageReceipt } from "../app/ops-rules";
+import { loadRoles } from "../app/jobs-rules";
 import { TASK_IDS, seedTask } from "./ops-seed";
 
 export interface OpsEnv extends AccessEnv { OWNER_EMAILS?: string; OPS_AGENT_CLIENT_IDS?: string; DASHBOARD_DATA?: R2Bucket }
@@ -66,7 +67,7 @@ async function workflow(bucket: R2Bucket, url: URL, now: number): Promise<Respon
   const selected = url.searchParams.get("event") ?? "all";
   if (selected.length > 100 || !/^[A-Za-z0-9_:.-]+$/.test(selected)) return fail(400, "Invalid event selection.");
   const keys = ["jobs/queue.json", "golfprice/index.json", "owner/ops/observations.json", "jobs/heartbeat/mckinley_home.json", "jobs/heartbeat/desktop-2ki41v6.json"];
-  const data = await Promise.all(keys.map((k) => readJson(bucket,k,1_000_000)));
+  const [data, loadedRoles] = await Promise.all([Promise.all(keys.map((k) => readJson(bucket,k,1_000_000))), loadRoles(bucket)]);
   const queue = data[0]?.value;
   if (queue !== undefined && (!object(queue) || !Array.isArray(queue.jobs) || queue.jobs.length>1000 || !queue.jobs.every(queueRowValid) || new Set(queue.jobs.map((j)=>j.id)).size!==queue.jobs.length)) return fail(503, "The job queue is unreadable. Workflow health is unknown.");
   const raw:QueueRow[] = object(queue) && Array.isArray(queue.jobs) ? (queue.jobs as QueueRow[]).slice().sort((a,b) => Date.parse(b.requested_at)-Date.parse(a.requested_at)).slice(0,32) : [];
@@ -84,7 +85,7 @@ async function workflow(bucket: R2Bucket, url: URL, now: number): Promise<Respon
     receipts = observation.receipts;
   }
   const beats = data.slice(3).map((d) => d?.value).filter(object);
-  const machines = summarizeMachines(beats,now);
+  const machines = summarizeMachines(beats,now,loadedRoles.roles,loadedRoles.problem);
   const aligned = machines.every((m) => m.online && !!m.code) && machines[0].code === machines[1].code;
   return json({ok:true, now:iso(now), week:start, timezone:"America/New_York", events, selected_event:selected, machines, code_aligned:aligned, backup_readiness:"not_verified", stages:stageSummaries(jobs,receipts,events,selected,start,now), schedule:attachExecutions(weekSchedule(start),jobs), jobs_observed:jobs.length, coverage:{execution:"Newest 32 queued job records; older schedule cells remain unverified without receipts.", outputs:observation ? "Stored content checks; exact event/occurrence and freshness required." : "Content-check receipts are not connected yet; exit zero does not mark outputs verified.", non_golfprice:"Producer, export and delivery observations are added as their reviewed instrumentation ships."}});
 }

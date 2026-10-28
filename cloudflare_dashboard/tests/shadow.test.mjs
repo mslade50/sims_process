@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateShadow, buildSummary, MISSED_GRACE_MS } from "../worker/shadow-rules.ts";
+import { runShadow } from "../worker/shadow.ts";
 import { dueJobs } from "../worker/cron-rules.ts";
-import { MACHINES, loadRoles, machinesWithRoles, parseRoles, rolesInvalid } from "../app/jobs-rules.ts";
+import { MACHINES, loadRoles, machinesWithRoles, parseRoles, rolesInvalid, trimQueue } from "../app/jobs-rules.ts";
 
 const MIN = 60_000;
 const NOW = Date.parse("2026-10-07T16:07:00Z"); // Wed 12:07 EDT
@@ -51,9 +52,9 @@ test("shadow rules: expected cron occurrences without a created job are missed a
   const base = { now: slot + MISSED_GRACE_MS, jobs: [], created: [], beats: [], dueAt };
   assert.deepEqual(evaluateShadow(base).map((f) => f.key).sort(), ["missed-odds_reprice-20261007T150000Z", "missed-watch-20261007T150000Z"]);
   assert.deepEqual(evaluateShadow({ ...base, now: slot + MISSED_GRACE_MS - 1 }), [], "inside the grace");
-  const made = evaluateShadow({ ...base, created: [{ type: "watch", requested_at: iso(slot + 20_000) }] });
+  const made = evaluateShadow({ ...base, created: [{ type: "watch", requested_at: iso(slot), requested_by: "cron" }] });
   assert.deepEqual(made.map((f) => f.subject), ["odds_reprice"]);
-  const limited = evaluateShadow({ ...base, jobs: [job("j-9", "odds_reprice", 0, "running", { requested_at: iso(slot - 2 * 3_600_000) })], created: [{ type: "watch", requested_at: iso(slot) }] });
+  const limited = evaluateShadow({ ...base, jobs: [job("j-9", "odds_reprice", 0, "running", { requested_at: iso(slot - 2 * 3_600_000) })], created: [{ type: "watch", requested_at: iso(slot), requested_by: "cron" }] });
   assert.deepEqual(limited, [], "a live same-type job inside the 6 h rate limit explains the skipped enqueue");
 });
 
@@ -90,7 +91,7 @@ function fakeBucket(initial = {}) {
       this.gets.push(key);
       if (this.failGet.has(key)) throw new Error(`simulated R2 failure for ${key}`);
       const o = store.get(key);
-      const result = o ? { key, etag: `e${o.v}`, text: async () => o.body } : null;
+      const result = o ? { key, etag: `e${o.v}`, uploaded: o.uploaded, text: async () => o.body } : null;
       if (this.onGet) await this.onGet(key);
       return result;
     },
@@ -229,7 +230,7 @@ test("rules: a blocker is judged at the tick, not now (finished between the tick
   const slot = Date.parse("2026-10-07T15:00:00Z");
   const dueAt = (ms) => (ms === slot ? [{ type: "watch" }] : []);
   const base = { now: slot + 15 * MIN, created: [], beats: [], dueAt };
-  const blocker = (over) => ({ id: "j-b", type: "watch", requested_at: iso(slot - 5 * MIN), state: "done", requested_by: "cron", ...over });
+  const blocker = (over) => ({ id: "j-b", type: "watch", requested_at: iso(slot - 5 * MIN), state: "done", requested_by: "cron", terminal_published_at: slot - 1000, ...over });
   assert.deepEqual(evaluateShadow({ ...base, jobs: [blocker({ finished_at: slot + 5 * MIN })] }), [], "finished after the tick: it was running at the tick");
   assert.equal(evaluateShadow({ ...base, jobs: [blocker({ finished_at: slot - MIN })] }).length, 1, "finished before the tick: no excuse");
   assert.deepEqual(evaluateShadow({ ...base, jobs: [blocker({ finished_at: null })] }), [], "unknown finish time is not turned into an incident");
@@ -242,14 +243,14 @@ test("rules: DST fall-back repeats the 01:00 ET slot (Nov 1 2026) and both occur
   const now = Date.parse("2026-11-01T06:10:00Z"); // 01:10 EST, second pass through 01:00 ET
   const f = evaluateShadow({ now, jobs: [], created: [], beats: [], dueAt: dueJobs }).filter((x) => x.subject === "after_round");
   assert.deepEqual(f.map((x) => x.key).sort(), ["missed-after_round-20261101T050000Z", "missed-after_round-20261101T060000Z"]);
-  const covered = evaluateShadow({ now, jobs: [], created: [{ type: "after_round", requested_at: "2026-11-01T05:00:20Z" }], beats: [], dueAt: dueJobs }).filter((x) => x.subject === "after_round");
+  const covered = evaluateShadow({ now, jobs: [], created: [{ type: "after_round", requested_at: "2026-11-01T05:00:00Z", requested_by: "cron" }], beats: [], dueAt: dueJobs }).filter((x) => x.subject === "after_round");
   assert.deepEqual(covered.map((x) => x.key), ["missed-after_round-20261101T060000Z"], "the first pass does not cover the second");
 });
 
 test("observer selects records independent of the Run page limits: an old failure survives 30 later cron jobs", async () => {
   const worker = await loadWorker();
-  const old = { id: "j-20261007T020000-oldfail", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: iso(NOW - 14 * 60 * MIN), verified: true };
-  const cron = Array.from({ length: 30 }, (_, i) => ({ id: `j-20261007T1${String(i).padStart(5, "0")}-c${i}`, type: "odds_reprice", params: {}, requested_by: "cron", requested_at: iso(NOW - (300 - i * 5) * MIN), verified: true }));
+  const old = { id: "j-20261007T020000-aabbcc", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: iso(NOW - 14 * 60 * MIN), verified: true };
+  const cron = Array.from({ length: 30 }, (_, i) => ({ id: `j-20261007T100000-${i.toString(16).padStart(6, "0")}`, type: "odds_reprice", params: {}, requested_by: "cron", requested_at: iso(NOW - (300 - i * 5) * MIN), verified: true }));
   const bucket = fakeBucket({
     "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [old, ...cron] },
     [`jobs/status/${old.id}.json`]: { id: old.id, state: "failed" },
@@ -280,12 +281,17 @@ test("summary.json is etag-guarded: a newer summary is not replaced, and a lost 
   assert.equal(JSON.parse(c.store.get("ops/shadow/summary.json").body).updated_at, first);
 });
 
-test("R2 read errors are not absence: a failed queue GET skips the tick; a failed status GET omits only that job", async () => {
+test("R2 read errors are not absence: a failed queue GET checks heartbeats and writes a degraded summary; a failed status GET omits only that job", async () => {
   const worker = await loadWorker();
   const q = seeded();
   q.failGet.add("jobs/queue.json");
+  q.store.set("jobs/heartbeat/desktop-2ki41v6.json", { body: JSON.stringify({ machine: "desktop-2ki41v6", at: iso(NOW - 90 * MIN) }), v: 1 });
   await tick(worker, { DASHBOARD_DATA: q, OPS_SHADOW_ENABLED: "1" }, NOW);
-  assert.equal(q.puts.some((k) => k.startsWith("ops/")), false, "nothing written, no false occurrence_missed");
+  assert.equal(recordedKeys(q).some((k) => k.includes("missed-") || k.includes("job-failed-")), false, "queue-dependent findings are skipped");
+  const qSummary = JSON.parse(q.store.get("ops/shadow/summary.json").body);
+  assert.ok(qSummary.degraded.includes("queue_read_error"));
+  assert.equal(qSummary.checked.machines, 2, "independent heartbeats still checked");
+  assert.ok(recordedKeys(q).some((k) => k.startsWith("heartbeat-stale-desktop-2ki41v6")));
   const s = seeded();
   s.failGet.add(`jobs/status/${failedJob.id}.json`);
   await tick(worker, { DASHBOARD_DATA: s, OPS_SHADOW_ENABLED: "1" }, NOW);
@@ -332,7 +338,7 @@ test("rules: an unreadable status suppresses only the 6 h after its own request,
 test("Tuesday due slot through the Worker: an unreadable status for that type suppresses its slot and is reported; a readable finished one does not", async () => {
   const worker = await loadWorker();
   const T = Date.parse("2026-10-13T16:12:00Z"); // Tue 12:12 EDT, the 12:00 ET tuesday slot (16:00Z) is past its grace
-  const tuesdayJob = { id: "j-20261013T155000-tttttt", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-13T15:50:00Z", verified: true };
+  const tuesdayJob = { id: "j-20261013T155000-aaaaaa", type: "tuesday", params: {}, requested_by: "o@example.com", requested_at: "2026-10-13T15:50:00Z", verified: true };
   const make = (status) =>
     fakeBucket({
       "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs: [tuesdayJob] },
@@ -343,6 +349,7 @@ test("Tuesday due slot through the Worker: an unreadable status for that type su
   const env = (bucket) => ({ DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" });
   const key = "missed-tuesday-20261013T160000Z";
   const readable = make({ id: tuesdayJob.id, state: "done", finished_at: "2026-10-13T15:55:00Z" });
+  readable.store.get(`jobs/status/${tuesdayJob.id}.json`).uploaded = new Date("2026-10-13T15:56:00Z");
   await tick(worker, env(readable), T);
   assert.ok(hasIncident(readable, key), "a job that finished before the slot does not excuse it");
   const corrupt = make("{not json");
@@ -469,7 +476,7 @@ test("invalid queue entries are dropped and reported; valid jobs, heartbeats and
 
 /* ------------------------------------------------------------------ round 5: batch + index storage model */
 const batchKeys = (bucket) => [...bucket.store.keys()].filter((k) => k.startsWith("ops/shadow/batches/"));
-const manyFailed = (count, T0, agoMin = 120) => Array.from({ length: count }, (_, i) => ({ id: `j-20261014T10${String(i).padStart(5, "0")}-m${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - agoMin * MIN), verified: true }));
+const manyFailed = (count, T0, agoMin = 120) => Array.from({ length: count }, (_, i) => ({ id: `j-20261014T100000-${i.toString(16).padStart(6, "0")}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - agoMin * MIN), verified: true }));
 const queueWith = (jobs, T0) =>
   fakeBucket({
     "jobs/queue.json": { schema: "golfprice.job_queue.v1", jobs },
@@ -507,7 +514,7 @@ test("600 findings in one tick all land in ONE batch object with a bounded numbe
 test("overlapping ticks that read the same index etag: both batches are durable, the index is the union, nothing is lost", async () => {
   const worker = await loadWorker();
   const T0 = Date.parse("2026-10-14T12:00:00Z");
-  const near = Array.from({ length: 10 }, (_, i) => ({ id: `j-20261012T1210${String(i).padStart(2, "0")}-n${i}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
+  const near = Array.from({ length: 10 }, (_, i) => ({ id: `j-20261012T121000-${i.toString(16).padStart(6, "0")}`, type: "wednesday", params: {}, requested_by: "o@example.com", requested_at: iso(T0 - (47 * 60 + 50) * MIN), verified: true }));
   const recent = manyFailed(5, T0);
   const bucket = queueWith([...near, ...recent], T0);
   const env = { DASHBOARD_DATA: bucket, OPS_SHADOW_ENABLED: "1" };
@@ -612,7 +619,7 @@ test("index retry path: valid at first read, the CAS loses, the re-read is corru
   const T0 = Date.parse("2026-10-14T12:00:00Z");
   const jobs = manyFailed(3, T0);
   const bucket = queueWith(jobs, T0);
-  bucket.store.set("ops/shadow/index/2026-10-14.json", { body: JSON.stringify({ keys: {} }), v: 1 });
+  bucket.store.set("ops/shadow/index/2026-10-14.json", { body: JSON.stringify({ schema: "golf_ops.shadow.v1", keys: {} }), v: 1 });
   let fired = false;
   bucket.onGet = async (key) => {
     if (key !== "ops/shadow/index/2026-10-14.json" || fired) return;
@@ -626,4 +633,203 @@ test("index retry path: valid at first read, the CAS loses, the re-read is corru
   assert.equal(batchKeys(bucket).length, 1);
   for (const j of jobs) assert.ok(recordedKeys(bucket).includes(`job-failed-${j.id}`));
   assert.ok(JSON.parse(bucket.store.get("ops/shadow/summary.json").body).degraded.includes("index_unreadable:2026-10-14"));
+});
+
+
+/* Evidence validation and chronology regressions; exercise source directly, without rebuilding the Worker. */
+test("manual requests do not prove a scheduled creation; cron matches the scheduled minute", () => {
+  const slot = Date.parse("2026-10-07T15:00:00Z");
+  const base = { now: slot + 10 * MIN, jobs: [], created: [], beats: [], dueAt: (t) => t === slot ? [{ type: "watch" }] : [] };
+  const created = (requested_by, at) => [{ type: "watch", requested_by, requested_at: iso(at) }];
+  for (const c of [created("manual", slot - 30_000), created("cron", slot - 30_000), created("cron", slot + MIN)]) {
+    assert.equal(evaluateShadow({ ...base, created: c }).filter((f) => f.kind === "occurrence_missed").length, 1);
+  }
+  assert.equal(evaluateShadow({ ...base, created: created("cron", slot) }).length, 0);
+  assert.equal(evaluateShadow({ ...base, created: created("cron", slot + 20_000) }).length, 0);
+});
+
+test("invalid queue, status, and heartbeat evidence is degraded, never trusted", async () => {
+  const env = (b) => ({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" });
+  for (const bad of [{ requested_at: "not-a-date" }, { requested_at: "2026-02-30T00:00:00Z" }, { requested_at: iso(NOW + 10 * MIN) }, { id: "../bad" }, { type: "nonsense" }]) {
+    const b = seeded();
+    b.store.set("jobs/queue.json", { body: JSON.stringify({ jobs: [{ ...failedJob, ...bad }] }), v: 1 });
+    await runShadow(env(b), NOW);
+    const summary = JSON.parse(b.store.get("ops/shadow/summary.json").body);
+    assert.ok(summary.degraded.includes("queue_entry_invalid:1"));
+    assert.equal(recordedKeys(b).some((k) => k.startsWith("missed-") || k.startsWith("job-failed-")), false);
+  }
+  for (const bad of [null, [], 3, { id: failedJob.id, state: "nonsense" }, { id: "wrong", state: "failed" }, { id: failedJob.id, state: "done", finished_at: iso(NOW - 120 * MIN) }, { id: failedJob.id, state: "done", finished_at: iso(NOW + 10 * MIN) }]) {
+    const b = seeded();
+    b.store.set(`jobs/status/${failedJob.id}.json`, { body: JSON.stringify(bad), v: 1 });
+    await runShadow(env(b), NOW);
+    assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes("status_unreadable:1"));
+    assert.ok(hasIncident(b, `status-unreadable-${failedJob.id}`));
+  }
+  for (const bad of [null, [], 3, { machine: "wrong", at: iso(NOW) }, { machine: "mckinley_home", at: iso(NOW + 10 * MIN) }]) {
+    const b = seeded();
+    b.store.set("jobs/heartbeat/mckinley_home.json", { body: JSON.stringify(bad), v: 1 });
+    await runShadow(env(b), NOW);
+    assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes("heartbeat_unreadable:mckinley_home"));
+    assert.ok(hasIncident(b, "heartbeat-unreadable-mckinley_home-2026-10-07"));
+    assert.equal(recordedKeys(b).some((k) => k.startsWith("heartbeat-stale-mckinley_home")), false);
+  }
+});
+
+test("queue cancellation time, not stale queued status, controls historical blocking; unknown terminal time degrades coverage", async () => {
+  const slot = Date.parse("2026-10-13T16:00:00Z");
+  const now = slot + 12 * MIN;
+  const j = { id: "j-20261013T155000-aaaaaa", type: "tuesday", requested_by: "manual", requested_at: iso(slot - 10 * MIN), params: {}, verified: true };
+  for (const [cancel, missed] of [[slot - MIN, true], [slot + MIN, false]]) {
+    const b = queueWith([{ ...j, cancelled_at: iso(cancel) }], now);
+    b.store.get("jobs/queue.json").uploaded = new Date(cancel + 1000);
+    b.store.set(`jobs/status/${j.id}.json`, { body: JSON.stringify({ id: j.id, state: "queued", updated_at: iso(slot - 9 * MIN) }), v: 2 });
+    await runShadow({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, now);
+    assert.equal(hasIncident(b, "missed-tuesday-20261013T160000Z"), missed);
+  }
+  const b = queueWith([j], now);
+  b.store.set(`jobs/status/${j.id}.json`, { body: JSON.stringify({ id: j.id, state: "done" }), v: 2 });
+  await runShadow({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, now);
+  assert.equal(hasIncident(b, "missed-tuesday-20261013T160000Z"), false);
+  assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes(`occurrence_chronology_unknown:${j.id}`));
+  b.store.set(`jobs/status/${j.id}.json`, { body: JSON.stringify({ id: j.id, state: "done", finished_at: iso(slot - 20 * MIN) }), v: 3 });
+  await runShadow({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, now + MIN);
+  assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes(`occurrence_chronology_unknown:${j.id}`));
+});
+
+test("wrong-shaped indexes are preserved on initial read and CAS reread while durable batches tolerate duplicates", async () => {
+  const now = Date.parse("2026-10-14T12:00:00Z");
+  const key = "ops/shadow/index/2026-10-14.json";
+  for (const bad of [{ schema: "golf_ops.shadow.v1", keys: [] }, { schema: "golf_ops.shadow.v1", keys: { x: null } }]) {
+    for (const reread of [false, true]) {
+      const jobs = manyFailed(1, now);
+      const b = queueWith(jobs, now);
+      const badBody = JSON.stringify(bad);
+      b.store.set(key, { body: reread ? JSON.stringify({ schema: "golf_ops.shadow.v1", keys: {} }) : badBody, v: 1 });
+      if (reread) {
+        let fired = false;
+        b.onGet = async (k) => { if (k === key && !fired) { fired = true; b.store.set(key, { body: badBody, v: 2 }); } };
+      }
+      await runShadow({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, now);
+      assert.equal(b.store.get(key).body, badBody);
+      assert.equal(batchKeys(b).length, 1);
+      assert.ok(hasIncident(b, `job-failed-${jobs[0].id}`));
+      assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes("index_unreadable:2026-10-14"));
+    }
+  }
+});
+
+
+test("round2 producer minute and same-minute ordering", () => {
+  const slot = Date.parse("2026-10-13T16:00:00Z");
+  const base = { now: slot + 12 * MIN, jobs: [], beats: [], created: [], dueAt: dueJobs };
+  const due = dueJobs(slot + 12_000).map((x) => x.type);
+  assert.deepEqual(due.sort(), ["odds_reprice", "tuesday", "watch"]);
+  const created = due.map((type) => ({ type, requested_by: "cron", requested_at: iso(slot + 12_000) }));
+  const f = evaluateShadow({ ...base, created });
+  for (const type of due) assert.equal(f.some((x) => x.key === `missed-${type}-20261013T160000Z`), false, type);
+  for (const offset of [-1, 60_000]) {
+    const bad = evaluateShadow({ ...base, created: [{ type: "tuesday", requested_by: "cron", requested_at: iso(slot + offset) }] });
+    assert.ok(bad.some((x) => x.key === "missed-tuesday-20261013T160000Z"));
+  }
+  const uncertain = [];
+  const manual = { id: "j-manual", type: "tuesday", requested_by: "manual", requested_at: iso(slot), state: "running" };
+  assert.equal(evaluateShadow({ ...base, jobs: [manual], uncertain }).some((x) => x.key === "missed-tuesday-20261013T160000Z"), false);
+  assert.ok(uncertain.includes("occurrence_chronology_unknown:j-manual"));
+  for (const offset of [0, 30_000]) {
+    const coverage = [];
+    const u = { id: "j-unknown", type: "tuesday", requested_at: iso(slot + offset), corrupt: false };
+    assert.equal(evaluateShadow({ ...base, unreadable: [u], uncertain: coverage }).some((x) => x.key === "missed-tuesday-20261013T160000Z"), false);
+    assert.ok(coverage.includes("occurrence_chronology_unknown:j-unknown"));
+  }
+});
+
+test("round2 terminal status upload time controls historical visibility", async () => {
+  const slot = Date.parse("2026-10-13T16:00:00Z");
+  const now = slot + 12 * MIN;
+  const j = { id: "j-20261013T155000-aaaaaa", type: "tuesday", requested_by: "manual", requested_at: iso(slot - 10 * MIN), params: {}, verified: true };
+  for (const [uploaded, finished, missed, uncertain] of [
+    [new Date(slot - 1000), slot - 2000, true, false],
+    [new Date(slot + 2 * MIN), slot - 1000, false, true],
+    [undefined, slot - 1000, false, true],
+    [new Date(NaN), slot - 1000, false, true],
+    [new Date(slot - 2000), slot - 1000, false, true],
+    [new Date(now + 10 * MIN), slot - 1000, false, true],
+    [undefined, slot + MIN, false, true],
+  ]) {
+    const b = queueWith([j], now);
+    b.store.set(`jobs/status/${j.id}.json`, { body: JSON.stringify({ id: j.id, state: "done", finished_at: iso(finished) }), v: 2, uploaded });
+    await runShadow({ DASHBOARD_DATA: b, OPS_SHADOW_ENABLED: "1" }, now);
+    assert.equal(hasIncident(b, "missed-tuesday-20261013T160000Z"), missed, String(uploaded));
+    assert.equal(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes(`occurrence_chronology_unknown:${j.id}`), uncertain, String(uploaded));
+  }
+});
+
+test("queue cancellation publication time remains uncertain until known available before the slot", async () => {
+  const slot=Date.parse("2026-10-13T16:00:00Z"), now=slot+12*MIN;
+  const j={id:"j-20261013T155000-aaaaaa",type:"tuesday",requested_by:"manual",requested_at:iso(slot-10*MIN),cancelled_at:iso(slot-MIN),params:{},verified:true};
+  for(const [uploaded,missed] of [[new Date(slot-30_000),true],[new Date(slot),false],[new Date(slot+2*MIN),false],[undefined,false]]) {
+    const b=queueWith([j],now); b.store.get("jobs/queue.json").uploaded=uploaded;
+    b.store.set(`jobs/status/${j.id}.json`,{body:JSON.stringify({id:j.id,state:"queued",updated_at:iso(slot-9*MIN)}),v:1});
+    await runShadow({DASHBOARD_DATA:b,OPS_SHADOW_ENABLED:"1"},now);
+    assert.equal(hasIncident(b,"missed-tuesday-20261013T160000Z"),missed,String(uploaded));
+    assert.equal(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes(`occurrence_chronology_unknown:${j.id}`),!missed,String(uploaded));
+  }
+});
+
+test("round3 rate-limit expiry during the scheduled minute is uncertain", () => {
+  const slot=Date.parse("2026-10-13T16:00:00Z");
+  const base={now:slot+12*MIN,jobs:[],created:[],beats:[],dueAt:(ms)=>ms===slot?[{type:"tuesday"}]:[]};
+  for(const [expires,unknown] of [[slot+12_000,true],[slot+59_999,true],[slot+60_000,false],[slot+61_000,false]]) {
+    const uncertainty=[];
+    const j={id:"j-expiry",type:"tuesday",state:"running",requested_at:new Date(expires-6*3_600_000).toISOString(),visible_at:slot-10*MIN,state_published_at:slot-10*MIN};
+    const findings=evaluateShadow({...base,jobs:[j],uncertain:uncertainty});
+    assert.equal(findings.some((f)=>f.kind==="occurrence_missed"),false);
+    assert.equal(uncertainty.includes("occurrence_chronology_unknown:j-expiry"),unknown,String(expires));
+  }
+});
+
+test("round3 nonterminal blockers require evidence of pre-slot visibility", async () => {
+  const slot=Date.parse("2026-10-13T16:00:00Z"),now=slot+12*MIN;
+  const j={id:"j-20261013T155959-aaaaaa",type:"tuesday",requested_by:"manual",requested_at:iso(slot-1000),params:{},verified:true};
+  for(const [uploaded,unknown] of [[new Date(slot-500),false],[new Date(slot),true],[new Date(slot+20_000),true],[undefined,true],[new Date(slot-2000),true]]) {
+    const b=queueWith([j],now);b.store.get("jobs/queue.json").uploaded=uploaded;
+    b.store.set(`jobs/status/${j.id}.json`,{body:JSON.stringify({id:j.id,state:"queued"}),v:1});
+    await runShadow({DASHBOARD_DATA:b,OPS_SHADOW_ENABLED:"1"},now);
+    const summary=JSON.parse(b.store.get("ops/shadow/summary.json").body);
+    assert.equal(hasIncident(b,"missed-tuesday-20261013T160000Z"),false);
+    assert.equal(summary.degraded.includes(`occurrence_chronology_unknown:${j.id}`),unknown,String(uploaded));
+  }
+});
+
+test("round4 a post-cancellation claim cannot prove pre-slot nonterminal state", async () => {
+  const slot=Date.parse("2026-10-13T16:00:00Z"),now=slot+12*MIN;
+  const j={id:"j-20261013T155000-aaaaaa",type:"tuesday",requested_by:"manual",requested_at:iso(slot-10*MIN),cancelled_at:iso(slot-MIN),params:{},verified:true};
+  for(const [claimPublished,claimedAt,unknown] of [[new Date(slot+61_000),slot+60_000,true],[undefined,slot+60_000,true],[new Date(slot-90_000),slot-100_000,false]]) {
+    const b=queueWith([j],now); b.store.get("jobs/queue.json").uploaded=new Date(slot-59_000);
+    b.store.set(`jobs/status/${j.id}.json`,{body:JSON.stringify({id:j.id,state:"claimed",claimed_at:iso(claimedAt)}),v:1,uploaded:claimPublished});
+    await runShadow({DASHBOARD_DATA:b,OPS_SHADOW_ENABLED:"1"},now);
+    assert.equal(hasIncident(b,"missed-tuesday-20261013T160000Z"),false);
+    assert.equal(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes(`occurrence_chronology_unknown:${j.id}`),unknown,String(claimPublished));
+  }
+});
+
+test("round5 producer queue trimming cannot manufacture a missed occurrence", async () => {
+  const slot=Date.parse("2026-10-13T16:00:00Z"),now=slot+30*MIN;
+  const old=Array.from({length:199},(_,i)=>({id:`j-20261013T120000-${i.toString(16).padStart(6,"0")}`,type:"monday_week",requested_at:iso(slot-4*3_600_000),requested_by:"manual",params:{},verified:true}));
+  const completed={id:"j-20261013T160000-aaaaaa",type:"watch",requested_at:iso(slot),requested_by:"cron",params:{},verified:true};
+  const next={...completed,id:"j-20261013T161500-bbbbbb",requested_at:iso(slot+15*MIN)};
+  const retained=trimQueue([...old,completed,next]);
+  assert.equal(retained.length,200);assert.equal(retained.some((j)=>j.id===completed.id),false);
+  const b=queueWith(retained,now);
+  b.store.set(`jobs/status/${completed.id}.json`,{body:JSON.stringify({id:completed.id,state:"done",finished_at:iso(slot+MIN)}),v:1,uploaded:new Date(slot+2*MIN)});
+  b.store.set(`jobs/status/${next.id}.json`,{body:JSON.stringify({id:next.id,state:"queued"}),v:1});
+  b.store.set("jobs/heartbeat/desktop-2ki41v6.json",{body:JSON.stringify({machine:"desktop-2ki41v6",at:iso(now-60*MIN)}),v:1});
+  const original=b.store.get(`jobs/status/${completed.id}.json`).body;
+  await runShadow({DASHBOARD_DATA:b,OPS_SHADOW_ENABLED:"1"},now);
+  assert.equal(recordedKeys(b).some((k)=>k.startsWith("missed-")),false);
+  assert.ok(JSON.parse(b.store.get("ops/shadow/summary.json").body).degraded.includes("queue_history_incomplete"));
+  assert.ok(hasIncident(b,`job-failed-${old[0].id}`));
+  assert.ok(recordedKeys(b).some((k)=>k.startsWith("heartbeat-stale-desktop-2ki41v6")));
+  assert.equal(b.store.get(`jobs/status/${completed.id}.json`).body,original);
+  assert.equal(b.delete_calls,0);
 });

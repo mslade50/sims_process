@@ -8,6 +8,7 @@
  *
  * Every finding has a stable key, so writing it twice produces the same R2 object name (worker/shadow.ts writes it only if absent).
  */
+import { CRON_REQUESTER } from "./cron-rules.ts";
 import { isTerminal } from "../app/jobs-rules.ts";
 import { P1_STALE_MS, beatAgeMs, failedJobs, type BeatLike, type JobLike } from "./alerts-rules.ts";
 
@@ -23,8 +24,8 @@ export const JOB_HORIZON_MS = 48 * 3_600_000;
 export const STUCK_RUNNING_MS = 3 * 3_600_000;
 const RATE_LIMIT_MS = 6 * 3_600_000; // same-type jobs still queued/claimed/running inside this window legitimately suppress a new enqueue
 
-/** `finished_at` = when the job reached a terminal state (status finished_at, else updated_at, else cancelled_at), epoch ms; null if unknown. */
-export type ShadowJob = JobLike & { requested_by?: string; finished_at?: number | null };
+/** `finished_at` = when the job reached a terminal state (queue cancelled_at when cancellation supplies the effective state; otherwise status finished_at or updated_at), epoch ms; null if unknown. */
+export type ShadowJob = JobLike & { requested_by?: string; visible_at?: number | null; state_published_at?: number | null; queue_cancelled_at?: number | null; finished_at?: number | null; terminal_source?: "queue" | "status"; terminal_published_at?: number | null };
 export type ShadowBeat = { machine: string; role: "primary" | "backup"; beat: BeatLike };
 export type Finding = {
   key: string;
@@ -52,8 +53,10 @@ export type ShadowInput = {
   /** Jobs with a resolved state (the alerts window). */
   jobs: ShadowJob[];
   /** Every queue record, state unknown: used only to prove that an occurrence created a job. */
-  created: { type: string; requested_at: string }[];
+  created: { type: string; requested_at: string; requested_by?: string }[];
   beats: ShadowBeat[];
+  /** Receives job IDs explaining suppressed occurrences with uncertain chronology. */
+  uncertain?: string[];
   /** Queue records whose status object could not be read (state unknown). */
   unreadable?: { id: string; type: string; requested_at: string; corrupt?: boolean }[];
   /** cron-rules.dueJobs, injected so this module stays import-light. */
@@ -77,7 +80,7 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
   }
 
   for (const u of input.unreadable ?? []) {
-    // Only a status that is present but not valid JSON is an incident; an R2 read failure is transient (degraded coverage in the summary only).
+    // Only a status that is present but invalid is an incident; an R2 read failure is transient (degraded coverage in the summary only).
     if (!u.corrupt) continue;
     out.push({ key: `status-unreadable-${slug(u.id)}`, kind: "status_unreadable", severity: "warn", date: day(parseMs(u.requested_at) ?? now), subject: u.id, detail: `status of ${u.type} job could not be read; missed-slot checks for it are suppressed for 6 h after its request`, expires_at: (parseMs(u.requested_at) ?? now) + JOB_HORIZON_MS });
   }
@@ -102,23 +105,46 @@ export function evaluateShadow(input: ShadowInput): Finding[] {
     for (const due of input.dueAt(tick)) {
       const made = input.created.some((j) => {
         const at = parseMs(j.requested_at);
-        return j.type === due.type && at !== null && at >= tick - 60_000 && at <= tick + MISSED_GRACE_MS;
+        // The scheduler preserves scheduledTime to the second; dueJobs matches its minute.
+        return j.type === due.type && j.requested_by === CRON_REQUESTER && at !== null && at >= tick && at < tick + 60_000 && at <= now;
       });
       if (made) continue;
-      // A same-type job requested before the tick, under 6 h old and not yet terminal AT THE TICK blocks the enqueue by design (appendJob /
-      // rateLimitProblem); that is not a miss. Non-terminal now, or finished after the tick (or finish time unknown), means it was live then.
-      const blocked = input.jobs.some((j) => {
+      let blocked = false;
+      const uncertain: string[] = [];
+      for (const j of input.jobs) {
         const at = parseMs(j.requested_at);
-        if (j.type !== due.type || at === null || at >= tick || tick - at >= RATE_LIMIT_MS) return false;
-        return !isTerminal(j.state) || j.finished_at == null || j.finished_at > tick;
-      });
-      if (blocked) continue;
-      // An unreadable status might have been the blocker: suppress only the ticks in [requested_at, requested_at + 6 h) of that job.
-      const unknown = (input.unreadable ?? []).some((u) => {
+        if (j.type !== due.type || at === null || at >= tick + 60_000 || tick - at >= RATE_LIMIT_MS) continue;
+        // The cron may have run at any second in its scheduled minute. Ordering against a request in that minute is unknown.
+        if (at >= tick) { uncertain.push(j.id); continue; }
+        if (!isTerminal(j.state)) {
+          // Existence alone cannot establish that a later claim was nonterminal at the slot.
+          // In particular, a stale runner may publish claimed after a queue cancellation.
+          const needsStateProof = j.state !== "queued" || j.queue_cancelled_at != null;
+          const unknownState = needsStateProof && (j.state_published_at == null || j.state_published_at >= tick || j.state_published_at < at);
+          if (unknownState || at + RATE_LIMIT_MS < tick + 60_000 || j.visible_at == null || j.visible_at >= tick || j.visible_at < at) uncertain.push(j.id);
+          else blocked = true;
+          continue;
+        }
+        if (j.finished_at == null) { uncertain.push(j.id); continue; }
+        // Queue cancellation and runner terminal status both require known publication before the slot.
+        // Equal timestamps cannot establish which read/write occurred first.
+        if (j.terminal_published_at == null || j.terminal_published_at >= tick || j.terminal_published_at < j.finished_at) {
+          uncertain.push(j.id);
+        }
+
+      }
+      for (const u of input.unreadable ?? []) {
         const at = parseMs(u.requested_at);
-        return u.type === due.type && at !== null && tick >= at && tick < at + RATE_LIMIT_MS;
-      });
-      if (unknown) continue;
+        if (u.type === due.type && at !== null && at < tick + 60_000 && tick - at < RATE_LIMIT_MS) uncertain.push(u.id);
+      }
+      if (blocked) continue;
+      if (uncertain.length) {
+        for (const id of uncertain) {
+          const label = `occurrence_chronology_unknown:${id}`;
+          if (input.uncertain && !input.uncertain.includes(label)) input.uncertain.push(label);
+        }
+        continue;
+      }
       out.push({ key: `missed-${slug(due.type)}-${stamp(tick)}`, kind: "occurrence_missed", severity: "warn", date: day(tick), subject: due.type, detail: `no ${due.type} job created for the ${new Date(tick).toISOString()} slot`, expires_at: tick + MISSED_LOOKBACK_MS });
     }
   }

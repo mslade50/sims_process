@@ -5,12 +5,12 @@ import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
 import { etTime } from "./lib";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { suggestedGroup } from "./shell-rules";
-import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
+import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
 type Heartbeat = MachineBeat & { version?: string };
 type Target = "auto" | string;
-type JobsResponse = { ok: boolean; now: string; jobs: JobRow[]; heartbeats: Heartbeat[]; roles?: Roles | null; error?: string };
+type JobsResponse = { ok: boolean; now: string; jobs: JobRow[]; heartbeats: Heartbeat[]; roles?: Roles | null; roles_invalid?: boolean; roles_read_error?: boolean; error?: string };
 type ApiResult<T> = { ok: boolean; status: number; body: T & { error?: string; problems?: string[] } };
 
 async function api<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
@@ -191,6 +191,7 @@ export function RunView() {
             {machines.every((m) => m.status === "offline") && (
               <div className="inputs-banner warn"><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong>Jobs wait in the queue until a machine comes back online.</div>
             )}
+            {(data.roles_invalid || data.roles_read_error) && <div className="inputs-banner warn" role="alert">Role configuration could not be verified. Built-in defaults are shown for reference; they do not establish runner ownership or backup readiness.</div>}
             <div className="run-machines" role="radiogroup" aria-label="Machine to run on">
               <label className={`run-machine ${target === "auto" ? "selected" : ""}`} aria-label="Automatic: the always-on desktop, the backup only if it is down">
                 <input type="radio" name="run-target" checked={target === "auto"} onChange={() => setTarget("auto")} />
@@ -208,6 +209,7 @@ export function RunView() {
                       <i aria-hidden="true" className={`run-dot ${m.status}`} />
                       {m.status === "offline" ? (m.lastSeen ? `Offline (last heard from ${ago(m.lastSeen, now)})` : "Offline (has not reported in)") : m.status === "running" ? `Running ${runningName(m.jobId, data?.jobs)}` : `Online and idle (checked in ${ago(m.lastSeen ?? undefined, now)})`}
                     </small>
+                    <small>{machineRoleEvidence(m.name, data.roles ?? null, data.roles_read_error ? "roles_read_error" : data.roles_invalid ? "roles_invalid" : null, data.heartbeats, now).message}</small>
                   </span>
                 </label>
               ))}

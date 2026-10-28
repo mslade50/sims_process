@@ -177,3 +177,24 @@ test("malformed or duplicate published event rows cannot silently reduce require
   b.seed("golfprice/index.json",{events}); assert.equal((await call(b,"/api/ops/workflow")).status,503);
  }
 });
+
+test("Weekly role evidence distinguishes configured roles from heartbeat reports", async () => {
+  const b = new Bucket();
+  b.seed("jobs/roles.json", {primary:"mckinley_home",backup:"desktop-2ki41v6"});
+  b.seed("jobs/heartbeat/desktop-2ki41v6.json", {machine:"desktop-2ki41v6",at:new Date(NOW).toISOString(),role:"primary"});
+  const r = await call(b,"/api/ops/workflow"); assert.equal(r.status,200);
+  const flow = await r.json(); const small = flow.machines.find((m)=>m.id==="desktop-2ki41v6");
+  assert.match(small.role,/Configured: backup/); assert.match(small.role,/Reported: primary/); assert.match(small.role,/Role mismatch/);
+  assert.equal(flow.backup_readiness,"not_verified");
+});
+
+test("Weekly role read failures remain unknown rather than silently claiming defaults", async () => {
+  for (const mode of ["invalid","unreadable"]) {
+    const b = new Bucket();
+    if(mode==="invalid") b.seed("jobs/roles.json",{primary:"unexpected",backup:"desktop-2ki41v6"});
+    else { const get=b.get.bind(b); b.get=async(key)=>{if(key==="jobs/roles.json")throw new Error("synthetic unavailable");return get(key);}; }
+    const r=await call(b,"/api/ops/workflow"); assert.equal(r.status,200);
+    const flow=await r.json(); assert.ok(flow.machines.every((m)=>/configured role unknown/.test(m.role)));
+    assert.equal(flow.backup_readiness,"not_verified");
+  }
+});

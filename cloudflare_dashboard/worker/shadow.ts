@@ -19,7 +19,7 @@
  */
 import { dueJobs } from "./cron-rules.ts";
 import { MISSED_LOOKBACK_MS, SHADOW_REGISTRY_KEY, SHADOW_SCHEMA, SHADOW_SUMMARY_KEY, buildSummary, evaluateShadow, type Finding, type ShadowBeat, type ShadowJob } from "./shadow-rules.ts";
-import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, loadRoles, machinesWithRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
+import { HEARTBEAT_PREFIX, MAX_QUEUE, JOB_ID_RE, QUEUE_KEY, STATUS_PREFIX, effectiveState, loadRoles, machinesWithRoles, parseUtc, specFor, type JobRecord, type JobStatus } from "../app/jobs-rules.ts";
 
 export interface ShadowEnv {
   DASHBOARD_DATA?: R2Bucket;
@@ -35,7 +35,7 @@ const INDEX_ATTEMPTS = 3;
 const INDEX_DAYS = 3;
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
-type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
+type Read = { kind: "absent" } | { kind: "ok"; value: unknown; etag: string; uploaded: unknown } | { kind: "parse_error"; etag: string } | { kind: "read_error" };
 
 async function readObject(bucket: R2Bucket, key: string): Promise<Read> {
   let object: R2ObjectBody | null;
@@ -48,13 +48,40 @@ async function readObject(bucket: R2Bucket, key: string): Promise<Read> {
   }
   if (!object) return { kind: "absent" };
   try {
-    return { kind: "ok", value: JSON.parse(text), etag: object.etag };
+    return { kind: "ok", value: JSON.parse(text), etag: object.etag, uploaded: object.uploaded };
   } catch {
     return { kind: "parse_error", etag: object.etag };
   }
 }
 
-const finishedAt = (job: JobRecord, status: JobStatus | null): number | null => parseUtc(status?.finished_at) ?? parseUtc(status?.updated_at) ?? parseUtc(job.cancelled_at) ?? null;
+// Producers use UTC ISO timestamps. Reject calendar rollover as well as malformed dates.
+const clockTolerance = 2 * 60_000;
+const timestamp = (value: unknown, now: number): number | null => {
+  const ms = parseUtc(value);
+  if (ms === null || ms > now + clockTolerance || new Date(ms).toISOString().slice(0, 19) !== (value as string).slice(0, 19)) return null;
+  return ms;
+};
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+const validJob = (value: unknown, now: number): value is JobRecord => {
+  if (!object(value) || typeof value.id !== "string" || !JOB_ID_RE.test(value.id) || !specFor(value.type) || typeof value.requested_by !== "string" || !value.requested_by.trim()) return false;
+  const requested = timestamp(value.requested_at, now);
+  if (requested === null) return false;
+  if (value.cancelled_at !== undefined && (timestamp(value.cancelled_at, now) === null || (timestamp(value.cancelled_at, now) as number) < requested)) return false;
+  return true;
+};
+const validStatus = (value: unknown, job: JobRecord, now: number): value is JobStatus => {
+  if (!object(value) || value.id !== job.id || typeof value.state !== "string" || !["queued", "claimed", "running", "done", "failed", "cancelled", "expired"].includes(value.state)) return false;
+  let prior = timestamp(job.requested_at, now) as number;
+  for (const key of ["claimed_at", "started_at", "finished_at", "updated_at"]) {
+    if (value[key] === undefined || value[key] === null) continue;
+    const at = timestamp(value[key], now);
+    if (at === null || at < prior) return false;
+    prior = at;
+  }
+  return true;
+};
+const finishedAt = (job: JobRecord, status: JobStatus | null): number | null =>
+  job.cancelled_at && (!status || status.state === "queued") ? parseUtc(job.cancelled_at) : parseUtc(status?.finished_at) ?? parseUtc(status?.updated_at);
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutcome> {
@@ -72,12 +99,14 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   const extra: Finding[] = [];
 
   const queueRead = await readObject(bucket, QUEUE_KEY);
-  if (queueRead.kind === "read_error") {
-    outcome.notes.push("jobs/queue.json could not be read (R2 error); tick skipped, nothing written");
-    return outcome;
-  }
   let records: JobRecord[] = [];
   let evaluate = true;
+  let occurrenceCoverage = true;
+  if (queueRead.kind === "read_error") {
+    outcome.notes.push("jobs/queue.json could not be read (R2 error); job and occurrence checks skipped");
+    degraded.push("queue_read_error");
+    evaluate = false;
+  }
   if (queueRead.kind === "parse_error") {
     evaluate = false;
   } else if (queueRead.kind === "ok") {
@@ -85,15 +114,21 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     if (queue && typeof queue === "object" && Array.isArray(queue.jobs)) {
       // Entries that are not job records are dropped (and reported) so the valid jobs and the heartbeats are still checked.
       const all = queue.jobs as unknown[];
-      records = all.filter((j): j is JobRecord => !!j && typeof j === "object" && typeof (j as JobRecord).id === "string" && typeof (j as JobRecord).type === "string" && typeof (j as JobRecord).requested_at === "string");
+      if (all.length >= MAX_QUEUE) {
+        occurrenceCoverage = false;
+        degraded.push("queue_history_incomplete");
+        outcome.notes.push("queue reached its retention bound; removed background occurrences may be missing, so missed-occurrence checks are skipped");
+      }
+      records = all.filter((j): j is JobRecord => validJob(j, now));
       const bad = all.length - records.length;
       if (bad > 0) {
+        occurrenceCoverage = false; // An invalid record could be the missing creation or a historical blocker.
         degraded.push(`queue_entry_invalid:${bad}`);
         extra.push({ key: `queue-entry-invalid-${utcDay(now)}`, kind: "queue_entry_invalid", severity: "warn", date: utcDay(now), subject: QUEUE_KEY, detail: `${bad} entr${bad === 1 ? "y" : "ies"} in jobs/queue.json are not job records and were skipped`, expires_at: now + MISSED_LOOKBACK_MS });
       }
     } else evaluate = false; // valid JSON of the wrong shape is not an empty queue
   }
-  if (!evaluate) {
+  if (!evaluate && queueRead.kind !== "read_error") {
     degraded.push("queue_unreadable");
     extra.push({ key: `queue-unreadable-${utcDay(now)}`, kind: "queue_unreadable", severity: "high", date: utcDay(now), subject: QUEUE_KEY, detail: "jobs/queue.json is not a valid queue object; job and missed-slot checks are skipped (heartbeats are still checked)", expires_at: now + MISSED_LOOKBACK_MS });
   }
@@ -114,13 +149,25 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   const resolved = await Promise.all(
     inHorizon.map(async (job): Promise<ShadowJob | null> => {
       const read = await readObject(bucket, `${STATUS_PREFIX}${job.id}.json`);
-      if (read.kind === "read_error" || read.kind === "parse_error") {
-        unreadable.push({ id: job.id, type: job.type, requested_at: job.requested_at, corrupt: read.kind === "parse_error" });
+      if (read.kind === "read_error" || read.kind === "parse_error" || (read.kind === "ok" && !validStatus(read.value, job, now))) {
+        unreadable.push({ id: job.id, type: job.type, requested_at: job.requested_at, corrupt: read.kind !== "read_error" });
         return null;
       }
       const status = read.kind === "ok" ? (read.value as JobStatus | null) : null;
       const st = status && typeof status === "object" ? status : null;
-      return { id: job.id, type: job.type, requested_at: job.requested_at, requested_by: job.requested_by, state: effectiveState(job, st), finished_at: finishedAt(job, st) };
+      const finish = finishedAt(job, st);
+      const fromQueue = !!job.cancelled_at && (!st || st.state === "queued");
+      const publication = fromQueue ? queueRead : read;
+      const uploaded = publication.kind === "ok" && publication.uploaded instanceof Date ? publication.uploaded.getTime() : NaN;
+      // A terminal status cannot have been published before its own declared timestamps or the request.
+      const latestStatusTime = Math.max(parseUtc(job.requested_at) as number, fromQueue ? finish ?? 0 : 0, ...[st?.claimed_at, st?.started_at, st?.finished_at, st?.updated_at].map((v) => parseUtc(v) ?? 0));
+      const published = Number.isFinite(uploaded) && uploaded >= latestStatusTime && uploaded <= now + clockTolerance ? uploaded : null;
+      const queueUpload = queueRead.kind === "ok" && queueRead.uploaded instanceof Date ? queueRead.uploaded.getTime() : NaN;
+      const queueVisible = Number.isFinite(queueUpload) && queueUpload >= (parseUtc(job.requested_at) as number) && queueUpload <= now + clockTolerance ? queueUpload : null;
+      // Either the containing queue or this job's status can prove it existed by that publication time.
+      const visibility = [queueVisible, published].filter((at): at is number => at !== null);
+      return { id: job.id, type: job.type, requested_at: job.requested_at, requested_by: job.requested_by, visible_at: visibility.length ? Math.min(...visibility) : null, state_published_at: fromQueue ? null : published, queue_cancelled_at: parseUtc(job.cancelled_at), state: effectiveState(job, st), finished_at: finish, terminal_source: fromQueue ? "queue" : "status", terminal_published_at: published };
+
     }),
   );
   const jobs = resolved.filter((j): j is ShadowJob => j !== null);
@@ -137,9 +184,9 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     if (read.kind === "read_error") {
       degraded.push(`heartbeat_read_error:${m.name}`);
       outcome.notes.push(`heartbeat read failed for ${m.name}; not evaluated`);
-    } else if (read.kind === "parse_error") {
+    } else if (read.kind === "parse_error" || (read.kind === "ok" && (!object(read.value) || read.value.machine !== m.name || timestamp(read.value.at, now) === null))) {
       degraded.push(`heartbeat_unreadable:${m.name}`);
-      extra.push({ key: `heartbeat-unreadable-${m.name}-${utcDay(now)}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is not valid JSON`, expires_at: now + MISSED_LOOKBACK_MS });
+      extra.push({ key: `heartbeat-unreadable-${m.name}-${utcDay(now)}`, kind: "heartbeat_unreadable", severity: m.role === "primary" ? "high" : "warn", date: utcDay(now), subject: m.name, detail: `heartbeat object of ${m.name} is invalid`, expires_at: now + MISSED_LOOKBACK_MS });
     } else {
       beats.push({ machine: m.name, role: m.role, beat: read.kind === "ok" ? (read.value as { at?: string } | null) : null });
     }
@@ -150,7 +197,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
     // With an unusable queue only the heartbeat check can run: no jobs, no creation evidence, no expected occurrences.
     ...evaluateShadow(
       evaluate
-        ? { now, jobs, created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at })), beats, unreadable, dueAt: dueJobs }
+        ? { now, jobs, created: inHorizon.map((j) => ({ type: j.type, requested_at: j.requested_at, requested_by: j.requested_by })), beats, unreadable, uncertain: degraded, dueAt: occurrenceCoverage ? dueJobs : () => [] }
         : { now, jobs: [], created: [], beats, unreadable: [], dueAt: () => [] },
     ),
   ];
@@ -160,13 +207,15 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   const days = Array.from({ length: INDEX_DAYS }, (_, n) => utcDay(now - n * 86_400_000));
   const indexes = await Promise.all(days.map((d) => readObject(bucket, `${INDEX_PREFIX}${d}.json`)));
   const recorded = new Set<string>();
-  const keysOf = (read: Read): Record<string, string> => {
-    const keys = read.kind === "ok" ? (read.value as { keys?: unknown } | null)?.keys : null;
-    return keys && typeof keys === "object" && !Array.isArray(keys) ? (keys as Record<string, string>) : {};
+  const validIndex = (read: Read): boolean => {
+    if (read.kind !== "ok") return read.kind === "absent";
+    const value = read.value;
+    return object(value) && value.schema === SHADOW_SCHEMA && object(value.keys) && Object.values(value.keys).every((pointer) => typeof pointer === "string" && /^ops\/shadow\/batches\/\d{4}-\d{2}-\d{2}\/[^/]+\.json$/.test(pointer));
   };
+  const keysOf = (read: Read): Record<string, string> => validIndex(read) && read.kind === "ok" ? (read.value as { keys: Record<string, string> }).keys : {};
   indexes.forEach((read, n) => {
     if (read.kind === "read_error") degraded.push(`index_read_error:${days[n]}`);
-    if (read.kind === "parse_error") degraded.push(`index_unreadable:${days[n]}`);
+    if (read.kind === "parse_error" || (read.kind === "ok" && !validIndex(read))) degraded.push(`index_unreadable:${days[n]}`);
     for (const key of Object.keys(keysOf(read))) recorded.add(key);
   });
   const fresh = outcome.findings.filter((f) => !recorded.has(f.key));
@@ -174,7 +223,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
   let indexConflict = false;
   if (fresh.length > 0) {
     batchKey = `${BATCH_PREFIX}${today}/${new Date(now).toISOString().replace(/[-:.]/g, "")}-${Math.random().toString(36).slice(2, 10)}.json`;
-    const body = { schema: SHADOW_SCHEMA, tick: new Date(now).toISOString(), findings: fresh.map(({ expires_at: _expires, ...stored }) => ({ ...stored, first_seen: new Date(now).toISOString() })) };
+    const body = { schema: SHADOW_SCHEMA, tick: new Date(now).toISOString(), findings: fresh.map((f) => ({ key: f.key, kind: f.kind, severity: f.severity, date: f.date, subject: f.subject, detail: f.detail, first_seen: new Date(now).toISOString() })) };
     const stored = await bucket.put(batchKey, JSON.stringify(body, null, 1), { httpMetadata: JSON_PUT, onlyIf: { etagDoesNotMatch: "*" } });
     if (stored === null) {
       outcome.notes.push("batch object name collided; findings will be retried next tick");
@@ -184,8 +233,8 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
       const mine: Record<string, string> = Object.fromEntries(fresh.map((f) => [f.key, batchKey as string]));
       let current: Read = indexes[0];
       // A corrupt index is never replaced with only this tick's keys (that would forget everything else it recorded): skip the update, accept duplicates.
-      indexConflict = current.kind !== "parse_error";
-      for (let attempt = 0; attempt < INDEX_ATTEMPTS && indexConflict && current.kind !== "read_error" && current.kind !== "parse_error"; attempt += 1) {
+      indexConflict = true;
+      for (let attempt = 0; attempt < INDEX_ATTEMPTS && indexConflict && current.kind !== "read_error" && validIndex(current); attempt += 1) {
         const merged = { schema: SHADOW_SCHEMA, keys: { ...mine, ...keysOf(current) } };
         const put = await bucket.put(`${INDEX_PREFIX}${today}.json`, JSON.stringify(merged), { httpMetadata: JSON_PUT, onlyIf: current.kind === "absent" ? { etagDoesNotMatch: "*" } : { etagMatches: current.etag } });
         if (put !== null) {
@@ -195,7 +244,7 @@ export async function runShadow(env: ShadowEnv, now: number): Promise<ShadowOutc
         if (attempt < INDEX_ATTEMPTS - 1) current = await readObject(bucket, `${INDEX_PREFIX}${today}.json`);
       }
       // A re-read can turn up a corrupt object (another writer, or damage): preserve it and say so.
-      if (current.kind === "parse_error" && !degraded.includes(`index_unreadable:${today}`)) degraded.push(`index_unreadable:${today}`);
+      if ((current.kind === "parse_error" || (current.kind === "ok" && !validIndex(current))) && !degraded.includes(`index_unreadable:${today}`)) degraded.push(`index_unreadable:${today}`);
       if (indexConflict) {
         degraded.push("index_conflict");
         outcome.notes.push("index_conflict: today's index could not be updated; the next tick may record the same incident_key again (consumers dedupe by incident_key)");
