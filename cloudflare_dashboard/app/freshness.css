@@ -1,0 +1,6 @@
+.data-through { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.data-through.warn { padding: 8px 10px; border: 1px solid var(--warning, #b7791f); border-radius: 6px; color: var(--ink, inherit); background: color-mix(in oklab, var(--warning, #b7791f) 10%, var(--surface)); }
+.fresh-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fresh-panel th, .fresh-panel td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.fresh-panel .fresh-stale { color: var(--negative, #b83232); font-weight: 600; }
+.fresh-panel .fresh-ok { color: var(--positive, #2f855a); }

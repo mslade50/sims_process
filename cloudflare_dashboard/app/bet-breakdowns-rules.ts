@@ -21,6 +21,8 @@ export type Meta = {
   hist_buckets: string[];
   skill_buckets: string[];
   notes?: string[];
+  /** Newest event date among the graded bets (published by the builder; optional until it ships). */
+  max_event_date?: string;
   fit_flags?: Record<string, string>;    // bit -> plain-words reason a bet is in-sample (owner 2026-10-22)
 };
 type RawDoc = { schema: string; built_at: string; meta: Meta; n: number; cols: Record<string, string> };

@@ -79,3 +79,10 @@ export function isMondaySettleTime(ms: number): boolean {
   const clock = easternClock(ms);
   return clock.weekday === "Mon" && hhmm(clock) === "08:30";
 }
+
+/** True when `ms` falls inside any repeating window of `type` (any minute of the hour, unlike dueJobs which also needs the window's minute list). */
+export function inWindow(type: string, ms: number): boolean {
+  const clock = easternClock(ms);
+  const at = hhmm(clock);
+  return WINDOWS.some((win) => win.type === type && win.days.includes(clock.weekday) && at >= win.from && at <= win.to);
+}

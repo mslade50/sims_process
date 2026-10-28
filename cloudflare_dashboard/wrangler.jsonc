@@ -22,7 +22,9 @@
     "crons": ["*/15 * * * *"]
   },
   "r2_buckets": [
-    { "binding": "DASHBOARD_DATA", "bucket_name": "golf-model-dashboard-data" }
+    { "binding": "DASHBOARD_DATA", "bucket_name": "golf-model-dashboard-data" },
+    // The repair watcher's inbox bucket (tools/watcher/runtime.py lists ops/agent_inbox/). worker/freshness.ts writes ops/agent_inbox/dashboard-freshness/** only.
+    { "binding": "AGENT_INBOX", "bucket_name": "golf-odds-board" }
   ],
   // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). Required by worker/access.ts.
   "vars": {
@@ -34,6 +36,8 @@
     // LEGACY_ALERTS_ENABLED: kill switch for the legacy P1/P2/P3 Telegram alerts (worker/alerts.ts); they also need both TELEGRAM_* secrets.
     "LEGACY_ALERTS_ENABLED": "0",
     // OPS_SHADOW_ENABLED: passive shadow observer (worker/shadow.ts); reads R2, writes ops/shadow/** only, sends nothing.
-    "OPS_SHADOW_ENABLED": "0"
+    "OPS_SHADOW_ENABLED": "0",
+    // DATA_FRESHNESS_ENABLED: data-staleness check on the 15-minute cron (worker/freshness.ts); read-only on data, writes owner/data_freshness.json and agent-inbox records, never Telegram.
+    "DATA_FRESHNESS_ENABLED": "1"
   }
 }

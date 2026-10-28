@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 import { runAlerts } from "./alerts";
 import { runShadow } from "./shadow";
 import { handleScheduled } from "./cron";
+import { runFreshness } from "./freshness";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
 import { handleOpsApi } from "./ops-api";
@@ -15,6 +16,10 @@ import { cacheControlFor, respondWithObject } from "./data-http";
 interface Env {
   ASSETS: Fetcher;
   DASHBOARD_DATA?: R2Bucket;
+  /** Optional: the repair watcher's inbox bucket (golf-odds-board); the freshness check writes ops/agent_inbox/dashboard-freshness/** only. */
+  AGENT_INBOX?: R2Bucket;
+  /** "1" enables the data-staleness check (worker/freshness.ts): reads R2, writes owner/data_freshness.json and agent-inbox records, sends nothing else. */
+  DATA_FRESHNESS_ENABLED?: string;
   /** Optional: set both to verify the Cloudflare Access JWT signature on override writes. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
@@ -83,6 +88,17 @@ const worker = {
           console.error(`shadow failed: ${error instanceof Error ? error.message : String(error)}`);
         }),
     );
+    // Data-staleness check (worker/freshness.ts): read-only on every data object, own status object, agent inbox (never Telegram). Independent of everything above.
+    ctx.waitUntil(
+      runFreshness(env, controller.scheduledTime)
+        .then((outcome) => {
+          if (!outcome.enabled) console.log(`freshness: ${outcome.notes.join("; ")}`);
+          else console.log(`freshness: ${outcome.doc ? `${outcome.doc.stale_count} stale of ${outcome.doc.sources.length}` : "no result"}${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
+        })
+        .catch((error: unknown) => {
+          console.error(`freshness failed: ${error instanceof Error ? error.message : String(error)}`);
+        }),
+    );
     // Daily retention of old job status/log/claim objects (worker/retention.ts). OFF unless jobs/retention/config.json exists; independent of the two above.
     ctx.waitUntil(
       handleRetention(controller, env)
@@ -149,7 +165,8 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
     try {
       object = env.DASHBOARD_DATA ? await env.DASHBOARD_DATA.get(`owner/${requested}`) : null;
     } catch {
-      object = null;
+      // An R2 failure is an outage (503), never "not published" (same mapping as /api/data below).
+      return Response.json({ error: "Data service unavailable" }, { status: 503, headers: { "cache-control": "no-store" } });
     }
     if (!object) return Response.json({ error: "Not published yet" }, { status: 404, headers: { "cache-control": "no-store" } });
     return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: "private, no-cache" });

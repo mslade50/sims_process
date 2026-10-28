@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useDashboardData } from "./data";
 import { Panel } from "./components";
+import { DataThrough } from "./DataThrough";
+import { dataThrough } from "./freshness-rules";
 import { historyRoundRows, parseCourseHistory, signed, type HistoryMetric, type RoundCell } from "./course-history-rules";
 
 /** One hue, light (oldest year) to full strength (most recent): years are ordered, so a sequential ramp, never a rainbow. */
@@ -31,6 +33,7 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
   const multiCourse = new Set(doc.editions.flatMap((e) => e.rounds.map((r) => r.course))).size > 1;
   const otherEvents = doc.editions.filter((e) => !e.same_event);
   return <Panel title={title} eyebrow={eyebrow}>
+    <DataThrough text={dataThrough(doc.through, "Course history through")} />
     {doc.by_round.length > 0 && <div className="score-hist-cards">{doc.by_round.map((r) => <div key={r.round}>
       <span>Round {r.round} · {r.editions} edition{r.editions === 1 ? "" : "s"}</span>
       <b title="Average field score minus par across the earlier editions at this course.">{signed(r.vs_par)} <small>vs par</small></b>

@@ -3,6 +3,7 @@
  * golfprice/course_history.py): earlier editions of this week's event or course, round by round. Shared by CourseHistoryPanel and tests.
  * Anything that is not the document gives null; missing numbers stay null (shown as a dash, never guessed).
  */
+import { historyThrough } from "./freshness-rules.ts";
 export const COURSE_HISTORY_SCHEMA = "golfprice.course_history.v1";
 export type HistoryRound = {
   round: number; date: string | null; course: string | null; at_venue: boolean; par: number | null; players: number | null;
@@ -11,7 +12,7 @@ export type HistoryRound = {
 };
 export type HistoryEdition = { event_uid: string; year: number; start: string | null; name: string | null; same_event: boolean; courses: string[]; rounds: HistoryRound[] };
 export type HistoryByRound = { round: number; editions: number; vs_par: number | null; wind: number | null; temp: number | null; weather_strokes: number | null; field_skill: number | null; adjusted_vs_par: number | null };
-export type CourseHistoryDoc = { status: "available" | "unavailable"; reason: string | null; course: string | null; editions: HistoryEdition[]; by_round: HistoryByRound[]; weather_model: string | null };
+export type CourseHistoryDoc = { status: "available" | "unavailable"; reason: string | null; course: string | null; editions: HistoryEdition[]; by_round: HistoryByRound[]; weather_model: string | null; /** Newest data date the document was built from (published source_through_date, else the newest round it contains). */ through: string | null };
 
 const num = (x: unknown): number | null => typeof x === "number" && Number.isFinite(x) ? x : null;
 const str = (x: unknown): string | null => typeof x === "string" && x ? x : null;
@@ -36,7 +37,8 @@ export function parseCourseHistory(raw: unknown): CourseHistoryDoc | null {
     const x = obj(r), round = num(x?.round);
     return x && round != null ? [{ round, editions: num(x.editions) ?? 0, vs_par: num(x.vs_par), wind: num(x.wind), temp: num(x.temp), weather_strokes: num(x.weather_strokes), field_skill: num(x.field_skill), adjusted_vs_par: num(x.adjusted_vs_par) }] : [];
   });
-  return { status: d.status === "available" && editions.length ? "available" : "unavailable", reason: str(d.reason), course: str(d.course), editions, by_round, weather_model: str(d.weather_model) };
+  const through = historyThrough(d.source_through_date, editions.flatMap((e) => e.rounds.map((r) => r.date)));
+  return { status: d.status === "available" && editions.length ? "available" : "unavailable", reason: str(d.reason), course: str(d.course), editions, by_round, weather_model: str(d.weather_model), through };
 }
 
 export type HistoryMetric = "vs_par" | "adjusted_vs_par" | "wind" | "weather_strokes" | "field_skill";

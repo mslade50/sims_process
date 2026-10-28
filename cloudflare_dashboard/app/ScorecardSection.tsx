@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { EmptyState, Kpi, Panel } from "./components";
 import { useDashboardData } from "./data";
+import { plainDate, scorecardLag, type EventLike } from "./freshness-rules";
 import { etTime } from "./lib";
-import { forwardRestartNote, MARKETS, MARKET_LABELS, SCORECARD_KEY, armName, dayLabel, deltaTone, fmt, forwardClockPaused, intervalText, isStale, latestWeekEvents, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
+import { forwardRestartNote, MARKETS, MARKET_LABELS, SCORECARD_KEY, armName, dayLabel, deltaTone, fmt, forwardClockPaused, intervalText, latestWeekEvents, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
 
 const SKILL_HINT = "How far off the model's skill estimates were in rounds 1 and 2, in strokes per round. Lower is better.";
 const MARKET_HINT = "Prediction error against the market's closing prices for this market. Negative means the model was closer to what happened than the market was; positive means the market was closer.";
@@ -87,7 +88,9 @@ export function GolfpriceScorecardSection() {
   }, []);
   const loading = fetching && !gaveUp;
   const card = parseScorecard(data);
+  const index = useDashboardData<{ events?: EventLike[] }>("golfprice/index.json");
   const events = card ? latestWeekEvents(card) : [];
+  const lag = card ? scorecardLag(card.events, index.data?.events ?? null, now) : null;
   const paused = forwardClockPaused(card);
 
   return (
@@ -98,7 +101,7 @@ export function GolfpriceScorecardSection() {
         <EmptyState title={fetching ? "The scorecard is not available right now" : "No scorecard yet"} detail={fetching ? "It did not load. Reload in a minute; it updates after each Monday settle." : "It appears after the first Monday settle grades the previous week."} />
       ) : (
         <div className="scorecard-body">
-          {isStale(card.generated_at, now) && <p className="inputs-note accent">This scorecard was last updated {etTime(card.generated_at)}, more than 8 days ago. A newer settle has not published yet.</p>}
+          {lag?.state === "behind" && <p className="inputs-note accent" role="status" data-testid="scorecard-behind">{lag.message}</p>}
           {paused ? (
             <p className="inputs-note accent" role="status" data-testid="forward-clock-paused">{forwardRestartNote(card.forward?.clock_start_event_uid)}</p>
           ) : (
@@ -109,7 +112,7 @@ export function GolfpriceScorecardSection() {
             </div>
           )}
           {events.length === 0 ? <EmptyState title="No graded event yet" detail="The latest week appears here once a settle has run." /> : events.map((event) => <EventTable key={event.event_uid} event={event} />)}
-          <p className="inputs-muted">Updated {etTime(card.generated_at)}. Only PGA Tour events after the forward test starts count toward the forward record.</p>
+          <p className="inputs-muted">{lag?.newestSettled ? `Newest graded event starts ${plainDate(lag.newestSettled)}. ` : ""}Updated {etTime(card.generated_at)}. Only PGA Tour events after the forward test starts count toward the forward record.</p>
         </div>
       )}
     </Panel>

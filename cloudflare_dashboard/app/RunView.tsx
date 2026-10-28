@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
 import { etTime } from "./lib";
+import { DataFreshnessPanel } from "./DataFreshnessPanel";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { suggestedGroup } from "./shell-rules";
 import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
@@ -252,6 +253,7 @@ export function RunView() {
         );
       })}
 
+      <DataFreshnessPanel />
       <OddsSignalsPanel />
 
       <Panel eyebrow="Latest 50" title="Recent runs" actions={<button type="button" className="inputs-button" onClick={() => void reload()}>Refresh</button>}>

@@ -27,7 +27,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
-export type ViewKey = "shot-data" | "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
+export type ViewKey = "shot-data" | "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
 
 type Manifest = {
   generated_at: string;
@@ -59,7 +59,6 @@ const ScoringView = lazy(() => import("./ScoringView").then((m) => ({ default: m
 const HistoryView = lazy(() => import("./views").then((m) => ({ default: m.HistoryView })));
 const PerformanceView = lazy(() => import("./views").then((m) => ({ default: m.PerformanceView })));
 const DiagnosticsView = lazy(() => import("./views").then((m) => ({ default: m.DiagnosticsView })));
-const WeatherView = lazy(() => import("./views").then((m) => ({ default: m.WeatherView })));
 const WeatherEffectsView = lazy(() => import("./WeatherEffectsView").then((m) => ({ default: m.WeatherEffectsView })));
 const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ default: m.WeatherEditsView })));
 const ThisWeekView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.ThisWeekView })));
@@ -81,7 +80,6 @@ const loaders: Record<string, () => Promise<unknown>> = {
   "history": () => import("./views"),
   "performance": () => import("./views"),
   "diagnostics": () => import("./views"),
-  "weather": () => import("./views"),
   "weather-effects": () => import("./WeatherEffectsView"),
   "weather-edits": () => import("./WeatherEditsView"),
   "this-week": () => import("./ExplainViews"),
@@ -114,7 +112,6 @@ const views: Record<ViewKey, React.ComponentType> = {
   history: HistoryView,
   performance: PerformanceView,
   diagnostics: DiagnosticsView,
-  weather: WeatherView,
   "weather-effects": WeatherEffectsView,
   "weather-edits": WeatherEditsView,
   "this-week": ThisWeekView,

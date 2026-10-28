@@ -6,7 +6,7 @@ import type { ProfileEntry } from "./player-profile-rules";
 
 /* ------------------------------------------------------------------ routes */
 export const DEFAULT_VIEW = "this-week";
-/** Routes kept for old bookmarks that now send the visitor elsewhere (nothing is deleted; the views stay registered). */
+/** Routes kept for old bookmarks that now send the visitor elsewhere (nothing is deleted; the views stay registered, except the retired static weather view, which no route reaches). */
 export const REDIRECTS: Record<string, string> = { weather: "/weather-effects", "sg-distributions": "/players" };
 /** Routes whose view is replaced by a "retired" notice. */
 export const RETIRED: readonly string[] = ["research"];

@@ -715,34 +715,3 @@ export function DiagnosticsView() {
     </>
   );
 }
-
-type WeatherPayload = { forecast: Record<string, unknown>; players: DataRow[]; matchups: DataRow[] };
-
-export function WeatherView() {
-  const { data, loading, error } = useDashboardData<WeatherPayload>("weather.json");
-  if (loading) return <LoadingState label="Loading weather impact" />;
-  if (error || !data) return <ErrorState message={error ?? "Weather data is unavailable."} />;
-  const hours = Array.from({ length: Math.max(0, ...[1,2,3,4].flatMap((round) => [Array.isArray(data.forecast[`wind_r${round}`]) ? (data.forecast[`wind_r${round}`] as unknown[]).length : 0, Array.isArray(data.forecast[`dew_r${round}`]) ? (data.forecast[`dew_r${round}`] as unknown[]).length : 0])) }, (_, index) => {
-    const point: DataRow = { hour: index + 6 };
-    for (let round = 1; round <= 4; round += 1) {
-      const wind = data.forecast[`wind_r${round}`]; const dew = data.forecast[`dew_r${round}`];
-      if (Array.isArray(wind)) point[`R${round} wind`] = numberValue(wind[index]);
-      if (Array.isArray(dew)) point[`R${round} dew`] = numberValue(dew[index]);
-    }
-    return point;
-  });
-  const impactColumns = ["wind_adv_r1_2", "dew_adv_r1_2", "total_weather_adv"].filter((column) => data.players.some((row) => row[column] !== undefined));
-  const playerBars = [...data.players].map((row) => ({ ...row, total: impactColumns.reduce((total, column) => total + numberValue(row[column]), 0) })).sort((a, b) => Math.abs(numberValue(b.total)) - Math.abs(numberValue(a.total))).slice(0, 20);
-  const maxWind = Math.max(0, ...hours.flatMap((row) => Object.entries(row).filter(([key]) => key.includes("wind")).map(([, value]) => numberValue(value))));
-  const maxDew = Math.max(0, ...hours.flatMap((row) => Object.entries(row).filter(([key]) => key.includes("dew")).map(([, value]) => numberValue(value))));
-
-  return (
-    <>
-      <PageIntro eyebrow="Course conditions" title="Weather" description="Forecast windows, field impact, and the matchups most exposed to wind and dewpoint differences." />
-      <div className="kpi-grid"><Kpi label="Peak forecast wind" value={hours.length ? `${maxWind.toFixed(1)} mph` : "Not loaded"} detail="Across published round windows"/><Kpi label="Peak dewpoint" value={hours.length ? `${maxDew.toFixed(1)}°` : "Not loaded"} detail="Published hourly maximum"/><Kpi label="Players modeled" value={String(data.players.length)} detail="With weather adjustments" tone="accent"/><Kpi label="Weather matchups" value={String(data.matchups.length)} detail="With a computed differential"/></div>
-      {hours.length > 0 ? <div className="two-column"><Panel title="Wind forecast" eyebrow="Hourly by round"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={hours} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="hour" stroke="var(--muted)" tickFormatter={(value) => `${value}:00`}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{[1,2,3,4].map((round, index) => <Line key={round} dataKey={`R${round} wind`} stroke={palette[index]} dot={false} strokeWidth={2}/>)}</LineChart></ResponsiveContainer></div></Panel><Panel title="Dewpoint forecast" eyebrow="Hourly by round"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={hours} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="hour" stroke="var(--muted)" tickFormatter={(value) => `${value}:00`}/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><Legend/>{[1,2,3,4].map((round, index) => <Line key={round} dataKey={`R${round} dew`} stroke={palette[index]} dot={false} strokeWidth={2}/>)}</LineChart></ResponsiveContainer></div></Panel></div> : <EmptyState title="No hourly forecast is currently published" detail="The player-impact data below remains available from the most recent simulation." />}
-      <Panel title="Largest player weather impacts" eyebrow="Absolute adjustment leaders"><div className="chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={playerBars} layout="vertical" margin={{ ...chartMargin, left: 75 }}><CartesianGrid stroke="var(--line)" horizontal={false}/><XAxis type="number" stroke="var(--muted)"/><YAxis type="category" dataKey="player_name" stroke="var(--muted)" width={120} tickFormatter={(value) => titleCase(value)}/><Tooltip content={<ChartTooltip/>}/><ReferenceLine x={0} stroke="var(--line-strong)"/><Bar dataKey="total" radius={[0,6,6,0]}>{playerBars.map((row, index) => <Cell key={index} fill={numberValue(row.total) >= 0 ? "var(--negative)" : "var(--positive)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>
-      <div className="stack-lg"><Panel title="Weather matchup discrepancies" eyebrow="Positive differential favors Player 1"><DataTable rows={data.matchups} label="Weather matchups" preferredColumns={["player_1", "player_2", "p1_weather_adv", "p2_weather_adv", "differential", "favored"]}/></Panel><Panel title="Field weather adjustments" eyebrow="Sortable player-level detail"><DataTable rows={data.players} label="Weather adjustments" preferredColumns={["player_name", "wind_adv_r1_2", "dew_adv_r1_2", "wind_adv_r3_4", "dew_adv_r3_4"]} pageSize={35}/></Panel></div>
-    </>
-  );
-}

@@ -36,6 +36,12 @@ GitHub uses bucket-scoped `DASHBOARD_R2_ACCESS_KEY_ID` and `DASHBOARD_R2_SECRET_
 
 `public/golfprice/` is an untracked, git-ignored copy of golfprice data used only by the no-Worker local preview (`RESEARCH_LOCAL_PREVIEW=1`, see `.claude/launch.json`), where `/api/golfprice/*` does not exist. `app/data.ts` falls back to it only when the API response is not the Worker's structured JSON (network failure, HTML or empty body); a real Worker answer such as 404 "not published yet" or 503 is shown as is. A normal `npm run build` removes `dist/client/golfprice` so production never ships the snapshot; `RESEARCH_LOCAL_PREVIEW=1` or `PACKAGE_GOLFPRICE_STATIC=1` keeps it. Copy fresh data into `public/golfprice/` by hand when you need it locally.
 
+## Data freshness (owner intent 2026-10-28)
+
+Every view that shows published data says what it runs through, built from published fields only (`app/freshness-rules.ts`; an absent field draws nothing, never a guess): player shot data (`deep_coverage.shot_data`), course history (`source_through_date`), course geometry, bet breakdowns (`built_at`, `meta.max_event_date`), the scorecard (newest graded event against the newest completed event, not `generated_at`), the glossary (season-neutral keys, `_<season>` fallback) and the PGA zero-point span (`pga_benchmark_reference.span`). Scoring snapshots for an earlier run read that run's immutable `weather/<event>/<kind>_<run>.json`; the weather page warns when `weather_brief_run` is older than `weather_run`.
+
+The 15-minute cron also runs `worker/freshness.ts` (on while `DATA_FRESHNESS_ENABLED` is `"1"`): it reads the publish pointers and owner files, judges each against the schedule (weekly sources 8 days; odds signals and the bet card a few hours once the `odds_reprice` window has been open that long), and writes `owner/data_freshness.json`, shown as the Data freshness panel on the Run page. New stale findings, one a day while still stale, and recoveries are written to the repair watcher's inbox (`ops/agent_inbox/dashboard-freshness/` in `golf-odds-board`, binding `AGENT_INBOX`), never to Telegram. Without the binding the findings stay in the status object. Undo: set `DATA_FRESHNESS_ENABLED` to `"0"`.
+
 ## Architecture
 
 The interface runs on [vinext](https://github.com/cloudflare/vinext) and a Cloudflare Worker. R2 serves the current JSON snapshot at stable `data/` keys without rebuilding the interface; static assets provide a safe fallback if storage is briefly unavailable.

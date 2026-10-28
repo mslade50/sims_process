@@ -11,8 +11,11 @@ test("cron triggers match SCHEDULE_CRONS", () => {
   assert.deepEqual(cfg.triggers?.crons, [...SCHEDULE_CRONS]);
 });
 test("R2 binding and Access vars are declared", () => {
-  assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }]);
+  assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }, { binding: "AGENT_INBOX", bucket_name: "golf-odds-board" }]);
   assert.ok(cfg.vars?.ACCESS_TEAM_DOMAIN && cfg.vars?.ACCESS_AUD);
+});
+test("the data-freshness check is declared on (read-only, never Telegram)", () => {
+  assert.equal(cfg.vars?.DATA_FRESHNESS_ENABLED, "1");
 });
 test("feature switches are declared and off", () => {
   assert.equal(cfg.vars?.LEGACY_ALERTS_ENABLED, "0");
