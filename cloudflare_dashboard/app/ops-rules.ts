@@ -1,5 +1,5 @@
 /** Shared, side-effect-free rules for the owner operations page. Execution success and output verification are separate facts. */
-import { JOB_TYPES, type MachineBeat } from "./jobs-rules.ts";
+import { JOB_TYPES, machineRoleEvidence, type Roles, type RolesProblem, type MachineBeat } from "./jobs-rules.ts";
 import { SLOTS, WINDOWS, type Day } from "../worker/cron-rules.ts";
 
 export const OPS_SCHEMA = "golfops.task.v1";
@@ -236,10 +236,10 @@ export function stageSummaries(jobs: JobEvidence[], receipts: StageReceipt[], ev
     return summary;
   });
 }
-export function summarizeMachines(beats: MachineBeat[], now: number): MachineSummary[] {
+export function summarizeMachines(beats: MachineBeat[], now: number, roles: Roles | null = null, problem: RolesProblem | null = null): MachineSummary[] {
   return [{ id: "mckinley_home", label: "Large desktop" }, { id: "desktop-2ki41v6", label: "Small desktop" }].map((m) => {
     const b = beats.find((v) => v.machine === m.id); const age = now - Date.parse(b?.at ?? "");
-    return { ...m, online: Number.isFinite(age) && age >= -60_000 && age <= 600_000, state: b?.state ?? "unknown", role: b?.role ?? "Role unverified", at: b?.at ?? null, commit: b?.commit ?? null, code: b?.code ?? null };
+    return { ...m, online: Number.isFinite(age) && age >= -60_000 && age <= 600_000, state: b?.state ?? "unknown", role: machineRoleEvidence(m.id, roles, problem, beats, now).message, at: b?.at ?? null, commit: b?.commit ?? null, code: b?.code ?? null };
   });
 }
 export function publicTask(task: OpsTask): PublicTask { return { ...task, lease: task.lease ? { actor: task.lease.actor, expires_at: task.lease.expires_at } : null }; }

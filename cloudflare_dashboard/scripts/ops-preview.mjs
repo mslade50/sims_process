@@ -20,6 +20,7 @@ function fixture(key){
  if(key==="golfprice/index.json")return {events};
  if(key==="golfprice/player_profiles/search-index.json")return {players:[]};
  if(key==="data/manifest.json")return {event:"Local verification fixtures",event_id:540,course:"No live data",generated_at:at};
+ if(key==="jobs/roles.json")return scenario==="roles_mismatch"?{primary:"mckinley_home",backup:"desktop-2ki41v6"}:scenario==="roles_invalid"?{primary:"unknown",backup:"desktop-2ki41v6"}:null;
  if(key.startsWith("jobs/heartbeat/")){const machine=key.includes("mckinley_home")?"mckinley_home":"desktop-2ki41v6";return {machine,at:scenario==="stale"?new Date(now-3_600_000).toISOString():at,state:"idle",role:machine==="desktop-2ki41v6"?"primary":"backup",code:machine==="desktop-2ki41v6"?"new-fixture":"old-fixture",commit:"fixture-only"};}
  if(key==="jobs/queue.json")return {jobs:[{id:"j-20261027T110000-aaaaaa",type:"monday_week",requested_at:requested,requested_by:"fixture-owner"},{id:"j-20261027T110100-bbbbbb",type:"watch",requested_at:requested,requested_by:"cron"},{id:"j-20261027T110200-cccccc",type:"tuesday",requested_at:requested,requested_by:"fixture-owner"},{id:"j-20261027T110300-dddddd",type:"publish",requested_at:requested,requested_by:"fixture-owner"}]};
  if(key.startsWith("jobs/status/"))return key.includes("bbbbbb")?{state:"running",started_at:requested,machine:"desktop-2ki41v6"}:{state:"done",exit_code:0,finished_at:finished,machine:"desktop-2ki41v6"};
@@ -28,7 +29,7 @@ function fixture(key){
 }
 const bucket={
  async get(key){if(scenario==="offline")throw new Error("Fixture storage outage");const saved=stored.get(key);const value=saved?JSON.parse(saved.text):fixture(key);if(value===null)return null;const text=JSON.stringify(value);return {etag:saved?.etag??"fixture",httpEtag:`"${saved?.etag??"fixture"}"`,size:Buffer.byteLength(text),text:async()=>text,body:new Response(text).body,writeHttpMetadata(h){h.set("content-type","application/json");}};},
- async head(){return null;},async list(){return {objects:[],truncated:false};},
+ async head(){return null;},async list({prefix}={}){return {objects:prefix==="jobs/heartbeat/"?[{key:prefix+"mckinley_home.json"},{key:prefix+"desktop-2ki41v6.json"}]:[],truncated:false};},
  async put(key,text,options){const old=stored.get(key);if(options?.onlyIf?.etagMatches&&old?.etag!==options.onlyIf.etagMatches)return null;if(options?.onlyIf?.etagDoesNotMatch==="*"&&old)return null;const etag=`p${++counter}`;stored.set(key,{text,etag});return {etag};}
 };
 const assetRoot=resolve("dist/client");
@@ -40,7 +41,7 @@ const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,`http://${host}`);
   if(url.pathname==="/__fixture"){
    if(url.searchParams.get("reset")==="1"){stored.clear();counter=0;}
-   const next=url.searchParams.get("scenario");if(next&&["mixed","stale","offline"].includes(next))scenario=next;
+   const next=url.searchParams.get("scenario");if(next&&["mixed","stale","offline","roles_mismatch","roles_invalid"].includes(next))scenario=next;
    const who=url.searchParams.get("role");if(who&&["owner","colleague"].includes(who))role=who;
    res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({fixture:true,scenario,role,notice:"IN-MEMORY LOCAL VERIFICATION ONLY"}));return;
   }

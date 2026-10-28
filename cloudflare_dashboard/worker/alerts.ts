@@ -1,8 +1,9 @@
 /**
  * Scheduled-tick alerting (E5, shipped DARK on October 9, 2026): stale-primary, failed-job and daily-digest checks.
  *
- * With TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID absent this module only reads (queue, statuses, heartbeats), logs what it would send, and writes
- * nothing: no state object, no fetch. Setting both Worker secrets (owner action) turns sending on; no code change is needed.
+ * Kill switch: sending requires the var LEGACY_ALERTS_ENABLED === "1" AND both secrets; the secrets alone never arm it.
+ * With the switch off or either secret absent this module only reads (queue, statuses, heartbeats), logs what it would send, and writes
+ * nothing: no state object, no fetch.
  *
  * Sending is reserve-then-send against jobs/alerts/state.json (etag-guarded, per-key 24 h cooldown), the telegram_policy.py semantics: a lost
  * race or failed reservation means no page, never a duplicate; a failed send leaves only the reservation, so the next attempt waits an hour.
@@ -20,12 +21,14 @@ import {
   type AlertState,
   type JobLike,
 } from "./alerts-rules";
-import { HEARTBEAT_PREFIX, MACHINES, QUEUE_KEY, STATUS_PREFIX, effectiveState, listWindow, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules";
+import { HEARTBEAT_PREFIX, QUEUE_KEY, STATUS_PREFIX, effectiveState, listWindow, machinesWithRoles, loadRoles, parseUtc, type JobRecord, type JobStatus } from "../app/jobs-rules";
 
 export interface AlertEnv {
   DASHBOARD_DATA?: R2Bucket;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  /** Kill switch (fail closed): legacy alerts send only when this is exactly "1" AND both secrets exist. Unset = dark. */
+  LEGACY_ALERTS_ENABLED?: string;
 }
 
 export type AlertOutcome = { enabled: boolean; evaluated: Alert[]; sent: string[]; suppressed: string[]; notes: string[] };
@@ -76,13 +79,16 @@ async function collect(bucket: R2Bucket, now: number) {
     }),
   );
   const beat = async (name: string) => (await readJson(bucket, `${HEARTBEAT_PREFIX}${name}.json`).catch(() => ({ value: null }))).value as { at?: string } | null;
-  const primary = MACHINES.find((m) => m.role === "primary");
-  const backup = MACHINES.find((m) => m.role === "backup");
+  const loaded = await loadRoles(bucket);
+  const machines = machinesWithRoles(loaded.roles);
+  const primary = machines.find((m) => m.role === "primary");
+  const backup = machines.find((m) => m.role === "backup");
   return {
     recentJobs: likes.filter((j) => now - (parseUtc(j.requested_at) ?? 0) <= 48 * 3_600_000),
     jobs24h: likes.filter((j) => now - (parseUtc(j.requested_at) ?? 0) <= 24 * 3_600_000),
     primary: primary ? await beat(primary.name) : null,
     backup: backup ? await beat(backup.name) : null,
+    rolesProblem: loaded.problem,
   };
 }
 
@@ -95,11 +101,12 @@ export async function runAlerts(env: AlertEnv, now: number, fetcher: typeof fetc
   }
   const token = env.TELEGRAM_BOT_TOKEN?.trim();
   const chat = env.TELEGRAM_CHAT_ID?.trim();
-  outcome.enabled = !!token && !!chat;
+  outcome.enabled = env.LEGACY_ALERTS_ENABLED === "1" && !!token && !!chat;
   const clock = easternClock(now);
   const etDate = new Date(now).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   const data = await collect(bucket, now);
+  if (data.rolesProblem) outcome.notes.push(`${data.rolesProblem}: jobs/roles.json ${data.rolesProblem === "roles_read_error" ? "could not be read" : "is not a valid {primary, backup}"}; using the built-in roles`);
   // Dark mode never touches the state object; the stored state only matters once sending is on.
   const read = outcome.enabled ? await readState(bucket) : { state: emptyAlertState(), etag: null as string | null };
   let initial = read.state;
@@ -118,7 +125,7 @@ export async function runAlerts(env: AlertEnv, now: number, fetcher: typeof fetc
   outcome.evaluated = dueAlerts({ ...data, state: initial, now, etHHMM: hhmm(clock), etDate });
 
   if (!outcome.enabled || !token || !chat) {
-    if (outcome.evaluated.length) outcome.notes.push(`telegram not configured; would send: ${outcome.evaluated.map((a) => a.key).join(", ")}`);
+    if (outcome.evaluated.length) outcome.notes.push(`telegram off (kill switch or secrets absent); would send: ${outcome.evaluated.map((a) => a.key).join(", ")}`);
     return outcome;
   }
 

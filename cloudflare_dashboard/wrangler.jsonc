@@ -29,6 +29,11 @@
     "ACCESS_TEAM_DOMAIN": "denaliassetmanagement.cloudflareaccess.com",
     "ACCESS_AUD": "6373d69c743a8032630161ae31dcd2031bf98dae6b7e186a40078bc4390f2ae0",
     // Owners (worker/owner.ts): only these Access users see Run, weather edits and overrides. Colleagues added in Access see the rest.
-    "OWNER_EMAILS": "mckinleyslade@gmail.com"
+    "OWNER_EMAILS": "mckinleyslade@gmail.com",
+    // Feature switches, declared here so a deploy never silently resets a value set in the Cloudflare dashboard: turning one on is a reviewed config change ("1" = on, anything else = off).
+    // LEGACY_ALERTS_ENABLED: kill switch for the legacy P1/P2/P3 Telegram alerts (worker/alerts.ts); they also need both TELEGRAM_* secrets.
+    "LEGACY_ALERTS_ENABLED": "0",
+    // OPS_SHADOW_ENABLED: passive shadow observer (worker/shadow.ts); reads R2, writes ops/shadow/** only, sends nothing.
+    "OPS_SHADOW_ENABLED": "0"
   }
 }

@@ -23,8 +23,71 @@ export const MACHINES: MachineSpec[] = [
 export const isKnownMachine = (name: unknown): name is string => typeof name === "string" && MACHINES.some((m) => m.name === name);
 export const machineLabel = (name: string | undefined | null): string => MACHINES.find((m) => m.name === name)?.label ?? name ?? "";
 
+/** Optional R2 override of which machine is primary/backup (owner/ops action; the constants above are the fallback). */
+export const ROLES_KEY = "jobs/roles.json";
+export type Roles = { primary: string; backup: string };
+
+/** Valid only when both names are allow-listed machines and they differ; anything else returns null so the caller keeps the constants. */
+export function parseRoles(value: unknown): Roles | null {
+  if (!value || typeof value !== "object") return null;
+  const { primary, backup } = value as Partial<Roles>;
+  if (typeof primary !== "string" || typeof backup !== "string" || primary === backup) return null;
+  if (!isKnownMachine(primary) || !isKnownMachine(backup)) return null;
+  return { primary, backup };
+}
+
+/** True when jobs/roles.json holds something (not null/absent) that parseRoles rejects, e.g. a typo in a machine name. */
+export const rolesInvalid = (value: unknown): boolean => value !== null && value !== undefined && parseRoles(value) === null;
+
+export type RolesProblem = "roles_invalid" | "roles_read_error";
+/**
+ * Read jobs/roles.json and tell the three non-roles outcomes apart: absent (no problem, constants apply), unusable content including a JSON
+ * parse error ("roles_invalid"), and an R2 read failure ("roles_read_error"). The fallback to the constants is the same in every case.
+ */
+export async function loadRoles(bucket: { get(key: string): Promise<{ text(): Promise<string> } | null> }): Promise<{ roles: Roles | null; problem: RolesProblem | null }> {
+  let text: string | null;
+  try {
+    const object = await bucket.get(ROLES_KEY);
+    text = object ? await object.text() : null;
+  } catch {
+    return { roles: null, problem: "roles_read_error" };
+  }
+  if (text === null) return { roles: null, problem: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { roles: null, problem: "roles_invalid" };
+  }
+  const roles = parseRoles(value);
+  return { roles, problem: roles ? null : "roles_invalid" };
+}
+
+/** MACHINES with the roles from jobs/roles.json applied. Null roles = the constants. */
+export function machinesWithRoles(roles: Roles | null | undefined): MachineSpec[] {
+  if (!roles) return MACHINES;
+  return MACHINES.map((m) => ({ ...m, role: m.name === roles.primary ? "primary" : m.name === roles.backup ? "backup" : m.role }));
+}
+
 export type MachineBeat = { machine?: string; at?: string; state?: string; job_id?: string | null; commit?: string | null; code?: string | null; role?: string | null };
 export type MachineStatus = { name: string; label: string; role: "primary" | "backup"; status: "offline" | "idle" | "running"; lastSeen: string | null; jobId: string | null; commit: string | null };
+
+export type RoleEvidence = { configured_role: "primary" | "backup" | null; reported_role: "primary" | "backup" | null; role_source: "configured" | "built_in" | "unknown"; message: string };
+/** Configuration describes intent; only a fresh, matching heartbeat describes the reported role. Neither proves takeover readiness. */
+export function machineRoleEvidence(machine: string, roles: Roles | null, problem: RolesProblem | null, beats: MachineBeat[], now: number): RoleEvidence {
+  const parsed = parseRoles(roles);
+  const invalid = problem !== null || (roles !== null && parsed === null);
+  const role_source = invalid ? "unknown" : parsed ? "configured" : "built_in";
+  const configured_role = invalid ? null : machinesWithRoles(parsed).find((m) => m.name === machine)?.role ?? null;
+  const beat = beats.find((b) => b && b.machine === machine);
+  const at = parseUtc(beat?.at);
+  const fresh = at !== null && now - at >= -60_000 && now - at <= STALE_HEARTBEAT_MS;
+  const reported_role = fresh && (beat?.role === "primary" || beat?.role === "backup") ? beat.role : null;
+  const configured = invalid ? "Role configuration is unreadable; configured role unknown." : `${parsed ? "Configured" : "Built-in default"}: ${configured_role ?? "unknown"}.`;
+  const reported = reported_role ? `Reported: ${reported_role}.` : "No fresh reported role.";
+  const mismatch = configured_role && reported_role && configured_role !== reported_role ? " Role mismatch; investigate before switching machines." : "";
+  return { configured_role, reported_role, role_source, message: `${configured} ${reported}${mismatch}` };
+}
 
 /** Live status of one allow-listed machine from its heartbeat object: offline = no heartbeat or older than STALE_HEARTBEAT_MS. */
 export function machineStatus(spec: MachineSpec, beats: MachineBeat[] | undefined, now: number): MachineStatus {
