@@ -33,7 +33,8 @@ test("old routes redirect or show a retired notice; nothing is deleted", async (
   assert.deepEqual(resolveRoute("weather", registered), { kind: "redirect", key: "weather", to: "/weather-effects" });
   assert.deepEqual(resolveRoute("sg-distributions", registered), { kind: "redirect", key: "sg-distributions", to: "/players" });
   assert.deepEqual(resolveRoute("research", registered), { kind: "retired", key: "research" });
-  for (const key of ["weather", "sg-distributions", "research", "history", "diagnostics"]) assert.ok(registered.includes(key), `${key} stays registered`);
+  for (const key of ["sg-distributions", "research", "history", "diagnostics"]) assert.ok(registered.includes(key), `${key} stays registered`);
+  assert.ok(!registered.includes("weather"), "the retired static weather view is gone; /weather only redirects");
   assert.deepEqual(Object.keys(REDIRECTS).sort(), ["sg-distributions", "weather"]);
   const html = await (await render("/research")).text();
   assert.match(html, /Betting backtests are no longer on this site/);

@@ -288,3 +288,12 @@ test("owner-data API: the owner reads R2 owner/<key>; others get 403; no package
     assert.equal((await get(bad, signedHeaders(OWNER))).status, 400, bad);
   }
 });
+
+test("owner-data API: an R2 failure is a 503 outage (like /api/data), never 'not published'", async () => {
+  const worker = await loadWorker();
+  const bucket = { get: async () => { throw new Error("R2 down"); } };
+  const env = { ASSETS: { fetch: async () => new Response("asset") }, DASHBOARD_DATA: bucket, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, OWNER_EMAILS: OWNER };
+  const res = await worker.fetch(new Request("https://golf.example/api/owner-data/data_freshness.json", { headers: signedHeaders(OWNER) }), env, { waitUntil() {}, passThroughOnException() {} });
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+});

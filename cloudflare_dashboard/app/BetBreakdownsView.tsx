@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { DataThrough } from "./DataThrough";
+import { dataThrough } from "./freshness-rules";
 import { EmptyState, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
 import {
   BET_BREAKDOWNS_KEY, EDGE_BUCKETS, MARKET_GROUPS, OWNER_BOOKS, OWNER_DATA_PREFIX, bookLabel, breakdown, decodeDataset, defaultFilters, examples, pct, verdict,
@@ -252,5 +254,7 @@ export function BetBreakdownsView() {
   );
   if (load.state === "loading") return <div>{intro}<LoadingState label="Loading about 400,000 historical bets (about 4 MB)" /></div>;
   if (load.state === "error") return <div>{intro}<EmptyState title="Bet breakdowns are not available" detail={load.message} onRetry={() => { setLoad({ state: "loading" }); setAttempt((a) => a + 1); }} /></div>;
-  return <div>{intro}<Explorer data={load.data} /></div>;
+  const through = dataThrough(load.data.meta.max_event_date, "Graded bets through");
+  const built = dataThrough(load.data.builtAt, "built");
+  return <div>{intro}<DataThrough text={[through, built].filter(Boolean).join(" · ") || "The file does not say which event date it runs through."} /><Explorer data={load.data} /></div>;
 }

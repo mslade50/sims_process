@@ -6,6 +6,14 @@
 /** The zero point of every "vs PGA avg" number (Q15, Oct 10 2026): the average PGA Tour round over nine complete seasons, fixed. Published as pga_benchmark_reference.span. */
 export const RULER_SPAN = "2017–2025";
 export const RULER_NAME = `average PGA Tour round, ${RULER_SPAN}`;
+/**
+ * Data-driven forms of the sentences that name the zero-point span. A view with the published pga_benchmark_reference passes
+ * spanOf(reference) (freshness-rules.ts) so the text follows what the publisher says; the constants above are only the fallback
+ * for a view that has no reference in scope.
+ */
+export const rulerName = (span: string = RULER_SPAN) => `average PGA Tour round, ${span}`;
+export const zeroLabel = (span: string = RULER_SPAN) => `vs ${rulerName(span)}`;
+export const vsPgaAvgLong = (span: string = RULER_SPAN) => LABELS.vsPgaAvg.long.replace(RULER_SPAN, span);
 
 export const LABELS = {
   /** Descriptive headline: recency-weighted R1-R2 adjusted SG, pulled toward the player's main-tour level, minus the fixed multi-season PGA round anchor (RULER_NAME). */
@@ -24,7 +32,8 @@ export const GAP_METHOD_SENTENCE =
   "'vs PGA avg' is recent form (rounds 1 and 2) on the average-PGA-Tour-round (2017–2025) scale. 'This week' is the model's all-round skill on the same scale, adjusted for course location and weather. A few tenths of a stroke apart per player is normal; the gap is form versus model.";
 
 /** Zero-point sentence for every PGA-scale number (BRIEF_v2 A3 / B2 row 8). */
-export const ZERO_SENTENCE = "Zero is the average PGA Tour round, 2017–2025 (opening two rounds, nine seasons weighted equally), not an average player; a typical full-time PGA regular reads about +0.4.";
+export const zeroSentence = (span: string = RULER_SPAN) => `Zero is the average PGA Tour round, ${span} (opening two rounds, every season weighted equally), not an average player; a typical full-time PGA regular reads about +0.4.`;
+export const ZERO_SENTENCE = zeroSentence();
 
 /** Plain names for saved-component keys that appear as raw headers today (BRIEF_v2 B4). Prefer the explain document's components_legend label when present; fall back here. */
 const PLAIN: Record<string, string> = {

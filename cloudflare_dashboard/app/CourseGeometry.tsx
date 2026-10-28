@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { Panel } from "./components";
 import { useDashboardData } from "./data";
 import "./course-geometry.css";
+import { DataThrough } from "./DataThrough";
+import { dataThrough } from "./freshness-rules";
 import { orderEvents } from "./explain-rules";
 import { profileHref, selectWeeklyEvent } from "./player-profile-rules";
 import {
@@ -158,6 +160,7 @@ function CourseGeometryBody({ idx, uid, eventName, switcher }: { idx: GeoIndex; 
   return (
     <Panel title="Course geometry" eyebrow={`${card.course_name || entry.course_name || card.event_name || eventName} · ${view.summary}`} className="cg-panel">
       {switcher}
+      <DataThrough text={[dataThrough(card.as_of, "Course geometry built"), card.seasons.length ? `latest edition ${Math.max(...card.seasons)}` : null].filter(Boolean).join(" · ") || null} />
       <p className="cg-descriptive">{idx.descriptive}</p>
       {view.fallback ? (
         <p className="cg-fallback" role="note">{card.note ?? "No shot coordinates were published for this event, so only yardage is shown."}</p>

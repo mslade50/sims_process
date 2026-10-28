@@ -9,6 +9,8 @@ import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
 import { matchPlayers, matchText } from "./inputs-search";
 import { DataRow, etTime, numberValue, palette, titleCase } from "./lib";
+import { DataThrough } from "./DataThrough";
+import { dataThrough, seasonField } from "./freshness-rules";
 import { GLOSSARY, HEADERS, define, registerFamilyLabels, titlesFor } from "./glossary";
 import { ALLOWED, CUT_BOUNDS, MAX_LIFETIME_DAYS, checkOverride, isExpired, isoSeconds, specFor, type FieldSpec, type OverrideRecord, type Scope } from "./overrides-rules";
 
@@ -1164,7 +1166,7 @@ type Glossary = {
   reading_weights: string;
   families: GlossaryFamily[];
   features: GlossaryFeature[];
-  location: { note: string; columns: GlossaryLocation[]; n_columns_2026: number };
+  location: { note: string; columns: GlossaryLocation[]; n_columns?: number; n_columns_2026?: number };
 };
 
 const VARIANT_SHORT: Record<string, string> = { base: "All players, all events", xeuro: "+ at DP World Tour events", xband0: "+ player <30 rounds", xband1: "+ player 30-100 rounds", miss: "+ if missing", miss_xeuro: "+ if missing, DP World Tour event" };
@@ -1208,13 +1210,15 @@ function FeaturesTab() {
   const m = glossary.model;
   const share = (f: GlossaryFamily) => (model === "chl" ? f.share_abs_weight_chl : f.share_abs_weight_v21);
   const visibleFamilies = glossary.families.filter((f) => shown.some((x) => x.family === f.key));
+  const published = dataThrough((glossary as Glossary & { generated_at?: string; as_of?: string }).generated_at ?? (glossary as Glossary & { as_of?: string }).as_of, "published");
   return (
     <div className="stack-lg">
+      <DataThrough text={`Skill measurements for the ${glossary.season} season${published ? `, ${published}` : ""}.`} />
       <div className="kpi-grid">
-        <Tip text="Distinct skill measurements the model can use to rate a player."><Kpi label="Features" value={String(glossary.features.length)} detail={`${num(m.n_design_columns_2026) ?? "—"} model inputs in ${glossary.season} once variants are counted`} tone="accent" /></Tip>
-        <Tip text="How strongly the fitting shrinks every weight toward zero so no single noisy feature dominates. Bigger means more shrinkage."><Kpi label="Shrinkage strength" value={fx(m.ridge_lambda_2026, 0)} detail={`chosen by testing on later seasons, ${glossary.season} season`} /></Tip>
-        <Tip text="The seasons of player results the weights were learned from. The weights are frozen for the whole season."><Kpi label="Learned from" value={String(m.train_seasons_2026 ?? "—").replace("-", " to ")} detail={`${(num(m.n_train_2026) ?? 0).toLocaleString()} player-events`} /></Tip>
-        <Tip text="Inputs describing home base, travel and nationality."><Kpi label="Location inputs" value={String(glossary.location.n_columns_2026)} detail="home base, travel and nationality" /></Tip>
+        <Tip text="Distinct skill measurements the model can use to rate a player."><Kpi label="Features" value={String(glossary.features.length)} detail={`${num(seasonField(m, "n_design_columns", glossary.season)) ?? "—"} model inputs in ${glossary.season} once variants are counted`} tone="accent" /></Tip>
+        <Tip text="How strongly the fitting shrinks every weight toward zero so no single noisy feature dominates. Bigger means more shrinkage."><Kpi label="Shrinkage strength" value={fx(seasonField(m, "ridge_lambda", glossary.season), 0)} detail={`chosen by testing on later seasons, ${glossary.season} season`} /></Tip>
+        <Tip text="The seasons of player results the weights were learned from. The weights are frozen for the whole season."><Kpi label="Learned from" value={String(seasonField(m, "train_seasons", glossary.season) ?? "—").replace("-", " to ")} detail={`${(num(seasonField(m, "n_train", glossary.season)) ?? 0).toLocaleString()} player-events`} /></Tip>
+        <Tip text="Inputs describing home base, travel and nationality."><Kpi label="Location inputs" value={String(glossary.location.n_columns ?? glossary.location.n_columns_2026 ?? glossary.location.columns.length)} detail="home base, travel and nationality" /></Tip>
       </div>
       <Panel eyebrow="How to read this" title="What the weights mean">
         <p className="inputs-note">{plain(m.overview)}</p>

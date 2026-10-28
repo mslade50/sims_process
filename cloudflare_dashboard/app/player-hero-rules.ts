@@ -9,8 +9,6 @@ export const signed = (v: unknown, digits = 2): string => finite(v) ? `${v > 0 ?
 /** B2 caveat rows 1 and 2: one line each, directly under the headline. */
 export const CAVEAT_REFERENCE_ONLY = "For reference only: prices come from the event model, not this number";
 export const CAVEAT_DESCRIPTIVE = "Descriptive, not a forecast";
-/** B2 row 8: the label carries the zero point. */
-export const ZERO_LABEL = "vs average PGA Tour round, 2017–2025";
 /** B2 row 9: one clause beside the interval. */
 export const INTERVAL_CLAUSE = "does not include future-round variability or uncertainty in the PGA average itself";
 /** B2 row 10 / A6. */

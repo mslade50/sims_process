@@ -40,7 +40,6 @@ const VIEWS = [
   ["history", "views.tsx", "HistoryView"],
   ["performance", "views.tsx", "PerformanceView"],
   ["diagnostics", "views.tsx", "DiagnosticsView"],
-  ["weather", "views.tsx", "WeatherView"],
   ["weather-effects", "WeatherEffectsView.tsx", "WeatherEffectsView"],
   ["weather-edits", "WeatherEditsView.tsx", "WeatherEditsView"],
   ["this-week", "ExplainViews.tsx", "ThisWeekView"],

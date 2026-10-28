@@ -89,6 +89,7 @@ import * as scoringRules from "../app/scoring-rules.ts";
 import * as libRules from "../app/lib.ts";
 import * as weatherRules from "../app/weather-rules.ts";
 import * as glossaryRules from "../app/glossary.ts";
+import * as freshnessRules from "../app/freshness-rules.ts";
 const require = createRequire(import.meta.url);
 function renderedScoring({ payload, error = null, loading = false, player = false, expectedRun = "fixture" } = {}) {
   const filename = fileURLToPath(new URL("../app/ScoringView.tsx", import.meta.url));
@@ -105,6 +106,7 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "./CourseHistoryPanel") return { CourseHistoryPanel: () => null };
     if (id === "next/link") return { __esModule: true, default: ({ href, children, className }) => React.createElement("a", { href, className }, children) };
     if (id === "./glossary") return glossaryRules;
+    if (id === "./freshness-rules") return freshnessRules;
     if (id === "./explain-rules" || id === "./distributions-rules" || id.endsWith(".css")) return {};
     if (id === "react") return { ...React, useState: (initial) => { const slot = state++; return [slot === 2 && player ? false : typeof initial === "function" ? initial() : initial, () => {}]; } };
     /* eslint-disable react/prop-types -- test-only stand-in components */
