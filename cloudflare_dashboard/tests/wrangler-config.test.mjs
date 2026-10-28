@@ -11,11 +11,13 @@ test("cron triggers match SCHEDULE_CRONS", () => {
   assert.deepEqual(cfg.triggers?.crons, [...SCHEDULE_CRONS]);
 });
 test("R2 binding and Access vars are declared", () => {
-  assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }, { binding: "AGENT_INBOX", bucket_name: "golf-odds-board" }]);
+  assert.deepEqual(cfg.r2_buckets, [{ binding: "DASHBOARD_DATA", bucket_name: "golf-model-dashboard-data" }]);
   assert.ok(cfg.vars?.ACCESS_TEAM_DOMAIN && cfg.vars?.ACCESS_AUD);
 });
 test("the data-freshness check is declared on (read-only, never Telegram)", () => {
   assert.equal(cfg.vars?.DATA_FRESHNESS_ENABLED, "1");
+  assert.equal(cfg.vars?.DATA_FRESHNESS_INBOX, "0", "inbox filing stays off until the watcher treats dashboard-freshness as internal");
+  assert.ok(!cfg.r2_buckets?.some((b) => b.binding === "AGENT_INBOX"), "no write binding to the odds board bucket");
 });
 test("feature switches are declared and off", () => {
   assert.equal(cfg.vars?.LEGACY_ALERTS_ENABLED, "0");

@@ -3,7 +3,7 @@ import test from "node:test";
 import { briefCurrency, calendarDate, dataThrough, daysSince, historyThrough, plainDate, scorecardLag, seasonField, shotFreshness, shotFreshnessLine, weatherRunKey } from "../app/freshness-rules.ts";
 import { parseCourseHistory } from "../app/course-history-rules.ts";
 import { inWindow } from "../worker/cron-rules.ts";
-import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, fieldFromHead, inboxRecord, judge, parseFreshness, windowOpenForMs } from "../worker/freshness-rules.ts";
+import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, eventsActive, fieldFromHead, inboxRecord, judge, parseFreshness, windowOpenForMs } from "../worker/freshness-rules.ts";
 import { runFreshness } from "../worker/freshness.ts";
 
 const iso = (s) => Date.parse(s);
@@ -188,7 +188,7 @@ test("check is off unless DATA_FRESHNESS_ENABLED is exactly 1 and writes nothing
 test("healthy data: status object written, everything current, no inbox writes", async () => {
   const bucket = fakeBucket(healthyData());
   const inbox = fakeBucket();
-  const out = await runFreshness({ DASHBOARD_DATA: bucket, AGENT_INBOX: inbox, DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  const out = await runFreshness({ DASHBOARD_DATA: bucket, AGENT_INBOX: inbox, DATA_FRESHNESS_INBOX: "1", DATA_FRESHNESS_ENABLED: "1" }, NOW);
   assert.equal(out.doc.ok, true, JSON.stringify(out.doc.sources.filter((s) => s.state !== "ok")));
   assert.deepEqual(bucket.puts, [FRESHNESS_STATUS_KEY]);
   assert.equal(inbox.puts.length, 0);
@@ -204,7 +204,7 @@ test("a stale bet card and a scorecard that lags files one inbox record each, th
   data["golfprice/scorecard/latest.json"] = { generated_at: "2026-10-28T08:00:00Z", events: [{ event_uid: "pga:1:2026-10-15", event_start: "2026-10-15" }] };
   const bucket = fakeBucket(data);
   const inbox = fakeBucket();
-  const env = { DASHBOARD_DATA: bucket, AGENT_INBOX: inbox, DATA_FRESHNESS_ENABLED: "1" };
+  const env = { DASHBOARD_DATA: bucket, AGENT_INBOX: inbox, DATA_FRESHNESS_INBOX: "1", DATA_FRESHNESS_ENABLED: "1" };
   let out = await runFreshness(env, NOW);
   assert.equal(out.doc.ok, false);
   assert.deepEqual(inbox.puts.sort(), ["ops/agent_inbox/dashboard-freshness/bet_card.json", "ops/agent_inbox/dashboard-freshness/scorecard_lag.json"]);
@@ -216,7 +216,7 @@ test("a stale bet card and a scorecard that lags files one inbox record each, th
   out = await runFreshness(env, NOW + 1_800_000);
   assert.equal(out.doc.stale_count, 1);
   assert.equal(inbox.puts.length, 3);
-  assert.match(inbox.puts[2], /bet_card\.recovered-/);
+  assert.match(inbox.puts[2], /bet_card\.recovered\.json$/);
 });
 
 test("without the inbox binding the finding stays in the status object; R2 failures raise no finding", async () => {
@@ -225,10 +225,46 @@ test("without the inbox binding the finding stays in the status object; R2 failu
   const out = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
   assert.equal(out.doc.inbox.bound, false);
   assert.equal(out.doc.sources.find((s) => s.id === "legacy_manifest").state, "stale");
-  assert.match(out.notes.join(" "), /not bound/);
   const broken = await runFreshness({ DASHBOARD_DATA: fakeBucket(healthyData(), { failKeys: ["owner/bet_card.json"] }), DATA_FRESHNESS_ENABLED: "1" }, NOW);
   assert.equal(broken.doc.sources.find((s) => s.id === "bet_card").state, "unreadable");
   assert.equal(broken.doc.ok, true);
+});
+
+test("inbox filing is off unless DATA_FRESHNESS_INBOX is 1, even with the binding present (no escalation path by default)", async () => {
+  const data = healthyData();
+  data["owner/bet_card.json"] = fresh("2026-10-26T04:00:00Z");
+  const inbox = fakeBucket();
+  const out = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), AGENT_INBOX: inbox, DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(out.doc.sources.find((s) => s.id === "bet_card").state, "stale");
+  assert.equal(inbox.puts.length, 0);
+  assert.equal(out.doc.inbox.bound, false);
+});
+
+test("bet_breakdowns has no scheduled producer and is not judged", () => {
+  assert.ok(!SOURCES.some((s) => s.id === "bet_breakdowns" || s.key === "owner/bet_breakdowns.json"));
+});
+
+test("off weeks are not judged: no event near today means nothing stale is reported", async () => {
+  const data = healthyData();
+  data["golfprice/index.json"] = { schema: "x", published_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-01", tour: "pga", date_start: "2026-10-01", date_end: "2026-10-04" }, { event_uid: "pga:9:2027-01-07", tour: "pga", date_start: "2027-01-07", date_end: "2027-01-10" }] };
+  data["owner/bet_card.json"] = fresh("2026-10-01T04:00:00Z");
+  data["golfprice/odds_signals/latest.json"] = fresh("2026-10-01T04:00:00Z");
+  data["data/manifest.json"] = fresh("2026-09-01T00:00:00Z");
+  const out = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(out.doc.ok, true);
+  assert.ok(out.doc.sources.every((s) => s.state === "skipped"));
+  assert.equal(eventsActive([], NOW), null);
+  assert.equal(eventsActive(null, NOW), null);
+  assert.equal(eventsActive([{ date_start: "2026-10-30" }], NOW), true);
+});
+
+test("orphaned episodes: a rolled-over history id is closed with a recovered record; an unjudged scorecard_lag stays open", () => {
+  const t0 = iso("2026-10-28T12:00:00Z");
+  const open = (id) => ({ id, label: id, key: "k", schedule: "weekly", state: "stale", observed_at: null, age_hours: 1, limit_hours: 1, via: null, detail: "d", stale_since: new Date(t0).toISOString(), inboxed_at: new Date(t0).toISOString() });
+  const r = carryForward(t0 + 900_000, [], [open("history:old"), open("scorecard_lag"), open("removed_source")], ["scorecard_lag"]);
+  assert.deepEqual(r.transitions.map((t) => `${t.kind}:${t.id}`).sort(), ["recovered:history:old", "recovered:removed_source"]);
+  assert.deepEqual(r.statuses.map((x) => x.id), ["scorecard_lag"]);
+  assert.equal(r.statuses[0].stale_since, new Date(t0).toISOString());
 });
 
 /* ------------------------------------------------------------------ the built Worker */

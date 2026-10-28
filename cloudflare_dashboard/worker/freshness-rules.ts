@@ -38,9 +38,11 @@ export const SOURCES: SourceSpec[] = [
   { id: "legacy_manifest", label: "legacy data manifest", key: "data/manifest.json", schedule: "weekly", fields: ["generated_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "Weekly legacy-pipeline export (History and Diagnostics)." },
   { id: "odds_signals", label: "odds signals", key: "golfprice/odds_signals/latest.json", schedule: "odds_window", fields: ["generated_at"], limitHours: 12, note: "Only published when an odds check finds new prices, so quiet markets and off weeks can age it; judged during the odds_reprice window only." },
   { id: "bet_card", label: "owner bet card", key: "owner/bet_card.json", schedule: "odds_window", fields: ["generated_at"], limitHours: 12, note: "Refreshed after each odds reprice; judged during the odds_reprice window, weekly otherwise." },
-  { id: "bet_breakdowns", label: "bet breakdowns", key: "owner/bet_breakdowns.json", schedule: "weekly", fields: ["built_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "Historical returns file for the owner page; rebuilt with the weekly run." },
   { id: "scorecard", label: "model scorecard", key: "golfprice/scorecard/latest.json", schedule: "weekly", fields: ["generated_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "Updated by each Monday settle." },
 ];
+
+// owner/bet_breakdowns.json is deliberately not listed: its only producer is the one-off experiments/bet_breakdown build, so a scheduled age check
+// could never be satisfied. The built_at / max_event_date label stays in the view. Add it back once a scheduled producer exists.
 
 /** Course history documents of the newest events (taken from the published index, never listed here). */
 export const HISTORY_SPEC = { idPrefix: "history:", schedule: "history" as Schedule, fields: ["source_through_date"], limitHours: 14 * 24, max: 2 };
@@ -99,7 +101,20 @@ export function windowOpenForMs(inWindow: WindowProbe, type: string, now: number
   return open >= capMs ? capMs : open + step;
 }
 
-export type EvalContext = { now: number; inWindow: WindowProbe };
+/** `active`: an event is in play or just finished (from the published index); false = off week, null = unknown (index unreadable). */
+export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean | null };
+
+const ACTIVE_BEFORE_DAYS = 11;
+const ACTIVE_AHEAD_DAYS = 7;
+/** True when some event starts within 11 days back to 7 days ahead of `now`; null when there are no events to read. */
+export function eventsActive(events: Array<{ date_start?: string | null }> | null, now: number): boolean | null {
+  if (!events || events.length === 0) return null;
+  const day = 86_400_000;
+  return events.some((e) => {
+    const ms = timestampMs(typeof e.date_start === "string" ? e.date_start.slice(0, 10) : null);
+    return ms !== null && ms >= now - ACTIVE_BEFORE_DAYS * day && ms <= now + ACTIVE_AHEAD_DAYS * day;
+  });
+}
 
 /** Judge one read of one source. `ageOverrideMs`: for sources whose observed time is a calendar date, the caller passes the reading itself. */
 export function judge(spec: { id: string; label: string; key: string; schedule: Schedule; fields: string[]; limitHours: number }, read: ReadResult, ctx: EvalContext): Omit<SourceStatus, "stale_since" | "inboxed_at"> {
@@ -109,6 +124,7 @@ export function judge(spec: { id: string; label: string; key: string; schedule: 
     if (spec.schedule === "odds_window" && windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now) === 0) return { ...base, state: "skipped", limit_hours: null, detail: "Not published and the odds_reprice window is closed; not judged." };
     return { ...base, state: "missing", detail: `${spec.key} is not published.` };
   }
+  if (ctx.active === false) return { ...base, limit_hours: null, state: "skipped", detail: "No event is in play or just finished in the published index (off week); not judged." };
   let observed: number | null = null;
   let via: string | null = null;
   const hit = fieldFromHead(read.head, spec.fields);
@@ -142,7 +158,7 @@ export function fmtAge(hours: number): string {
 export type Transition = { id: string; kind: "stale" | "refile" | "recovered"; status: SourceStatus };
 
 /** Carry stale_since / inboxed_at forward and decide which sources need an inbox record this tick. */
-export function carryForward(now: number, current: Array<Omit<SourceStatus, "stale_since" | "inboxed_at">>, previous: SourceStatus[] | null): { statuses: SourceStatus[]; transitions: Transition[] } {
+export function carryForward(now: number, current: Array<Omit<SourceStatus, "stale_since" | "inboxed_at">>, previous: SourceStatus[] | null, knownIds: string[] = []): { statuses: SourceStatus[]; transitions: Transition[] } {
   const prev = new Map((previous ?? []).map((s) => [s.id, s]));
   const statuses: SourceStatus[] = [];
   const transitions: Transition[] = [];
@@ -164,6 +180,18 @@ export function carryForward(now: number, current: Array<Omit<SourceStatus, "sta
     }
     statuses.push(status);
   }
+  // An open episode whose id was not judged this tick must not be dropped silently: keep it while its source is only unjudged, and close it
+  // (a recovered record) when the id left the set by design (a rolled-over history document, a source removed from the list).
+  const seen = new Set(current.map((c) => c.id));
+  for (const before of previous ?? []) {
+    if (seen.has(before.id) || !isOpen(before)) continue;
+    const retired = before.id.startsWith(HISTORY_SPEC.idPrefix) || !knownIds.includes(before.id);
+    if (!retired) { statuses.push(before); continue; }
+    if (before.inboxed_at) {
+      const gone: SourceStatus = { ...before, state: "skipped", stale_since: null, inboxed_at: null, detail: "No longer checked (left the set of newest events or the source list)." };
+      transitions.push({ id: before.id, kind: "recovered", status: gone });
+    }
+  }
   return { statuses, transitions };
 }
 
@@ -173,8 +201,8 @@ export function inboxRecord(t: Transition, nowIso: string): { key: string; body:
   const dedupe = `${INBOX_SOURCE}:${s.id}`;
   if (t.kind === "recovered") {
     return {
-      key: `${INBOX_PREFIX}${s.id}.recovered-${nowIso.replace(/[^0-9A-Za-z]/g, "")}.json`,
-      body: { source: INBOX_SOURCE, ts: nowIso, severity: "recovered", kind: "recovered", summary: `${dedupe}: recovered`, detail: `${s.label} is current again (${s.detail})`, dedupe_key: dedupe },
+      key: `${INBOX_PREFIX}${s.id}.recovered.json`,
+      body: { source: INBOX_SOURCE, ts: nowIso, severity: "recovered", kind: "recovered", summary: `${dedupe}: recovered`, detail: `${s.label} is no longer stale (${s.detail})`, dedupe_key: dedupe },
     };
   }
   return {

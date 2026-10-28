@@ -3,8 +3,9 @@
  *
  * Reads the published objects the dashboard depends on, judges each against the schedule, and writes ONE status object
  * (owner/data_freshness.json, shown as the "Data freshness" panel on the Run page, owner-only through /api/owner-data/). Stale findings go to the
- * ops agent inbox (bucket golf-odds-board, prefix ops/agent_inbox/dashboard-freshness/, the objects the repair watcher lists), never to Telegram or
- * any phone path. Nothing here sends a message or calls a network service other than R2.
+ * ops agent inbox ONLY when DATA_FRESHNESS_INBOX is "1" and AGENT_INBOX is bound (bucket golf-odds-board, prefix ops/agent_inbox/dashboard-freshness/).
+ * Both are off by default until the watcher treats source "dashboard-freshness" as internal (repair-only): an external source is escalated to Telegram
+ * after 6 h unrecovered. The Worker itself never calls Telegram or any phone path. Nothing here sends a message or calls a network service other than R2.
  *
  * Safety: read-only on every data object. The only writes are the status object and, on a transition (newly stale, re-filed once a day while still stale,
  * recovered), one inbox object. It never touches the jobs queue, the board or the bet card, and it is independent of the other cron work (separate
@@ -13,14 +14,16 @@
 import { inWindow } from "./cron-rules.ts";
 import { scorecardLag, historyThrough, type EventLike } from "../app/freshness-rules.ts";
 import {
-  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, inboxRecord, judge, parseFreshness,
+  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, parseFreshness,
   type FreshnessDoc, type ReadResult,
 } from "./freshness-rules.ts";
 
 export interface FreshnessEnv {
   DASHBOARD_DATA?: R2Bucket;
-  /** Bucket the repair watcher lists (golf-odds-board). Optional: without it findings are only in the status object. */
+  /** Bucket the repair watcher lists (golf-odds-board). Not bound in wrangler.jsonc by default: see DATA_FRESHNESS_INBOX. */
   AGENT_INBOX?: R2Bucket;
+  /** "1" = also file findings in the agent inbox (needs the AGENT_INBOX binding). Off by default: the watcher treats an unknown source as external and escalates it to a phone after 6 h. */
+  DATA_FRESHNESS_INBOX?: string;
   DATA_FRESHNESS_ENABLED?: string;
 }
 
@@ -78,27 +81,29 @@ export async function runFreshness(env: FreshnessEnv, now: number): Promise<Fres
   if (env.DATA_FRESHNESS_ENABLED !== "1") return { enabled: false, doc: null, notes: ["disabled (DATA_FRESHNESS_ENABLED is not 1)"] };
   const bucket = env.DASHBOARD_DATA;
   if (!bucket) return { enabled: true, doc: null, notes: ["dashboard bucket is not bound"] };
-  return withTimeout(check(bucket, env.AGENT_INBOX, now), TOTAL_TIMEOUT_MS, "freshness check").catch((error: unknown) => ({
+  return withTimeout(check(bucket, env.DATA_FRESHNESS_INBOX === "1" ? env.AGENT_INBOX : undefined, now), TOTAL_TIMEOUT_MS, "freshness check").catch((error: unknown) => ({
     enabled: true, doc: null, notes: [`check failed: ${error instanceof Error ? error.message : String(error)}`],
   }));
 }
 
 async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number): Promise<FreshnessOutcome> {
   const notes: string[] = [];
-  const ctx = { now, inWindow };
   const previous = await readStatus(bucket);
 
   // Static sources, plus the golfprice index (full read: it names the history documents and feeds the scorecard comparison).
   const heads = await Promise.all(SOURCES.filter((s) => s.id !== "golfprice_index").map(async (spec) => ({ spec, read: await readHead(bucket, spec.key) })));
   const index = await readFull(bucket, "golfprice/index.json");
+  const events: EventLike[] | null = Array.isArray((index.json as { events?: unknown } | null)?.events) ? ((index.json as { events: EventLike[] }).events) : null;
+  // Off weeks (no event in play or just finished, from the published index) are not judged: nothing is expected to publish.
+  const active = eventsActive(events, now);
+  const ctx = { now, inWindow, active };
+  if (active === false) notes.push("Off week: no event in play or just finished in the published index; sources are not judged.");
   const judged = [
     ...SOURCES.map((spec) => {
       if (spec.id === "golfprice_index") return judge(spec, index.read, ctx);
       return judge(spec, heads.find((h) => h.spec.id === spec.id)!.read, ctx);
     }),
   ];
-
-  const events: EventLike[] | null = Array.isArray((index.json as { events?: unknown } | null)?.events) ? ((index.json as { events: EventLike[] }).events) : null;
 
   // Course history of the newest events: the published `history_key` of each, judged on the document's own source_through_date.
   const historyKeys = ((events ?? []) as IndexEvent[])
@@ -120,7 +125,7 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   // Scorecard against the newest completed PGA event (not generated_at).
   const card = await readFull(bucket, "golfprice/scorecard/latest.json");
   const cardEvents = (card.json as { events?: Array<{ event_uid?: string; event_start?: string }> } | null)?.events;
-  if (card.read.kind === "ok" && Array.isArray(cardEvents) && events) {
+  if (active !== false && card.read.kind === "ok" && Array.isArray(cardEvents) && events) {
     const lag = scorecardLag(cardEvents.filter((e): e is { event_uid: string; event_start?: string } => typeof e.event_uid === "string"), events, now);
     judged.push({
       id: "scorecard_lag", label: "scorecard vs newest completed event", key: "golfprice/scorecard/latest.json", schedule: "weekly",
@@ -130,13 +135,13 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
     });
   }
 
-  const { statuses, transitions } = carryForward(now, judged, previous?.sources ?? null);
+  const { statuses, transitions } = carryForward(now, judged, previous?.sources ?? null, [...SOURCES.map((x) => x.id), "scorecard_lag"]);
   const nowIso = new Date(now).toISOString();
   const written: string[] = [];
   const failed: string[] = [];
   for (const t of transitions) {
     const record = inboxRecord(t, nowIso);
-    if (!inbox) { failed.push(`${t.id} (agent inbox bucket not bound)`); continue; }
+    if (!inbox) continue; // inbox routing is off: the finding lives in the status object only
     try {
       await withTimeout(inbox.put(record.key, JSON.stringify(record.body), { httpMetadata: JSON_PUT }), READ_TIMEOUT_MS, "inbox put");
       written.push(`${t.kind}:${t.id}`);

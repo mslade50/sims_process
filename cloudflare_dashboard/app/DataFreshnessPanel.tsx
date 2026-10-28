@@ -37,7 +37,7 @@ export function DataFreshnessPanel() {
         : <>
           <p className={doc.ok && !checkerLate ? "data-through" : "data-through warn"} role="status" data-testid="fresh-summary">
             {checkerLate ? `The check last ran ${etTime(doc.checked_at)}, more than 45 minutes ago: it may not be running. ` : ""}
-            {doc.ok ? "Every source checked is within its normal age." : `${doc.stale_count} source${doc.stale_count === 1 ? " is" : "s are"} stale or missing. Findings were sent to the repair inbox, not to your phone.`} Checked {etTime(doc.checked_at)}.
+            {doc.ok ? "Every source checked is within its normal age." : `${doc.stale_count} source${doc.stale_count === 1 ? " is" : "s are"} stale or missing. This panel is the record; nothing is sent to your phone.`} Checked {etTime(doc.checked_at)}.
           </p>
           <table>
             <thead><tr><th>Source</th><th>State</th><th>Last updated</th><th>Normal maximum</th></tr></thead>
@@ -51,7 +51,7 @@ export function DataFreshnessPanel() {
             ))}</tbody>
           </table>
           {doc.notes.length > 0 && <p className="inputs-muted">{doc.notes.join(" · ")}</p>}
-          {!doc.inbox.bound && <p className="inputs-muted">The repair inbox is not connected to this Worker yet, so findings are only shown here.</p>}
+          {!doc.inbox.bound && <p className="inputs-muted">Findings are shown here only; routing to the repair inbox is switched off until the watcher side is ready.</p>}
         </>}
     </Panel>
   );

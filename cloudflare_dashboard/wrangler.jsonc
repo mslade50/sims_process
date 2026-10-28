@@ -22,9 +22,9 @@
     "crons": ["*/15 * * * *"]
   },
   "r2_buckets": [
-    { "binding": "DASHBOARD_DATA", "bucket_name": "golf-model-dashboard-data" },
-    // The repair watcher's inbox bucket (tools/watcher/runtime.py lists ops/agent_inbox/). worker/freshness.ts writes ops/agent_inbox/dashboard-freshness/** only.
-    { "binding": "AGENT_INBOX", "bucket_name": "golf-odds-board" }
+    { "binding": "DASHBOARD_DATA", "bucket_name": "golf-model-dashboard-data" }
+    // Intentionally NOT bound: AGENT_INBOX -> golf-odds-board (the repair watcher's bucket) would give this Worker write access to the live odds board bucket.
+    // Add it together with DATA_FRESHNESS_INBOX="1" only after the watcher treats source "dashboard-freshness" as internal (otherwise it escalates to a phone after 6 h).
   ],
   // Cloudflare Access application protecting workers.dev (public identifiers, not secrets). Required by worker/access.ts.
   "vars": {
@@ -37,7 +37,9 @@
     "LEGACY_ALERTS_ENABLED": "0",
     // OPS_SHADOW_ENABLED: passive shadow observer (worker/shadow.ts); reads R2, writes ops/shadow/** only, sends nothing.
     "OPS_SHADOW_ENABLED": "0",
-    // DATA_FRESHNESS_ENABLED: data-staleness check on the 15-minute cron (worker/freshness.ts); read-only on data, writes owner/data_freshness.json and agent-inbox records, never Telegram.
-    "DATA_FRESHNESS_ENABLED": "1"
+    // DATA_FRESHNESS_ENABLED: data-staleness check on the 15-minute cron (worker/freshness.ts); read-only on data, writes owner/data_freshness.json only (agent-inbox records need DATA_FRESHNESS_INBOX), never Telegram.
+    "DATA_FRESHNESS_ENABLED": "1",
+    // DATA_FRESHNESS_INBOX: also file findings in the agent inbox (needs the AGENT_INBOX binding above). Off until the watcher side is ready.
+    "DATA_FRESHNESS_INBOX": "0"
   }
 }
