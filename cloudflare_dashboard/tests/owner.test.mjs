@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { NAVIGATION, OWNER_ONLY_VIEWS, navigationFor, ownerOnlyPath, viewerFrom } from "../app/shell-rules.ts";
 
 // Owner-only areas (owner, October 15, 2026): colleagues let in through Access never see or reach Run, weather edits or overrides.
 
 test("owner-only paths: Run, weather edits and the jobs/override APIs, however they are spelled", () => {
-  for (const path of ["/run", "/RUN", "/run/", "/run.rsc", "/weather-edits", "/weather-edits/", "/bet-breakdowns", "/Bet-Breakdowns/", "/bet-breakdowns.rsc"]) assert.equal(ownerOnlyPath(path), "page", path);
+  for (const path of ["/ops", "/OPS/", "/ops.rsc"]) assert.equal(ownerOnlyPath(path), "page", path);
+  for (const path of ["/api/ops", "/API/Ops/", "/api/ops/week", "/api/ops/tasks/task-1"]) assert.equal(ownerOnlyPath(path), "api", path);
+  for (const path of ["/shot-data", "/SHOT-DATA/", "/shot-data.rsc", "/run", "/RUN", "/run/", "/run.rsc", "/weather-edits", "/weather-edits/", "/bet-breakdowns", "/Bet-Breakdowns/", "/bet-breakdowns.rsc"]) assert.equal(ownerOnlyPath(path), "page", path);
   for (const path of ["/api/jobs", "/api/jobs/j-1/log", "/api/jobs/j-1/cancel", "/api/overrides", "/api/overrides/history", "/api/overrides/abc", "/api/weather-overrides/pga_1_2026", "/API/Jobs/", "/api/owner-data", "/api/owner-data/bet_breakdowns.json", "/API/Owner-Data/x.json"]) assert.equal(ownerOnlyPath(path), "api", path);
   for (const path of ["/", "/this-week", "/inputs", "/weather-effects", "/running", "/api/data/manifest.json", "/api/golfprice/index.json", "/api/overridesx", "/api/whoami"]) assert.equal(ownerOnlyPath(path), null, path);
 });
@@ -97,6 +100,8 @@ test("a colleague is refused every owner-only API before it reads or writes anyt
   const worker = await loadWorker();
   const colleague = signedHeaders("colleague@example.com");
   const cases = [
+    ["/api/ops/week", "GET"],
+    ["/api/ops/tasks/task-1", "POST", { state: "done" }],
     ["/api/jobs", "GET"],
     ["/api/jobs", "POST", { type: "tuesday" }],
     ["/api/jobs/j-20261015T120000-abcdef/cancel", "POST", {}],
@@ -108,12 +113,14 @@ test("a colleague is refused every owner-only API before it reads or writes anyt
     ["/api/weather-overrides/pga_1_2026-10-15", "GET"],
     ["/api/weather-overrides/pga_1_2026-10-15", "PUT", { phase: "pre", hours: [] }],
     ["/api/owner-data/bet_breakdowns.json", "GET"],
+    ["/api/owner-data/shot-monitor/collectors-desktop.json", "GET"],
+    ["/api/owner-data/shot-monitor/publications.json", "GET"],
   ];
   for (const [path, method, body] of cases) {
     for (const headers of [colleague, unsignedHeaders(OWNER), {}]) {
       const res = await call(worker, path, { method, headers, body });
       assert.equal(res.status, 403, `${method} ${path}`);
-      assert.match((await res.json()).error, /owner only/);
+      assert.match((await res.json()).error, path.startsWith("/api/ops/") ? /verified owner/ : /owner only/);
     }
   }
   assert.deepEqual(writes, [], "nothing written");
@@ -122,7 +129,7 @@ test("a colleague is refused every owner-only API before it reads or writes anyt
 test("owner-only pages redirect a colleague home; the owner and shared pages pass through", async () => {
   const worker = await loadWorker();
   const colleague = signedHeaders("colleague@example.com");
-  for (const path of ["/run", "/weather-edits?e=pga_1", "/Run/", "/bet-breakdowns"]) {
+  for (const path of ["/ops", "/OPS/", "/ops.rsc", "/shot-data", "/Shot-Data/", "/shot-data.rsc", "/run", "/weather-edits?e=pga_1", "/Run/", "/bet-breakdowns"]) {
     const res = await call(worker, path, { headers: colleague });
     assert.equal(res.status, 302, path);
     assert.equal(res.headers.get("location"), "https://golf.example/this-week");
@@ -133,6 +140,29 @@ test("owner-only pages redirect a colleague home; the owner and shared pages pas
   assert.notEqual(shared.status, 302, "colleague reaches shared pages");
   const data = await call(worker, "/api/golfprice/index.json", { headers: colleague });
   assert.notEqual(data.status, 403, "published model data stays readable");
+});
+
+test("signed owner route HTML references the built client registry containing both lazy views", async () => {
+  const worker = await loadWorker();
+  const client = new URL("../dist/client/", import.meta.url);
+  const manifest = JSON.parse(readFileSync(new URL(".vite/manifest.json", client), "utf8"));
+  const dashboard = manifest["app/DashboardApp.tsx"];
+  assert.ok(dashboard, "the build contains the real DashboardApp entry");
+  const registry = readFileSync(new URL(dashboard.file, client), "utf8");
+  for (const [key, name] of [["shot-data", "ShotDataView"], ["ops", "OpsView"]]) {
+    const moduleId = `app/${name}.tsx`;
+    assert.ok(dashboard.dynamicImports?.includes(moduleId), `${key}: lazy view reachable from DashboardApp`);
+    assert.ok(manifest[moduleId]?.file, `${key}: built view chunk exists`);
+    const chunk = readFileSync(new URL(manifest[moduleId].file, client), "utf8");
+    assert.ok(chunk.includes(name), `${key}: chunk exports actual view`);
+    assert.ok(registry.includes(manifest[moduleId].file.split("/").at(-1)), `${key}: client imports built view reference`);
+    const response = await call(worker, `/${key}`, { headers: { ...signedHeaders(OWNER), accept: "text/html" } });
+    assert.equal(response.status, 200, key);
+    const html = await response.text();
+    assert.doesNotMatch(html, /That page does not exist|There is no page at/, key);
+    assert.ok(html.includes(dashboard.file), `${key}: owner HTML references this DashboardApp client registry`);
+    assert.match(html, new RegExp(`initialView[\\s\\S]{0,40}${key}`), `${key}: route passed into registered dashboard`);
+  }
 });
 
 test("the owner still reaches the owner-only APIs; with OWNER_EMAILS unset the gate is off", async () => {
