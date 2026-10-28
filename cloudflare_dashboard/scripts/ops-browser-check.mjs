@@ -1,0 +1,72 @@
+/** Optional actual-browser regressions. Start the built loopback fixture first. No production endpoints or credentials. */
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+const require=createRequire(import.meta.url);
+const {chromium}=require(process.env.OPS_PLAYWRIGHT_MODULE??"playwright");
+const base=process.env.OPS_FIXTURE_URL??"http://127.0.0.1:5317";
+const url=new URL(base);
+assert.ok(["127.0.0.1","localhost"].includes(url.hostname)&&url.protocol==="http:","Only the local fixture is allowed");
+const browser=await chromium.launch({executablePath:process.env.OPS_BROWSER_EXECUTABLE??"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",headless:true});
+try {
+ const page=await browser.newPage({viewport:{width:1440,height:1100}});
+ page.setDefaultTimeout(5000);
+ await page.request.get(`${base}/__fixture?scenario=mixed&role=owner&reset=1`);
+ await page.goto(`${base}/ops`);
+ await page.getByRole("heading",{name:"Current standing",exact:true}).waitFor();
+ await page.getByRole("button",{name:"Rollout work",exact:true}).click();
+ await page.getByRole("button",{name:"Claim this task",exact:true}).click();
+ await page.getByRole("status").filter({hasText:"Claim saved"}).waitFor();
+ await page.getByLabel("Handoff note",{exact:true}).fill("An old draft must never overwrite an intervening update.");
+ await page.getByLabel("Next step",{exact:true}).fill("Old draft next step");
+ const changed=await page.evaluate(async()=>{
+  const read=await (await fetch("/api/ops/tasks/B02")).json();
+  const response=await fetch("/api/ops/tasks/B02",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({op:"update",revision:read.task.revision,lease_token:sessionStorage.getItem("golfops:lease:B02"),state:"blocked",next_step:"Intervening independently recorded next step",note:"Fixture concurrent writer recorded a blocker."})});
+  return response.status;
+ });
+ assert.equal(changed,200);
+ await page.getByRole("button",{name:"Refresh",exact:true}).click();
+ await page.getByRole("button",{name:"Reload current record and discard draft",exact:true}).waitFor();
+ assert.equal(await page.getByRole("button",{name:"Save state and next step",exact:true}).isDisabled(),true);
+ assert.equal(await page.getByLabel("Next step",{exact:true}).inputValue(),"Old draft next step");
+ await page.getByRole("button",{name:"Reload current record and discard draft",exact:true}).click();
+ assert.equal(await page.getByLabel("Next step",{exact:true}).inputValue(),"Intervening independently recorded next step");
+ assert.equal(await page.getByLabel("Task state",{exact:true}).inputValue(),"blocked");
+ await page.getByRole("button",{name:"Owner decisions",exact:true}).click();
+ await page.getByLabel("Exact decision terms or context",{exact:true}).fill("Old owner decision draft");
+ const decisionChanged=await page.evaluate(async()=>{
+  const read=await (await fetch("/api/ops/tasks/D01")).json();
+  return (await fetch("/api/ops/tasks/D01",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({op:"decision",revision:read.task.revision,state:"blocked",note:"Fixture concurrent decision remains blocked."})})).status;
+ });
+ assert.equal(decisionChanged,200);
+ await page.getByRole("button",{name:"Refresh",exact:true}).click();
+ await page.getByRole("button",{name:"Reload current record and discard draft",exact:true}).waitFor();
+ assert.equal(await page.getByRole("button",{name:"Approve these exact terms",exact:true}).isDisabled(),true);
+ await page.getByRole("button",{name:"The week",exact:true}).click();
+ let expireResponse=false;
+ await page.getByRole("checkbox",{name:"Show the frequent watch and odds checks",exact:true}).check();
+ await page.route("**/api/ops/workflow?*",async(route)=>{
+  const response=await route.fetch();const data=await response.json();data.now=new Date(Date.now()-(expireResponse?7_200_000:0)).toISOString();
+  const past=data.schedule.filter((o)=>Date.parse(o.scheduled_at)<Date.now()).slice(0,2);
+  data.schedule=data.schedule.map((o)=>({...o,...(o.id===past[0]?.id?{execution_state:"running"}:o.id===past[1]?.id?{execution_state:"failed"}:{})}));
+  data.stages=data.stages.map((stage)=>({...stage,state:"verified"}));data.machines=data.machines.map((machine)=>({...machine,online:true}));
+  await route.fulfill({response,json:data});
+ });
+ await page.getByRole("button",{name:"Refresh",exact:true}).click();
+ await page.locator(".ops-occurrence .ops-status.running").first().waitFor();
+ await page.locator(".ops-occurrence .ops-status.failed").first().waitFor();
+ assert.ok(await page.locator(".ops-occurrence .ops-status.running").count()>0);
+ assert.ok(await page.locator(".ops-occurrence .ops-status.failed").count()>0);
+ expireResponse=true;
+ await page.getByRole("button",{name:"Refresh",exact:true}).click();
+ await page.getByRole("alert").filter({hasText:"Current workflow health is unknown"}).waitFor();
+ assert.equal(await page.locator(".ops-node .ops-status.verified").count(),0);
+ assert.equal(await page.locator(".ops-dot.verified").count(),0);
+ assert.equal(await page.locator(".ops-occurrence .ops-status.running" ).count(),0);
+ assert.equal(await page.locator(".ops-occurrence .ops-status.failed" ).count(),0);
+ await page.unroute("**/api/ops/workflow?*");
+ await page.request.get(`${base}/__fixture?scenario=mixed&role=colleague`);
+ await page.goto(`${base}/ops`);
+ assert.equal(new URL(page.url()).pathname,"/this-week");
+ assert.equal((await page.request.get(`${base}/api/ops/tasks`)).status(),403);
+ console.log("PASS: work and owner-decision drafts cannot silently rebase; old health expires; colleague access is denied.");
+} finally {await browser.close();}

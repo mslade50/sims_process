@@ -6,6 +6,7 @@ import { runShadow } from "./shadow";
 import { handleScheduled } from "./cron";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
+import { handleOpsApi } from "./ops-api";
 import { handleOwnerGate, ownerEmails, viewerFor } from "./owner";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
@@ -19,6 +20,8 @@ interface Env {
   ACCESS_AUD?: string;
   /** Comma-separated owner emails (worker/owner.ts): only they see Run, weather edits and overrides. Unset = gate off. */
   OWNER_EMAILS?: string;
+  /** Explicit Cloudflare Access service-client allowlist; empty means agents are denied. */
+  OPS_AGENT_CLIENT_IDS?: string;
   /** Optional Worker secrets (owner action). While either is absent the alert tick only logs what it would send. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
@@ -104,6 +107,16 @@ const worker = {
 
 async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
+
+  // This private page fails closed even when the legacy owner-list gate is unset.
+  let decodedPath = url.pathname;
+  try { decodedPath = decodeURIComponent(decodedPath); } catch { /* an invalid route is handled below */ }
+  if (/^\/ops(?:\.rsc)?\/*$/i.test(decodedPath) && (!ownerEmails(env) || !(await viewerFor(request, env)).owner)) {
+    return new Response(null, { status: 302, headers: { location: new URL("/this-week", url).href, "cache-control": "no-store" } });
+  }
+  // Ops authenticates owners and narrowly authorized service clients itself, fail-closed even without OWNER_EMAILS.
+  const opsResponse = await handleOpsApi(request, env);
+  if (opsResponse) return opsResponse;
 
   // Owner-only pages and APIs are refused before any handler sees them (worker/owner.ts).
   const ownerGate = await handleOwnerGate(request, env);
