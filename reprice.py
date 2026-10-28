@@ -165,6 +165,7 @@ def _deliver_then_store_matchups(
     store_func,
     alert_func=None,
     health_check=None,
+    after_delivery=None,
 ):
     """Enforce alert-before-storage for newly qualifying sharp-book rows.
 
@@ -173,10 +174,16 @@ def _deliver_then_store_matchups(
     required delivery fails, only that non-alert subset is stored and the
     exception propagates so GitHub Actions fails and retries the sharp rows.
 
+    ``after_delivery`` (optional, must not raise) runs only once this call has
+    completed without an exception, i.e. after any required alert and the health
+    gates passed; it never runs for a rejected bundle or a failed alert.
+
     Returns ``(submitted_to_storage, telegram_rows_delivered)``.
     """
     if new_mu is None or new_mu.empty:
         print("  [reprice] No new matchup rows to store.")
+        if after_delivery is not None:
+            after_delivery()
         return 0, 0
 
     alert_rows, no_alert_rows = rc_module.partition_matchup_alert_rows(
@@ -224,7 +231,45 @@ def _deliver_then_store_matchups(
         new_mu, sim_round, tourney, event_id,
         dg_id_lookup=dg_id_lookup, spreadsheet=spreadsheet,
     )
+    if after_delivery is not None:
+        after_delivery()
     return len(new_mu), len(alert_rows) if alert_rows is not None else 0
+
+
+def _persist_killed_edges(killed_frames, *, sim_round, tourney, event_id, spreadsheet):
+    """Best-effort: store >5% edges the gates killed. Never raises."""
+    try:
+        frames = [f for f in killed_frames if f is not None and not f.empty]
+        if not frames:
+            return 0
+        import pandas as pd
+        from sheets_storage import store_killed_round_matchups
+        return store_killed_round_matchups(
+            pd.concat(frames, ignore_index=True), sim_round, tourney, event_id,
+            spreadsheet=spreadsheet,
+        )
+    except Exception as exc:
+        print(f"  [reprice] Killed-edge persist skipped ({type(exc).__name__}: {exc})")
+        return 0
+
+
+def _send_prior_round_recap(*, event_id, tourney, round_num, spreadsheet=None, recap_func=None):
+    """Best-effort: once-per-round Telegram recap of the round just completed.
+
+    ``round_num`` is the completed round from round_config.  Never raises, so it
+    can never break pricing or alerts.
+    """
+    try:
+        if round_num < 1:
+            return None
+        if recap_func is None:
+            from round_recap import run_recap as recap_func
+        status = recap_func(event_id, tourney, round_num, spreadsheet=spreadsheet)
+        print(f"  [recap] R{round_num}: {status}")
+        return status
+    except Exception as exc:
+        print(f"  [recap] R{round_num} skipped ({type(exc).__name__}: {exc})")
+        return None
 
 
 def main():
@@ -262,6 +307,8 @@ def main():
                 if decision.status != "owned":
                     print(f"::warning title=Ownership marker {decision.status}::{decision.detail}")
                 _write_readiness_output(False)
+                if not args.dry_run:
+                    _send_prior_round_recap(event_id=event_id, tourney=tourney, round_num=round_num)
                 return 0
     except Exception as exc:
         print(f"  ownership check failed ({type(exc).__name__}: {exc}); continuing with legacy readiness checks")
@@ -272,6 +319,8 @@ def main():
     _write_readiness_output(reason is None)
     if reason is not None:
         print(f"  [skip] {reason}")
+        if not args.dry_run:
+            _send_prior_round_recap(event_id=event_id, tourney=tourney, round_num=round_num)
         return 0
     if args.check_ready:
         print("  Current simulation is available for repricing.")
@@ -365,6 +414,8 @@ def main():
     matchup_df = load_matchup_odds("round_matchups", api_key=os.getenv("DATAGOLF_API_KEY"), round=sim_round)
     if matchup_df is None or matchup_df.empty:
         print("  No round-matchup odds available — nothing to price.")
+        if not args.dry_run:
+            _send_prior_round_recap(event_id=event_id, tourney=tourney, round_num=round_num)
         return 0
     print(f"  Loaded {len(matchup_df)} matchup lines")
 
@@ -372,8 +423,10 @@ def main():
     matchup_df = rc.price_from_h2h(matchup_df, lookup, known, repl=NAME_REPL)
     _require_complete_matchup_pricing(matchup_df)
     matchup_df = rc.calculate_edges(matchup_df)
+    killed_frames = []
     combined, sharp = rc.build_matchup_outputs(
-        matchup_df, sim_round, pred_lookup, sample_lookup, wx_lookup=wx_lookup
+        matchup_df, sim_round, pred_lookup, sample_lookup, wx_lookup=wx_lookup,
+        killed_out=killed_frames,
     )
 
     if args.dry_run:
@@ -412,6 +465,8 @@ def main():
     # shared runner cannot swap the pricing bundle between dedup and delivery.
     # A delivery exception escapes main(), failing the workflow. ──
     require_pricing_health()
+    # Killed edges are persisted only after delivery and health gates succeed
+    # (never from a rejected bundle); the callback cannot raise.
     n_new, n_alerted = _deliver_then_store_matchups(
         new_mu,
         seen_alert_keys,
@@ -424,6 +479,15 @@ def main():
         store_func=store_health_checked_round_matchups,
         alert_func=send_health_checked_matchup_alert,
         health_check=require_pricing_health,
+        after_delivery=lambda: _persist_killed_edges(
+            killed_frames, sim_round=sim_round, tourney=tourney,
+            event_id=event_id, spreadsheet=spreadsheet,
+        ),
+    )
+
+    _send_prior_round_recap(
+        event_id=event_id, tourney=tourney, round_num=round_num,
+        spreadsheet=spreadsheet,
     )
 
     alert_status = (

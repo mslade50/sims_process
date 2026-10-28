@@ -60,6 +60,8 @@ jobs:
         # without them send_telegram() returns False silently.
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # Final-round (R4) matchup recap goes to the round-bets chat.
+        TELEGRAM_ROUND_BETS_CHAT_ID: ${{ secrets.TELEGRAM_ROUND_BETS_CHAT_ID }}
       run: python monday_grading.py
     - name: Telegram on failure
       if: failure()

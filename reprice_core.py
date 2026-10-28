@@ -341,8 +341,55 @@ def calculate_edges(df):
 
 
 # ── combined/sharp split (verbatim mirror of round_sim.build_matchup_outputs) ───
-def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None):
-    """Filter, annotate, and split matchup DataFrame into combined + sharp."""
+KILLED_EDGE_FLOOR = 5.0
+KILLED_COLUMNS = [
+    "Player 1", "Player 2", "Bookmaker", "Ties", "P1 Odds", "P2 Odds",
+    "Fair_p1", "Fair_p2", "edge_p1", "edge_p2", "edge_on", "bet_on",
+    "pred_on", "sample_on", "P1 Line", "P2 Line", "line_verified",
+    "market_kind", "kill_reason",
+]
+
+
+def collect_killed_matchups(annotated, floor=KILLED_EDGE_FLOOR):
+    """Gradeable rows with best-side edge > floor that failed the edge gates.
+
+    ``annotated`` is the post-quarantine frame with edge_on/pred_on/sample_on
+    (quarantined rows have unknown settlement and are never gradeable, so they
+    are not captured); the gate expressions mirror the combined filters in
+    build_matchup_outputs.  One primary ``kill_reason`` per row, in gate order:
+    sample_on<20, then pred_on gate.  Soft-book quotes of bets that passed the
+    gates are not kills.
+    """
+    if annotated is None or annotated.empty:
+        return pd.DataFrame(columns=KILLED_COLUMNS)
+    a = annotated
+    edge = pd.to_numeric(a["edge_on"], errors="coerce")
+    pred = pd.to_numeric(a["pred_on"], errors="coerce")
+    sample = pd.to_numeric(a["sample_on"], errors="coerce").fillna(0)
+    pred_ok = ((pred > 0) & (edge > 7)) | (pred > 1)
+    gate_ok = (edge > 3) & (sample >= 20) & pred_ok & ~((edge < 5) & (pred < 1))
+    reason = pd.Series("", index=a.index, dtype=object)
+    reason[~gate_ok & (sample < 20)] = "sample_on<20"
+    reason[~gate_ok & (sample >= 20) & ~pred_ok] = "pred_on gate"
+    keep = (edge > floor) & (reason != "")
+    out = a.loc[keep].copy()
+    out["kill_reason"] = reason[keep]
+    if out.empty:
+        return pd.DataFrame(columns=KILLED_COLUMNS)
+    out = out.reset_index(drop=True)
+    for col in KILLED_COLUMNS:
+        if col not in out.columns:
+            out[col] = np.nan
+    return out[KILLED_COLUMNS]
+
+
+def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=None,
+                          killed_out=None):
+    """Filter, annotate, and split matchup DataFrame into combined + sharp.
+
+    ``killed_out`` (optional list): a frame of edges > 5% that did not survive
+    (see collect_killed_matchups) is appended, for the prior-round recap.
+    """
     quarantined = ~actionable_matchup_mask(df)
     if quarantined.any():
         print(
@@ -384,6 +431,12 @@ def build_matchup_outputs(df, sim_round, pred_lookup, sample_lookup, wx_lookup=N
             axis=1,
         )
         df["wx_diff"] = df["wx_on"] - df["wx_against"]
+
+    if killed_out is not None:
+        try:
+            killed_out.append(collect_killed_matchups(df))
+        except Exception as exc:  # diagnostics must never affect pricing
+            print(f"  Warning: killed-edge capture failed: {type(exc).__name__}: {exc}")
 
     combined = df[df["edge_on"] > 3].copy()
     combined = combined[combined["sample_on"].fillna(0) >= 20]

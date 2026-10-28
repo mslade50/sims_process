@@ -17,6 +17,8 @@ concurrency:
 jobs:
   reprice:
     runs-on: ubuntu-latest
+    # A stalled step must not hold the single-slot concurrency group all weekend.
+    timeout-minutes: 30
 
     steps:
     - name: Skip if outside tournament window (Thu night – Sun morning)
@@ -54,6 +56,11 @@ jobs:
       if: steps.window.outputs.skip != 'true'
       env:
         GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        # Stand-down / not-ready runs still send the once-per-round prior-round recap.
+        DATAGOLF_API_KEY: ${{ secrets.DATAGOLF_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_ROUND_BETS_CHAT_ID: ${{ secrets.TELEGRAM_ROUND_BETS_CHAT_ID }}
       run: python reprice.py --check-ready
 
     - name: Fetch fresh round-matchup odds from golf_scraping
