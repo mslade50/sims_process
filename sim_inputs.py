@@ -5,7 +5,7 @@ import numpy as np
 SIMULATIONS   = 100000
 STD_DEV       = 2.8
 PAR           = 70
-CUT_LINE      = 65
+CUT_LINE      = 70
 USE_10_SHOT_RULE = False
 WIND_FACTOR_SIM  = 0.12  # must match your main script
 TOP_K = 20 
@@ -24,18 +24,18 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [33]
-course_id = 773
-tourney = 'pga_c'
+event_ids = [100]
+course_id = 541
+tourney = 'the_open'
 course_par = 70
 course_name = "" #this is for the multi course showdown sims to id proper course
 # course_name = "Arnold Palmer's Bay Hill Club & Lodge"
 
-major_adjustment = 0.0022 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
+major_adjustment = 0.00182 if any(eid in [33, 14, 100, 26] for eid in event_ids) else 0
 links_adjustment = 1 if any(eid in [100,541] for eid in event_ids) else 0
 
 #for multiple course setups in the showdown sim
-course_id_1=73
+course_id_1=541
 course_id_2=0
 
 #cut rules. Line is inclusive of ties, shot rule should be 0 as a default
@@ -44,40 +44,6 @@ shot_rule=0
 
 #for players who we don't have a birthday (monday q guys etc.)
 default_birthday = datetime(1995, 1, 1)
-
-#wind speeds expected on a pre-tournament basis. Start at 6 am end 8 pm
-dewpoint_1 = [59, 60, 62, 64, 64, 63, 62, 61, 63, 63, 63, 63, 63, 64, 65]
-
-dewpoint_2 = [65, 65, 66, 66, 64, 62, 60, 60, 59, 60, 61, 61, 62, 64, 65]
-
-dewpoint_3 = [65, 65, 66, 65, 63, 61, 59, 58, 57, 56, 57, 58, 61, 63, 64]
-
-dewpoint_4 = [64, 64, 65, 64, 63, 62, 59, 57, 55, 55, 56, 58, 60, 62, 63]
-wind_1 = [4,5,6,7,8,8,8,8,9,9,10,9,8,8,7]
-wind_2 = [5,6,7,8,7,7,7,7,7,8,9,9,9,8,7]
-wind_3 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
-wind_4 = [4,4,5,6,8,9,9,10,9,9,8,7,6,5,5]
-
-# wind = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] to gauge length of list
-# wind = [1,1,1,1,1,1,1,1,10,10,10,10,10,10,10] 8 single 7 double
-# wind = [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10] all double
-
-
-#if you have reason to believe the course will play easier than it has in the past
-#postiive value here indicates increased difficulty
-score_adj_r1 = 0
-score_adj_r2 = 0
-score_adj_r3 = 0
-score_adj_r4 = 0
-
-###for showdown sims
-score_adj_r1_sd= 0
-score_adj_r2_sd= 0 
-score_adj_r3_sd= 0
-score_adj_r4_sd= 0 
-
-#how much variance do we want the sim to price in? Higher = more variance
-player_var= 2
 
 #expected tee time range on the weekend to forecast weather in sims
 tee_time_start="8:30" 

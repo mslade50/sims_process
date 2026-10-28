@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session Notes &mdash; 2026-05-11</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         max-width: 920px; margin: 24px auto; padding: 0 24px; color: #1f2937; line-height: 1.5; }
+  h1 { border-bottom: 2px solid #2c5282; padding-bottom: 6px; margin-bottom: 4px; }
+  h2 { color: #2c5282; margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+  h3 { color: #444; margin-top: 18px; margin-bottom: 6px; }
+  code, pre { background: #f3f4f6; border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, "Cascadia Mono", "Roboto Mono", monospace; font-size: 13px; }
+  pre { padding: 10px; overflow-x: auto; }
+  ul { margin-top: 4px; }
+  li { margin-bottom: 4px; }
+  .commit { color: #6b21a8; font-weight: 600; }
+  .file { color: #065f46; }
+  .warn { background: #fff8e1; border-left: 3px solid #f59e0b; padding: 6px 12px; margin: 8px 0; }
+  .note { background: #eef2ff; border-left: 3px solid #3b82f6; padding: 6px 12px; margin: 8px 0; }
+  .check { background: #ecfdf5; border-left: 3px solid #10b981; padding: 6px 12px; margin: 8px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; font-size: 13px; }
+  th { background: #f9fafb; }
+  .meta { color: #6b7280; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>Session notes &mdash; 2026-05-11</h1>
+<p class="meta">All commits below are already pushed to <code>origin/main</code> on
+<code>mslade50/sims_process</code> (or <code>mslade50/golf_scraping</code> where noted).
+The work is not the open item &mdash; the open item is <strong>verifying behavior</strong> on tomorrow's
+fresh sim run.</p>
+
+<h2>1. Things to verify tomorrow (highest priority)</h2>
+
+<h3>1a. NoVig <code>winner</code> pricing now uses DH-resolved sim prob</h3>
+<p>Both <code>price_kalshi_outrights_tourney</code> and <code>price_novig_outrights_tourney</code>
+should map the <code>winner</code> market_type to <code>simulated_win_prob</code> (uniform
+random tie-break, equivalent to DH 1/N split), not to <code>win_nodh</code>.
+Earlier in this session a single <code>replace_all</code> only caught the Kalshi
+multi-line dict; the NoVig one-line dict was patched separately in a second
+commit. <strong>Verify by inspecting the tournament email's NoVig winner edges
+&mdash; should be lower (and more accurate) than yesterday's run.</strong></p>
+<p>Commits: <span class="commit">a469c6a</span>, <span class="commit">c153ca5</span></p>
+
+<h3>1b. Betcris outright scrape + DG-priority fallback</h3>
+<p>Betcris top_5 / top_10 / winner are now scraped from the public
+<code>sportsbook.betcris.com/odds/golf/</code> pages, published as
+<span class="file">data/betcris_outrights_latest.json</span> in the
+<code>golf_scraping</code> repo, and consumed by <code>new_sim</code>
+via <code>_apply_betcris_fallback()</code>.</p>
+<p><strong>Priority rule (already confirmed today)</strong>: per
+(player, market_type), if DataGolf returned a betcris row, the DG version is
+kept and the scrape is ignored for that player. The scrape only fills in
+gaps. Last run logged:</p>
+<pre>[betcris-fallback] WIN:    DG had betcris for 100 players, backfilled 100 more from scrape
+[betcris-fallback] TOP_5:  DG had betcris for 0 players,   backfilled 100 more from scrape
+[betcris-fallback] TOP_10: DG had betcris for 0 players,   backfilled 100 more from scrape</pre>
+<p><strong>Verify tomorrow</strong>: spot-check that a known Betcris top-10 line
+on the public site matches what shows in the <em>Sportsbook Priority</em>
+email's "SB Line" column for the same player.</p>
+<p>Commits (sims_process): <span class="commit">402bc22</span>.
+Commits (golf_scraping): <span class="commit">4e1c6d7</span>, <span class="commit">d00708c</span>.</p>
+
+<h3>1c. Sportsbook priority email &mdash; sharp + concat-aware</h3>
+<p>Two related fixes landed:</p>
+<ul>
+  <li><span class="commit">62f39b1</span> &mdash; restrict to sharp books only
+      (<code>SHARP_BOOKS = ["pinnacle", "betonline", "betcris"]</code>).</li>
+  <li><span class="commit">e4e61e1</span> &mdash; the <code>combined_finish_df</code>
+      groupby concatenates <code>bookmaker</code> values when multiple books
+      share the same decimal_odds (e.g. <code>"betcris, betonline"</code>). The
+      naive <code>isin(SHARP_BOOKS)</code> check dropped every concat row, which
+      is what caused "edges that would have been bigger at betcris showed as
+      betonline edges". Filter now tokenises on comma and keeps any row that
+      contains at least one sharp book.</li>
+</ul>
+<p><strong>Verify</strong>: tomorrow's <em>Sportsbook Priority</em> email should
+show betcris in the SB Book column wherever it has the best sharp price (alone
+or tied). If you still see a tied-best line surfacing as <code>betonline</code>
+when betcris would have matched, flag it.</p>
+
+<h3>1d. <code>--sim-only</code> / <code>--price-only</code> / <code>--reprice</code> flags on <code>new_sim</code></h3>
+<p>Wrapped the Monte Carlo block in <code>if not args.price_only:</code> and
+added cache save/load so a re-priced run skips the ~5min sim and re-runs only
+the pricing + email + storage path.</p>
+<table>
+  <tr><th>Mode</th><th>Behavior</th></tr>
+  <tr><td><code>python new_sim.py</code></td><td>Full sim + price + email + Sheets (existing flow). Also writes the cache.</td></tr>
+  <tr><td><code>python new_sim.py --sim-only</code></td><td>Run sim, save cache, exit before pricing/email.</td></tr>
+  <tr><td><code>python new_sim.py --price-only</code></td><td>Skip sim (load cache), run price + email + Sheets storage with fresh API/scraped odds.</td></tr>
+  <tr><td><code>python new_sim.py --reprice</code></td><td>Same as <code>--price-only</code> but skips Sheets storage so re-priced rows don't double-up on the tabs.</td></tr>
+</table>
+<p><strong>NOT yet tested end-to-end.</strong> The earlier sims today ran
+before the cache code existed, so cache files don't exist on disk yet.
+First time you run <code>python new_sim.py</code> tomorrow it'll save:</p>
+<ul>
+  <li><span class="file">{tourney}/final_scores.npy</span></li>
+  <li><span class="file">{tourney}/player_names.json</span></li>
+  <li>(plus the pre-existing <span class="file">top_finish_probs_*.csv</span>,
+      <span class="file">finish_equity_*.csv</span>,
+      <span class="file">rank_probs_updated_*.parquet</span>)</li>
+</ul>
+<p>After the first full run completes, validate <code>--price-only</code>
+with: <code>time python new_sim.py --price-only</code> &mdash; should finish
+in ~30-60s (vs ~5min full).</p>
+<p>Commit: <span class="commit">e94ca42</span>.</p>
+
+<h2>2. Things landed earlier today (already verified working)</h2>
+
+<h3>2a. Round-sim cache flags restored</h3>
+<p>Nightly Round Sim Backup workflow had been silently failing for ~4 weeks
+because <code>round_sim.py --sim-only</code> argparse was removed in commit
+<code>6b606d1</code> (Apr 13). Restored <code>save_sim_cache</code>,
+<code>load_sim_cache</code>, the four reprice helpers, and all three flags.
+Manually triggered the workflow today &mdash; succeeded with
+<code>truist/sim_cache_r4.parquet</code> (72 players &times; 100k sims).</p>
+<p>Commit: <span class="commit">76e769c</span>. <span class="check">Verified.</span></p>
+
+<h3>2b. Pre-commit hook against OneDrive truncation</h3>
+<p>OneDrive periodically wipes tracked <code>.py</code> files to 0 bytes
+(notably <code>new_sim.py</code> three times in this repo). Added
+<span class="file">.githooks/pre-commit</span> that refuses to commit a guarded
+file (<code>.py</code>/<code>.md</code>/<code>.yml</code>/<code>.yaml</code>/
+<code>.json</code>/<code>.toml</code>/<code>.sh</code>/<code>.sql</code>)
+that was non-empty at HEAD and is now 0 bytes.</p>
+<p>Commit: <span class="commit">0585b56</span>. <span class="check">Hook tested
+and active locally.</span> The Documents clone (see 2c) needs a one-time
+<code>git config core.hooksPath .githooks</code> if you ever commit from there.</p>
+
+<h3>2c. Fresh repo clone outside OneDrive</h3>
+<p>Cloned to <code>C:\Users\mckin\Documents\sims_process</code> (real local
+directory, NOT a OneDrive junction). Copied <code>sim_inputs.py</code>,
+<code>.env</code>, <code>credentials.json</code> across. Pre-commit hook
+activated.</p>
+<p class="note">CLAUDE.md still says <code>sim_inputs.py</code> is gitignored
+&mdash; it's actually tracked. Worth fixing the doc next time you touch it.</p>
+
+<h3>2d. Reset extended for new week</h3>
+<p><code>sheet_config.reset_for_new_week()</code> now also pushes
+<code>CUT_LINE</code> + <code>course_par</code> from <code>sim_inputs.py</code>
+in addition to the existing four fields. Eliminates the manual cut_line tweak
+each week.</p>
+<p>Commit: <span class="commit">8e62993</span>. <span class="check">Verified
+&mdash; cut_line=65 + course_pars=70 pushed live for PGA Championship.</span></p>
+
+<h2>3. Open caveats / things to think about</h2>
+
+<div class="warn">
+<strong>Reprice path silently broken in production for a month.</strong>
+The <code>reprice.yml</code> workflow has been "succeeding" because it
+exits 0 at "Verify cache exists" when no cache file is present. With the
+nightly cache now being written, the next scraper webhook (Thu/Fri/Sat night)
+will actually exercise the reprice path for the first time since mid-April.
+Worth babysitting the first one.
+</div>
+
+<div class="warn">
+<strong><code>update_sheet_courses.py</code> doesn't clear stale entries.</strong>
+When the API returns no course codes (single-course week), the script writes
+nothing &mdash; leaving the prior week's value (e.g. "doral") in the Sheet.
+For a single-course week this isn't fatal because the catfirst dists key off
+<code>course_id</code>, not the name, but it's a minor papercut. Easy fix:
+write <code>"" </code> (empty) to <code>course_codes</code> when no codes are
+returned.
+</div>
+
+<div class="note">
+<strong>NoVig outright depth not exposed publicly.</strong> All exchange
+email tables show <code>"&mdash;"</code> in the Top / Fill columns for NoVig rows.
+Documented; not a bug.
+</div>
+
+<div class="note">
+<strong>Sportsbook Priority email currently outrights-only.</strong>
+You asked whether to extend the same SB-vs-exchange priority comparison to
+matchups (where a sportsbook tournament matchup might have a bigger edge than
+the corresponding Kalshi H2H). Decision deferred &mdash; do you want this?
+</div>
+
+<h2>4. Quick smoke tests to run tomorrow</h2>
+<pre># 1. Full sim &mdash; populates the new sim cache.
+cd C:\Users\mckin\OneDrive\sims_process
+python new_sim.py
+
+# 2. Time the price-only re-run &mdash; should be ~30-60s vs ~5min.
+time python new_sim.py --price-only
+
+# 3. Open the latest emails and confirm:
+#    - Sportsbook Priority shows betcris in SB Book where appropriate
+#    - NoVig winner edges look reasonable (not inflated like before)
+#    - Exchange Edges table top_5/top_10 are all populated for betcris
+#       (including the gap-fills that DataGolf didn't return)
+
+# 4. Watch the next reprice.yml run (triggered by scraper webhook
+#    Thu/Fri/Sat night). Should finally exercise the full cache path.
+</pre>
+
+<h2>5. Pending commits</h2>
+<p><span class="check">None &mdash; everything from today is on
+<code>origin/main</code>.</span></p>
+
+</body>
+</html>
