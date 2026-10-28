@@ -19,7 +19,7 @@ interface Env {
   /** Optional: the repair watcher's inbox bucket (golf-odds-board); the freshness check writes ops/agent_inbox/dashboard-freshness/** only. */
   AGENT_INBOX?: R2Bucket;
   DATA_FRESHNESS_INBOX?: string;
-  /** "1" enables the data-staleness check (worker/freshness.ts): reads R2, writes owner/data_freshness.json and agent-inbox records, sends nothing else. */
+  /** "1" enables the data-staleness check (worker/freshness.ts): reads R2, writes owner/data_freshness.json; agent-inbox records only when DATA_FRESHNESS_INBOX="1" and the AGENT_INBOX binding exist, sends nothing else. */
   DATA_FRESHNESS_ENABLED?: string;
   /** Optional: set both to verify the Cloudflare Access JWT signature on override writes. */
   ACCESS_TEAM_DOMAIN?: string;
