@@ -20,7 +20,6 @@ import {
 import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData } from "./data";
-import { titleCase } from "./lib";
 import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
 import { FreshnessBadge, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
@@ -187,7 +186,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const ownerOnly = route.kind === "view" && OWNER_ONLY_VIEWS.includes(route.key);
   const { data: manifest } = useDashboardData<Manifest>("manifest.json");
   // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
-  // falling back to the legacy sims_process manifest only when the golfprice index is unavailable. Freshness is the OLDEST event's
+  // with no run shown when the golfprice index is unavailable (the legacy manifest is only the badge on the Legacy views, never a stand-in for the current week). Freshness is the OLDEST event's
   // newest run, so a stale event cannot hide behind a fresh one (site audit C3).
   const { data: gpIndex } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
   const now = useNow(30_000);
@@ -301,8 +300,8 @@ export function DashboardApp({ initialView }: { initialView: string }) {
               </>
             ) : (
               <>
-                <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}</small></div>
-                <FreshnessBadge at={manifest?.generated_at} label="Data" />
+                <div><strong>This week</strong><small>Run data unavailable</small></div>
+                <FreshnessBadge at={null} />
               </>
             )}
           </div>

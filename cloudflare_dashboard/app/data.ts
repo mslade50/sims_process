@@ -69,7 +69,7 @@ function loadEntry(name: string, force: boolean): Promise<Entry> {
     const isGolfprice = name.startsWith("golfprice/");
     const result = await loadResource({
       url: isGolfprice ? `/api/${name}` : `/api/data/${name}`,
-      packagedUrl: isGolfprice ? `/${name}` : `/data/${name}`,
+      packagedUrl: isGolfprice ? `/${name}` : undefined,   // /data/* is a frozen August snapshot: never presented as current
       fetchImpl,
       timeoutMs: timeoutFor(name),
       cache: force ? "no-cache" : fetchCacheMode(name),

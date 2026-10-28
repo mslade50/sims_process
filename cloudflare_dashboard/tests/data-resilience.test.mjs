@@ -214,3 +214,9 @@ test("respondWithObject answers 304 without a body when the tag matches, 200 oth
   assert.equal(await head.text(), "");
   void cancelled;
 });
+
+test("without a packagedUrl (legacy /api/data) a missing Worker never yields the bundled snapshot", async () => {
+  const urlSwitch = (url) => (url.startsWith("/api/") ? reply(200, "<html>nope</html>") : reply(200, { packaged: true }));
+  const result = await loadResource({ ...base, packagedUrl: undefined, url: "/api/data/manifest.json", fetchImpl: scripted([urlSwitch]).fetchImpl });
+  assert.notEqual(result.status, "ok");
+});
