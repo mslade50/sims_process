@@ -14,8 +14,8 @@
 import { inWindow } from "./cron-rules.ts";
 import { scorecardLag, historyThrough, type EventLike } from "../app/freshness-rules.ts";
 import {
-  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, parseFreshness,
-  type FreshnessDoc, type ReadResult,
+  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, oddsCheckEvidence, parseFreshness, timestampMs,
+  type FreshnessDoc, type OddsCheckEvidence, type ReadResult,
 } from "./freshness-rules.ts";
 
 export interface FreshnessEnv {
@@ -33,6 +33,8 @@ export type FreshnessOutcome = { enabled: boolean; doc: FreshnessDoc | null; not
 const READ_TIMEOUT_MS = 8_000;
 const TOTAL_TIMEOUT_MS = 25_000;
 const HEAD_BYTES = 8_192;
+/** Status objects read for the newest odds_reprice jobs (every 30 minutes, so 8 covers four hours). */
+const ODDS_STATUS_READS = 8;
 const JSON_PUT = { contentType: "application/json; charset=utf-8", cacheControl: "no-store" };
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -68,6 +70,25 @@ async function readFull(bucket: R2Bucket, key: string): Promise<{ read: ReadResu
   }
 }
 
+/** Newest clean odds_reprice run, from jobs/queue.json and the status object of the newest odds_reprice jobs. Null when the queue cannot be read. */
+async function readOddsCheck(bucket: R2Bucket): Promise<OddsCheckEvidence | null> {
+  const queue = await readFull(bucket, "jobs/queue.json");
+  if (queue.read.kind === "absent") return { lastSuccessMs: null, jobsSeen: 0 };
+  if (queue.read.kind !== "ok") return null;
+  const jobs = (queue.json as { jobs?: unknown } | null)?.jobs;
+  if (!Array.isArray(jobs)) return null;
+  const newest = (jobs as Array<{ id?: unknown; type?: unknown; requested_at?: unknown }>)
+    .filter((j) => j && j.type === "odds_reprice" && typeof j.id === "string" && /^[A-Za-z0-9_.-]{1,100}$/.test(j.id))
+    .sort((a, b) => (timestampMs(b.requested_at) ?? 0) - (timestampMs(a.requested_at) ?? 0))
+    .slice(0, ODDS_STATUS_READS);
+  const statuses = new Map<string, unknown>();
+  for (const job of newest) {
+    const got = await readFull(bucket, `jobs/status/${job.id}.json`);
+    if (got.read.kind === "ok") statuses.set(job.id as string, got.json);
+  }
+  return oddsCheckEvidence({ jobs: newest }, statuses);
+}
+
 async function readStatus(bucket: R2Bucket): Promise<FreshnessDoc | null> {
   try {
     const object = await withTimeout(bucket.get(FRESHNESS_STATUS_KEY), READ_TIMEOUT_MS, FRESHNESS_STATUS_KEY);
@@ -96,8 +117,9 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   const events: EventLike[] | null = Array.isArray((index.json as { events?: unknown } | null)?.events) ? ((index.json as { events: EventLike[] }).events) : null;
   // Off weeks (no event in play or just finished, from the published index) are not judged: nothing is expected to publish.
   const active = eventsActive(events, now);
-  const ctx = { now, inWindow, active };
-  if (active === false) notes.push("Off week: no event in play or just finished in the published index; sources are not judged.");
+  const oddsCheck = await readOddsCheck(bucket);
+  const ctx = { now, inWindow, active, ...(oddsCheck ? { oddsCheck } : {}) };
+  if (active === false) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
   const judged = [
     ...SOURCES.map((spec) => {
       if (spec.id === "golfprice_index") return judge(spec, index.read, ctx);

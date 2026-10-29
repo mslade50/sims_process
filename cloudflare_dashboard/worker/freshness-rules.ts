@@ -18,8 +18,10 @@ export const INBOX_PREFIX = "ops/agent_inbox/dashboard-freshness/";
 export const REFILE_MS = 24 * 3_600_000;
 export const HOUR_MS = 3_600_000;
 export const WEEKLY_LIMIT_HOURS = 8 * 24;
+/** Odds checks run every 30 minutes in the window; no successful run for this long (window open that long) means the checker stopped. */
+export const ODDS_CHECK_MAX_HOURS = 3;
 
-export type Schedule = "weekly" | "odds_window" | "history";
+export type Schedule = "weekly" | "odds_window" | "odds_check" | "history";
 export type SourceSpec = {
   id: string;
   label: string;
@@ -36,7 +38,7 @@ export const SOURCES: SourceSpec[] = [
   { id: "golfprice_manifest", label: "golfprice publish manifest", key: "golfprice/manifest.json", schedule: "weekly", fields: [], limitHours: WEEKLY_LIMIT_HOURS, note: "Written last by every golfprice publish; the pointer every golfprice view follows." },
   { id: "golfprice_index", label: "golfprice event index", key: "golfprice/index.json", schedule: "weekly", fields: ["published_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "The event list, run checkpoints and weather pointers." },
   { id: "legacy_manifest", label: "legacy data manifest", key: "data/manifest.json", schedule: "weekly", fields: ["generated_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "Weekly legacy-pipeline export (History and Diagnostics)." },
-  { id: "odds_signals", label: "odds signals", key: "golfprice/odds_signals/latest.json", schedule: "odds_window", fields: ["generated_at"], limitHours: 12, note: "Only published when an odds check finds new prices, so quiet markets and off weeks can age it; judged during the odds_reprice window only." },
+  { id: "odds_signals", label: "odds signals", key: "golfprice/odds_signals/latest.json", schedule: "odds_check", fields: ["generated_at"], limitHours: ODDS_CHECK_MAX_HOURS, note: "The producer publishes nothing when quotes are unchanged, so the age of the content is never judged. Judged on the odds_reprice job outcomes instead: stale only when no odds check has succeeded for the limit while the window is open." },
   { id: "bet_card", label: "owner bet card", key: "owner/bet_card.json", schedule: "odds_window", fields: ["generated_at"], limitHours: 12, note: "Refreshed after each odds reprice; judged during the odds_reprice window, weekly otherwise." },
   { id: "scorecard", label: "model scorecard", key: "golfprice/scorecard/latest.json", schedule: "weekly", fields: ["generated_at"], limitHours: WEEKLY_LIMIT_HOURS, note: "Updated by each Monday settle." },
 ];
@@ -102,21 +104,42 @@ export function windowOpenForMs(inWindow: WindowProbe, type: string, now: number
 }
 
 /** `active`: an event is in play or just finished (from the published index); false = off week, null = unknown (index unreadable). */
-export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean | null };
+/** Outcome of the odds_reprice jobs in jobs/queue.json: `lastSuccessMs` is the newest finished clean run (null = none seen). Undefined on the context = the queue could not be read. */
+export type OddsCheckEvidence = { lastSuccessMs: number | null; jobsSeen: number };
+export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean | null; oddsCheck?: OddsCheckEvidence };
+
+/** Newest clean odds_reprice run from the queue records and the status object of each (statuses keyed by job id; missing = unknown). Null when the queue is not a readable queue. */
+export function oddsCheckEvidence(queue: unknown, statuses: Map<string, unknown>): OddsCheckEvidence | null {
+  const jobs = (queue as { jobs?: unknown } | null)?.jobs;
+  if (!Array.isArray(jobs)) return null;
+  let lastSuccessMs: number | null = null;
+  let jobsSeen = 0;
+  for (const job of jobs) {
+    const j = job as { id?: unknown; type?: unknown };
+    if (!j || j.type !== "odds_reprice" || typeof j.id !== "string") continue;
+    jobsSeen += 1;
+    const st = statuses.get(j.id) as { state?: unknown; finished_at?: unknown; exit_code?: unknown } | null | undefined;
+    if (!st || st.state !== "done" || (st.exit_code !== undefined && st.exit_code !== null && st.exit_code !== 0)) continue;
+    const at = timestampMs(st.finished_at);
+    if (at !== null && (lastSuccessMs === null || at > lastSuccessMs)) lastSuccessMs = at;
+  }
+  return { lastSuccessMs, jobsSeen };
+}
 
 const ACTIVE_BEFORE_DAYS = 11;
 const ACTIVE_AHEAD_DAYS = 7;
-/** Once the newest indexed event started this long ago, silence is treated as a dead pipeline (the index only lists published events), so judging resumes. */
-const LAPSED_AFTER_DAYS = 21;
-/** True when some event starts within 11 days back to 7 days ahead of `now`, or when the newest indexed event is so old that publishing has evidently stopped (judge). False = a short gap between events. Null when there are no events to read. */
+/**
+ * True when some indexed event starts within 11 days back to 7 days ahead of `now`. False = scheduled inactivity: no event in that activity window and
+ * none published ahead (the winter break, an off week), so nothing is expected to publish and nothing is judged. Null when there are no events to read.
+ * The index lists only published events and carries no tour calendar, so a missed publication inside the active window is caught by the age limits and
+ * the jobs alerts; a pipeline that stops before the next event is announced is not detectable from here and is not reported as stale.
+ */
 export function eventsActive(events: Array<{ date_start?: string | null }> | null, now: number): boolean | null {
   if (!events || events.length === 0) return null;
   const day = 86_400_000;
   const starts = events.map((e) => timestampMs(typeof e.date_start === "string" ? e.date_start.slice(0, 10) : null)).filter((ms): ms is number => ms !== null);
   if (starts.length === 0) return null;
-  if (starts.some((ms) => ms >= now - ACTIVE_BEFORE_DAYS * day && ms <= now + ACTIVE_AHEAD_DAYS * day)) return true;
-  const newestPast = Math.max(...starts.filter((ms) => ms < now), -Infinity);
-  return newestPast < now - LAPSED_AFTER_DAYS * day; // lapsed pipeline: judge, so a missed week shows as stale
+  return starts.some((ms) => ms >= now - ACTIVE_BEFORE_DAYS * day && ms <= now + ACTIVE_AHEAD_DAYS * day);
 }
 
 /** Judge one read of one source. `ageOverrideMs`: for sources whose observed time is a calendar date, the caller passes the reading itself. */
@@ -124,10 +147,11 @@ export function judge(spec: { id: string; label: string; key: string; schedule: 
   const base = { id: spec.id, label: spec.label, key: spec.key, schedule: spec.schedule, observed_at: null as string | null, age_hours: null as number | null, limit_hours: spec.limitHours as number | null, via: null as string | null };
   if (read.kind === "error") return { ...base, state: "unreadable", detail: "The storage read failed this tick; no judgment made." };
   if (read.kind === "absent") {
-    if (spec.schedule === "odds_window" && windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now) === 0) return { ...base, state: "skipped", limit_hours: null, detail: "Not published and the odds_reprice window is closed; not judged." };
+    if ((spec.schedule === "odds_window" || spec.schedule === "odds_check") && windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now) === 0) return { ...base, state: "skipped", limit_hours: null, detail: "Not published and the odds_reprice window is closed; not judged." };
     return { ...base, state: "missing", detail: `${spec.key} is not published.` };
   }
-  if (ctx.active === false) return { ...base, limit_hours: null, state: "skipped", detail: "No event is in play or just finished in the published index (off week); not judged." };
+  if (ctx.active === false) return { ...base, limit_hours: null, state: "skipped", detail: "No event is in play or just finished in the published index and none is published ahead (off week or break); not judged." };
+  if (spec.schedule === "odds_check") return judgeOddsCheck(base, spec, read, ctx);
   let observed: number | null = null;
   let via: string | null = null;
   const hit = fieldFromHead(read.head, spec.fields);
@@ -151,6 +175,25 @@ export function judge(spec: { id: string; label: string; key: string; schedule: 
   if (ageHours < -1) return { ...common, state: "unreadable", limit_hours: limit, detail: "The timestamp is in the future; clock or data problem." };
   if (ageHours > limit) return { ...common, state: "stale", limit_hours: limit, detail: `Last updated ${fmtAge(ageHours)} ago (${via}); the normal maximum is ${fmtAge(limit)}.` };
   return { ...common, state: "ok", limit_hours: limit, detail: `Updated ${fmtAge(ageHours)} ago (${via}); normal maximum ${fmtAge(limit)}.` };
+}
+
+type JudgeBase = Omit<SourceStatus, "state" | "detail" | "stale_since" | "inboxed_at">;
+/** Odds signals: judged on successful checks (the odds_reprice jobs), never on how old the published content is. */
+function judgeOddsCheck(base: JudgeBase, spec: { limitHours: number; fields: string[] }, read: Extract<ReadResult, { kind: "ok" }>, ctx: EvalContext): Omit<SourceStatus, "stale_since" | "inboxed_at"> {
+  const open = windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now);
+  if (open === 0) return { ...base, limit_hours: null, state: "skipped", detail: "The odds_reprice window is closed; the checker is not expected to run. Content age is never judged (no new prices means no new file)." };
+  if (!ctx.oddsCheck) return { ...base, state: "unreadable", detail: "The job queue could not be read, so whether odds checks are succeeding is unknown." };
+  const hit = fieldFromHead(read.head, spec.fields);
+  const content = hit ? timestampMs(hit.value) : null;
+  const contentNote = content !== null ? ` Published signals date from ${new Date(content).toISOString()}; a quiet market publishes nothing new.` : "";
+  const last = ctx.oddsCheck.lastSuccessMs;
+  const sinceHours = last === null ? null : Math.round(((ctx.now - last) / HOUR_MS) * 10) / 10;
+  const common = { ...base, observed_at: last === null ? null : new Date(last).toISOString(), age_hours: sinceHours, via: "odds_reprice job", limit_hours: spec.limitHours };
+  if (open < spec.limitHours * HOUR_MS) return { ...common, state: "ok", detail: `The odds window opened ${Math.round(open / HOUR_MS)} h ago; not judged until it has been open ${spec.limitHours} h.${contentNote}` };
+  if (last === null || (sinceHours as number) > spec.limitHours) {
+    return { ...common, state: "stale", detail: `No successful odds check ${last === null ? `among the ${ctx.oddsCheck.jobsSeen} odds_reprice job record(s) in the queue` : `for ${fmtAge(sinceHours as number)}`} while the window has been open ${fmtAge(open / HOUR_MS)}; the normal maximum is ${fmtAge(spec.limitHours)}.${contentNote}` };
+  }
+  return { ...common, state: "ok", detail: `Last successful odds check ${fmtAge(sinceHours as number)} ago; normal maximum ${fmtAge(spec.limitHours)}.${contentNote}` };
 }
 
 export function fmtAge(hours: number): string {
