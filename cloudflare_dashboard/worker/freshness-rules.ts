@@ -106,7 +106,14 @@ export function windowOpenForMs(inWindow: WindowProbe, type: string, now: number
 /** `active`: an event is in play or just finished (from the published index); false = off week, null = unknown (index unreadable). */
 /** Outcome of the odds_reprice jobs in jobs/queue.json: `lastSuccessMs` is the newest finished clean run (null = none seen). Undefined on the context = the queue could not be read. */
 export type OddsCheckEvidence = { lastSuccessMs: number | null; jobsSeen: number };
-export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean | null; oddsCheck?: OddsCheckEvidence };
+export type EvalContext = { now: number; inWindow: WindowProbe; active?: boolean | null; oddsCheck?: OddsCheckEvidence; runnerSilent?: boolean };
+
+export const RUNNER_SILENT_HOURS = 6;
+/** True only on positive evidence the job runners stopped: heartbeats exist and the newest is older than RUNNER_SILENT_HOURS. No readable heartbeat = no evidence (false). */
+export function runnerSilent(beats: unknown[], now: number): boolean {
+  const times = beats.map((b) => timestampMs((b as { at?: unknown } | null)?.at)).filter((ms): ms is number => ms !== null);
+  return times.length > 0 && now - Math.max(...times) > RUNNER_SILENT_HOURS * HOUR_MS;
+}
 
 /** Newest clean odds_reprice run from the queue records and the status object of each (statuses keyed by job id; missing = unknown). Null when the queue is not a readable queue. */
 export function oddsCheckEvidence(queue: unknown, statuses: Map<string, unknown>): OddsCheckEvidence | null {
@@ -132,7 +139,8 @@ const ACTIVE_AHEAD_DAYS = 7;
  * True when some indexed event starts within 11 days back to 7 days ahead of `now`. False = scheduled inactivity: no event in that activity window and
  * none published ahead (the winter break, an off week), so nothing is expected to publish and nothing is judged. Null when there are no events to read.
  * The index lists only published events and carries no tour calendar, so a missed publication inside the active window is caught by the age limits and
- * the jobs alerts; a pipeline that stops before the next event is announced is not detectable from here and is not reported as stale.
+ * the jobs alerts. A dead pipeline during a break is told apart from scheduled inactivity by the runner heartbeats (see runnerSilent): when every
+ * heartbeat is older than RUNNER_SILENT_HOURS the caller judges the sources despite `false`, so a publisher that died mid-season goes stale at about D+11.
  */
 export function eventsActive(events: Array<{ date_start?: string | null }> | null, now: number): boolean | null {
   if (!events || events.length === 0) return null;
@@ -150,7 +158,7 @@ export function judge(spec: { id: string; label: string; key: string; schedule: 
     if ((spec.schedule === "odds_window" || spec.schedule === "odds_check") && windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now) === 0) return { ...base, state: "skipped", limit_hours: null, detail: "Not published and the odds_reprice window is closed; not judged." };
     return { ...base, state: "missing", detail: `${spec.key} is not published.` };
   }
-  if (ctx.active === false) return { ...base, limit_hours: null, state: "skipped", detail: "No event is in play or just finished in the published index and none is published ahead (off week or break); not judged." };
+  if (ctx.active === false && !ctx.runnerSilent) return { ...base, limit_hours: null, state: "skipped", detail: "No event is in play or just finished in the published index and none is published ahead (off week or break); not judged." };
   if (spec.schedule === "odds_check") return judgeOddsCheck(base, spec, read, ctx);
   let observed: number | null = null;
   let via: string | null = null;

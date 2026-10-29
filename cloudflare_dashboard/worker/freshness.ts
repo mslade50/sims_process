@@ -14,7 +14,7 @@
 import { inWindow } from "./cron-rules.ts";
 import { scorecardLag, historyThrough, type EventLike } from "../app/freshness-rules.ts";
 import {
-  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, oddsCheckEvidence, parseFreshness, timestampMs,
+  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, oddsCheckEvidence, parseFreshness, runnerSilent, timestampMs,
   type FreshnessDoc, type OddsCheckEvidence, type ReadResult,
 } from "./freshness-rules.ts";
 
@@ -82,11 +82,19 @@ async function readOddsCheck(bucket: R2Bucket): Promise<OddsCheckEvidence | null
     .sort((a, b) => (timestampMs(b.requested_at) ?? 0) - (timestampMs(a.requested_at) ?? 0))
     .slice(0, ODDS_STATUS_READS);
   const statuses = new Map<string, unknown>();
-  for (const job of newest) {
-    const got = await readFull(bucket, `jobs/status/${job.id}.json`);
-    if (got.read.kind === "ok") statuses.set(job.id as string, got.json);
-  }
+  const got = await Promise.all(newest.map(async (job) => ({ id: job.id as string, read: await readFull(bucket, `jobs/status/${job.id}.json`) })));
+  for (const g of got) if (g.read.read.kind === "ok") statuses.set(g.id, g.read.json);
   return oddsCheckEvidence({ jobs: newest }, statuses);
+}
+
+/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty when none can be listed or read. */
+async function readHeartbeats(bucket: R2Bucket): Promise<unknown[]> {
+  try {
+    const listed = await withTimeout(bucket.list({ prefix: "jobs/heartbeat/", limit: 20 }), READ_TIMEOUT_MS, "heartbeats");
+    return (await Promise.all(listed.objects.map(async (o) => (await readFull(bucket, o.key)).json))).filter((j) => j !== null);
+  } catch {
+    return [];
+  }
 }
 
 async function readStatus(bucket: R2Bucket): Promise<FreshnessDoc | null> {
@@ -118,8 +126,10 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   // Off weeks (no event in play or just finished, from the published index) are not judged: nothing is expected to publish.
   const active = eventsActive(events, now);
   const oddsCheck = await readOddsCheck(bucket);
-  const ctx = { now, inWindow, active, ...(oddsCheck ? { oddsCheck } : {}) };
-  if (active === false) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
+  const silent = active === false && runnerSilent(await readHeartbeats(bucket), now);
+  const ctx = { now, inWindow, active, runnerSilent: silent, ...(oddsCheck ? { oddsCheck } : {}) };
+  if (silent) notes.push("No event is in play or published ahead, but every job runner heartbeat is old: this is not treated as a scheduled break, so sources are judged.");
+  else if (active === false) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
   const judged = [
     ...SOURCES.map((spec) => {
       if (spec.id === "golfprice_index") return judge(spec, index.read, ctx);

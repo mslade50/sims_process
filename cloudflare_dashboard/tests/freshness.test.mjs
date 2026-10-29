@@ -3,7 +3,7 @@ import test from "node:test";
 import { briefCurrency, calendarDate, dataThrough, daysSince, historyThrough, plainDate, scorecardLag, seasonField, shotFreshness, shotFreshnessLine, weatherRunKey } from "../app/freshness-rules.ts";
 import { parseCourseHistory } from "../app/course-history-rules.ts";
 import { inWindow } from "../worker/cron-rules.ts";
-import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, eventsActive, fieldFromHead, inboxRecord, judge, oddsCheckEvidence, parseFreshness, windowOpenForMs } from "../worker/freshness-rules.ts";
+import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, eventsActive, fieldFromHead, inboxRecord, judge, oddsCheckEvidence, parseFreshness, runnerSilent, windowOpenForMs } from "../worker/freshness-rules.ts";
 import { runFreshness } from "../worker/freshness.ts";
 
 const iso = (s) => Date.parse(s);
@@ -182,6 +182,7 @@ function fakeBucket(initial = {}, { failKeys = [] } = {}) {
       const text = options?.range ? o.text.slice(options.range.offset, options.range.offset + options.range.length) : o.text;
       return { text: async () => text, uploaded: o.uploaded };
     },
+    async list({ prefix }) { return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })) }; },
     async put(key, body) { puts.push(key); store.set(key, { text: String(body), uploaded: new Date() }); return { key }; },
   };
 }
@@ -346,4 +347,27 @@ test("scheduled(): the freshness check runs alongside the other cron work and ne
   }
   assert.ok(bucket.store.has(FRESHNESS_STATUS_KEY));
   assert.equal(fetched, 0);
+});
+
+test("a dead publisher in mid-season is flagged by about D+12 (silent runners); a break with live runners stays not_judged", async () => {
+  const data = healthyData();
+  data["golfprice/index.json"].events = [{ event_uid: "pga:1:2026-10-22", tour: "pga", date_start: "2026-10-22", date_end: "2026-10-25" }, { event_uid: "pga:2:2026-10-29", tour: "pga", date_start: "2026-10-29", date_end: "2026-11-01" }];
+  data["data/manifest.json"] = fresh("2026-11-02T12:00:00Z");
+  data["golfprice/odds_signals/latest.json"] = fresh("2026-11-02T01:00:00Z");
+  data["owner/bet_card.json"] = fresh("2026-11-02T01:00:00Z");
+  const d12 = iso("2026-11-13T15:00:00Z"); // 12 days after the last event start; the old 21-day rule would still be quiet
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-03T09:00:00Z" };
+  const dead = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(dead.doc.not_judged, false);
+  assert.ok(dead.doc.stale_count > 0, JSON.stringify(dead.doc.sources.map((s) => [s.id, s.state])));
+  assert.match(dead.doc.notes.join(" "), /heartbeat is old|heartbeat/);
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-13T14:50:00Z" };
+  const quiet = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(quiet.doc.not_judged, true);
+  assert.equal(quiet.doc.stale_count, 0);
+  delete data["jobs/heartbeat/desktop.json"];
+  const none = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(none.doc.not_judged, true, "no heartbeat object is no evidence");
+  assert.equal(runnerSilent([{ at: "2026-11-13T00:00:00Z" }, { at: "2026-11-13T14:00:00Z" }], d12), false, "newest heartbeat counts");
+  assert.equal(runnerSilent([], d12), false);
 });
