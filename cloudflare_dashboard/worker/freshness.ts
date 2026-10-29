@@ -128,7 +128,7 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   const oddsCheck = await readOddsCheck(bucket);
   const silent = active === false && runnerSilent(await readHeartbeats(bucket), now);
   const ctx = { now, inWindow, active, runnerSilent: silent, ...(oddsCheck ? { oddsCheck } : {}) };
-  if (silent) notes.push("No event is in play or published ahead, but every job runner heartbeat is old: this is not treated as a scheduled break, so sources are judged.");
+  if (silent) notes.push("No event is in play or published ahead, but no job runner is reporting idle or running within the last 6 h: this is not treated as a scheduled break, so sources are judged.");
   else if (active === false) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
   const judged = [
     ...SOURCES.map((spec) => {
