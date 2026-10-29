@@ -305,3 +305,40 @@ scripts/*
 !scripts/test_review_check.py
 !scripts/test_test_inventory.py
 !scripts/test_test_weakening.py
+
+# -----------------------------------------------------------------------------
+# Local-only outputs and runtime state (health pass 2026-10-28). Root-anchored
+# so nothing under dashboard_data/ or permanent_data/historical_dists/ (tracked
+# rank_probs_*.parquet) is affected. Already-tracked files stay tracked.
+# -----------------------------------------------------------------------------
+/=
+/.codex_audit_rounds.json
+.wrangler/
+cloudflare_dashboard/**/__pycache__/
+*.stackdump
+*.pstats
+*.bak
+*.bak.*
+*.csv.stale_*
+/h2h_matrix_*.parquet
+/rank_probs_live_*.parquet
+/rank_probs_updated_*.parquet
+/made_cut_live_*.npy
+/standings_r*_live_*.npy
+/player_names_live_*.json
+/*.pdf
+# Research and rerun output folders under permanent_data (none tracked)
+permanent_data/hole_sim_*/
+permanent_data/shot_*/
+permanent_data/distribution_engine_backtest_*/
+permanent_data/manual_*/
+permanent_data/provisional/
+permanent_data/research/
+permanent_data/sim_reruns/
+permanent_data/spatial_chain_common_baselines/
+permanent_data/approach_lie_course_fit_extended_results.json
+permanent_data/sheet_bets_*_precleared_*.csv
+# Written by the weekly-repo-check scheduled task on every run
+permanent_data/weekly_repo_check_last_report.md
+permanent_data/weekly_repo_check_last.log
+permanent_data/sim_health_check_last.log
