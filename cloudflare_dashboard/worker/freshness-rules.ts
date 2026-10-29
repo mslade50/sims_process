@@ -20,6 +20,8 @@ export const HOUR_MS = 3_600_000;
 export const WEEKLY_LIMIT_HOURS = 8 * 24;
 /** Odds checks run every 30 minutes in the window; no successful run for this long (window open that long) means the checker stopped. */
 export const ODDS_CHECK_MAX_HOURS = 3;
+/** A source that stays unreadable longer than this is reported stale ("could not be verified since"): persistent unreadable evidence must not hide an outage. */
+export const UNREADABLE_MAX_HOURS = 12;
 
 export type Schedule = "weekly" | "odds_window" | "odds_check" | "history";
 export type SourceSpec = {
@@ -71,7 +73,10 @@ export type SourceStatus = {
   stale_since: string | null;
   /** Last time an inbox record was filed for the current stale episode. */
   inboxed_at: string | null;
+  /** First tick of the current run of unreadable ticks (kept while it stays unreadable, cleared on any readable tick). */
+  unknown_since: string | null;
 };
+export type Judged = Omit<SourceStatus, "stale_since" | "inboxed_at" | "unknown_since">;
 
 /** The value of the first listed field found as a top-level-looking `"field": "value"` in the leading bytes; null when none. */
 export function fieldFromHead(head: string, fields: string[]): { field: string; value: string } | null {
@@ -156,7 +161,7 @@ export function eventsActive(events: Array<{ date_start?: string | null }> | nul
 }
 
 /** Judge one read of one source. `ageOverrideMs`: for sources whose observed time is a calendar date, the caller passes the reading itself. */
-export function judge(spec: { id: string; label: string; key: string; schedule: Schedule; fields: string[]; limitHours: number }, read: ReadResult, ctx: EvalContext): Omit<SourceStatus, "stale_since" | "inboxed_at"> {
+export function judge(spec: { id: string; label: string; key: string; schedule: Schedule; fields: string[]; limitHours: number }, read: ReadResult, ctx: EvalContext): Judged {
   const base = { id: spec.id, label: spec.label, key: spec.key, schedule: spec.schedule, observed_at: null as string | null, age_hours: null as number | null, limit_hours: spec.limitHours as number | null, via: null as string | null };
   if (read.kind === "error") return { ...base, state: "unreadable", detail: "The storage read failed this tick; no judgment made." };
   if (read.kind === "absent") {
@@ -190,9 +195,9 @@ export function judge(spec: { id: string; label: string; key: string; schedule: 
   return { ...common, state: "ok", limit_hours: limit, detail: `Updated ${fmtAge(ageHours)} ago (${via}); normal maximum ${fmtAge(limit)}.` };
 }
 
-type JudgeBase = Omit<SourceStatus, "state" | "detail" | "stale_since" | "inboxed_at">;
+type JudgeBase = Omit<Judged, "state" | "detail">;
 /** Odds signals: judged on successful checks (the odds_reprice jobs), never on how old the published content is. */
-function judgeOddsCheck(base: JudgeBase, spec: { limitHours: number; fields: string[] }, read: Extract<ReadResult, { kind: "ok" }>, ctx: EvalContext): Omit<SourceStatus, "stale_since" | "inboxed_at"> {
+function judgeOddsCheck(base: JudgeBase, spec: { limitHours: number; fields: string[] }, read: Extract<ReadResult, { kind: "ok" }>, ctx: EvalContext): Judged {
   const open = windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now);
   if (open === 0) return { ...base, limit_hours: null, state: "skipped", detail: "The odds_reprice window is closed; the checker is not expected to run. Content age is never judged (no new prices means no new file)." };
   if (!ctx.oddsCheck) return { ...base, state: "unreadable", detail: "The job queue or the job status records could not be read, so whether odds checks are succeeding is unknown." };
@@ -216,24 +221,48 @@ export function fmtAge(hours: number): string {
 
 export type Transition = { id: string; kind: "stale" | "refile" | "recovered"; status: SourceStatus };
 
-/** Carry stale_since / inboxed_at forward and decide which sources need an inbox record this tick. */
-export function carryForward(now: number, current: Array<Omit<SourceStatus, "stale_since" | "inboxed_at">>, previous: SourceStatus[] | null, knownIds: string[] = []): { statuses: SourceStatus[]; transitions: Transition[] } {
+export type CarryOptions = {
+  /** Scheduled break (no event in play, runners alive): skipped sources are not judged, so they carry no episode and are not counted. Nightly closed-window skips are not a break and keep their episode. */
+  scheduledBreak?: boolean;
+};
+
+/**
+ * Carry stale_since / inboxed_at / unknown_since forward and decide which sources need an inbox record this tick.
+ * Break rule: the first break tick that skips a source with an open episode closes it the way a recovery is recorded (a "recovered" inbox record
+ * when one had been filed, the normal semantics), so the watcher drops its item; the break itself then emits stale_since = null. After the break a
+ * source judged stale starts a new episode at that tick.
+ * Unreadable rule: one unreadable tick changes nothing; once a source has been unreadable longer than UNREADABLE_MAX_HOURS it is reported stale
+ * with stale_since = the first unreadable tick (or the open episode's own start).
+ */
+export function carryForward(now: number, current: Judged[], previous: SourceStatus[] | null, knownIds: string[] = [], options: CarryOptions = {}): { statuses: SourceStatus[]; transitions: Transition[] } {
   const prev = new Map((previous ?? []).map((s) => [s.id, s]));
   const statuses: SourceStatus[] = [];
   const transitions: Transition[] = [];
+  const nowIso = new Date(now).toISOString();
   const isBad = (s: { state: SourceState }) => s.state === "stale" || s.state === "missing";
-  // An open episode is remembered by stale_since, so a tick that could not judge (unreadable, or a closed window or scheduled break) neither clears nor re-files it.
+  // An open episode is remembered by stale_since, so a tick that could not judge (unreadable, or a closed odds window) neither clears nor re-files it.
   // A skipped or unreadable tick never creates or extends an episode: it only keeps the existing stale_since / inboxed_at on a non-stale state.
   const isOpen = (s: SourceStatus | undefined): s is SourceStatus => !!s && s.stale_since !== null;
-  for (const cur of current) {
-    const before = prev.get(cur.id);
-    let status: SourceStatus = { ...cur, stale_since: null, inboxed_at: null };
+  for (const judged of current) {
+    const before = prev.get(judged.id);
+    let cur = judged;
+    let unknownSince: string | null = null;
+    let escalated = false;
+    if (cur.state === "unreadable") {
+      unknownSince = before?.unknown_since && timestampMs(before.unknown_since) !== null ? before.unknown_since : nowIso;
+      if (now - (timestampMs(unknownSince) as number) > UNREADABLE_MAX_HOURS * HOUR_MS) {
+        escalated = true;
+        cur = { ...cur, state: "stale", detail: `${cur.label} could not be verified since ${unknownSince} (unreadable for more than ${UNREADABLE_MAX_HOURS} h): ${cur.detail}` };
+      }
+    }
+    let status: SourceStatus = { ...cur, stale_since: null, inboxed_at: null, unknown_since: unknownSince };
+    const breakSkip = options.scheduledBreak === true && cur.state === "skipped";
     if (isBad(cur)) {
-      const since = isOpen(before) ? before.stale_since! : new Date(now).toISOString();
+      const since = isOpen(before) ? before.stale_since! : escalated ? (unknownSince as string) : nowIso;
       status = { ...status, stale_since: since, inboxed_at: isOpen(before) ? before.inboxed_at : null };
       if (!status.inboxed_at) transitions.push({ id: cur.id, kind: "stale", status });
       else if (now - (timestampMs(status.inboxed_at) ?? 0) >= REFILE_MS) transitions.push({ id: cur.id, kind: "refile", status });
-    } else if ((cur.state === "unreadable" || cur.state === "skipped") && isOpen(before)) {
+    } else if ((cur.state === "unreadable" || cur.state === "skipped") && isOpen(before) && !breakSkip) {
       status = { ...status, stale_since: before.stale_since, inboxed_at: before.inboxed_at };
     } else if (isOpen(before) && before.inboxed_at) {
       transitions.push({ id: cur.id, kind: "recovered", status });
@@ -248,7 +277,7 @@ export function carryForward(now: number, current: Array<Omit<SourceStatus, "sta
     const retired = before.id.startsWith(HISTORY_SPEC.idPrefix) || !knownIds.includes(before.id);
     if (!retired) { statuses.push(before); continue; }
     if (before.inboxed_at) {
-      const gone: SourceStatus = { ...before, state: "skipped", stale_since: null, inboxed_at: null, detail: "No longer checked (left the set of newest events or the source list)." };
+      const gone: SourceStatus = { ...before, state: "skipped", stale_since: null, inboxed_at: null, unknown_since: null, detail: "No longer checked (left the set of newest events or the source list)." };
       transitions.push({ id: before.id, kind: "recovered", status: gone });
     }
   }
@@ -298,7 +327,7 @@ export function parseFreshness(raw: unknown): FreshnessDoc | null {
     if (typeof o.id !== "string" || typeof o.state !== "string") return [];
     const str = (v: unknown) => (typeof v === "string" ? v : null);
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-    return [{ id: o.id, label: str(o.label) ?? o.id, key: str(o.key) ?? "", schedule: (str(o.schedule) as Schedule) ?? "weekly", state: o.state as SourceState, observed_at: str(o.observed_at), age_hours: num(o.age_hours), limit_hours: num(o.limit_hours), via: str(o.via), detail: str(o.detail) ?? "", stale_since: str(o.stale_since), inboxed_at: str(o.inboxed_at) }];
+    return [{ id: o.id, label: str(o.label) ?? o.id, key: str(o.key) ?? "", schedule: (str(o.schedule) as Schedule) ?? "weekly", state: o.state as SourceState, observed_at: str(o.observed_at), age_hours: num(o.age_hours), limit_hours: num(o.limit_hours), via: str(o.via), detail: str(o.detail) ?? "", stale_since: str(o.stale_since), inboxed_at: str(o.inboxed_at), unknown_since: str(o.unknown_since) }];
   });
   const inbox = (d.inbox && typeof d.inbox === "object" ? d.inbox : {}) as Record<string, unknown>;
   return {

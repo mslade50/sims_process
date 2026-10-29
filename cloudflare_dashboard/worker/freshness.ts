@@ -91,12 +91,12 @@ async function readOddsCheck(bucket: R2Bucket, now: number): Promise<OddsCheckEv
   return failedRead && !proven ? null : evidence;
 }
 
-/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty (no evidence) when the list fails or any listed heartbeat cannot be read: a partial list must not show the runner as silent. */
+/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty (no evidence) when the list fails or any listed heartbeat read fails: a partial list must not show the runner as silent. A heartbeat that reads but is not valid JSON counts as not live (dropped). */
 async function readHeartbeats(bucket: R2Bucket): Promise<unknown[]> {
   try {
     const listed = await withTimeout(bucket.list({ prefix: "jobs/heartbeat/", limit: 20 }), READ_TIMEOUT_MS, "heartbeats");
-    const beats = await Promise.all(listed.objects.map(async (o) => (await readFull(bucket, o.key)).json));
-    return beats.some((j) => j === null) ? [] : beats;
+    const got = await Promise.all(listed.objects.map((o) => readFull(bucket, o.key)));
+    return got.some((g) => g.read.kind === "error") ? [] : got.map((g) => g.json).filter((j) => j !== null);
   } catch {
     return [];
   }
@@ -164,10 +164,7 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   const card = await readFull(bucket, "golfprice/scorecard/latest.json");
   const cardEvents = (card.json as { events?: Array<{ event_uid?: string; event_start?: string }> } | null)?.events;
   const cardBase = { id: "scorecard_lag", label: "scorecard vs newest completed event", key: "golfprice/scorecard/latest.json", schedule: "weekly" as const, observed_at: null, age_hours: null, limit_hours: null, via: "events" };
-  if (scheduledBreak) {
-    // Explicit skipped (never a carried-forward verdict) so the doc stays consistent with every other source during a break.
-    judged.push({ ...cardBase, state: "skipped", detail: "No event is in play or just finished in the published index and none is published ahead (off week or break); not judged." });
-  } else if (card.read.kind === "error") {
+  if (card.read.kind === "error") {
     judged.push({ ...cardBase, state: "unreadable", detail: "The storage read failed this tick; no judgment made." });
   } else if (card.read.kind === "ok" && Array.isArray(cardEvents) && events) {
     const lag = scorecardLag(cardEvents.filter((e): e is { event_uid: string; event_start?: string } => typeof e.event_uid === "string"), events, now);
@@ -179,7 +176,7 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
     });
   }
 
-  const { statuses, transitions } = carryForward(now, judged, previous?.sources ?? null, [...SOURCES.map((x) => x.id), "scorecard_lag"]);
+  const { statuses, transitions } = carryForward(now, judged, previous?.sources ?? null, [...SOURCES.map((x) => x.id), "scorecard_lag"], { scheduledBreak });
   const nowIso = new Date(now).toISOString();
   const written: string[] = [];
   const failed: string[] = [];
