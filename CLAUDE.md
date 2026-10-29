@@ -1,6 +1,6 @@
 # Golf Tournament Monte Carlo Simulation System
 
-<!-- owner-maintenance-authority:start -->
+<!-- owner-maintenance-authority:v2:start -->
 # Maintenance authority -- owner instruction, October 26, 2026
 
 This rule covers every repository and machine the owner uses. It applies to every
@@ -48,11 +48,9 @@ owner's login or a new secret, ask for exactly that.
 
 ## Always ask immediately before
 
-- `git reset --hard`, force-push or history rewrite on a shared branch;
-- deleting existing branches, worktrees, run history or stored data (cloud objects,
-  databases, tables, Workers);
-- placing, sizing or cancelling a broker order, bet or trade, or changing a live
-  stop level.
+The canonical list is "Always ask first" in "Approvals and authority". Follow it
+for destructive git operations, deletion of stored data or cloud resources, and
+money-moving actions.
 
 Deployment windows and safeguards written for specific systems (for example the
 07:30-11:30 New York blackout for New_Seasonals and trading_ibkr) still apply.
@@ -63,13 +61,15 @@ Deployment windows and safeguards written for specific systems (for example the
   the same failure does not return.
 - Commit only the files the repair touches. Leave unrelated working-tree changes,
   branches and worktrees alone: no stash, clean or reset.
-- Have an independent reviewer check a risky repair (one that publishes, deploys,
-  sends alerts or touches money paths) before it ships.
+- Review a repair by the tiers in "Delivery and review" (HIGH: Opus + Codex)
+  before it ships.
 - After deploying, confirm the next run or health check passes. If it does not,
   roll back.
 - Never print or commit secrets.
 - Record what broke, what changed, where it shipped and how to undo it.
-<!-- owner-maintenance-authority:end -->
+<!-- owner-maintenance-authority:v2:end -->
+
+Full shared rules: https://github.com/mslade50/agent-rules (installed globally as ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md).
 
 Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Combines EMA-weighted strokes gained distributions, course shape adjustments, weather effects, and live skill updates to price matchups, score cards, and finish positions.
 
@@ -79,8 +79,8 @@ Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
 Run `python secret_free_tests.py`, paste the real output
 into the PR, name the risk tier, and write the rollback steps in plain
 words. Never print or commit secrets.
-Ordinary fixes still go straight to main, as AGENTS.md already says, and this
-policy applies whenever a pull request is opened.
+Every change goes through a focused pull request; the agent merges its own PR
+when the gate in `docs/REVIEW_POLICY.md` passes. No direct commits to `main`.
 
 ## Pipeline Execution Order
 
