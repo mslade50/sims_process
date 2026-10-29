@@ -21,10 +21,12 @@ export type LoadState<T> = {
 type Entry = { payload: unknown; checkedAt: number; stale: boolean; savedAt: number | null };
 const cache = new Map<string, Entry>();
 const listeners = new Set<() => void>();
+const keyListeners = new Map<string, Set<() => void>>();
 let savedSnapshot: number[] = [];
 /** Every write to `cache` goes through here so the page-wide saved-copy notice follows the data actually in use. */
 function remember(name: string, entry: Entry): void {
   cache.set(name, entry);
+  keyListeners.get(name)?.forEach((l) => l());
   const next = [...cache.values()].filter((e) => e.stale).map((e) => e.savedAt ?? e.checkedAt).sort((a, b) => a - b);
   if (next.length === savedSnapshot.length && next.every((v, i) => v === savedSnapshot[i])) return;
   savedSnapshot = next;
@@ -112,6 +114,15 @@ export function useDashboardData<T>(name: string | null): LoadState<T> {
   });
   const [nonce, setNonce] = useState(0);
   const forceNext = useRef(false);
+  // Every mounted consumer of this key follows the shared cache, so a saved-copy fallback seen by one is seen by all.
+  useEffect(() => {
+    if (name === null) return;
+    const follow = () => { const entry = cache.get(name); if (entry) setState(ready(entry)); };
+    const set = keyListeners.get(name) ?? new Set<() => void>();
+    set.add(follow);
+    keyListeners.set(name, set);
+    return () => { set.delete(follow); if (set.size === 0 && keyListeners.get(name) === set) keyListeners.delete(name); };
+  }, [name]);
   const refetch = useCallback(() => { forceNext.current = true; setNonce((n) => n + 1); }, []);
 
   useEffect(() => {
