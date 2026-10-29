@@ -91,12 +91,12 @@ async function readOddsCheck(bucket: R2Bucket, now: number): Promise<OddsCheckEv
   return failedRead && !proven ? null : evidence;
 }
 
-/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty (no evidence) when the list fails or any listed heartbeat read fails: a partial list must not show the runner as silent. A heartbeat that reads but is not valid JSON counts as not live (dropped). */
+/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty (no evidence) when the list fails or any listed heartbeat read fails: a partial list must not show the runner as silent. A heartbeat that reads but is not valid JSON counts as non-live evidence (an empty beat). */
 async function readHeartbeats(bucket: R2Bucket): Promise<unknown[]> {
   try {
     const listed = await withTimeout(bucket.list({ prefix: "jobs/heartbeat/", limit: 20 }), READ_TIMEOUT_MS, "heartbeats");
     const got = await Promise.all(listed.objects.map((o) => readFull(bucket, o.key)));
-    return got.some((g) => g.read.kind === "error") ? [] : got.map((g) => g.json).filter((j) => j !== null);
+    return got.some((g) => g.read.kind === "error") ? [] : got.map((g) => g.json ?? {});
   } catch {
     return [];
   }

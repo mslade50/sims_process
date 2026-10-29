@@ -529,6 +529,15 @@ test("a corrupt heartbeat is dropped, not no-evidence: silent detection still wo
   assert.equal(inBreak(out.doc), false);
 });
 
+test("all listed heartbeats corrupt: non-live evidence, runner silent and sources judged", async () => {
+  const data = breakData();
+  data["jobs/heartbeat/desktop.json"] = "{ not json";
+  data["jobs/heartbeat/home.json"] = "also not json";
+  const out = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  assert.match(out.doc.notes.join(" "), /no job runner is reporting idle or running/);
+  assert.equal(inBreak(out.doc), false);
+});
+
 test("scheduled break: a skipped tick never creates a stale episode", () => {
   const skipped = { id: "scorecard_lag", label: "x", key: "k", schedule: "weekly", state: "skipped", observed_at: null, age_hours: null, limit_hours: null, via: "events", detail: "" };
   const r = carryForward(iso("2026-11-13T15:00:00Z"), [skipped], null, ["scorecard_lag"]);
