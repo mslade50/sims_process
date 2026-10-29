@@ -81,7 +81,7 @@ of what the screen would look like is not evidence.
 
 ## Repository HIGH items
 
-In addition to the shared HIGH list, call the change HIGH when it touches pricing, edge, simulation, or model logic, or published data outputs. Call it LOW only for display, copy, or docs tweaks; LOW gets a lighter check: the diff matches the description, and the proof is actually there.
+In addition to the shared HIGH list, call the change HIGH when it touches pricing, edge, simulation, or model logic, or published data outputs.
 
 ## CI details for this repository
 
