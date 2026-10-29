@@ -21,15 +21,17 @@ function resolveFile(from, id) {
 }
 
 /** data: object mapping dashboard data keys to payloads, or a function (key) => payload | undefined. Missing keys return a 404-style error. */
-export function loadApp(file, { data = {}, loading = false } = {}) {
+/** stale: keys served as a saved copy after an outage; saved: epoch ms of the saved copies the page-wide notice reports. */
+export function loadApp(file, { data = {}, loading = false, stale = [], saved = [] } = {}) {
   const lookup = typeof data === "function" ? data : (key) => data[key];
   const cache = new Map();
   const dataHook = {
     useDashboardData: (key) => {
       if (loading) return { data: null, loading: true, error: null };
       const payload = lookup(key);
-      return payload === undefined ? { data: null, loading: false, error: "Data request failed (404)" } : { data: payload, loading: false, error: null };
+      return payload === undefined ? { data: null, loading: false, error: "Data request failed (404)" } : { data: payload, loading: false, error: null, stale: stale.includes(key), staleAgeMs: stale.includes(key) ? 3_600_000 : null };
     },
+    useSavedCopies: () => saved,
   };
   const load = (filename) => {
     if (cache.has(filename)) return cache.get(filename).exports;
@@ -57,7 +59,7 @@ export function loadApp(file, { data = {}, loading = false } = {}) {
 }
 
 /** Render `exportName` of app/<file> to static HTML. `search` fakes window.location.search for components that read the URL. */
-export function renderView(file, exportName, { data, loading, search = "", pathname = "/", props = {} } = {}) {
+export function renderView(file, exportName, { data, loading, stale, saved, search = "", pathname = "/", props = {} } = {}) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
   globalThis.window = {
     location: { search, pathname, hash: "" },
@@ -67,7 +69,7 @@ export function renderView(file, exportName, { data, loading, search = "", pathn
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
   };
   try {
-    const exports = loadApp(file, { data, loading });
+    const exports = loadApp(file, { data, loading, stale, saved });
     return renderToStaticMarkup(React.createElement(exports[exportName], props));
   } finally {
     if (previous) Object.defineProperty(globalThis, "window", previous);

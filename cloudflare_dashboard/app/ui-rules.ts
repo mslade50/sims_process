@@ -77,6 +77,20 @@ export function freshnessTone(ageMs: number | null): FreshnessTone {
   return "stale";
 }
 
+/** Header badge: a saved copy (the data service could not be reached) is never shown as live or fresh, whatever its age. */
+export function badgeView(ageMs: number | null, label: string, scale: "run" | "catalog", savedCopy: boolean): { tone: FreshnessTone; text: string } {
+  const base = scale === "catalog" ? catalogFreshnessTone(ageMs) : freshnessTone(ageMs);
+  if (savedCopy) return { tone: "stale", text: ageMs === null ? "Saved copy" : `Saved copy · ${label} ${relativeAge(ageMs)}` };
+  return { tone: base, text: ageMs === null ? "No run yet" : `${label} ${relativeAge(ageMs)}${scale === "catalog" && base === "aging" ? " · stale" : ""}` };
+}
+
+/** One line for the banner shown while any dashboard data is a saved copy; null when none is. `savedAts` are epoch ms of the copies in use. */
+export function savedCopyNotice(savedAts: number[], now: number): string | null {
+  if (savedAts.length === 0) return null;
+  const oldest = Math.min(...savedAts);
+  return `The data service could not be reached, so ${savedAts.length === 1 ? "one dataset on this page is" : `${savedAts.length} datasets are`} a saved copy (oldest last confirmed ${relativeAge(now - oldest)}). Numbers may be out of date. Reload to retry.`;
+}
+
 /** Daily-refreshed reference catalogs (player profiles): fresh through 7 days, amber ("aging") beyond. */
 export const CATALOG_STALE_MS = 7 * 86_400_000;
 export function catalogFreshnessTone(ageMs: number | null): FreshnessTone {
