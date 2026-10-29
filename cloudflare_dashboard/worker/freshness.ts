@@ -14,7 +14,7 @@
 import { inWindow } from "./cron-rules.ts";
 import { scorecardLag, historyThrough, type EventLike } from "../app/freshness-rules.ts";
 import {
-  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, SOURCES, carryForward, eventsActive, inboxRecord, judge, oddsCheckEvidence, parseFreshness, runnerSilent, timestampMs,
+  FRESHNESS_SCHEMA, FRESHNESS_STATUS_KEY, HISTORY_SPEC, HOUR_MS, ODDS_CHECK_MAX_HOURS, SOURCES, carryForward, eventsActive, inboxRecord, judge, oddsCheckEvidence, parseFreshness, runnerSilent, timestampMs,
   type FreshnessDoc, type OddsCheckEvidence, type ReadResult,
 } from "./freshness-rules.ts";
 
@@ -71,7 +71,7 @@ async function readFull(bucket: R2Bucket, key: string): Promise<{ read: ReadResu
 }
 
 /** Newest clean odds_reprice run, from jobs/queue.json and the status object of the newest odds_reprice jobs. Null when the queue cannot be read. */
-async function readOddsCheck(bucket: R2Bucket): Promise<OddsCheckEvidence | null> {
+async function readOddsCheck(bucket: R2Bucket, now: number): Promise<OddsCheckEvidence | null> {
   const queue = await readFull(bucket, "jobs/queue.json");
   if (queue.read.kind === "absent") return { lastSuccessMs: null, jobsSeen: 0 };
   if (queue.read.kind !== "ok") return null;
@@ -84,14 +84,19 @@ async function readOddsCheck(bucket: R2Bucket): Promise<OddsCheckEvidence | null
   const statuses = new Map<string, unknown>();
   const got = await Promise.all(newest.map(async (job) => ({ id: job.id as string, read: await readFull(bucket, `jobs/status/${job.id}.json`) })));
   for (const g of got) if (g.read.read.kind === "ok") statuses.set(g.id, g.read.json);
-  return oddsCheckEvidence({ jobs: newest }, statuses);
+  const evidence = oddsCheckEvidence({ jobs: newest }, statuses);
+  // A failed status read may hide the newest success: unless a success already inside the limit proves freshness, the evidence is unknown (unreadable, never stale).
+  const failedRead = got.some((g) => g.read.read.kind === "error");
+  const proven = evidence !== null && evidence.lastSuccessMs !== null && now - evidence.lastSuccessMs <= ODDS_CHECK_MAX_HOURS * HOUR_MS;
+  return failedRead && !proven ? null : evidence;
 }
 
-/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty when none can be listed or read. */
+/** Runner heartbeat objects (jobs/heartbeat/<machine>.json). Empty (no evidence) when the list fails or any listed heartbeat cannot be read: a partial list must not show the runner as silent. */
 async function readHeartbeats(bucket: R2Bucket): Promise<unknown[]> {
   try {
     const listed = await withTimeout(bucket.list({ prefix: "jobs/heartbeat/", limit: 20 }), READ_TIMEOUT_MS, "heartbeats");
-    return (await Promise.all(listed.objects.map(async (o) => (await readFull(bucket, o.key)).json))).filter((j) => j !== null);
+    const beats = await Promise.all(listed.objects.map(async (o) => (await readFull(bucket, o.key)).json));
+    return beats.some((j) => j === null) ? [] : beats;
   } catch {
     return [];
   }
@@ -125,11 +130,12 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   const events: EventLike[] | null = Array.isArray((index.json as { events?: unknown } | null)?.events) ? ((index.json as { events: EventLike[] }).events) : null;
   // Off weeks (no event in play or just finished, from the published index) are not judged: nothing is expected to publish.
   const active = eventsActive(events, now);
-  const oddsCheck = await readOddsCheck(bucket);
+  const oddsCheck = await readOddsCheck(bucket, now);
   const silent = active === false && runnerSilent(await readHeartbeats(bucket), now);
+  const scheduledBreak = active === false && !silent;
   const ctx = { now, inWindow, active, runnerSilent: silent, ...(oddsCheck ? { oddsCheck } : {}) };
   if (silent) notes.push("No event is in play or published ahead, but no job runner is reporting idle or running within the last 6 h: this is not treated as a scheduled break, so sources are judged.");
-  else if (active === false) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
+  else if (scheduledBreak) notes.push("Scheduled inactivity: no event in play, just finished or published ahead in the index (off week or break); sources are not judged.");
   const judged = [
     ...SOURCES.map((spec) => {
       if (spec.id === "golfprice_index") return judge(spec, index.read, ctx);
@@ -157,12 +163,18 @@ async function check(bucket: R2Bucket, inbox: R2Bucket | undefined, now: number)
   // Scorecard against the newest completed PGA event (not generated_at).
   const card = await readFull(bucket, "golfprice/scorecard/latest.json");
   const cardEvents = (card.json as { events?: Array<{ event_uid?: string; event_start?: string }> } | null)?.events;
-  if (active !== false && card.read.kind === "ok" && Array.isArray(cardEvents) && events) {
+  const cardBase = { id: "scorecard_lag", label: "scorecard vs newest completed event", key: "golfprice/scorecard/latest.json", schedule: "weekly" as const, observed_at: null, age_hours: null, limit_hours: null, via: "events" };
+  if (scheduledBreak) {
+    // Explicit skipped (never a carried-forward verdict) so the doc stays consistent with every other source during a break.
+    judged.push({ ...cardBase, state: "skipped", detail: "No event is in play or just finished in the published index and none is published ahead (off week or break); not judged." });
+  } else if (card.read.kind === "error") {
+    judged.push({ ...cardBase, state: "unreadable", detail: "The storage read failed this tick; no judgment made." });
+  } else if (card.read.kind === "ok" && Array.isArray(cardEvents) && events) {
     const lag = scorecardLag(cardEvents.filter((e): e is { event_uid: string; event_start?: string } => typeof e.event_uid === "string"), events, now);
     judged.push({
-      id: "scorecard_lag", label: "scorecard vs newest completed event", key: "golfprice/scorecard/latest.json", schedule: "weekly",
+      ...cardBase,
       state: lag.state === "behind" ? "stale" : lag.state === "current" ? "ok" : "skipped",
-      observed_at: lag.newestSettled ? `${lag.newestSettled}T00:00:00.000Z` : null, age_hours: null, limit_hours: null, via: "events",
+      observed_at: lag.newestSettled ? `${lag.newestSettled}T00:00:00.000Z` : null,
       detail: lag.state === "behind" ? lag.message : lag.state === "current" ? "The newest completed event is graded (or inside the settle grace)." : "No completed event to compare.",
     });
   }

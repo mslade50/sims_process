@@ -195,7 +195,7 @@ type JudgeBase = Omit<SourceStatus, "state" | "detail" | "stale_since" | "inboxe
 function judgeOddsCheck(base: JudgeBase, spec: { limitHours: number; fields: string[] }, read: Extract<ReadResult, { kind: "ok" }>, ctx: EvalContext): Omit<SourceStatus, "stale_since" | "inboxed_at"> {
   const open = windowOpenForMs(ctx.inWindow, "odds_reprice", ctx.now);
   if (open === 0) return { ...base, limit_hours: null, state: "skipped", detail: "The odds_reprice window is closed; the checker is not expected to run. Content age is never judged (no new prices means no new file)." };
-  if (!ctx.oddsCheck) return { ...base, state: "unreadable", detail: "The job queue could not be read, so whether odds checks are succeeding is unknown." };
+  if (!ctx.oddsCheck) return { ...base, state: "unreadable", detail: "The job queue or the job status records could not be read, so whether odds checks are succeeding is unknown." };
   const hit = fieldFromHead(read.head, spec.fields);
   const content = hit ? timestampMs(hit.value) : null;
   const contentNote = content !== null ? ` Published signals date from ${new Date(content).toISOString()}; a quiet market publishes nothing new.` : "";
@@ -222,7 +222,8 @@ export function carryForward(now: number, current: Array<Omit<SourceStatus, "sta
   const statuses: SourceStatus[] = [];
   const transitions: Transition[] = [];
   const isBad = (s: { state: SourceState }) => s.state === "stale" || s.state === "missing";
-  // An open episode is remembered by stale_since, so a tick that could not judge (unreadable, or a closed window) neither clears nor re-files it.
+  // An open episode is remembered by stale_since, so a tick that could not judge (unreadable, or a closed window or scheduled break) neither clears nor re-files it.
+  // A skipped or unreadable tick never creates or extends an episode: it only keeps the existing stale_since / inboxed_at on a non-stale state.
   const isOpen = (s: SourceStatus | undefined): s is SourceStatus => !!s && s.stale_since !== null;
   for (const cur of current) {
     const before = prev.get(cur.id);
