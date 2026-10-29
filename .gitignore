@@ -314,6 +314,7 @@ scripts/*
 /=
 /.codex_audit_rounds.json
 .wrangler/
+cloudflare_dashboard/**/__pycache__/
 *.stackdump
 *.pstats
 *.bak
