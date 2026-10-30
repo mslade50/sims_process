@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-30 00:45:00 UTC",
+  "generated_at": "2026-10-30 12:37:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:540:2026-10-29/R1_20261030T004500Z",
+      "run_id": "pga:540:2026-10-29/R1_20261030T123700Z",
       "model_version": "B8+v2.6 in-play",
       "after_round": 1,
-      "run_manifest_sha256": "fddbab44b7af3b21f4beabb6bcaa8e788790623adf65928590198fa2d25e667c",
+      "run_manifest_sha256": "61c1eb3ea3472314caa2682bc8c1452ddfea29efe988a3d571d20a66e583159d",
       "base_run_as_of": "2026-10-29 11:12:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-10-30 00:45:00 UTC",
-      "root_generated_at": "2026-10-30 00:45:00 UTC"
+      "generated_at": "2026-10-30 12:37:00 UTC",
+      "root_generated_at": "2026-10-30 12:37:00 UTC"
     },
     "simulation": {
       "num_players": 118,
@@ -40,22 +40,22 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-30 00:45:00 UTC"
+      "at": "2026-10-30 12:37:00 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 8
     },
-    "manifest_sha256": "872f65f1fc39d51b86318130ff96186dd5a775a1c6e65bcb5c9f6c733cbc0c3f"
+    "manifest_sha256": "d23991a866f2bae9e741f6acf330a5961f3192719af0d501e777ca28bee6c98e"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "fe1bb60e140bf8d0f1f5bf5a8a69e8a7453e79396d1857dd3781b33adc1d5fad"
+      "sha256": "2af6404597cdff33fd90fcee3aa0d3c0bb7f91f16209d53c6eb4afbbf54775d6"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
-      "sha256": "5924296b45b390b11709e4521287b8040e8124f07ee04eeb5ce8905be531b82f"
+      "sha256": "491bc79f52786cd1277eb27ec99462ae59b73a81da267a1c8afa48ededd49020"
     }
   },
   "extra": {
@@ -258,9 +258,9 @@
         ]
       ],
       "field_players": 120,
-      "tee_time_players": 120,
+      "tee_time_players": 119,
       "group_sizes": [
-        3,
+        2,
         3,
         3,
         3,
@@ -316,18 +316,12 @@
           "hardy, nick",
           "martin, ben",
           "roy, kevin"
-        ],
-        [
-          "higgo, garrick",
-          "horschel, billy",
-          "ortiz, alvaro"
         ]
       ],
       "excluded_players": [
-        "hardy, nick",
-        "horschel, billy"
+        "hardy, nick"
       ]
     }
   },
-  "manifest_sha256": "d6fb2d8181f8e9ac18fd8f460a80acdad217353768929dd31f40f38b7f7fe48b"
+  "manifest_sha256": "7777dc039ddfbd6eafb539b06ac30ebaccec2f2eb5f096bb8546a765d1a53ef2"
 }

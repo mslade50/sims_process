@@ -1,74 +1,74 @@
 {
   "schema_version": "complete-live-package/v1",
-  "generation": "event-540-r2-872f65f1fc39-4b42bb0164c3",
-  "generated_at": "2026-10-30 00:45:00 UTC",
+  "generation": "event-540-r2-d23991a866f2-4cb617e62215",
+  "generated_at": "2026-10-30 12:37:00 UTC",
   "event_id": "540",
   "tourney": "vidantaworld",
   "round": 2,
-  "simulation_manifest_sha256": "872f65f1fc39d51b86318130ff96186dd5a775a1c6e65bcb5c9f6c733cbc0c3f",
-  "live_tournament_manifest_sha256": "4b42bb0164c31d90cc5841607bcf3f81d56b24ff9a16872fb177c38f42659e3f",
+  "simulation_manifest_sha256": "d23991a866f2bae9e741f6acf330a5961f3192719af0d501e777ca28bee6c98e",
+  "live_tournament_manifest_sha256": "4cb617e6221526cefddee692fcbc4d6c4f3973655f27df7363f0116a8206cb91",
   "release_assets": {
     "matchup_scores_live": {
-      "name": "matchup_scores_live.event-540-r2-872f65f1fc39-4b42bb0164c3.ec7637cfd62abd54.parquet",
-      "sha256": "ec7637cfd62abd54a064161ce596fbca007d242f62ad4ea6b2a3c77cd856f8b1",
-      "size": 16657603
+      "name": "matchup_scores_live.event-540-r2-d23991a866f2-4cb617e62215.f6c51f57976c1f03.parquet",
+      "sha256": "f6c51f57976c1f03d830b2f7a043a3c8e9f049d19c4db20100e920ebd0f83cb7",
+      "size": 16664698
     },
     "tournament_made_cut_full": {
-      "name": "tournament_made_cut_full.event-540-r2-872f65f1fc39-4b42bb0164c3.a52b49b0bcf4908f.parquet",
-      "sha256": "a52b49b0bcf4908fb0bb3bab85d2a79edd531bc520f54612770668fe75ac16e9",
-      "size": 80264235
+      "name": "tournament_made_cut_full.event-540-r2-d23991a866f2-4cb617e62215.358e179dcc02d512.parquet",
+      "sha256": "358e179dcc02d512a00ff9e2ca46e013253cfce971e05c5b0080cb9fc1c33eda",
+      "size": 80264349
     },
     "tournament_samples_full": {
-      "name": "tournament_samples_full.event-540-r2-872f65f1fc39-4b42bb0164c3.fafa92d236091ca3.parquet",
-      "sha256": "fafa92d236091ca3419d1fc12876c9b6592c58d32ccf55f09ffe98f4dc337637",
-      "size": 100691322
+      "name": "tournament_samples_full.event-540-r2-d23991a866f2-4cb617e62215.9dcda8ba9e19cbdb.parquet",
+      "sha256": "9dcda8ba9e19cbdbf830ec384d827cb0ea045e9408561233ef81b58ba5c3a95a",
+      "size": 100727158
     }
   },
   "git_files": {
     "round_3ball_r2.parquet": {
-      "sha256": "5924296b45b390b11709e4521287b8040e8124f07ee04eeb5ce8905be531b82f",
+      "sha256": "491bc79f52786cd1277eb27ec99462ae59b73a81da267a1c8afa48ededd49020",
       "size": 6674
     },
     "round_3ball_r2_contract.json": {
-      "sha256": "c5e61012f6d9bd595daa75d7347e843ebdd2807298686c7234924d1c340db1ff",
-      "size": 7327
+      "sha256": "72834ac13e2c3065ac94aebd99779b179f82dd60534d9701da6d00fdea3feb36",
+      "size": 7196
     },
     "round_3ball_r2_meta.json": {
-      "sha256": "fe1bb60e140bf8d0f1f5bf5a8a69e8a7453e79396d1857dd3781b33adc1d5fad",
-      "size": 3086
+      "sha256": "2af6404597cdff33fd90fcee3aa0d3c0bb7f91f16209d53c6eb4afbbf54775d6",
+      "size": 3011
     },
     "round_h2h_r2.parquet": {
-      "sha256": "0e99dca0fb4ecfe320457c602fbb66f850800867d3944797047e204821be270e",
-      "size": 109145
+      "sha256": "dcf05990cd5b30435e42911ec7e9bde612f7ae662cc347dd7b021ed5192db2f7",
+      "size": 109555
     },
     "round_h2h_r2_health.json": {
-      "sha256": "3211a18cfa50685a418a418fea77f76c11bb9f982444ec7aed156b52417524aa",
+      "sha256": "0122679b1ccb9233ea41fa3c032835a6725b330027e9512b56ecc06a60fd5acc",
       "size": 1932
     },
     "round_h2h_r2_meta.json": {
-      "sha256": "af6b3604b73da09765dff472095834d1d74bf5367cbb7b3a59848a82581753a4",
+      "sha256": "39b983cf5d27d11a6297b6e6b3170f76b5c190790b7bae26d123c8440384ad02",
       "size": 283
     },
     "round_samples.parquet": {
-      "sha256": "a05595c659de0af6914587cc0aa60fa54db311f7db7f7312778dd7a46a6c3261",
-      "size": 1229607
+      "sha256": "993f07fb3985885b754e0be9c9e036a56126a002b050ce1148bf2ad09d7aa7f5",
+      "size": 1228942
     },
     "sim_fairs.json": {
-      "sha256": "a34516a417838141f36e5b6e506c47e13326b0079b399fa21add94c1db0b25b1",
-      "size": 798322
+      "sha256": "be12e2a997c5a2364572dacdfd20dc10a0aa38834c2a97f2fd88c72176349e1e",
+      "size": 798245
     },
     "tournament_live_vidantaworld_health.json": {
-      "sha256": "52096e2b4f49942aad3a31392abb8ec2a0f0e463ccfc25d38aaccb05859eb6f9",
+      "sha256": "9852c73a0c1e5bcb5ba51a475cd0b4f3b8da4e0be59785949167a0882d2c6925",
       "size": 2499
     },
     "tournament_made_cut.parquet": {
-      "sha256": "f4147d21505b28821dec2588a027b3d00794a503130cc0a40b2a1948796983c6",
-      "size": 10688353
+      "sha256": "6e2cf48cb2829d5646eb210bfe966a2cff50bf077a5eea4f2aba76c03ba34581",
+      "size": 10688403
     },
     "tournament_samples.parquet": {
-      "sha256": "13baf55a5b8754a19f9cfd6c4ffc5e36ebcd5e1c9923f4d4bea5c536ac22eb73",
-      "size": 13421976
+      "sha256": "ca3ba39717881c4f1b9afeea26961799cf20bcb9f8fac723bc2d574c432713b7",
+      "size": 13428576
     }
   },
-  "manifest_sha256": "25877cd2375f803444e6dffa630946568f56cceaabf41fbbfe5c1eec5aaf4a9e"
+  "manifest_sha256": "96e1705fc7fc867832ccf4314df53c1d75be8161beab63ca533554a4cf9ab87c"
 }
