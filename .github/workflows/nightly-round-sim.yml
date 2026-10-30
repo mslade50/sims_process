@@ -1,13 +1,11 @@
 name: Nightly Round Sim Backup
 
+# DEPRECATED 2026-10-30: the legacy weekly chain is retired; production is
+# golfprice (mslade50/sim_prep research/rebuild-v1). The 02:45 UTC cron
+# (Fri/Sat/Sun, i.e. Thu/Fri/Sat evening ET) was removed; workflow_dispatch stays
+# for rollback. To re-enable, restore:
+#   schedule: [{cron: '45 2 * * 5'}, {cron: '45 2 * * 6'}, {cron: '45 2 * * 0'}]
 on:
-  schedule:
-    # Fixed at 02:45 UTC: 9:45 PM EST / 10:45 PM EDT (previous day)
-    # Runs Thu night (after R1), Fri night (after R2), Sat night (after R3)
-    - cron: '45 2 * * 5'   # Friday UTC = Thursday evening ET
-    - cron: '45 2 * * 6'   # Saturday UTC = Friday evening ET
-    - cron: '45 2 * * 0'   # Sunday UTC = Saturday evening ET
-
   workflow_dispatch:         # Manual trigger
     inputs:
       publish_dashboard:
