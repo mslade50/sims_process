@@ -2125,6 +2125,15 @@ if __name__ == "__main__":
         _client.close()
         sys.exit(1 if _cancel_err else 0)
 
+    # ── Hard scrape rule: a dry-run / preview / shadow run reads live Kalshi books, so it refuses
+    # while a round is in play and on weekdays 07:30-11:30 ET. A refusal is exit 0 (not a failure). ──
+    if not args.live:
+        _refusal = maker_guard.scrape_refusal(time.time(), _check_not_live)
+        if _refusal:
+            print(f"[maker] {_refusal}")
+            _client.close()
+            sys.exit(0)
+
     # ── Live-trade preconditions: the live event must be confirmed inside
     # sim_inputs, then kill switch, sim fairs fresh, then NOT a live round.
     # Any failure halts --live and PULLS the bot's own smk_ quotes. Manual
