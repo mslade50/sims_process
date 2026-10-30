@@ -173,3 +173,73 @@ def test_entrypoint_recheck_before_scan_exits_zero_without_fetching(monkeypatch,
     assert "started during preconditions" in out
     assert "[maker] tourney=" not in out, "scan() must not be reached"
     assert fetched == []
+
+
+# ── round 2 review ──
+def test_a_slow_check_that_crosses_0730_refuses():
+    clock = {"t": ts(2026, 10, 30, 7, 29) + 59}
+
+    def slow_but_clear():
+        clock["t"] += 3           # the status I/O takes 3 s and ends at 07:30:02
+        return (True, "not live")
+    reason = mg.scrape_refusal(clock["t"], slow_but_clear, clock=lambda: clock["t"])
+    assert reason and "blackout" in reason and "during the status check" in reason
+
+
+def test_a_check_that_stays_outside_the_window_is_allowed():
+    t = ts(2026, 10, 30, 18, 0)
+    assert mg.scrape_refusal(t, lambda: (True, "ok"), clock=lambda: t + 5) is None
+
+
+def _km(monkeypatch):
+    monkeypatch.setenv("COEFFS_FROM_CACHE", "1")
+    import kalshi_maker
+    return kalshi_maker
+
+
+def test_unknown_round_with_a_stale_feed_is_refused_for_scrape_but_not_for_live(monkeypatch):
+    import pandas as pd
+    km = _km(monkeypatch)
+    sheet = types.ModuleType("sheet_config")
+
+    def down(*a, **k):
+        raise OSError("sheet unavailable")
+    sheet.get_param = down
+    monkeypatch.setitem(sys.modules, "sheet_config", sheet)
+    stale = pd.DataFrame({"last_updated": ["2020-01-01 00:00:00"]})
+    import api_utils
+    monkeypatch.setattr(api_utils, "fetch_live_stats", lambda *a, **k: stale)
+    monkeypatch.setattr(km, "_round_teetimes", lambda rnd: [])
+    ok, reason = km._scrape_not_live()
+    assert ok is False and "unknown" in reason.lower() or "refuse" in reason.lower()
+    assert km._current_play_round_strict() is None
+    assert km._current_play_round() == 1               # the --live path keeps its old fallback
+
+
+def test_scrape_signals_use_a_clock_read_after_the_io(monkeypatch):
+    import pandas as pd
+    km = _km(monkeypatch)
+    sheet = types.ModuleType("sheet_config")
+    sheet.get_param = lambda *a, **k: "1"
+    monkeypatch.setitem(sys.modules, "sheet_config", sheet)
+    import api_utils
+    now = {"t": 1_000_000.0}
+    monkeypatch.setattr(km.time, "time", lambda: now["t"])
+
+    def slow_feed(*a, **k):
+        now["t"] += 3600                                  # the read takes an hour
+        return pd.DataFrame({"last_updated": ["2026-10-30 12:00:00"]})
+    monkeypatch.setattr(api_utils, "fetch_live_stats", slow_feed)
+    seen = []
+    monkeypatch.setattr(km, "_round_teetimes", lambda rnd: [now["t"] + 100, now["t"] + 200])
+    monkeypatch.setattr(mg, "schedule_live", lambda a, b, n, round_hours=None: seen.append(n) or True)
+    km._live_signals(strict=True)
+    assert seen == [now["t"]] and seen[0] >= 1_000_000.0 + 3600
+
+
+def test_pre_import_refusal_handles_argparse_abbreviations():
+    fri9 = ts(2026, 10, 30, 9, 0)
+    for flag in ("--liv", "--live", "--cancel-a", "--list", "--cancel-script=1"):
+        assert mg.pre_import_refusal([flag], fri9) is None, flag
+    for flag in ("--preview", "--prev", "--no-matchups", "--limit=3", "-x", "--"):
+        assert mg.pre_import_refusal([flag], fri9) is not None, flag

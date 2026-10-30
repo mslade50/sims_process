@@ -334,23 +334,36 @@ def resolve_scrape_live(sched, dg):
     return (False, "schedule and datagolf both say not live")
 
 
+_EXEMPT_FLAGS = ("--live", "--cancel-all", "--cancel-script", "--list-orders")
+
+
+def _is_exempt_flag(arg):
+    """argparse accepts unambiguous prefixes (--liv), so match prefixes of the exempt flags too."""
+    if not arg.startswith("--") or len(arg) <= 2:
+        return False
+    name = arg.split("=", 1)[0]
+    return any(flag.startswith(name) for flag in _EXEMPT_FLAGS)
+
+
 def pre_import_refusal(argv, now_ts):
     """Refusal for the window check that must run BEFORE kalshi_maker imports anything network-capable
     (sim_inputs fetches Google Sheets coefficients at import). None when the run is --live, an order
-    maintenance mode (--cancel-all, --cancel-script, --list-orders), or outside the window."""
-    args = set(argv)
-    if args & {"--live", "--cancel-all", "--cancel-script", "--list-orders"}:
+    maintenance mode (--cancel-all, --cancel-script, --list-orders; abbreviations included), or outside the window."""
+    if any(_is_exempt_flag(a) for a in argv):
         return None
     if weekday_blackout(now_ts):
         return "scrape refused: weekday 07:30-11:30 ET blackout"
     return None
 
 
-def scrape_refusal(now_ts, not_live_check):
+def scrape_refusal(now_ts, not_live_check, clock=None):
     """One-line refusal reason, or None when reading the books is allowed.
 
-    not_live_check() -> (ok_to_trade, reason) where ok means NOT live (kalshi_maker._check_not_live).
-    An exception from it refuses."""
+    not_live_check() -> (ok_to_read, reason). An exception from it refuses. The window is checked again with a
+    fresh clock after the (possibly slow) status I/O and before permission is granted, so a check that starts at
+    07:29:59 and returns at 07:30:01 refuses."""
+    import time as _time
+    clock = clock or _time.time
     if weekday_blackout(now_ts):
         return "scrape refused: weekday 07:30-11:30 ET blackout"
     try:
@@ -359,6 +372,8 @@ def scrape_refusal(now_ts, not_live_check):
         return f"scrape refused: live status check failed ({type(e).__name__})"
     if not ok:
         return f"scrape refused: round in play ({reason})"
+    if weekday_blackout(clock()):
+        return "scrape refused: weekday 07:30-11:30 ET blackout (reached during the status check)"
     return None
 
 

@@ -1916,24 +1916,47 @@ def _check_risk_limits():
         return (False, f"risk limits unreadable ({e}) — fail-closed")
 
 
-def _live_signals():
-    """(round, schedule_live, datagolf_live), each True/False/None. Best-effort I/O."""
+def _current_play_round_strict():
+    """Like _current_play_round, but an unreadable sheet is None (unknown), never round 1.
+    Used by the scrape guard only; --live keeps the old fallback."""
+    try:
+        import sheet_config
+        rc = int(float(sheet_config.get_param("round", "0") or 0))
+    except Exception:
+        return None
+    return max(1, min(4, rc + 1))
+
+
+def _live_signals(strict=False):
+    """(round, schedule_live, datagolf_live), each True/False/None. Best-effort I/O.
+
+    strict (scrape guard): an unknown round stays unknown and yields (None, None, None), and the
+    schedule / feed ages are judged against a clock read AFTER the network reads, so a slow read
+    cannot hand out a verdict that is already past 07:30 or a tee time."""
     now = time.time()
-    rnd = _current_play_round()
+    rnd = _current_play_round_strict() if strict else _current_play_round()
+    if rnd is None:
+        print("  [live] current round unknown (sheet unavailable); refusing to guess")
+        return None, None, None
     api_key = os.getenv("DATAGOLF_API_KEY", "")
     sched = dg = None
     tts = _round_teetimes(rnd)  # shared with _quote_expiration_ts (memoized)
-    if tts:
-        sched = maker_guard.schedule_live(min(tts), max(tts), now)
+    lu = None
+    feed_ok = False
     try:  # DataGolf live feed freshness
         from api_utils import fetch_live_stats
         ls = fetch_live_stats(rnd, api_key)
-        lu = None
         if ls is not None and len(ls) and "last_updated" in ls.columns:
             lu = _parse_dt_to_ts(str(ls["last_updated"].iloc[0]))
-        dg = maker_guard.datagolf_live(lu, now)
+        feed_ok = True
     except Exception as e:
         print(f"  [live] datagolf feed unavailable: {e}")
+    if strict:
+        now = time.time()
+    if tts:
+        sched = maker_guard.schedule_live(min(tts), max(tts), now)
+    if feed_ok:
+        dg = maker_guard.datagolf_live(lu, now)
     return rnd, sched, dg
 
 
@@ -1949,7 +1972,7 @@ def _check_not_live():
 def _scrape_not_live():
     """(ok_to_read, reason) for the hard scrape rule: conservative resolution, see
     maker_guard.resolve_scrape_live. A stale feed never overrides a live schedule."""
-    rnd, sched, dg = _live_signals()
+    rnd, sched, dg = _live_signals(strict=True)
     is_live, reason = maker_guard.resolve_scrape_live(sched, dg)
     return (not is_live, f"round {rnd}: {reason}")
 
