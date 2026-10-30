@@ -6,8 +6,15 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Review
 
-Repo proof command and CI details: `docs/REVIEW_POLICY.md`. Run
-`python secret_free_tests.py` before opening a pull request.
+- Proof command (the one CI runs): `python secret_free_tests.py`. Paste its real summary into the PR under Proof. No linter config exists; do not invent one.
+- HIGH item: pricing, edge, simulation or model logic, and published data outputs.
+- A displayed page or alert also needs a sample alert text, screenshot or JSON sample.
+- CI is `.github/workflows/review-check.yml`, four jobs (ubuntu-latest, no secrets, `persist-credentials: false`):
+  - `body`: `scripts/check_pr_body.py` fails when Proof or Rollback is missing or placeholder.
+  - `test-weakening`: `scripts/check_test_weakening.py` checks the diff for deleted or skipped tests, wider exclusions (`--ignore`, `--deselect`, `-k`, conftest `collect_ignore`) and looser asserts. It needs a real `## Test changes` note. Any edit to a guard checker (`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`, `scripts/check_test_inventory.py`, `secret_free_tests.py`) or its workflow, even a comment-only edit, counts as a weakening.
+  - `test-inventory`: `scripts/check_test_inventory.py` compares collected test ids and script check counts on base and head. A dropped id needs `## Test changes` (a rename needs `old -> new`).
+  - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`; modules needing credentials or the `sims_kernel` build are not collected (list in `conftest.py`).
+- Dependabot and Renovate PRs skip the body, weakening and inventory checks.
 
 ## Pipeline Execution Order
 
