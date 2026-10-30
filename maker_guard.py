@@ -317,6 +317,35 @@ def weekday_blackout(now_ts):
     return local.weekday() < 5 and BLACKOUT_START_MIN <= minutes < BLACKOUT_END_MIN
 
 
+def resolve_scrape_live(sched, dg):
+    """Pure. (is_live, reason) for the scrape rule. Deliberately NOT resolve_live: a stale or silent
+    DataGolf feed must never override a tee-time schedule that says a round is live.
+    Reading is allowed only when the schedule says not live AND DataGolf confidently says not live
+    (fresh-feed age >= MAKER_LIVE_STALE_MIN). Live on either source, a disagreement, an in-between
+    or missing reading on either source all refuse."""
+    if sched is True:
+        return (True, f"schedule says live (datagolf={dg})")
+    if dg is True:
+        return (True, f"datagolf says live (schedule={sched})")
+    if sched is None:
+        return (True, f"tee-time schedule unknown (datagolf={dg}) -> refuse")
+    if dg is None:
+        return (True, "datagolf feed unreadable or in-between -> refuse")
+    return (False, "schedule and datagolf both say not live")
+
+
+def pre_import_refusal(argv, now_ts):
+    """Refusal for the window check that must run BEFORE kalshi_maker imports anything network-capable
+    (sim_inputs fetches Google Sheets coefficients at import). None when the run is --live, an order
+    maintenance mode (--cancel-all, --cancel-script, --list-orders), or outside the window."""
+    args = set(argv)
+    if args & {"--live", "--cancel-all", "--cancel-script", "--list-orders"}:
+        return None
+    if weekday_blackout(now_ts):
+        return "scrape refused: weekday 07:30-11:30 ET blackout"
+    return None
+
+
 def scrape_refusal(now_ts, not_live_check):
     """One-line refusal reason, or None when reading the books is allowed.
 

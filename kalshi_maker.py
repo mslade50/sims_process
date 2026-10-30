@@ -81,6 +81,16 @@ import re
 import sys
 import time
 from collections import Counter, defaultdict
+
+if __name__ == "__main__":
+    # Hard scrape rule, step 1: the weekday window is checked before any network-capable import
+    # (sim_inputs pulls Google Sheets coefficients at import time). maker_guard is stdlib only.
+    import maker_guard as _mg_pre
+    _pre = _mg_pre.pre_import_refusal(sys.argv[1:], time.time())
+    if _pre:
+        print(f"[maker] {_pre}")
+        sys.exit(0)
+
 from dotenv import load_dotenv
 
 import httpx
@@ -1906,10 +1916,8 @@ def _check_risk_limits():
         return (False, f"risk limits unreadable ({e}) — fail-closed")
 
 
-def _check_not_live():
-    """(ok_to_trade, reason). ok = NOT live. Schedule (tee-times) is the default;
-    the DataGolf live feed overrides on a confident signal. Best-effort I/O;
-    fail-closed (assume live) when both are blind."""
+def _live_signals():
+    """(round, schedule_live, datagolf_live), each True/False/None. Best-effort I/O."""
     now = time.time()
     rnd = _current_play_round()
     api_key = os.getenv("DATAGOLF_API_KEY", "")
@@ -1926,8 +1934,29 @@ def _check_not_live():
         dg = maker_guard.datagolf_live(lu, now)
     except Exception as e:
         print(f"  [live] datagolf feed unavailable: {e}")
+    return rnd, sched, dg
+
+
+def _check_not_live():
+    """(ok_to_trade, reason). ok = NOT live. Schedule (tee-times) is the default;
+    the DataGolf live feed overrides on a confident signal. Best-effort I/O;
+    fail-closed (assume live) when both are blind. Used by --live (unchanged)."""
+    rnd, sched, dg = _live_signals()
     is_live, reason = maker_guard.resolve_live(sched, dg)
     return (not is_live, f"round {rnd}: {reason}")
+
+
+def _scrape_not_live():
+    """(ok_to_read, reason) for the hard scrape rule: conservative resolution, see
+    maker_guard.resolve_scrape_live. A stale feed never overrides a live schedule."""
+    rnd, sched, dg = _live_signals()
+    is_live, reason = maker_guard.resolve_scrape_live(sched, dg)
+    return (not is_live, f"round {rnd}: {reason}")
+
+
+def _dry_run_refusal():
+    """Refusal line for a non-live run (window + round in play), or None."""
+    return maker_guard.scrape_refusal(time.time(), _scrape_not_live)
 
 
 _BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -2128,7 +2157,7 @@ if __name__ == "__main__":
     # ── Hard scrape rule: a dry-run / preview / shadow run reads live Kalshi books, so it refuses
     # while a round is in play and on weekdays 07:30-11:30 ET. A refusal is exit 0 (not a failure). ──
     if not args.live:
-        _refusal = maker_guard.scrape_refusal(time.time(), _check_not_live)
+        _refusal = _dry_run_refusal()
         if _refusal:
             print(f"[maker] {_refusal}")
             _client.close()
@@ -2157,6 +2186,14 @@ if __name__ == "__main__":
             is_script=_is_script_order, cancel_order=cancel_order, alert=_alert)
         _client.close()
         sys.exit(_halt_code)
+
+    # Recheck immediately before any book fetch: a round may have started during the preconditions above.
+    if not args.live:
+        _refusal = _dry_run_refusal()
+        if _refusal:
+            print(f"[maker] {_refusal}")
+            _client.close()
+            sys.exit(0)
 
     try:
         cands, prob_lookup = scan()
