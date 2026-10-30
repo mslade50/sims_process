@@ -1,8 +1,10 @@
 name: Midweek Round Automation
 
+# DEPRECATED 2026-10-30: the legacy weekly chain is retired; production is
+# golfprice (mslade50/sim_prep research/rebuild-v1). The repository_dispatch
+# trigger (types: [sentinel-scrape-complete], sent by golf_scraping) was
+# removed; workflow_dispatch stays for rollback. To re-enable, restore it.
 on:
-  repository_dispatch:
-    types: [sentinel-scrape-complete]
   workflow_dispatch:
     inputs:
       dry_run:

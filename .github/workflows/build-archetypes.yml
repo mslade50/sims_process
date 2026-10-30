@@ -4,16 +4,15 @@ name: Build Weekly Archetypes
 # snapshot in Cloudflare R2 (sim_prep's dgdata bucket) and commits it. The
 # sims read this CSV at runtime instead of needing db access on any runner.
 #
-# Triggers: a push that changes sim_inputs.py (the new week's config landing),
-# a Wednesday-morning refresh, or manual dispatch.
+# DEPRECATED 2026-10-30: the legacy weekly chain is retired; production is
+# golfprice (mslade50/sim_prep research/rebuild-v1). Manual dispatch only. The
+# push trigger (paths: sim_inputs.py on main) and the Wednesday 14:00 UTC cron
+# were removed; to re-enable, restore them:
+#   push: {branches: [main], paths: [sim_inputs.py]}
+#   schedule: [{cron: '0 14 * * 3'}]
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [sim_inputs.py]
-  schedule:
-    - cron: '0 14 * * 3'
 
 concurrency:
   group: build-archetypes

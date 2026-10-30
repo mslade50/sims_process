@@ -16,7 +16,35 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
   - `test-inventory`: the workflow installs each commit's own `requirements.txt`, then `scripts/check_test_inventory.py` collects the suite on the base and head commits, using that tree's own conftest and runner flags. Added tests are fine. It records test ids (collected, or skipped with the reason, including conftest `SKIP_TESTS`), `CREDENTIAL_IMPORTS` and `KERNEL_IMPORTS` modules not collected, and each script program's check count. It fails when a test id disappears, a running test becomes skipped or not collected, or a script disappears or reports fewer checks, unless `## Test changes` is filled in. A plain rename is one removed id and one added id, so it needs an `old -> new` mapping. It does not parse the diff, so an exclusion hidden in a conftest hook, the runner, the workflow or the requirements still shows up.
   - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`, `permissions: contents: read`. One pytest process per module. `conftest.py` lists modules that need Google credentials (`CREDENTIAL_IMPORTS`, which include external-service scripts) or the compiled `sims_kernel` (`KERNEL_IMPORTS`). They are not collected in CI, where those are missing, and they collect locally when the credential or the kernel is present. A collection error outside that list fails the job. One stale source-grep test is skipped (`SKIP_TESTS`); the rest of its module runs. A `SCRIPT_MODULES` entry that collects pytest items fails the job. Each script program must report a nonzero pass count.
 
-## Pipeline Execution Order
+## Legacy weekly chain: DEPRECATED (owner decision 2026-10-30)
+
+The legacy weekly chain is retired: sim_prep normal-mode `weekly_pipeline.py` prep
+(`sim_inputs.py` edit, publish to this repo's `main`) and this repo's sim chain
+(`new_sim.py` calibration and final pass, `mkt_regress.py`, round sims, reprice,
+midweek automation, legacy `publish_sim_fairs.py` publication).
+
+Production is golfprice: `mslade50/sim_prep`, branch `research/rebuild-v1`, under
+`research/sportsbook_model/rebuild_v1`, driven by the Worker cron in
+`cloudflare_dashboard`. Do not use the sections below for a new week.
+
+Still running on purpose:
+
+- ETR legacy weekly (`weekly_pipeline.py --etr-only`, `new_sim.py`, `mkt_regress.py`,
+  `skill_merge.py`, `sim_inputs.py`, `tools/etr_*`). ETR deliverables have no golfprice
+  replacement yet; this carve-out lasts until the owner says otherwise.
+- `monday-grading.yml` and `clv-alert.yml` (Google Sheet bet grading) until the ledgers
+  are reconciled.
+- `kalshi-preflight`, `deploy-cloudflare-dashboard`, `deploy-odds-screen`,
+  `publish-cloudflare-dashboard-data`, `local-runner-smoke`, and the
+  ownership/hand-back logic in `publish_sim_fairs.py`.
+
+Triggers removed 2026-10-30 (each workflow keeps `workflow_dispatch` for rollback):
+`nightly-round-sim.yml` cron, `build-archetypes.yml` push and cron,
+`midweek-round-automation.yml` `repository_dispatch`, `weekly-cleanup.yml` cron.
+`reprice.yml` still lists `repository_dispatch` because open PRs #35 and #21 edit that
+file; remove the trigger there after they land.
+
+## Pipeline Execution Order (legacy, deprecated)
 
 When preparing ETR, run `hole_baselines.py`; it resolves historical editions
 by physical `course_id` and exact `(year, event_id)` pairs rather than assuming

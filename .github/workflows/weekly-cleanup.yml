@@ -1,11 +1,13 @@
 name: Weekly Data Cleanup
 
 # Runs Monday afternoon AFTER the 14:00/15:00 UTC grading pipeline
+# DEPRECATED 2026-10-30: it only prunes past-week files of the legacy weekly chain
+# (final_predictions_*, pre_course_fit_*, pre_sim_summary_*, h2h_matrix_*,
+# rank_probs_updated_*) and reads the tourney from sim_inputs.py, which the legacy
+# publisher no longer updates. The Monday 17:00 UTC cron was removed;
+# workflow_dispatch stays. To re-enable, restore:
+#   schedule: [{cron: '0 17 * * 1'}]
 on:
-  schedule:
-    - cron: '0 17 * * 1'  # Monday 17:00 UTC = noon EST / 1 PM EDT
-  
-  # Also allow manual trigger for testing
   workflow_dispatch:
 
 permissions:

@@ -8,7 +8,35 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 Review facts are in AGENTS.md under Review.
 
-## Pipeline Execution Order
+## Legacy weekly chain: DEPRECATED (owner decision 2026-10-30)
+
+The legacy weekly chain is retired: sim_prep normal-mode `weekly_pipeline.py` prep
+(`sim_inputs.py` edit, publish to this repo's `main`) and this repo's sim chain
+(`new_sim.py` calibration and final pass, `mkt_regress.py`, round sims, reprice,
+midweek automation, legacy `publish_sim_fairs.py` publication).
+
+Production is golfprice: `mslade50/sim_prep`, branch `research/rebuild-v1`, under
+`research/sportsbook_model/rebuild_v1`, driven by the Worker cron in
+`cloudflare_dashboard`. Do not use the sections below for a new week.
+
+Still running on purpose:
+
+- ETR legacy weekly (`weekly_pipeline.py --etr-only`, `new_sim.py`, `mkt_regress.py`,
+  `skill_merge.py`, `sim_inputs.py`, `tools/etr_*`). ETR deliverables have no golfprice
+  replacement yet; this carve-out lasts until the owner says otherwise.
+- `monday-grading.yml` and `clv-alert.yml` (Google Sheet bet grading) until the ledgers
+  are reconciled.
+- `kalshi-preflight`, `deploy-cloudflare-dashboard`, `deploy-odds-screen`,
+  `publish-cloudflare-dashboard-data`, `local-runner-smoke`, and the
+  ownership/hand-back logic in `publish_sim_fairs.py`.
+
+Triggers removed 2026-10-30 (each workflow keeps `workflow_dispatch` for rollback):
+`nightly-round-sim.yml` cron, `build-archetypes.yml` push and cron,
+`midweek-round-automation.yml` `repository_dispatch`, `weekly-cleanup.yml` cron.
+`reprice.yml` still lists `repository_dispatch` because open PRs #35 and #21 edit that
+file; remove the trigger there after they land.
+
+## Pipeline Execution Order (legacy, deprecated)
 
 When preparing ETR, run `hole_baselines.py`; it resolves historical editions
 by physical `course_id` and exact `(year, event_id)` pairs rather than assuming
