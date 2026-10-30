@@ -1,8 +1,6 @@
 # Review policy
 
-Global rules come from `mslade50/agent-rules`, installed on this machine as `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. This file holds sims_process facts only.
-
-This file holds the repository-specific proof commands, HIGH items and CI details.
+Common review rules (proof, risk tiers, reviewers, structure checklist) are in `repo/REVIEW_POLICY.core.md` of `mslade50/agent-rules`, available on this machine at `~/.agent-rules/src/repo/REVIEW_POLICY.core.md`. This file holds sims_process additions only.
 
 ## Repository proof commands
 
