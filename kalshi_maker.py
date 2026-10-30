@@ -1917,11 +1917,14 @@ def _check_risk_limits():
 
 
 def _current_play_round_strict():
-    """Like _current_play_round, but an unreadable sheet is None (unknown), never round 1.
-    Used by the scrape guard only; --live keeps the old fallback."""
+    """Like _current_play_round, but an unreadable sheet or a missing/blank round cell is
+    None (unknown), never round 1. Used by the scrape guard only; --live keeps the old fallback."""
     try:
         import sheet_config
-        rc = int(float(sheet_config.get_param("round", "0") or 0))
+        raw = sheet_config.get_param("round", None)
+        if raw is None or not str(raw).strip():
+            return None
+        rc = int(float(raw))
     except Exception:
         return None
     return max(1, min(4, rc + 1))

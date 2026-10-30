@@ -216,6 +216,15 @@ def test_unknown_round_with_a_stale_feed_is_refused_for_scrape_but_not_for_live(
     assert km._current_play_round() == 1               # the --live path keeps its old fallback
 
 
+def test_blank_or_missing_round_cell_is_unknown_for_scrape(monkeypatch):
+    km = _km(monkeypatch)
+    for value in (None, "", "   "):
+        sheet = types.ModuleType("sheet_config")
+        sheet.get_param = lambda name, default=None, _v=value: default if _v is None else _v
+        monkeypatch.setitem(sys.modules, "sheet_config", sheet)
+        assert km._current_play_round_strict() is None, repr(value)
+
+
 def test_scrape_signals_use_a_clock_read_after_the_io(monkeypatch):
     import pandas as pd
     km = _km(monkeypatch)
