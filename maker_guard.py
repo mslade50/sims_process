@@ -298,6 +298,85 @@ def schedule_live(first_tee_ts, last_tee_ts, now_ts, round_hours=None):
     return (now_ts >= first_tee_ts) and (now_ts <= last_tee_ts + rh * 3600.0)
 
 
+# ── Hard scrape rule (owner, 2026-10-30) ──────────────────────────────────────
+# "We should not be scraping anything when rounds are in play." Dry-run, preview and
+# shadow runs read live Kalshi books, so they refuse (exit 0, one log line) while a round
+# is live and on weekdays 07:30-11:30 America/New_York. Fail closed: if live status cannot
+# be established, resolve_live already assumes live. --live is untouched (its own halt
+# path pulls the bot's quotes).
+BLACKOUT_START_MIN = 7 * 60 + 30
+BLACKOUT_END_MIN = 11 * 60 + 30
+
+
+def weekday_blackout(now_ts):
+    """Pure. True Mon-Fri from 07:30 (inclusive) to 11:30 (exclusive) America/New_York; DST follows the zone."""
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    local = _dt.datetime.fromtimestamp(now_ts, ZoneInfo("America/New_York"))
+    minutes = local.hour * 60 + local.minute
+    return local.weekday() < 5 and BLACKOUT_START_MIN <= minutes < BLACKOUT_END_MIN
+
+
+def resolve_scrape_live(sched, dg):
+    """Pure. (is_live, reason) for the scrape rule. Deliberately NOT resolve_live: a stale or silent
+    DataGolf feed must never override a tee-time schedule that says a round is live.
+    Reading is allowed only when the schedule says not live AND DataGolf confidently says not live
+    (fresh-feed age >= MAKER_LIVE_STALE_MIN). Live on either source, a disagreement, an in-between
+    or missing reading on either source all refuse."""
+    if sched is True:
+        return (True, f"schedule says live (datagolf={dg})")
+    if dg is True:
+        return (True, f"datagolf says live (schedule={sched})")
+    if sched is None:
+        return (True, f"tee-time schedule unknown (datagolf={dg}) -> refuse")
+    if dg is None:
+        return (True, "datagolf feed unreadable or in-between -> refuse")
+    return (False, "schedule and datagolf both say not live")
+
+
+_EXEMPT_FLAGS = ("--live", "--cancel-all", "--cancel-script", "--list-orders")
+
+
+def _is_exempt_flag(arg):
+    """argparse accepts unambiguous prefixes (--liv), so match prefixes of the exempt flags too."""
+    if not arg.startswith("--") or len(arg) <= 2:
+        return False
+    name = arg.split("=", 1)[0]
+    return any(flag.startswith(name) for flag in _EXEMPT_FLAGS)
+
+
+def pre_import_refusal(argv, now_ts):
+    """Refusal for the window check that must run BEFORE kalshi_maker imports anything network-capable
+    (sim_inputs fetches Google Sheets coefficients at import). None when the run is --live, an order
+    maintenance mode (--cancel-all, --cancel-script, --list-orders; abbreviations included), or outside the window."""
+    if any(_is_exempt_flag(a) for a in argv):
+        return None
+    if weekday_blackout(now_ts):
+        return "scrape refused: weekday 07:30-11:30 ET blackout"
+    return None
+
+
+def scrape_refusal(now_ts, not_live_check, clock=None):
+    """One-line refusal reason, or None when reading the books is allowed.
+
+    not_live_check() -> (ok_to_read, reason). An exception from it refuses. The window is checked again with a
+    fresh clock after the (possibly slow) status I/O and before permission is granted, so a check that starts at
+    07:29:59 and returns at 07:30:01 refuses."""
+    import time as _time
+    clock = clock or _time.time
+    if weekday_blackout(now_ts):
+        return "scrape refused: weekday 07:30-11:30 ET blackout"
+    try:
+        ok, reason = not_live_check()
+    except Exception as e:  # fail closed
+        return f"scrape refused: live status check failed ({type(e).__name__})"
+    if not ok:
+        return f"scrape refused: round in play ({reason})"
+    if weekday_blackout(clock()):
+        return "scrape refused: weekday 07:30-11:30 ET blackout (reached during the status check)"
+    return None
+
+
 def quote_expiry(now_ts, tee_times, *, ttl_max, ttl_fallback, tee_buffer, ttl_short):
     """Pure. Native expiration_ts for a quote posted now, pinned to the schedule.
 
