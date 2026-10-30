@@ -6,15 +6,15 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Review
 
-- Proof command (the one CI runs): `python secret_free_tests.py`. Paste its real summary into the PR under Proof. No linter config exists; do not invent one.
+- Proof command (the one CI runs): `python secret_free_tests.py`, after `python -m pip install -r requirements.txt "pytest>=8.1,<10"`. Paste its real summary into the PR under Proof: the pytest counts, the script counts and the not-collected list. "Tests passed" alone is not proof. No linter config exists; do not invent one.
 - HIGH item: pricing, edge, simulation or model logic, and published data outputs.
 - A displayed page or alert also needs a sample alert text, screenshot or JSON sample.
-- CI is `.github/workflows/review-check.yml`, four jobs (ubuntu-latest, no secrets, `persist-credentials: false`):
-  - `body`: `scripts/check_pr_body.py` fails when Proof or Rollback is missing or placeholder.
-  - `test-weakening`: `scripts/check_test_weakening.py` checks the diff for deleted or skipped tests, wider exclusions (`--ignore`, `--deselect`, `-k`, conftest `collect_ignore`) and looser asserts. It needs a real `## Test changes` note. Any edit to a guard checker (`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`, `scripts/check_test_inventory.py`, `secret_free_tests.py`) or its workflow, even a comment-only edit, counts as a weakening.
-  - `test-inventory`: `scripts/check_test_inventory.py` compares collected test ids and script check counts on base and head. A dropped id needs `## Test changes` (a rename needs `old -> new`).
-  - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`; modules needing credentials or the `sims_kernel` build are not collected (list in `conftest.py`).
-- Dependabot and Renovate PRs skip the body, weakening and inventory checks.
+- The PR template is `.github/PULL_REQUEST_TEMPLATE.md`. Its headings: Risk tier, Proof, Rollback steps, Test changes. Other bots and coding agents must fill it; only Dependabot and Renovate PRs skip the body, weakening and inventory checks.
+- CI is `.github/workflows/review-check.yml`, four jobs (`ubuntu-latest`, no secrets, `persist-credentials: false`). Other workflows are scheduled or manual and some use a self-hosted runner; review-check does not.
+  - `body`: `python3 scripts/check_pr_body.py` fails when Proof or Rollback is missing, empty or placeholder (`is_placeholder()` in that script). It does not require `## Test changes`.
+  - `test-weakening`: `scripts/check_test_weakening.py` reads the PR diff (`base...head`). It flags a deleted test file, a removed test, a new skip, xfail or importorskip, a new or wider exclusion (`--ignore`, `--deselect`, `-k`, conftest `collect_ignore`) and a looser assert. It needs a real `## Test changes` note. A rename, an equivalent assert rewrite and a tighter tolerance are not weakenings. `secret_free_tests.py` and `scripts/secret_free_tests.py` are scanned as CI config. Any edit to a guard checker (`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`, `scripts/check_test_inventory.py`, `secret_free_tests.py`) or to a workflow that runs one, even a comment-only edit, counts as a weakening.
+  - `test-inventory`: `scripts/check_test_inventory.py` installs each commit's own `requirements.txt`, then collects the suite on the base and head commits. It records test ids (collected, or skipped with the reason, including conftest `SKIP_TESTS`), `CREDENTIAL_IMPORTS` and `KERNEL_IMPORTS` modules not collected, and each script program's check count. It fails when a test id disappears, a running test becomes skipped or not collected, or a script disappears or reports fewer checks, unless `## Test changes` is filled in. A plain rename is one removed id and one added id, so it needs an `old -> new` mapping. It does not parse the diff, so an exclusion hidden in a conftest hook, the runner, the workflow or the requirements still shows up.
+  - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`, `permissions: contents: read`. One pytest process per module. Modules that need Google credentials, a live service or the compiled `sims_kernel` are not collected when it is missing (list in `conftest.py`). A collection error outside that list fails the job. One stale source-grep test is skipped (`SKIP_TESTS`); the rest of its module runs. A `SCRIPT_MODULES` entry that collects pytest items fails the job. Each script program must report a nonzero pass count.
 
 ## Pipeline Execution Order
 
