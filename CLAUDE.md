@@ -6,8 +6,7 @@ Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Comb
 
 ## Review
 
-Repo proof command and CI details: `docs/REVIEW_POLICY.md`. Run
-`python secret_free_tests.py` before opening a pull request.
+Review facts are in AGENTS.md under Review.
 
 ## Pipeline Execution Order
 

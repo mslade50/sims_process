@@ -296,7 +296,6 @@ permanent_data/board_closing.json
 # This block stays after !*.py and !*.md so those exceptions do not reopen it.
 !docs/
 docs/*
-!docs/REVIEW_POLICY.md
 !scripts/
 scripts/*
 !scripts/check_pr_body.py
