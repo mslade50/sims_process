@@ -1,6 +1,6 @@
 name: Weekly Data Cleanup
 
-# Runs Monday afternoon AFTER the 14:00/15:00 UTC grading pipeline
+# Formerly ran Monday afternoon after the 14:00/15:00 UTC grading pipeline; now manual only (see below).
 # DEPRECATED 2026-10-30: it only prunes past-week files of the legacy weekly chain
 # (final_predictions_*, pre_course_fit_*, pre_sim_summary_*, h2h_matrix_*,
 # rank_probs_updated_*) and reads the tourney from sim_inputs.py, which the legacy

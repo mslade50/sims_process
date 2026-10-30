@@ -30,6 +30,11 @@ Still running on purpose:
   `publish-cloudflare-dashboard-data`, `local-runner-smoke`, and the
   ownership/hand-back logic in `publish_sim_fairs.py`.
 
+`sim_inputs.py` identity (`tourney`, `event_ids`) is kept current by golfprice: each PGA
+board publish to this repo rewrites those two lines in the same commit as
+`sim_fairs.json`, so the Kalshi gate (`kalshi_maker.py`, `maker_guard.py`,
+`kalshi-preflight.yml`) keeps matching the live event.
+
 Triggers removed 2026-10-30 (each workflow keeps `workflow_dispatch` for rollback):
 `nightly-round-sim.yml` cron, `build-archetypes.yml` push and cron,
 `midweek-round-automation.yml` `repository_dispatch`, `weekly-cleanup.yml` cron.
