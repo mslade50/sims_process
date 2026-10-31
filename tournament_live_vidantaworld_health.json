@@ -2,32 +2,32 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-10-30 12:37:00 UTC",
+  "generated_at": "2026-10-31 01:01:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:540:2026-10-29/R1_20261030T123700Z",
-      "model_version": "B8+v2.6 in-play",
-      "after_round": 1,
-      "run_manifest_sha256": "61c1eb3ea3472314caa2682bc8c1452ddfea29efe988a3d571d20a66e583159d",
+      "run_id": "pga:540:2026-10-29/R2_20261031T010100Z",
+      "model_version": "v2.4+v2.6 in-play",
+      "after_round": 2,
+      "run_manifest_sha256": "db60852c9f4cdea6ffc22864e40646cc1800989fe7724df4d63f96da87df1af2",
       "base_run_as_of": "2026-10-29 11:12:00 UTC"
     },
     "event": {
       "event_id": "540",
       "tourney": "vidantaworld",
-      "round": 2
+      "round": 3
     },
     "source": {
-      "generated_at": "2026-10-30 12:37:00 UTC",
-      "root_generated_at": "2026-10-30 12:37:00 UTC"
+      "generated_at": "2026-10-31 01:01:00 UTC",
+      "root_generated_at": "2026-10-31 01:01:00 UTC"
     },
     "simulation": {
-      "num_players": 118,
+      "num_players": 67,
       "num_sims": 150000,
-      "player_set_sha256": "cc18b90e4ff1db01e6276fb4684844bd831f6f5a8a35a939e1cfd1526bea5619",
+      "player_set_sha256": "3fd2376bf551985aef350c512a438ed28c491112427dc9be9e544fa0777f6a9d",
       "seeds": [
         20250929,
         20250930,
@@ -40,39 +40,39 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-30 12:37:00 UTC"
+      "at": "2026-10-31 01:01:00 UTC"
     },
     "checks": {
       "passed": true,
-      "n_checks": 8
+      "n_checks": 10
     },
-    "manifest_sha256": "d23991a866f2bae9e741f6acf330a5961f3192719af0d501e777ca28bee6c98e"
+    "manifest_sha256": "9234a5902966453cd720d2b483252ca905988099a2a4ad7273b643b2201dd17d"
   },
   "files": {
     "final_scores": {
       "path": "final_scores_live_vidantaworld.npy",
-      "sha256": "99d4b5dcf08b9f730b77e5590603b5d96d6289c9f7a10eecf4be1e2faac0c0ec"
+      "sha256": "530dba582488a47bee154e260f3e999ea4f05aaa6c422cd6426de40c40ac84f7"
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "bf10d07e6e260767a9241a5c47f38af0f3386c199b202585ea8c78a8aacb1e26"
+      "sha256": "6403a7805fdc486a9675be047229cd0550604e5962ac9b0f409e1204f9b7ef9d"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_vidantaworld.csv",
-      "sha256": "2279929e0925c6ad4a2165fba827736353a925798636133c72c00cfe47f12f5f"
+      "sha256": "ae61f93e6b47935c9610690439185599f48b899f95fc3c18ddd149d1510c0e83"
     },
     "made_cut": {
       "path": "made_cut_live_vidantaworld.npy",
-      "sha256": "5d97fb6eedaa22ce86a20635236e55515b977c646b566c14d76a597731311315"
+      "sha256": "a7ceda94b2414dc8bff894a0ebb8eec4003181da485dc6468b7135eed48b4a04"
     },
     "player_names": {
       "path": "player_names_live_vidantaworld.json",
-      "sha256": "ab7b45041cf07ed7ce2db470ada1bcbc7f22b62c81d0734c1e6aab5e80926e9f"
+      "sha256": "d45fc455b74701e1dd0e3324b2a6a4e20739885356791ed44ad2ef8a5468ecab"
     }
   },
   "extra": {
-    "num_players": 118,
+    "num_players": 67,
     "num_sims": 150000
   },
-  "manifest_sha256": "4cb617e6221526cefddee692fcbc4d6c4f3973655f27df7363f0116a8206cb91"
+  "manifest_sha256": "9dcd2e44bf3afee9f724b09d14b324cf29f6238ec661f585d35c5af8f19c3159"
 }
