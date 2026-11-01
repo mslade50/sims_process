@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-31 23:30:00 UTC",
+  "generated_at": "2026-11-01 15:15:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:540:2026-10-29/R3_20261031T233000Z",
+      "run_id": "pga:540:2026-10-29/R3_20261101T151500Z",
       "model_version": "v2.4+v2.6 in-play",
       "after_round": 3,
-      "run_manifest_sha256": "9743a3bb5bb2f6542693189c6dbe564024fe441906ba55d520fc7f79422ced68",
+      "run_manifest_sha256": "2d3d74634262fb30589e252a278a698c0148e0f7137fe3322c6139f5339a0719",
       "base_run_as_of": "2026-10-29 11:12:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 4
     },
     "source": {
-      "generated_at": "2026-10-31 23:30:00 UTC",
-      "root_generated_at": "2026-10-31 23:30:00 UTC"
+      "generated_at": "2026-11-01 15:15:00 UTC",
+      "root_generated_at": "2026-11-01 15:15:00 UTC"
     },
     "simulation": {
       "num_players": 67,
@@ -40,24 +40,24 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-31 23:30:00 UTC"
+      "at": "2026-11-01 15:15:00 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 10
     },
-    "manifest_sha256": "edcac2e82e868d4021b3507ab2600553bc45b8a3572514077376a659f163cc13"
+    "manifest_sha256": "96b9384ea09ee5abe2333531e8388b185ca6a1b009e0297f9660596bc4351263"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r4_meta.json",
-      "sha256": "98d025626606a6c27fce7654f4dfdb49aeba4ffa3868c22c4d8ef78bc29ae174"
+      "sha256": "63083a721ae30b233f1b967ef3d930fddc56d231269e4c86fa8b5f209d10b5eb"
     },
     "h2h_parquet": {
       "path": "round_h2h_r4.parquet",
-      "sha256": "e0a8efe27a854616285f20b904aba285fdda6cd51ed0b9fb8685ec10640ff89b"
+      "sha256": "4cfa44ac54b14c1140e709fec0cb65a56562ca02bf3977cd9b1f5db18e79a763"
     }
   },
   "extra": {},
-  "manifest_sha256": "9b130b0a93bdbc7e2b41908346d61f78213982f200ef140e0be62ae0929b0e23"
+  "manifest_sha256": "f570131013bc48dfa6b3f7ffc400194f1e78cfe2ca860a56add01ef3f0949296"
 }
