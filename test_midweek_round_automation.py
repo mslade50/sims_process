@@ -781,10 +781,15 @@ class SplitBrainGuardFailClosedTests(unittest.TestCase):
                 marker.mkdir()  # reading a directory raises OSError
             elif marker_text is not None:
                 marker.write_text(marker_text, encoding="utf-8")
-            with patch.object(automation, "ROOT", root),                  patch.dict(os.environ, {"DATAGOLF_API_KEY": ""}),                  patch.dict("sys.modules", {
+            with patch.object(automation, "ROOT", root), \
+                 patch.dict(os.environ, {"DATAGOLF_API_KEY": ""}), \
+                 patch.dict("sys.modules", {
                      "sim_inputs": SimpleNamespace(tourney="Other Event"),
                      "sim_fairs_ownership": None,
-                 }),                  patch("publish_sim_fairs._external_owner", return_value=None),                  patch.object(automation, "_load_gate_context", return_value=gate),                  redirect_stdout(io.StringIO()):
+                 }), \
+                 patch("publish_sim_fairs._external_owner", return_value=None), \
+                 patch.object(automation, "_load_gate_context", return_value=gate), \
+                 redirect_stdout(io.StringIO()):
                 os.environ.pop("SIM_FAIRS_FORCE_PRODUCTION", None)
                 try:
                     automation.run_pipeline(SimpleNamespace())
