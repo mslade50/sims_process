@@ -22,8 +22,11 @@ jobs:
     - name: Skip if outside tournament window (Thu night – Sun morning)
       id: window
       run: |
-        DOW=$(date -u +%u)  # 1=Mon ... 7=Sun
-        if [ "$DOW" -ge 1 ] && [ "$DOW" -le 4 ]; then
+        # Weekday gate is Eastern, not UTC. Thursday through Sunday run;
+        # Monday through Wednesday are outside the tournament window.
+        DOW=$(TZ=America/New_York date +%u)  # 1=Mon ... 7=Sun
+        echo "Eastern weekday $DOW ($(TZ=America/New_York date '+%A %Y-%m-%d %H:%M %Z'))"
+        if [ "$DOW" -ge 1 ] && [ "$DOW" -le 3 ]; then
           echo "Day $DOW is outside Thu-Sun window, skipping."
           echo "skip=true" >> "$GITHUB_OUTPUT"
         else
@@ -61,11 +64,16 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GOLF_SCRAPING_PAT }}
       run: |
+        set -euo pipefail
         mkdir -p permanent_data/scraped_odds
-        curl -sL -H "Authorization: token $GH_TOKEN" \
+        out="permanent_data/scraped_odds/round_matchups_latest.json"
+        curl -fsSL \
+          -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github.raw" \
           "https://raw.githubusercontent.com/mslade50/golf_scraping/master/data/round_matchups_latest.json" \
-          -o "permanent_data/scraped_odds/round_matchups_latest.json" || true
-        ls -la permanent_data/scraped_odds/ || true
+          -o "$out"
+        test -s "$out"
+        python -c 'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); assert data not in (None, "", [], {}), "round matchup odds download is empty"; print("round matchup odds ok (%s)" % (len(data) if hasattr(data, "__len__") else 1))' "$out"
 
     - name: Run reprice
       id: pricing
