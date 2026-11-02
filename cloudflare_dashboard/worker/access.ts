@@ -74,3 +74,26 @@ export async function accessIdentity(request: Request, env: AccessEnv, now = Dat
     return null;
   }
 }
+
+/** Signature-verified Access service identity. Service JWTs have common_name and empty sub, not a user email.
+ * https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/
+ * Authorization of a particular client and its allowed operations is the caller's responsibility. */
+export async function accessServiceIdentity(request: Request, env: AccessEnv, now = Date.now(), fetcher: typeof fetch = fetch): Promise<{ client_id: string; verified: true } | null> {
+  const team = env.ACCESS_TEAM_DOMAIN?.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (!team || !env.ACCESS_AUD) return null;
+  const parts = (request.headers.get("cf-access-jwt-assertion") ?? "").trim().split(".");
+  if (parts.length !== 3) return null;
+  const header = decodeJson(parts[0]), payload = decodeJson(parts[1]);
+  if (!header || !payload || header.alg !== "RS256" || typeof payload.common_name !== "string" || !payload.common_name.endsWith(".access") || payload.sub !== "") return null;
+  if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp * 1000 <= now || (typeof payload.nbf === "number" && payload.nbf * 1000 > now)) return null;
+  const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (!aud.includes(env.ACCESS_AUD) || payload.iss !== `https://${team}`) return null;
+  try {
+    let jwk = (await signingKeys(team, fetcher)).find((key) => key.kid === header.kid);
+    if (!jwk) jwk = (await signingKeys(team, fetcher, true)).find((key) => key.kid === header.kid);
+    if (!jwk) return null;
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    return valid ? { client_id: payload.common_name, verified: true } : null;
+  } catch { return null; }
+}

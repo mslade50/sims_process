@@ -1,28 +1,59 @@
 # Golf Tournament Monte Carlo Simulation System
 
+Global rules come from `mslade50/agent-rules`, installed on this machine as `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. This file holds sims_process facts only.
+
 Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Combines EMA-weighted strokes gained distributions, course shape adjustments, weather effects, and live skill updates to price matchups, score cards, and finish positions.
 
 ## Review
 
-Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
-Run `python secret_free_tests.py`, paste the real output
-into the PR, name the risk tier, and write the rollback steps in plain
-words. Never print or commit secrets.
-Ordinary fixes still go straight to main, as AGENTS.md already says, and this
-policy applies whenever a pull request is opened.
+- Proof command (the one CI runs): `python secret_free_tests.py`, after `python -m pip install -r requirements.txt "pytest>=8.1,<10"`. Paste its real summary into the PR under Proof: the pytest counts, the script counts and the not-collected list. "Tests passed" alone is not proof. No linter config exists; do not invent one.
+- HIGH item: pricing, edge, simulation or model logic, and published data outputs.
+- A displayed page or alert also needs a sample alert text, screenshot or JSON sample.
+- The PR template is `.github/PULL_REQUEST_TEMPLATE.md`. Its headings: Risk tier, Proof, Rollback steps, Test changes. Other bots and coding agents must fill it; only Dependabot and Renovate PRs skip the body, weakening and inventory checks.
+- CI is `.github/workflows/review-check.yml`, four jobs, run on `pull_request` (opened, edited, synchronize, reopened, ready_for_review) on `ubuntu-latest` with no secrets; each checkout uses `persist-credentials: false`. Other workflows run on a schedule, by hand or on push, and some use a self-hosted runner; review-check does not.
+  - `body`: `python3 scripts/check_pr_body.py` fails when Proof or Rollback is missing, empty or placeholder (`is_placeholder()` in that script). It does not require `## Test changes`.
+  - `test-weakening`: `scripts/check_test_weakening.py` reads the PR diff (`base...head`). It flags a deleted test file, a removed test, a new skip, xfail or importorskip (including a bare `importorskip`), a new or wider exclusion (`--ignore`, `--deselect`, `-k`, a list-style `"--ignore", "x"` pair, conftest `collect_ignore`) and a looser assert. It needs a real `## Test changes` note. A rename, an equivalent assert rewrite and a tighter tolerance are not weakenings. `secret_free_tests.py` and `scripts/secret_free_tests.py` are scanned as CI config. Any edit to a guard checker (`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`, `scripts/check_test_inventory.py`, `secret_free_tests.py`) or to a workflow that runs one, even a comment-only edit, counts as a weakening.
+  - `test-inventory`: the workflow installs each commit's own `requirements.txt`, then `scripts/check_test_inventory.py` collects the suite on the base and head commits, using that tree's own conftest and runner flags. Added tests are fine. It records test ids (collected, or skipped with the reason, including conftest `SKIP_TESTS`), `CREDENTIAL_IMPORTS` and `KERNEL_IMPORTS` modules not collected, and each script program's check count. It fails when a test id disappears, a running test becomes skipped or not collected, or a script disappears or reports fewer checks, unless `## Test changes` is filled in. A plain rename is one removed id and one added id, so it needs an `old -> new` mapping. It does not parse the diff, so an exclusion hidden in a conftest hook, the runner, the workflow or the requirements still shows up.
+  - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`, `permissions: contents: read`. One pytest process per module. `conftest.py` lists modules that need Google credentials (`CREDENTIAL_IMPORTS`, which include external-service scripts) or the compiled `sims_kernel` (`KERNEL_IMPORTS`). They are not collected in CI, where those are missing, and they collect locally when the credential or the kernel is present. A collection error outside that list fails the job. One stale source-grep test is skipped (`SKIP_TESTS`); the rest of its module runs. A `SCRIPT_MODULES` entry that collects pytest items fails the job. Each script program must report a nonzero pass count.
 
-## Pipeline Execution Order
+## Legacy weekly chain: DEPRECATED (owner decision 2026-10-30)
+
+The legacy weekly chain is retired: sim_prep normal-mode `weekly_pipeline.py` prep
+(`sim_inputs.py` edit, publish to this repo's `main`) and this repo's sim chain
+(`new_sim.py` calibration and final pass, `mkt_regress.py`, round sims, reprice,
+midweek automation, legacy `publish_sim_fairs.py` publication).
+
+Production is golfprice: `mslade50/sim_prep`, branch `research/rebuild-v1`, under
+`research/sportsbook_model/rebuild_v1`, driven by the Worker cron in
+`cloudflare_dashboard`. Do not use the sections below for a new week.
+
+Still running on purpose:
+
+- ETR legacy weekly (`weekly_pipeline.py --etr-only`, `new_sim.py`, `mkt_regress.py`,
+  `skill_merge.py`, `sim_inputs.py`, `tools/etr_*`). ETR deliverables have no golfprice
+  replacement yet; this carve-out lasts until the owner says otherwise.
+- `monday-grading.yml` and `clv-alert.yml` (Google Sheet bet grading) until the ledgers
+  are reconciled.
+- `kalshi-preflight`, `deploy-cloudflare-dashboard`, `deploy-odds-screen`,
+  `publish-cloudflare-dashboard-data`, `local-runner-smoke`, and the
+  ownership/hand-back logic in `publish_sim_fairs.py`.
+
+`sim_inputs.py` identity (`tourney`, `event_ids`) is kept current by golfprice: each PGA
+board publish to this repo rewrites those two lines in the same commit as
+`sim_fairs.json`, so the Kalshi gate (`kalshi_maker.py`, `maker_guard.py`,
+`kalshi-preflight.yml`) keeps matching the live event.
+
+Triggers removed 2026-10-30 (each workflow keeps `workflow_dispatch` for rollback):
+`nightly-round-sim.yml` cron, `build-archetypes.yml` push and cron,
+`midweek-round-automation.yml` `repository_dispatch`, `weekly-cleanup.yml` cron.
+`reprice.yml` still lists `repository_dispatch` because open PRs #35 and #21 edit that
+file; remove the trigger there after they land.
+
+## Pipeline Execution Order (legacy, deprecated)
 
 When preparing ETR, run `hole_baselines.py`; it resolves historical editions
 by physical `course_id` and exact `(year, event_id)` pairs rather than assuming
 the current event ID was stable across venues.
-
-## Repository Branch Policy
-
-Commit and push ordinary requested fixes directly to `main`. Do not create a
-separate branch or pull request unless the user explicitly asks for one or the
-requested workflow specifically requires one. Preserve unrelated working-tree
-changes when committing directly to `main`.
 
 **Pre-tournament**: `init_weekly.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`. The SG distribution files (`sg_dist_player.csv`, `this_week_dists_v2.csv`) are NOT built here — sim_prep's `cat_dists_player.py` is the single producer and fans them out to this repo, the OneDrive root, and etr-golf-sims (the local copy is archived).
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)
@@ -163,3 +194,7 @@ Both sides of every join/merge must go through `name_replacements`. The `cat_dis
 - Graceful degradation for missing files (warn, don't crash)
 - Follow existing print-statement debugging patterns
 - Email reports → HTML tables with confidence thresholds
+
+## Golf rollout handoff
+
+For the authorized golf operations rollout, read `cloudflare_dashboard/docs/OPS_HANDOFF.md` and the live authenticated `/api/ops/bootstrap`, `/api/ops/tasks` and `/api/ops/workflow` before changing a task. The reviewed scope and dependencies are in `golf_ops/docs/ROLLOUT_BRIEF.md`. Claim the task, retain provenance and exact revision, keep owner decisions separate from agent notes, and leave missing output evidence unverified. Exact owner answers for D01/D02 are retained in golf_ops/docs/ROLLOUT_DECISIONS_20261027.json; implementation verification remains pending. These pointers do not authorize model changes or real bet actions.

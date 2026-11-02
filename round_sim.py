@@ -228,8 +228,9 @@ EMAIL_MIN_SAMPLE = 20
 # Outright market filter thresholds
 EDGE_THRESHOLD_WIN = 2.0     # minimum edge (pp) sim_prob - implied_prob
 EDGE_THRESHOLD_TOPN = 2.0   # minimum edge (pp) sim_prob - implied_prob
+from kelly_config import KELLY_FRACTION
+
 BANKROLL = 10000.0
-KELLY_FRACTION = 0.25
 RETAIL_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'barstool', 'espn']
 BOOKS_TO_USE = ['betcris', 'betmgm', 'betonline', 'bovada', 'caesars', 'draftkings', 'fanduel', 'pinnacle', 'unibet']
 
@@ -4044,7 +4045,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
         - bet_on player's pred > EMAIL_MIN_PRED
         - bet_on player's sample > EMAIL_MIN_SAMPLE
     """
-    from kalshi_ancillary import kelly_contracts  # 0.4-Kelly $50k contract sizing
+    from kalshi_ancillary import kelly_contracts  # shared KELLY_FRACTION, $50k bankroll
     from reprice_core import selected_spread_line
 
     # --- Sharp-book matchup line-count banner (top of email) ---
@@ -4309,7 +4310,7 @@ def build_matchup_email_html(sharp_df, sim_round, sample_lookup, outrights_sharp
                     fill_str = "—"
                     top_str = "—"
 
-                # Kalshi/NoVig: Stake = 0.4-Kelly contracts on a $50k bankroll,
+                # Kalshi/NoVig: Stake = kelly_contracts (shared KELLY_FRACTION, $50k bankroll),
                 # Units = kelly$ / $500. Non-exchange rows keep the $ stake / $200 units.
                 if is_exchange and pd.notna(imp_prob) and pd.notna(sim_prob_row):
                     _contracts, _dollars, _units = kelly_contracts(sim_prob_row, imp_prob)

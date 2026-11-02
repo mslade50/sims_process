@@ -6,7 +6,7 @@ import type { ProfileEntry } from "./player-profile-rules";
 
 /* ------------------------------------------------------------------ routes */
 export const DEFAULT_VIEW = "this-week";
-/** Routes kept for old bookmarks that now send the visitor elsewhere (nothing is deleted; the views stay registered). */
+/** Routes kept for old bookmarks that now send the visitor elsewhere (nothing is deleted; the views stay registered, except the retired static weather view, which no route reaches). */
 export const REDIRECTS: Record<string, string> = { weather: "/weather-effects", "sg-distributions": "/players" };
 /** Routes whose view is replaced by a "retired" notice. */
 export const RETIRED: readonly string[] = ["research"];
@@ -62,8 +62,15 @@ export const NAVIGATION: NavGroup[] = [
       { key: "weather-edits", href: "/weather-edits", label: "Weather edits", description: "Replace forecast hours with your own numbers, then reprice" },
     ],
   },
-  { label: "Operate", items: [{ key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
-  { label: "Review", items: [{ key: "performance", href: "/performance", label: "Scorecard and P&L", description: "Model scorecard and bet results" }] },
+  { label: "Operate", items: [{ key: "shot-data", href: "/shot-data", label: "Shot data", description: "Collector health, capture and cleaning, published dataset readiness" }, { key: "ops", href: "/ops", label: "Weekly workflow", description: "The week, verified outputs, open work and agent handoffs" }, { key: "run", href: "/run", label: "Run", description: "Start a pricing job, even from your phone" }] },
+  {
+    label: "Review",
+    items: [
+      { key: "performance", href: "/performance", label: "Scorecard and P&L", description: "Model scorecard and bet results" },
+      { key: "bet-breakdowns", href: "/bet-breakdowns", label: "Bet breakdowns", description: "How our edges have paid, by market, book and edge size" },
+      { key: "bet-card", href: "/bet-card", label: "Bet card", description: "Current suggested bets and the lowest price worth taking" },
+    ],
+  },
   {
     label: "Archive",
     collapsed: true,
@@ -91,8 +98,8 @@ export function navEntryFor(viewKey: string): { item: NavItem; label: string; de
  * Colleagues may be let in through Cloudflare Access; these areas stay with the owner (OWNER_EMAILS on the Worker, worker/owner.ts).
  * The Worker enforces it (pages redirect home, APIs answer 403); the app only hides the links.
  */
-export const OWNER_ONLY_VIEWS: readonly string[] = ["run", "weather-edits"];
-export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/jobs", "/api/overrides", "/api/weather-overrides"];
+export const OWNER_ONLY_VIEWS: readonly string[] = ["shot-data", "ops", "run", "weather-edits", "bet-breakdowns", "bet-card"];
+export const OWNER_ONLY_API_PREFIXES: readonly string[] = ["/api/ops", "/api/jobs", "/api/overrides", "/api/weather-overrides", "/api/owner-data"];
 
 /** "page" or "api" when `pathname` is owner-only, else null. Case, a trailing slash and an `.rsc` suffix do not get around it. */
 export function ownerOnlyPath(pathname: string): "page" | "api" | null {

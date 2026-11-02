@@ -12,6 +12,8 @@ import { checkpoints, runLabel, type DistributionEvent } from "./distributions-r
 import { betEv, breakEvenDecimal, curveRows, decimalToAmerican, evBreakEvenShift, expectationBridge, marketNoVig, normalizePmf, overUnder, parseScoring, fieldMixturePmf, pmfMean, weatherBaselineText, WEATHER_HISTORY_CAVEAT, parseWeatherExtras, waveComponentMeans, waveGapText, windSensitivityText, type WeatherExtras, plainDate, prettyName, resolvedOverShare, shiftedOverUnder, scoringEvidence, plainText, plainTeeTime, type EvidenceContext, type ScoringDoc, type ScoringPlayer } from "./scoring-rules";
 import { COMPONENT_LABELS, parseWeather, runMoment, signedFixed, type WeatherDoc } from "./weather-rules";
 import { define } from "./glossary";
+import { weatherRunKey } from "./freshness-rules";
+import { CourseHistoryPanel } from "./CourseHistoryPanel";
 import "./scoring.css";
 
 const COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-2)", "var(--chart-4)"];
@@ -44,13 +46,14 @@ function ScoringExplorer({ event }: { event: DistributionEvent }) {
   return <>
     <div className="score-controls"><label className="score-select">Simulation run<select aria-label="Simulation run" value={runKey} onChange={(e) => setRunKey(e.target.value)}>{runs.length ? runs.map((r) => <option key={r.key} value={r.key}>{runLabel(r)}{r.key === latest?.key ? " · Latest" : ""}</option>) : <option value={runKey}>Latest run</option>}</select></label></div>
     {runs.length > 1 && <nav className="score-timeline" aria-label="Simulation runs">{runs.map((r, i) => <button key={r.key} type="button" aria-current={r.key === runKey ? "step" : undefined} className={r.key === runKey ? "active" : ""} onClick={() => setRunKey(r.key)}><span>{i + 1}</span>{runLabel(r).split(" · ")[0]}<small>{runLabel(r).split(" · ")[1]}</small></button>)}</nav>}
-    <Snapshot key={runKey} runKey={runKey} expectedRun={selectedRun?.run ?? null} latest={runKey === latest?.key} weatherKey={weatherKey} />
+    <Snapshot key={runKey} runKey={runKey} expectedRun={selectedRun?.run ?? null} latest={runKey === latest?.key} weatherKey={weatherKey} weatherRunKey={weatherRunKey(weatherKey, selectedRun?.kind, selectedRun?.run) ?? undefined} historyKey={(event as DistributionEvent & { history_key?: string | null }).history_key ?? null} />
   </>;
 }
 
-export function Snapshot({ runKey, expectedRun, latest, weatherKey }: { runKey: string; expectedRun: string | null; latest: boolean; weatherKey?: string }) {
+export function Snapshot({ runKey, expectedRun, latest, weatherKey, weatherRunKey: runWeatherKey, historyKey }: { runKey: string; expectedRun: string | null; latest: boolean; weatherKey?: string; weatherRunKey?: string; historyKey?: string | null }) {
   const source = useDashboardData<unknown>(runKey);
-  const weatherSource = useDashboardData<unknown>(weatherKey ?? "golfprice/none.json");
+  // The newest run reads the no-cache latest.json; an earlier run reads its own immutable <kind>_<run>.json copy, never today's forecast.
+  const weatherSource = useDashboardData<unknown>((latest ? weatherKey : runWeatherKey) ?? "golfprice/none.json");
   const weatherDoc = useMemo(() => parseWeather(weatherSource.data), [weatherSource.data]);
   const weatherExtras = useMemo(() => parseWeatherExtras(weatherSource.data), [weatherSource.data]);
   const scoring = useMemo(() => {
@@ -145,6 +148,7 @@ export function Snapshot({ runKey, expectedRun, latest, weatherKey }: { runKey: 
     </div>
 
     <WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={scoring.round} latest={latest} />
+    {historyKey !== undefined && <CourseHistoryPanel historyKey={historyKey} />}
 
     <details className="score-details score-investigate"><summary>See how hard each hole plays</summary><Panel title="Course difficulty by hole" eyebrow={holeProfile.length ? "Expected strokes vs par on each hole" : "Hole-by-hole course difficulty"}>
       {holeProfile.length ? <div className="score-hole-chart" role="img" aria-label="Published course expected strokes relative to par by hole"><ResponsiveContainer width="100%" height="100%"><BarChart data={holeProfile} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}><CartesianGrid vertical={false} stroke="var(--line)" /><XAxis dataKey="hole" interval={0} tick={{ fontSize: 10 }} stroke="var(--muted)" label={{ value: "Hole", position: "insideBottom", offset: -3, fill: "var(--muted)" }} /><YAxis width={40} tick={{ fontSize: 10 }} stroke="var(--muted)" tickFormatter={(v) => Number(v) > 0 ? `+${v}` : String(v)} /><ReferenceLine y={0} stroke="var(--muted)" /><Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--line)", borderRadius: 10 }} formatter={(v) => [`${Number(v) > 0 ? "+" : ""}${Number(v).toFixed(2)} vs par`, "Expected strokes"]} labelFormatter={(h) => `Hole ${h} · par ${holeProfile.find((x) => x.hole === Number(h))?.par ?? "—"}`} /><Bar dataKey="exp" name="Expected strokes vs par" radius={[3, 3, 0, 0]} isAnimationActive={false}>{holeProfile.map((h) => <Cell key={h.hole} fill={h.par === 3 ? "var(--chart-2)" : h.par === 5 ? "var(--chart-3)" : "var(--chart-1)"} />)}</Bar></BarChart></ResponsiveContainer></div> : <EmptyState title="Hole profile unavailable" detail="No hole-by-hole expectation was published for this run." />}<p className="score-footnote">The base hole table totals approximately {fmt(holeProfile.reduce((sum, h) => sum + h.par + h.exp, 0))} strokes. Expected course difficulty for Round {scoring.round} is {fmt(scoring.baseline.course_score)} before weather. This profile does not attribute an individual player’s score.</p>
@@ -233,7 +237,7 @@ export function WeatherThisRound({ doc, extras, loading, round, latest }: { doc:
   const [pick, setPick] = useState<number | null>(null);
   const link = <Link className="ex-link" href="/weather-effects">Full weather effects page <ChevronRight size={14} /></Link>;
   if (loading) return null;
-  if (!doc) return <Panel title="Weather this round" eyebrow="Expected wave split and why" actions={link}><p className="score-footnote">No weather document is published for this event yet, so the wave split is not shown.</p></Panel>;
+  if (!doc) return <Panel title="Weather this round" eyebrow="Expected wave split and why" actions={link}><p className="score-footnote">{latest ? "No weather document is published for this event yet, so the wave split is not shown." : "No weather forecast was archived for this earlier run, so its wave split is not shown (today's forecast would not describe it)."}</p></Panel>;
   const rounds = [...new Set([...doc.waves.map((w) => w.round), ...doc.field.map((f) => f.round)])].filter((x) => x > 0).sort((a, b) => a - b);
   const r = pick ?? (round != null && rounds.includes(round) ? round : rounds[0] ?? null);
   if (r == null) return <Panel title="Weather this round" eyebrow="Expected wave split and why" actions={link}><p className="score-footnote">The weather document has no round detail yet.</p></Panel>;
@@ -252,7 +256,7 @@ export function WeatherThisRound({ doc, extras, loading, round, latest }: { doc:
   return <Panel title="Weather this round" eyebrow="Expected wave split and why" actions={link}>
     <div className="score-wx-head">
       {rounds.length > 1 && <label className="score-select">Round<select aria-label="Weather round" value={r} onChange={(e) => setPick(Number(e.target.value))}>{rounds.map((x) => <option key={x} value={x}>Round {x}</option>)}</select></label>}
-      <span>{doc.as_of && etTime(doc.as_of, "") ? `Forecast as of ${etTime(doc.as_of)}` : "Forecast time not reported"}{!latest ? " · latest forecast, not necessarily the one this run used" : ""}</span>
+      <span>{doc.as_of && etTime(doc.as_of, "") ? `Forecast as of ${etTime(doc.as_of)}` : "Forecast time not reported"}{!latest ? " · the forecast archived with this run" : ""}</span>
     </div>
     {field?.common_strokes != null && <p className="score-wx-lead">Round {r} weather moves the whole field by <b>{signedFixed(field.common_strokes)} strokes</b> versus {info?.venueSeen === false ? "typical tour conditions" : info?.venueSeen === true ? "this course's typical conditions" : "typical conditions"}.</p>}
     {info?.status && info.status !== "ok" && <p className="score-footnote">{(info.reason && plainText(info.reason)) || `Status: ${info.status}`}. Wave detail is not available for this round.</p>}

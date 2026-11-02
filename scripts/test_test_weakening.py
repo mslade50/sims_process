@@ -16,7 +16,7 @@ from scripts.check_test_weakening import find_weakening, is_ci_config, is_test_f
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_test_weakening.py"
 TEMPLATE = ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md"
-POLICY = ROOT / "docs" / "REVIEW_POLICY.md"
+POLICY = ROOT / "AGENTS.md"
 TEMPLATE_SENTENCE = (
     "Optional. Required only when this PR deletes or weakens tests, or the inventory "
     "shows a dropped test, a newly skipped test, or a lower script check count. "

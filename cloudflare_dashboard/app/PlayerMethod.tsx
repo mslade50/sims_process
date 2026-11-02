@@ -1,6 +1,6 @@
 "use client";
 
-import { GAP_METHOD_SENTENCE, LABELS, ZERO_SENTENCE } from "./labels";
+import { GAP_METHOD_SENTENCE, LABELS, vsPgaAvgLong, zeroSentence } from "./labels";
 import { etTime } from "./lib";
 import { NOT_YET_SHRUNK, finite, isShrunk, shortProfileDate, signedZ, unshrunkValue, benchmarkValue, referenceSpan, type PgaBenchmark, type PgaBenchmarkReference } from "./player-profile-rules";
 import { CROSS_TOUR_BAND, INTERVAL_CLAUSE, RADAR_LABEL, regularTick } from "./player-hero-rules";
@@ -22,8 +22,8 @@ export function PlayerMethod({ rating, reference, catalog }: { rating: PgaBenchm
     <details className="pp-details ph-method" data-testid="player-method">
       <summary>Method and caveats</summary>
       <h4>The headline: {LABELS.vsPgaAvg.short}</h4>
-      <p>{LABELS.vsPgaAvg.long}.</p>
-      <p>{ZERO_SENTENCE}</p>
+      <p>{vsPgaAvgLong(referenceSpan(reference))}.</p>
+      <p>{zeroSentence(referenceSpan(reference))}</p>
       <p>
         The zero point is the average PGA Tour round over {referenceSpan(reference)} (rounds {reference?.rounds?.join(" and ") ?? "1 and 2"}), which is {signedZ(reference?.adjusted_sg_mean, 3)} strokes on the data provider&apos;s scale, from {reference?.n_rounds?.toLocaleString("en-US") ?? "an unknown number of"} rounds by {reference?.n_players ?? "an unknown number of"} players. It stays fixed so numbers are comparable week to week.
       </p>

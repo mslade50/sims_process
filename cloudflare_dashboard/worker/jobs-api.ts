@@ -13,6 +13,7 @@
 import { accessIdentity, type AccessEnv } from "./access";
 import {
   HEARTBEAT_PREFIX,
+  loadRoles,
   JOB_ID_RE,
   LOG_PREFIX,
   MAX_AGE_MS,
@@ -118,6 +119,7 @@ export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.n
       // Direct get of exactly the listed jobs' status keys (readStatus returns null on 404): a bucket listing is capped at 1000 keys, oldest first.
       const recent = listWindow(jobs, now);
       const statuses = await Promise.all(recent.map((job) => readStatus(bucket, job.id)));
+      const loadedRoles = await loadRoles(bucket);
       const heartbeatList = await bucket.list({ prefix: HEARTBEAT_PREFIX, limit: 100 });
       const heartbeats = (await Promise.all(heartbeatList.objects.map(async (o) => (await readJson(bucket, o.key).catch(() => null))?.value))).filter(
         (value) => value && typeof value === "object",
@@ -127,6 +129,9 @@ export async function handleJobsApi(request: Request, env: JobsEnv, now = Date.n
         now: isoSeconds(now),
         jobs: recent.map((job, index) => ({ ...job, status: statuses[index], state: effectiveState(job, statuses[index]) })),
         heartbeats,
+        roles: loadedRoles.roles,
+        roles_invalid: loadedRoles.problem === "roles_invalid",
+        roles_read_error: loadedRoles.problem === "roles_read_error",
       });
     }
 

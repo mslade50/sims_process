@@ -33,6 +33,8 @@ import numpy as np
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 
+from kelly_config import KELLY_FRACTION
+
 load_dotenv()
 
 
@@ -127,10 +129,11 @@ SCORING_SHADOW_HEADERS = [
 # are NOT subject to this gate.
 MIN_KELLY_EDGE = 0.05
 
-# Standard finish-position Kelly sizing — mirrors round_sim.BANKROLL/KELLY_FRACTION.
-# Used to size exchange (Kalshi/NoVig) finish bets the same way as sportsbook ones.
+# Finish-position bankroll for exchange rows sized at store time.
+# The fraction is the shared kelly_config.KELLY_FRACTION, same haircut as
+# sportsbook finish bets. The bankroll stays local to this path.
 _FINISH_BANKROLL = 10000.0
-_FINISH_KELLY_FRACTION = 0.25
+_FINISH_KELLY_FRACTION = KELLY_FRACTION
 
 # Parquet ledger (local-only, not committed to repo)
 LEDGER_PATH = os.path.join(os.path.dirname(__file__), "permanent_data", "bet_ledger.parquet")
