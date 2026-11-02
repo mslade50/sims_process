@@ -1,12 +1,16 @@
 """Run the offline suite used by the review-check tests job.
 
-One pytest process per module. In a shared process, importing an earlier
-module loads ``sim_inputs``, and
+One pytest process per module, and those processes run together. In a shared
+process, importing an earlier module loads ``sim_inputs``, and
 ``test_provisional_round.py::ProvisionalTests::test_manifest_hash_identity_and_group_contract``
 then fails because its fixture event does not match that live configuration.
 The test passes when its module is the only one loaded. A second
 same-process failure was not reproduced across shuffled full-suite orders;
 the source-grep skip below is the test that fails on its own.
+
+``SECRET_FREE_WORKERS`` sets how many modules run at once (``auto`` follows
+the machine, ``1`` is the serial schedule). Each module still gets its own
+interpreter.
 
 Credential and kernel modules are not collected when that dependency is
 missing (see ``conftest.py``). They still collect when the dependency is
@@ -24,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import conftest
@@ -95,13 +100,53 @@ def _env() -> dict[str, str]:
     return env
 
 
+def _worker_count(n_items: int) -> int:
+    """How many module processes to run at once.
+
+    ``auto`` (the default) uses one worker per CPU. ``1`` keeps the serial
+    schedule. The count never exceeds the number of modules.
+    """
+    raw = os.environ.get("SECRET_FREE_WORKERS", "").strip().lower()
+    if not raw or raw == "auto":
+        chosen = os.cpu_count() or 1
+    else:
+        try:
+            chosen = int(raw)
+        except ValueError:
+            chosen = 1
+    if chosen < 1:
+        chosen = 1
+    if n_items < 1:
+        return 1
+    return min(chosen, n_items)
+
+
+def _run_many(fn, items: list[str], env: dict[str, str]) -> list[tuple[int, str]]:
+    """Run ``fn(item, env)`` for each item. Separate processes, shared schedule."""
+    workers = _worker_count(len(items))
+
+    def call(item: str) -> tuple[int, str]:
+        try:
+            return fn(item, env)
+        except Exception as exc:
+            return 1, f"{item}: worker failed: {exc}\n"
+
+    if workers <= 1:
+        return [call(item) for item in items]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(call, item) for item in items]
+        return [future.result() for future in futures]
+
+
 def _print_plan() -> None:
     creds = "present" if conftest.credentials_present() else "absent"
     kernel = "installed" if conftest.kernel_present() else "not installed"
+    raw = os.environ.get("SECRET_FREE_WORKERS", "").strip() or "auto"
     print(f"credentials: {creds}")
     print(f"sims_kernel: {kernel}")
     print("COEFFS_FROM_CACHE=1")
     print("pytest: one process per module")
+    print(f"pytest workers: {raw}")
     print("not collected:")
     for name, reason in conftest.excluded_modules():
         print(f"  {name}: {reason}")
@@ -265,10 +310,10 @@ def main(argv: list[str]) -> int:
         print("collection did not include: " + ", ".join(missing or ["(no files)"]))
         return 1
 
+    print(f"pytest workers this run: {_worker_count(len(files))}")
     pytest_totals = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
     failed_runs: list[str] = []
-    for path in files:
-        status, output = _run_pytest_file(path, env)
+    for path, (status, output) in zip(files, _run_many(_run_pytest_file, files, env)):
         counts = parse_pytest_summary(output)
         for key in pytest_totals:
             pytest_totals[key] += counts[key]
@@ -286,9 +331,10 @@ def main(argv: list[str]) -> int:
                     break
             print(f"ok {path}: {summary or counts}")
 
+    script_names = sorted(conftest.SCRIPT_MODULES)
+    print(f"script workers this run: {_worker_count(len(script_names))}")
     script_totals = {"passed": 0, "failed": 0}
-    for name in sorted(conftest.SCRIPT_MODULES):
-        status, output = evaluate_script(name, env)
+    for name, (status, output) in zip(script_names, _run_many(evaluate_script, script_names, env)):
         counts = parse_script_summary(output)
         script_totals["passed"] += counts["passed"]
         script_totals["failed"] += counts["failed"]
