@@ -68,8 +68,13 @@ def test_round_in_play_refuses_outside_the_window():
 
 
 def test_not_live_outside_the_window_is_allowed():
-    assert mg.scrape_refusal(ts(2026, 10, 30, 18, 0), not_live) is None
-    assert mg.scrape_refusal(ts(2026, 10, 31, 9, 0), not_live) is None
+    # The second blackout read uses clock(), which defaults to the wall clock.
+    # Pin it to the scenario time so a runner inside 07:30-11:30 ET still allows
+    # a timestamp that is outside the window.
+    evening = ts(2026, 10, 30, 18, 0)
+    saturday = ts(2026, 10, 31, 9, 0)
+    assert mg.scrape_refusal(evening, not_live, clock=lambda: evening) is None
+    assert mg.scrape_refusal(saturday, not_live, clock=lambda: saturday) is None
 
 
 def test_unreadable_live_status_refuses():
