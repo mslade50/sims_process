@@ -106,7 +106,7 @@ The solver naturally:
 
 ### Step 7: Apply fractional Kelly and report
 
-Multiply all fractions by `kelly_fraction` (0.60) for safety. Convert to dollar amounts at the configured bankroll ($30,000). No portfolio cap or minimum bet filter — the output shows the raw optimal allocation per golfer group.
+Multiply all fractions by `kelly_fraction` (the shared `kelly_config.KELLY_FRACTION`, 0.4) for safety. Convert to dollar amounts at the configured bankroll ($30,000). No portfolio cap or minimum bet filter — the output shows the raw optimal allocation per golfer group.
 
 ## What the output tells you
 
@@ -142,6 +142,6 @@ Multiply all fractions by `kelly_fraction` (0.60) for safety. Convert to dollar 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `bankroll` | $30,000 | Total capital for correlated sizing |
-| `kelly_fraction` | 0.60 | Safety multiplier (60% Kelly) |
+| `kelly_fraction` | 0.4 | Safety multiplier (`kelly_config.KELLY_FRACTION`) |
 | `golfer_cap` | 0.15 | Max 15% of bankroll on any single golfer (pre-fractional) |
 | `SKIP_STORAGE` | env var | Set to skip Google Sheets writes on rerun |

@@ -15,7 +15,12 @@ on:
         required: false
         type: number
       use_pinnacle_for_betcris:
-        description: 'Manual repair: require BetOnline + Pinnacle when BetCRIS is unavailable'
+        description: 'Manual repair: require BetOnline + Pinnacle when BetCRIS is unavailable. Mutually exclusive with use_betonline_only.'
+        required: false
+        type: boolean
+        default: false
+      use_betonline_only:
+        description: 'Manual repair: require BetOnline only. Dispatch only; mutually exclusive with use_pinnacle_for_betcris.'
         required: false
         type: boolean
         default: false
@@ -39,6 +44,12 @@ jobs:
       RUNNER_PYTHON: 'C:\actions-runner\python310-portable\tools\python.exe'
     
     steps:
+    - name: Reject conflicting manual book modes
+      if: inputs.use_betonline_only && inputs.use_pinnacle_for_betcris
+      shell: powershell
+      run: |
+        throw "use_betonline_only and use_pinnacle_for_betcris are mutually exclusive"
+
     - name: Checkout repository
       uses: actions/checkout@v5
       with:
@@ -103,7 +114,10 @@ jobs:
         # A successful manual production run must also publish its exact fairs
         # and receive the pinned board-build dispatch.
         REQUIRE_SIM_FAIRS_PUBLISH: '1'
-        ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
+        # Both repair modes require workflow_dispatch. Checking both inputs
+        # yields an unsupported mode so the run fails closed instead of
+        # silently preferring one book set. The min-matchup floor is unchanged.
+        ROUND_MATCHUP_REQUIRED_BOOK_PAIR: ${{ github.event_name == 'workflow_dispatch' && inputs.use_betonline_only && inputs.use_pinnacle_for_betcris && 'conflicting_book_modes' || github.event_name == 'workflow_dispatch' && inputs.use_betonline_only && 'betonline_only' || github.event_name == 'workflow_dispatch' && inputs.use_pinnacle_for_betcris && 'betonline_pinnacle' || 'betcris_betonline' }}
         LIVE_PIN_HIGH_ADJ: '1'
         IMG_SHOT_COLLECTOR_ROOT: 'C:\Users\McKinley Slade\dev\golf_scraping-collector-prod'
         IMG_SHOT_DB_PATH: 'C:\Users\McKinley Slade\dev\golf_scraping\output\imgarena_shots_lean.sqlite3'

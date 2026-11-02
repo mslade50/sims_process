@@ -8,6 +8,7 @@ import { useDashboardData } from "./data";
 import { useIsOwner } from "./viewer";
 import { WeatherBriefBody } from "./WeatherBriefView";
 import { OwnerEditNote, WeatherHourTable, editTitle } from "./WeatherHourTable";
+import { briefCurrency } from "./freshness-rules";
 import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
 import { etTime } from "./lib";
 import {
@@ -15,7 +16,7 @@ import {
   type HourlyPoint, type PlayerRow, type SortKey, type Wave, type WeatherDoc,
 } from "./weather-rules";
 
-type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_brief_key?: string | null; weather_run?: string | null; weather_as_of?: string | null; explain_run?: string | null };
+type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_brief_key?: string | null; weather_run?: string | null; weather_brief_run?: string | null; weather_brief_as_of?: string | null; weather_as_of?: string | null; explain_run?: string | null };
 type PublishIndex = { events?: IndexEvent[] };
 
 const WIND = "var(--wx-wind)";
@@ -300,6 +301,13 @@ function PlayerRows({ p, rounds, teeRounds, effectRounds, showSd, cols, open, on
 }
 
 /* ------------------------------------------------------------------ one event */
+/** The brief is written from a weather run; say so when the weather document has moved on to a newer one. */
+export function BriefCurrencyBanner({ event }: { event: IndexEvent }) {
+  const c = briefCurrency(event);
+  if (c.state !== "behind") return null;
+  return <div className="inputs-note accent" role="status" data-state="brief-behind"><strong>This summary is behind the weather data.</strong><span> {c.message}</span></div>;
+}
+
 export function CheckpointBanner({ event, docAsOf }: { event: IndexEvent; docAsOf: string }) {
   const c = weatherCheckpoint(event, docAsOf);
   const headline = c.state === "mismatch" ? "Weather and prices are out of step." : c.weatherAsOf ? `Weather updated ${etTime(c.weatherAsOf)}.` : "Weather update time unknown.";
@@ -409,7 +417,7 @@ export function WeatherEffectsView() {
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;
   if (!event) return <div>{intro}<EmptyState title="No run is published yet" detail="Weather appears here once a run has been published with a forecast." /></div>;
   if (briefKey && briefLoad.loading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
-  if (brief) return <div>{intro}<OwnerEditNote summary={doc?.forecast.owner_overrides ?? null} eventUid={event.event_uid} /><WeatherBriefBody key={event.event_uid} brief={brief} />{doc && doc.forecast.hourly.length > 0 && <BriefHourly key={event.event_uid} doc={doc} />}</div>;
+  if (brief) return <div>{intro}<BriefCurrencyBanner event={event} /><OwnerEditNote summary={doc?.forecast.owner_overrides ?? null} eventUid={event.event_uid} /><WeatherBriefBody key={event.event_uid} brief={brief} />{doc && doc.forecast.hourly.length > 0 && <BriefHourly key={event.event_uid} doc={doc} />}</div>;
   if (docLoading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
   if (!doc) {
     return (

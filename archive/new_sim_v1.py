@@ -60,8 +60,20 @@ CAT_ORDER = ["sg_ott", "sg_app", "sg_arg", "sg_putt"]
 CLIP_CAT = (-8.0, 8.0)
 RNG = np.random.default_rng(123)
 
+
+def require_datagolf_api_key():
+    """Return DATAGOLF_API_KEY or exit. There is no hardcoded fallback."""
+    key = (os.getenv("DATAGOLF_API_KEY") or "").strip()
+    if not key:
+        raise SystemExit(
+            "DATAGOLF_API_KEY is not set. Export it before running; "
+            "this script no longer has a hardcoded key."
+        )
+    return key
+
+
 # DataGolf API
-API_KEY = os.getenv('DATAGOLF_API_KEY', 'c05ee5fd8f2f3b14baab409bd83c')
+API_KEY = require_datagolf_api_key()
 MATCHUPS_URL = "https://feeds.datagolf.com/betting-tools/matchups"
 OUTRIGHTS_URL = "https://feeds.datagolf.com/betting-tools/outrights"
 
@@ -724,8 +736,9 @@ print(f"[ok] wrote rank_probs_updated_{tourney}.parquet")
 # --- Config for betting outputs ---
 EDGE_THRESHOLD_WIN   = 2.0     # minimum edge (pp) for WIN market (sim_prob - implied_prob)
 EDGE_THRESHOLD_TOPN  = 2.0     # minimum edge (pp) for Top-N markets (sim_prob - implied_prob)
+from kelly_config import KELLY_FRACTION
+
 BANKROLL             = 10000.0
-KELLY_FRACTION       = 0.25
 RETAIL_BOOKS         = ['draftkings','fanduel','betmgm','caesars','barstool','espn','pointsbet','wynnbet','unibet','betway','betfred','betrivers']
 BANKROLLS            = {'pinnacle': 10000, 'betcris': 10000, 'betonline': 8000, 'retail': 4000, 'bovada': 3000}
 
