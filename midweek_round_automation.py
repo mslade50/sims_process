@@ -795,10 +795,24 @@ def run_pipeline(args) -> int:
 
         sim_tourney = getattr(sim_inputs, "tourney", None)
         if sim_tourney and tourney and sim_tourney != tourney:
-            raise PipelineFailure(
-                f"Split-brain config: Sheet tourney '{tourney}' != "
-                f"sim_inputs.tourney '{sim_tourney}'"
-            )
+            # sim_inputs.py only feeds the legacy live-skill/round_sim path. When
+            # golfprice owns the board (same _external_fairs_owner() gate as the
+            # PR #28 skip, incl. fail-closed marker fallback and the
+            # SIM_FAIRS_FORCE_PRODUCTION=1 override) that path is skipped, so a
+            # stale sim_inputs must not block the odds gate, Sheet pointer,
+            # weather or status writes.
+            split_owner = _external_fairs_owner()
+            if split_owner:
+                print(
+                    f"  Split-brain check skipped: Sheet tourney '{tourney}' != "
+                    f"sim_inputs.tourney '{sim_tourney}', but round fairs are owned "
+                    f"by {split_owner}. Set SIM_FAIRS_FORCE_PRODUCTION=1 to enforce."
+                )
+            else:
+                raise PipelineFailure(
+                    f"Split-brain config: Sheet tourney '{tourney}' != "
+                    f"sim_inputs.tourney '{sim_tourney}'"
+                )
     except PipelineFailure:
         raise
     except Exception as exc:
