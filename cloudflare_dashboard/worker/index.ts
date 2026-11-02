@@ -2,10 +2,13 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { runAlerts } from "./alerts";
+import { runShadow } from "./shadow";
 import { handleScheduled } from "./cron";
+import { runFreshness } from "./freshness";
 import { handleRetention } from "./retention";
 import { handleJobsApi } from "./jobs-api";
-import { handleOwnerGate } from "./owner";
+import { handleOpsApi } from "./ops-api";
+import { handleOwnerGate, ownerEmails, viewerFor } from "./owner";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
@@ -13,14 +16,25 @@ import { cacheControlFor, respondWithObject } from "./data-http";
 interface Env {
   ASSETS: Fetcher;
   DASHBOARD_DATA?: R2Bucket;
+  /** Optional: the repair watcher's inbox bucket (golf-odds-board); the freshness check writes ops/agent_inbox/dashboard-freshness/** only. */
+  AGENT_INBOX?: R2Bucket;
+  DATA_FRESHNESS_INBOX?: string;
+  /** "1" enables the data-staleness check (worker/freshness.ts): reads R2, writes owner/data_freshness.json; agent-inbox records only when DATA_FRESHNESS_INBOX="1" and the AGENT_INBOX binding exist, sends nothing else. */
+  DATA_FRESHNESS_ENABLED?: string;
   /** Optional: set both to verify the Cloudflare Access JWT signature on override writes. */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   /** Comma-separated owner emails (worker/owner.ts): only they see Run, weather edits and overrides. Unset = gate off. */
   OWNER_EMAILS?: string;
+  /** Explicit Cloudflare Access service-client allowlist; empty means agents are denied. */
+  OPS_AGENT_CLIENT_IDS?: string;
   /** Optional Worker secrets (owner action). While either is absent the alert tick only logs what it would send. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  /** Kill switch for the legacy alerts above: must be exactly "1" (plus both secrets) to send. Unset = dark. */
+  LEGACY_ALERTS_ENABLED?: string;
+  /** "1" enables the passive shadow observer (worker/shadow.ts): R2 writes under ops/shadow/ only, sends nothing. Unset = off. */
+  OPS_SHADOW_ENABLED?: string;
   DB: D1Database;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -64,6 +78,28 @@ const worker = {
           console.error(`alerts failed: ${error instanceof Error ? error.message : String(error)}`);
         }),
     );
+    // Passive ops shadow observer (worker/shadow.ts). OFF unless OPS_SHADOW_ENABLED === "1"; reads R2, writes ops/shadow/** only, sends nothing.
+    ctx.waitUntil(
+      runShadow(env, controller.scheduledTime)
+        .then((outcome) => {
+          if (!outcome.enabled) console.log(`shadow: ${outcome.notes.join("; ") || "disabled"}`);
+          else console.log(`shadow: ${outcome.findings.length} finding(s), ${outcome.written} new finding(s) recorded${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
+        })
+        .catch((error: unknown) => {
+          console.error(`shadow failed: ${error instanceof Error ? error.message : String(error)}`);
+        }),
+    );
+    // Data-staleness check (worker/freshness.ts): read-only on every data object, own status object, agent inbox (never Telegram). Independent of everything above.
+    ctx.waitUntil(
+      runFreshness(env, controller.scheduledTime)
+        .then((outcome) => {
+          if (!outcome.enabled) console.log(`freshness: ${outcome.notes.join("; ")}`);
+          else console.log(`freshness: ${outcome.doc ? `${outcome.doc.stale_count} stale of ${outcome.doc.sources.length}` : "no result"}${outcome.notes.length ? `; ${outcome.notes.join("; ")}` : ""}`);
+        })
+        .catch((error: unknown) => {
+          console.error(`freshness failed: ${error instanceof Error ? error.message : String(error)}`);
+        }),
+    );
     // Daily retention of old job status/log/claim objects (worker/retention.ts). OFF unless jobs/retention/config.json exists; independent of the two above.
     ctx.waitUntil(
       handleRetention(controller, env)
@@ -89,6 +125,16 @@ const worker = {
 async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
 
+  // This private page fails closed even when the legacy owner-list gate is unset.
+  let decodedPath = url.pathname;
+  try { decodedPath = decodeURIComponent(decodedPath); } catch { /* an invalid route is handled below */ }
+  if (/^\/ops(?:\.rsc)?\/*$/i.test(decodedPath) && (!ownerEmails(env) || !(await viewerFor(request, env)).owner)) {
+    return new Response(null, { status: 302, headers: { location: new URL("/this-week", url).href, "cache-control": "no-store" } });
+  }
+  // Ops authenticates owners and narrowly authorized service clients itself, fail-closed even without OWNER_EMAILS.
+  const opsResponse = await handleOpsApi(request, env);
+  if (opsResponse) return opsResponse;
+
   // Owner-only pages and APIs are refused before any handler sees them (worker/owner.ts).
   const ownerGate = await handleOwnerGate(request, env);
   if (ownerGate) return ownerGate;
@@ -99,6 +145,33 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
   if (weatherEditsResponse) return weatherEditsResponse;
   const jobsResponse = await handleJobsApi(request, env);
   if (jobsResponse) return jobsResponse;
+
+  // Owner-only research data (R2 owner/<key>, e.g. owner/bet_breakdowns.json). handleOwnerGate above has already refused anyone else;
+  // there is deliberately no packaged-asset fallback, so the file is never public.
+  if (url.pathname.startsWith("/api/owner-data/")) {
+    // Fail closed: unlike the shared gate (off while OWNER_EMAILS is unset), private data needs a configured owner list AND a verified owner.
+    if (!ownerEmails(env) || !(await viewerFor(request, env)).owner) {
+      return Response.json({ ok: false, error: "This part of the dashboard is for the owner only" }, { status: 403, headers: { "cache-control": "no-store" } });
+    }
+    let requested = "";
+    try {
+      requested = decodeURIComponent(url.pathname.slice("/api/owner-data/".length));
+    } catch {
+      return Response.json({ error: "Invalid data path" }, { status: 400 });
+    }
+    if (!requested || requested.includes("..") || !/^[A-Za-z0-9_./-]+\.json$/.test(requested)) {
+      return Response.json({ error: "Invalid data path" }, { status: 400 });
+    }
+    let object: R2ObjectBody | null = null;
+    try {
+      object = env.DASHBOARD_DATA ? await env.DASHBOARD_DATA.get(`owner/${requested}`) : null;
+    } catch {
+      // An R2 failure is an outage (503), never "not published" (same mapping as /api/data below).
+      return Response.json({ error: "Data service unavailable" }, { status: 503, headers: { "cache-control": "no-store" } });
+    }
+    if (!object) return Response.json({ error: "Not published yet" }, { status: 404, headers: { "cache-control": "no-store" } });
+    return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: "private, no-cache" });
+  }
 
   if (url.pathname.startsWith("/api/data/")) {
     let requested = "";
@@ -111,19 +184,18 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
       return Response.json({ error: "Invalid data path" }, { status: 400 });
     }
     const key = `data/${requested}`;
+    // No packaged-snapshot fallback: public/data/*.json is a frozen 2026-08-18 (BMW) copy, and serving it here would show
+    // months-old data as current. A miss is an explicit "not published" (404); an R2 failure is an outage (503). The client
+    // already words both (app/data-rules.ts classifyFailure).
     let object: R2ObjectBody | null = null;
     try {
       object = env.DASHBOARD_DATA ? await env.DASHBOARD_DATA.get(key) : null;
     } catch {
-      // Local preview and a newly provisioned bucket intentionally fall back
-      // to the packaged snapshot until the first R2 publish completes.
+      return Response.json({ error: "Data service unavailable" }, { status: 503, headers: { "cache-control": "no-store" } });
     }
-    if (object) {
-      // manifest.json is the publish pointer (short max-age + revalidate); If-None-Match answers 304 so unchanged files cost no body.
-      return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: cacheControlFor(requested) });
-    }
-    const assetUrl = new URL(`/data/${requested}`, request.url);
-    return env.ASSETS.fetch(new Request(assetUrl, request));
+    if (!object) return Response.json({ error: "Not published yet" }, { status: 404, headers: { "cache-control": "no-store" } });
+    // manifest.json is the publish pointer (short max-age + revalidate); If-None-Match answers 304 so unchanged files cost no body.
+    return respondWithObject(request, object, { contentType: "application/json; charset=utf-8", cacheControl: cacheControlFor(requested) });
   }
 
   if (url.pathname === "/_vinext/image") {

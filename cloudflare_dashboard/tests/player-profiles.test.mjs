@@ -44,7 +44,7 @@ test("archived checkpoints withhold later observations and reference anchors",()
 
 test("profile headline is mounted and labels preserve descriptive vs saved-model meaning",async()=>{
   const {readFile}=await import("node:fs/promises");const view=(await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8"))+(await readFile(new URL("../app/WeeklyPlayersView.tsx",import.meta.url),"utf8"));
-  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("recent form vs the {RULER_NAME}"));assert.ok(view.includes("not a price forecast"));assert.ok(view.includes("does not feed the simulations"));assert.ok(view.includes("rebuilt from the latest data"));
+  assert.ok(view.includes("<ProfileBenchmark profile={p}"));assert.ok(view.includes("recent form vs the {rulerName(referenceSpan(reference))}"));assert.ok(view.includes("not a price forecast"));assert.ok(view.includes("does not feed the simulations"));assert.ok(view.includes("rebuilt from the latest data"));
   assert.equal(view.includes("Absolute model"),false);assert.equal(view.includes("Absolute pre-event"),false);assert.equal(view.includes("known before this checkpoint"),false);assert.equal(view.includes(String.fromCharCode(65533)),false);
 });
 

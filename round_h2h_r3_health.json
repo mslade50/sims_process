@@ -2,32 +2,32 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-10-09 23:03:00 UTC",
+  "generated_at": "2026-10-31 16:05:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:527:2026-10-08/R2_20261009T230300Z",
+      "run_id": "pga:540:2026-10-29/R2_20261031T160500Z",
       "model_version": "v2.4+v2.6 in-play",
       "after_round": 2,
-      "run_manifest_sha256": "9ecd75c1e237ad94d527973baf27972e737685fc8535dccee415ac1ab5132658",
-      "base_run_as_of": "2026-10-07 22:05:00 UTC"
+      "run_manifest_sha256": "9e3e4e9743975668181c5ff98e62b8290a0386db119549d00d1ca52aa06dfaf1",
+      "base_run_as_of": "2026-10-29 11:12:00 UTC"
     },
     "event": {
-      "event_id": "527",
-      "tourney": "baycurrent",
+      "event_id": "540",
+      "tourney": "vidantaworld",
       "round": 3
     },
     "source": {
-      "generated_at": "2026-10-09 23:03:00 UTC",
-      "root_generated_at": "2026-10-09 23:03:00 UTC"
+      "generated_at": "2026-10-31 16:05:00 UTC",
+      "root_generated_at": "2026-10-31 16:05:00 UTC"
     },
     "simulation": {
-      "num_players": 72,
+      "num_players": 67,
       "num_sims": 150000,
-      "player_set_sha256": "79a48cbe4211f7c5164e9f5260d489efdeae53012312c8b89e82c9a418c3887a",
+      "player_set_sha256": "3fd2376bf551985aef350c512a438ed28c491112427dc9be9e544fa0777f6a9d",
       "seeds": [
         20250929,
         20250930,
@@ -40,24 +40,24 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-09 23:03:00 UTC"
+      "at": "2026-10-31 16:05:00 UTC"
     },
     "checks": {
       "passed": true,
-      "n_checks": 9
+      "n_checks": 10
     },
-    "manifest_sha256": "a8aa6b89fcb7b985164bb94a5024b32dea602c03593337ed0fa3f7b2b13c76f6"
+    "manifest_sha256": "d9ec6bd093ab7800c8ddd1d7b6b128c6b7aa400d2b7c58912e803dbb41212576"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r3_meta.json",
-      "sha256": "11d22ef55701432ca09658f5f46601c517d7c44962e0abccf8e2073358263726"
+      "sha256": "5ef1967d1eb3d815ccc0a0cd637e579ff0a50040a7a16e348b5000dae1cf321b"
     },
     "h2h_parquet": {
       "path": "round_h2h_r3.parquet",
-      "sha256": "5558abef872d6accee719e0791d16b81bfaee2090eb902ad3d437d912c13784b"
+      "sha256": "3d7393e98a73c812230b0ce04b57b1100100dfc19e492ab01641dd643239c949"
     }
   },
   "extra": {},
-  "manifest_sha256": "814df7b6200b8972c691de6028a02a88aede15265204e371cbbad9e28e8f4fb1"
+  "manifest_sha256": "97e2eaf12f117280fd5ab4c76d116b3df99730144775d2bdd4933b14af4a0100"
 }

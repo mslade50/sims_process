@@ -135,7 +135,8 @@ export type LoadResult =
 export type LoadPlan = FetchPlan & {
   /** The Worker URL, then the packaged static copy (local no-Worker preview only). */
   url: string;
-  packagedUrl: string;
+  /** Omit for objects that must never be served from the bundled snapshot (the legacy /api/data/* files). */
+  packagedUrl?: string;
   store?: LastGoodStore;
   now?: () => number;
 };
@@ -166,8 +167,8 @@ export async function loadResource(plan: LoadPlan): Promise<LoadResult> {
     return failure.kind === "outage" ? staleOrError(plan, failure, api.status) : { status: "error", kind: failure.kind, message: failure.message, httpStatus: api.status };
   }
   // No Worker answered in a structured way: network failure, timeout, or an HTML/empty body.
-  const packaged = await fetchWithRetry(plan.packagedUrl, { ...plan, retries: 0, timeoutMs: Math.min(plan.timeoutMs ?? DEFAULT_TIMEOUT_MS, 6000) });
-  if (packaged.kind === "response" && packaged.ok && packaged.json !== undefined && !isWorkerError(packaged.json)) {
+  const packaged = plan.packagedUrl ? await fetchWithRetry(plan.packagedUrl, { ...plan, retries: 0, timeoutMs: Math.min(plan.timeoutMs ?? DEFAULT_TIMEOUT_MS, 6000) }) : null;
+  if (packaged && packaged.kind === "response" && packaged.ok && packaged.json !== undefined && !isWorkerError(packaged.json)) {
     return { status: "ok", json: packaged.json, stale: false, savedAt: null, source: "packaged" };
   }
   const status = api.kind === "response" ? api.status : null;

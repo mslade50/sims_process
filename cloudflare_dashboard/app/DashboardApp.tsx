@@ -19,16 +19,15 @@ import {
 } from "lucide-react";
 import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
-import { useDashboardData } from "./data";
-import { titleCase } from "./lib";
+import { useDashboardData, useSavedCopies } from "./data";
 import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
 import { FreshnessBadge, useNow } from "./ui";
-import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
+import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
-export type ViewKey = "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather" | "weather-effects" | "weather-edits" | "this-week" | "why-priced";
+export type ViewKey = "shot-data" | "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
 
 type Manifest = {
   generated_at: string;
@@ -43,12 +42,14 @@ type Manifest = {
 /** Icons by view key; the labels, groups and order live in shell-rules.ts (NAVIGATION) so tests can read them. */
 const NAV_ICONS: Record<string, typeof CircleGauge> = {
   "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
-  inputs: SlidersHorizontal, run: Play, performance: TrendingUp, history: Archive, diagnostics: Microscope,
+  "shot-data": CircleGauge, ops: Settings2, inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": TrendingUp, "bet-card": TrendingUp, history: Archive, diagnostics: Microscope,
 };
 
 /** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
 const PlayersView = lazy(() => import("./PlayerProfilesView").then((m) => ({ default: m.PlayersView })));
 const WeeklyPlayersView = lazy(() => import("./WeeklyPlayersView").then((m) => ({ default: m.WeeklyPlayersView })));
+const ShotDataView = lazy(() => import("./ShotDataView").then((m) => ({ default: m.ShotDataView })));
+const OpsView = lazy(() => import("./OpsView").then((m) => ({ default: m.OpsView })));
 const RunView = lazy(() => import("./RunView").then((m) => ({ default: m.RunView })));
 const InputsView = lazy(() => import("./InputsView").then((m) => ({ default: m.InputsView })));
 const ResearchView = lazy(() => import("./ResearchView").then((m) => ({ default: m.ResearchView })));
@@ -58,15 +59,18 @@ const ScoringView = lazy(() => import("./ScoringView").then((m) => ({ default: m
 const HistoryView = lazy(() => import("./views").then((m) => ({ default: m.HistoryView })));
 const PerformanceView = lazy(() => import("./views").then((m) => ({ default: m.PerformanceView })));
 const DiagnosticsView = lazy(() => import("./views").then((m) => ({ default: m.DiagnosticsView })));
-const WeatherView = lazy(() => import("./views").then((m) => ({ default: m.WeatherView })));
 const WeatherEffectsView = lazy(() => import("./WeatherEffectsView").then((m) => ({ default: m.WeatherEffectsView })));
 const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ default: m.WeatherEditsView })));
 const ThisWeekView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.ThisWeekView })));
+const BetBreakdownsView = lazy(() => import("./BetBreakdownsView").then((m) => ({ default: m.BetBreakdownsView })));
+const BetCardView = lazy(() => import("./BetCardView").then((m) => ({ default: m.BetCardView })));
 const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.WhyPricedView })));
 
 const loaders: Record<string, () => Promise<unknown>> = {
+  "shot-data": () => import("./ShotDataView"),
   "players": () => import("./PlayerProfilesView"),
   "weekly-players": () => import("./WeeklyPlayersView"),
+  "ops": () => import("./OpsView"),
   "run": () => import("./RunView"),
   "inputs": () => import("./InputsView"),
   "research": () => import("./ResearchView"),
@@ -76,11 +80,12 @@ const loaders: Record<string, () => Promise<unknown>> = {
   "history": () => import("./views"),
   "performance": () => import("./views"),
   "diagnostics": () => import("./views"),
-  "weather": () => import("./views"),
   "weather-effects": () => import("./WeatherEffectsView"),
   "weather-edits": () => import("./WeatherEditsView"),
   "this-week": () => import("./ExplainViews"),
   "why-priced": () => import("./ExplainViews"),
+  "bet-breakdowns": () => import("./BetBreakdownsView"),
+  "bet-card": () => import("./BetCardView"),
 };
 
 const warmed = new Set<string>();
@@ -94,8 +99,10 @@ function prefetchView(key: string) {
 const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  "shot-data": ShotDataView,
   players: PlayersView,
   "weekly-players": WeeklyPlayersView,
+  ops: OpsView,
   run: RunView,
   inputs: InputsView,
   research: ResearchView,
@@ -105,11 +112,12 @@ const views: Record<ViewKey, React.ComponentType> = {
   history: HistoryView,
   performance: PerformanceView,
   diagnostics: DiagnosticsView,
-  weather: WeatherView,
   "weather-effects": WeatherEffectsView,
   "weather-edits": WeatherEditsView,
   "this-week": ThisWeekView,
   "why-priced": WhyPricedView,
+  "bet-breakdowns": BetBreakdownsView,
+  "bet-card": BetCardView,
 };
 
 function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
@@ -173,12 +181,13 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const viewer = useViewer();
   const navigation = navigationFor(viewer?.owner === true);
   const ownerOnly = route.kind === "view" && OWNER_ONLY_VIEWS.includes(route.key);
-  const { data: manifest } = useDashboardData<Manifest>("manifest.json");
+  const { data: manifest, stale: manifestSaved } = useDashboardData<Manifest>("manifest.json");
   // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
-  // falling back to the legacy sims_process manifest only when the golfprice index is unavailable. Freshness is the OLDEST event's
+  // with no run shown when the golfprice index is unavailable (the legacy manifest is only the badge on the Legacy views, never a stand-in for the current week). Freshness is the OLDEST event's
   // newest run, so a stale event cannot hide behind a fresh one (site audit C3).
-  const { data: gpIndex } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
+  const { data: gpIndex, stale: indexSaved } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
   const now = useNow(30_000);
+  const savedNotice = savedCopyNotice(useSavedCopies(), now);
   const week = useMemo(() => summarizeWeek(gpIndex, now), [gpIndex, now]);
   useEffect(() => {
     // After first render, once the browser is idle, warm the most used views so the next click is instant.
@@ -275,27 +284,28 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           </div>
           <HeaderSearch onNavigate={navigateWithReload} />
           <div className="event-context">
-            {isLegacy ? (
+            {activeKey === "shot-data" ? <span>Scheduled shot snapshots</span> : isLegacy ? (
               <>
                 <span className="legacy-pill">Legacy data</span>
-                <FreshnessBadge at={manifest?.generated_at} label="Data" />
+                <FreshnessBadge at={manifest?.generated_at} label="Data" savedCopy={manifestSaved} />
               </>
             ) : week ? (
               <>
                 <div><strong>{week.title}</strong>{week.sub && <small>{week.sub}</small>}</div>
                 {week.publishedLine && <span className="published-line">{week.publishedLine}</span>}
                 {week.heldBackNote && <p className="held-note" role="status" title={week.heldBackNote}>{week.heldBackNote}</p>}
-                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} />
+                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} savedCopy={indexSaved} />
               </>
             ) : (
               <>
-                <div><strong>{titleCase(manifest?.event || "Tournament")}</strong><small>{manifest?.par ? `Par ${manifest.par}` : "Course model"}</small></div>
-                <FreshnessBadge at={manifest?.generated_at} label="Data" />
+                <div><strong>This week</strong><small>Run data unavailable</small></div>
+                <FreshnessBadge at={null} savedCopy={indexSaved} />
               </>
             )}
           </div>
         </header>
         <div className="content-frame">
+          {savedNotice && <p className="link-notice saved-copy-notice" role="alert" data-testid="saved-copy-notice">{savedNotice}</p>}
           {badEvent && <p className="link-notice" role="status">The event in this link is not in the published list, so the default event is shown instead.</p>}
           {route.kind === "notfound" ? <NotFound requested={route.requested} navigation={navigation} /> : ownerOnly && !viewer ? null : ownerOnly && !viewer?.owner ? <NotFound requested={activeKey} navigation={navigation} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
         </div>

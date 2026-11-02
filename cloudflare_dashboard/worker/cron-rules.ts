@@ -25,7 +25,8 @@ export type Window = { type: string; days: Day[]; from: string; to: string; minu
 /** Fixed Eastern-time slots (HH:MM, 24 h). Order = enqueue order inside one tick. */
 export const SLOTS: Slot[] = [
   { type: "monday_settle", days: ["Mon"], times: ["08:30", "11:30", "13:30"], note: "Settle last week at 08:30 (before production grading); later slots retry while the event is not final (a pending settle writes nothing)." },
-  { type: "sunday_week", days: ["Sun"], times: ["20:00"], note: "Sunday-night pricing (owner 2026-10-12): the next event from the PGA TOUR field (released Friday 5 pm ET), so prices are ready when markets open Monday. Refuses (no-op failure) when the just-finished event's rounds are not in the data yet; Monday 15:30 stays the full run." },
+  { type: "sunday_week", days: ["Sun"], times: ["20:00", "22:30"], note: "Sunday-night pricing (owner 2026-10-12): the next event from the PGA TOUR field (released Friday 5 pm ET), so prices are ready when markets open Monday. The just-finished event's rounds come from DataGolf, or from the published shot packages once every played round is complete (owner 2026-10-30); the job refuses (failure, no prices, repair-agent inbox only) while a round is still missing, so the later slots are the retries. Once the run's course-fit email has gone out, later slots are no-ops (the job itself checks)." },
+  { type: "sunday_week", days: ["Mon"], times: ["00:30", "01:30"], note: "Retry slots after midnight (owner 2026-10-30): they belong to the same Sunday run, as the shot packages of a late-finishing final round can appear after 22:30. Monday 15:30 stays the full run on DataGolf's numbers." },
   { type: "monday_week", days: ["Mon"], times: ["15:30"], note: "Price the new week once the settle has finished." },
   { type: "tuesday", days: ["Tue"], times: ["12:00"], note: "Tuesday refresh on the first full day of market data." },
   { type: "wednesday", days: ["Wed"], times: ["18:00", "22:30"], note: "Reprice with the tee-time gate; the 22:30 slot catches late tee sheets and the early European tee." },
@@ -40,7 +41,8 @@ export const SLOTS: Slot[] = [
 /** Repeating windows (ET). `minutes` are the minutes past the hour. The watch job goes first so a re-simulation it starts is the base the odds reprice then reads. */
 export const WINDOWS: Window[] = [
   { type: "watch", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], from: "00:00", to: "23:59", minutes: [0, 15, 30, 45], note: "Every 15 minutes, all week (owner 2026-10-07, event weeks run by themselves): input changes, the per-event pre-tee close (30 minutes before each event's own first tee, any time zone), and the after-round pricing of each event as soon as the feed shows the round complete. Cheap when nothing is due; does nothing when no event is active." },
-  { type: "odds_reprice", days: ["Mon"], from: "16:00", to: "23:59", minutes: [0, 30], note: "No re-simulation: re-read odds, recompute signals against the existing fairs, publish, alert." },
+  { type: "odds_reprice", days: ["Sun"], from: "18:00", to: "23:59", minutes: [0, 30], note: "Sunday evening (owner 2026-10-22): the bet card catches the early 72-hole and make-cut lines (BetOnline opens first) on the Sunday-night prices." },
+  { type: "odds_reprice", days: ["Mon"], from: "00:00", to: "23:59", minutes: [0, 30], note: "No re-simulation: re-read odds, recompute signals against the existing fairs, publish, alert; then refresh the owner's bet card. All Monday (owner 2026-10-22: early lines)." },
   { type: "odds_reprice", days: ["Tue", "Wed"], from: "00:00", to: "23:59", minutes: [0, 30], note: "Overnight and in the betting window." },
   { type: "odds_reprice", days: ["Thu"], from: "00:00", to: "11:00", minutes: [0, 30], note: "Until the first tee (the job does nothing once every event has teed off)." },
 ];
@@ -77,4 +79,11 @@ export function dueJobs(ms: number): DueJob[] {
 export function isMondaySettleTime(ms: number): boolean {
   const clock = easternClock(ms);
   return clock.weekday === "Mon" && hhmm(clock) === "08:30";
+}
+
+/** True when `ms` falls inside any repeating window of `type` (any minute of the hour, unlike dueJobs which also needs the window's minute list). */
+export function inWindow(type: string, ms: number): boolean {
+  const clock = easternClock(ms);
+  const at = hhmm(clock);
+  return WINDOWS.some((win) => win.type === type && win.days.includes(clock.weekday) && at >= win.from && at <= win.to);
 }

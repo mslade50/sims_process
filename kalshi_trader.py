@@ -22,11 +22,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from kalshi_client import KalshiClient
+from kelly_config import KELLY_FRACTION
 
 # -- Config ------------------------------------------------------------
 
 KALSHI_BANKROLL = float(os.environ.get("KALSHI_BANKROLL", "200"))
-KELLY_FRACTION = 0.60
 MIN_EDGE_OUTRIGHT = 0.5   # percentage points
 MIN_EDGE_WINNER = 0.5
 MAX_SPREAD = 0.12         # skip markets with bid/ask spread > 12 cents

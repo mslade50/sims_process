@@ -2,14 +2,14 @@
 
 import type { ReactNode } from "react";
 import { Badge, Skeleton } from "./ui";
-import { LABELS, ZERO_SENTENCE } from "./labels";
+import { LABELS, vsPgaAvgLong, zeroLabel, zeroSentence } from "./labels";
 import { etTime } from "./lib";
-import { entryName, pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
+import { entryName, pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, referenceSpan, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
 import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
 import {
-  CAVEAT_REFERENCE_ONLY, LIVE_CENTRING_NOTE, ZERO_LABEL, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
+  CAVEAT_REFERENCE_ONLY, LIVE_CENTRING_NOTE, barGeometry, liveChips, regularTick, signed, sparklinePaths, supportBadge, tourMixBadge,
 } from "./player-hero-rules";
 import "./player-hero.css";
 
@@ -107,8 +107,8 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
       </div>
 
       <div className="ph-row ph-stats">
-        <article className="ph-headline" title={`${LABELS.vsPgaAvg.long}. ${ZERO_SENTENCE}`}>
-          <span className="eyebrow">{LABELS.vsPgaAvg.short} · {ZERO_LABEL}</span>
+        <article className="ph-headline" title={`${vsPgaAvgLong(referenceSpan(reference))}. ${zeroSentence(referenceSpan(reference))}`}>
+          <span className="eyebrow">{LABELS.vsPgaAvg.short} · {zeroLabel(referenceSpan(reference))}</span>
           <strong className="ph-number" data-testid="hero-value" title={value === null ? undefined : `${signed(value, 3)} strokes per round`}>
             {value === null ? (withheld ? "Withheld" : "Unavailable") : signed(value)} {value !== null && <small>strokes per round</small>}
           </strong>
