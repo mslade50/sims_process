@@ -543,7 +543,7 @@ def _external_fairs_owner() -> str | None:
     if marker.exists():
         try:
             return str(json.loads(marker.read_text(encoding="utf-8")).get("owner") or "external")
-        except ValueError:
+        except (ValueError, OSError, AttributeError):
             return "external"
     try:
         from publish_sim_fairs import _external_owner
@@ -801,8 +801,11 @@ def run_pipeline(args) -> int:
             # SIM_FAIRS_FORCE_PRODUCTION=1 override) that path is skipped, so a
             # stale sim_inputs must not block the odds gate, Sheet pointer,
             # weather or status writes.
+            # Fail closed: only a positively confirmed "golfprice" owner skips the
+            # guard. The generic "external" fallback (unreadable/corrupt/ownerless
+            # metadata) or any unexpected owner value keeps it on.
             split_owner = _external_fairs_owner()
-            if split_owner:
+            if split_owner == "golfprice":
                 print(
                     f"  Split-brain check skipped: Sheet tourney '{tourney}' != "
                     f"sim_inputs.tourney '{sim_tourney}', but round fairs are owned "

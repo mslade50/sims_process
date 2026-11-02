@@ -762,3 +762,53 @@ class ExternalFairsOwnerTests(unittest.TestCase):
                  patch("publish_sim_fairs._external_owner", return_value=None):
                 os.environ.pop("SIM_FAIRS_FORCE_PRODUCTION", None)
                 self.assertIsNone(automation._external_fairs_owner())
+
+
+class SplitBrainGuardFailClosedTests(unittest.TestCase):
+    """The split-brain guard is skipped only when golfprice ownership is confirmed."""
+
+    def _run_guard(self, marker_text=None, unreadable=False):
+        gate = {
+            "action": "run",
+            "config": {"event_id": "1", "tourney": "Sheet Event", "course_id": "c"},
+            "readiness": SimpleNamespace(target_round=2),
+            "spreadsheet": None,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "SIM_FAIRS_EXTERNAL.json"
+            if unreadable:
+                marker.mkdir()  # reading a directory raises OSError
+            elif marker_text is not None:
+                marker.write_text(marker_text, encoding="utf-8")
+            with patch.object(automation, "ROOT", root), \
+                 patch.dict(os.environ, {"DATAGOLF_API_KEY": ""}), \
+                 patch.dict("sys.modules", {
+                     "sim_inputs": SimpleNamespace(tourney="Other Event"),
+                     "sim_fairs_ownership": None,
+                 }), \
+                 patch("publish_sim_fairs._external_owner", return_value=None), \
+                 patch.object(automation, "_load_gate_context", return_value=gate), \
+                 redirect_stdout(io.StringIO()):
+                os.environ.pop("SIM_FAIRS_FORCE_PRODUCTION", None)
+                try:
+                    automation.run_pipeline(SimpleNamespace())
+                except automation.PipelineFailure as exc:
+                    return str(exc)
+        return ""
+
+    def test_confirmed_golfprice_skips_guard(self):
+        msg = self._run_guard('{"owner": "golfprice"}')
+        self.assertNotIn("Split-brain", msg)
+
+    def test_corrupt_json_keeps_guard(self):
+        self.assertIn("Split-brain", self._run_guard("{not json"))
+
+    def test_unreadable_file_keeps_guard(self):
+        self.assertIn("Split-brain", self._run_guard(unreadable=True))
+
+    def test_missing_owner_field_keeps_guard(self):
+        self.assertIn("Split-brain", self._run_guard("{}"))
+
+    def test_unknown_owner_keeps_guard(self):
+        self.assertIn("Split-brain", self._run_guard('{"owner": "someone-else"}'))
