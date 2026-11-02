@@ -3,8 +3,8 @@
 Two groups for one completed round of the current event:
   (a) recommended: Round Matchups rows the bot alerted (sharp books, one per
       pairing+side), and
-  (b) killed: edges > 5% that the reprice gates filtered out
-      (``Killed Round Matchups`` tab, written by reprice.py), with kill reason.
+  (b) killed: edges > 5% already on the ``Killed Round Matchups`` tab, with
+      kill reason. A missing tab is an empty group.
 
 Both are graded from DataGolf live-tournament-stats round scores through
 grade_bets.grade_round_matchup (spread, ties rule, units), so settlement logic

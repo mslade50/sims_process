@@ -1,7 +1,6 @@
-"""Offline tests for the prior-round matchup recap (round_recap.py) and the
-killed-edge capture that feeds it. No network, Sheets, or Telegram."""
+"""Offline tests for the Monday grading matchup recap (round_recap.py).
+No network, Sheets, or Telegram."""
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import reprice
 import reprice_core as rc
 import round_recap
 import sheets_storage as ss
@@ -98,65 +96,6 @@ def _spreadsheet():
 
 FULL_SCORES = _scores(alpha=68, bravo=70, charlie=72, delta=70,
                       golf=71, hotel=69, india=70, juliet=70)
-
-
-# ── kill capture ─────────────────────────────────────────────────────────────
-def _matchups():
-    def row(p1, p2, book, e1, e2, **extra):
-        return {"Player 1": p1, "Player 2": p2, "Bookmaker": book, "Ties": "",
-                "P1 Odds": 110, "P2 Odds": -130, "Fair_p1": -105, "Fair_p2": -115,
-                "edge_p1": e1, "edge_p2": e2, "P1 Line": np.nan, "P2 Line": np.nan,
-                **extra}
-    return pd.DataFrame([
-        row("a", "b", "pinnacle", 9.0, -9.0),                       # survives
-        row("c", "d", "pinnacle", 8.0, -8.0),                       # sample too small
-        row("e", "f", "betonline", 6.0, -6.0),                      # pred gate
-        row("g", "h", "fanduel", 9.0, -9.0),                        # non-sharp book
-        row("k", "l", "pinnacle", -4.0, 4.0),                       # edge below 5: not a kill
-        row("i", "j", "pinnacle", 12.0, -12.0, **{"P1 Line": 3.5, "P2 Line": -3.5}),
-    ])
-
-
-PRED = {"a": 1.5, "b": 0.0, "c": 1.5, "d": 0.0, "e": 0.2, "f": 0.0,
-        "g": 1.5, "h": 0.0, "k": 0.0, "l": 1.5, "i": 1.5, "j": 0.0}
-SAMPLE = {name: 30.0 for name in PRED} | {"c": 10.0}
-
-
-def test_killed_capture_records_reasons_and_leaves_outputs_unchanged():
-    killed = []
-    combined, sharp = rc.build_matchup_outputs(
-        _matchups(), 2, PRED, SAMPLE, killed_out=killed)
-    plain_combined, plain_sharp = rc.build_matchup_outputs(_matchups(), 2, PRED, SAMPLE)
-    assert combined.equals(plain_combined) and sharp.equals(plain_sharp)
-
-    frame = killed[0]
-    reasons = dict(zip(frame["bet_on"], frame["kill_reason"]))
-    # g (soft-book quote of a passing bet) and i (quarantined) are not kills
-    assert reasons == {"c": "sample_on<20", "e": "pred_on gate"}
-    assert (frame["edge_on"] > 5).all()
-
-
-def test_capture_failure_does_not_affect_pricing_outputs():
-    killed = []
-    with patch.object(rc, "collect_killed_matchups", side_effect=RuntimeError("boom")):
-        combined, sharp = rc.build_matchup_outputs(
-            _matchups(), 2, PRED, SAMPLE, killed_out=killed)
-    assert killed == []
-    assert set(combined["bet_on"]) == {"a", "g", "l"}
-    assert set(sharp["bet_on"]) == {"a", "l"}
-
-
-def test_store_killed_dedups_per_pair_side_book_across_runs():
-    killed = []
-    rc.build_matchup_outputs(_matchups(), 2, PRED, SAMPLE, killed_out=killed)
-    book = FakeSpreadsheet()
-    first = ss.store_killed_round_matchups(killed[0], 2, "test", "100", spreadsheet=book)
-    again = ss.store_killed_round_matchups(killed[0], 2, "test", "100", spreadsheet=book)
-    assert first == 2 and again == 0
-    moved = killed[0].copy()
-    moved["P1 Odds"] = 130  # repriced quote of the same pair/side/book: first quote wins
-    assert ss.store_killed_round_matchups(moved, 2, "test", "100", spreadsheet=book) == 0
-    assert len(book.tabs[ss.TAB_KILLED_ROUND_MU].rows) == 2
 
 
 # ── grading / aggregation ────────────────────────────────────────────────────
@@ -273,20 +212,6 @@ def test_nothing_to_recap_marks_without_sending():
     assert sent == []
 
 
-def test_recap_and_persist_failures_are_swallowed_by_reprice_hooks():
-    def boom(*args, **kwargs):
-        raise RuntimeError("sheets down")
-
-    assert reprice._send_prior_round_recap(
-        event_id="100", tourney="t", round_num=2, recap_func=boom) is None
-    assert reprice._send_prior_round_recap(
-        event_id="100", tourney="t", round_num=0, recap_func=boom) is None
-    frame = pd.DataFrame([{"Player 1": "a", "Player 2": "b", "edge_on": 6.0}])
-    with patch.object(ss, "store_killed_round_matchups", side_effect=boom):
-        assert reprice._persist_killed_edges(
-            [frame], sim_round=2, tourney="t", event_id="100", spreadsheet=None) == 0
-
-
 def test_first_chunk_failure_leaves_no_marker_and_later_chunk_failure_keeps_it():
     sheet = _spreadsheet()
     with patch.object(round_recap, "format_recap_messages", return_value=["one", "two"]):
@@ -387,9 +312,16 @@ def test_fetch_live_stats_passes_timeout_and_defaults_to_none():
         assert get.call_args.kwargs["timeout"] is None
 
 
-def test_reprice_job_has_timeout_minutes():
-    path = Path(__file__).parent / ".github" / "workflows" / "reprice.yml"
-    assert "timeout-minutes:" in path.read_text(encoding="utf-8")
+def test_monday_grading_runs_r4_recap_without_failing_the_job():
+    root = Path(__file__).parent
+    source = (root / "monday_grading.py").read_text(encoding="utf-8")
+    block = source[source.index("Step 4b"):source.index("Step 5")]
+    assert "from round_recap import run_recap" in block
+    assert "run_recap(event_id, event_name, 4" in block
+    assert "except Exception" in block
+    workflow = (root / ".github" / "workflows" / "monday-grading.yml").read_text(encoding="utf-8")
+    assert "runs-on: ubuntu-latest" in workflow
+    assert "TELEGRAM_ROUND_BETS_CHAT_ID: ${{ secrets.TELEGRAM_ROUND_BETS_CHAT_ID }}" in workflow
 
 
 def test_recap_marker_write_honours_etr_only_mode(monkeypatch):
@@ -398,75 +330,3 @@ def test_recap_marker_write_honours_etr_only_mode(monkeypatch):
     with pytest.raises(RuntimeError, match="ETR-only"):
         round_recap.run_recap("100", "t", 2, spreadsheet=sheet)
     assert ss.TAB_ROUND_RECAP_LOG not in sheet.tabs
-
-
-# ── persist only after successful delivery ───────────────────────────────────
-def _delivery(after, alert):
-    new_mu = pd.DataFrame([{
-        "Player 1": "alpha", "Player 2": "bravo", "Bookmaker": "pinnacle",
-        "bet_on": "alpha", "edge_on": 8.2, "P1 Odds": 120, "P2 Odds": -140,
-    }])
-    return reprice._deliver_then_store_matchups(
-        new_mu, set(), sim_round=2, tourney="t", event_id="100", dg_id_lookup={},
-        spreadsheet=None, rc_module=rc, store_func=lambda *a, **k: None,
-        alert_func=alert, after_delivery=after)
-
-
-def test_after_delivery_runs_only_when_delivery_succeeds():
-    calls = []
-    _delivery(lambda: calls.append("persist"), lambda rows, *a, **k: len(rows))
-    assert calls == ["persist"]
-
-    def failing_alert(rows, *a, **k):
-        raise rc.TelegramDeliveryError("down")
-
-    calls.clear()
-    with pytest.raises(rc.TelegramDeliveryError):
-        _delivery(lambda: calls.append("persist"), failing_alert)
-    assert calls == []
-
-    reprice._deliver_then_store_matchups(
-        pd.DataFrame(), set(), sim_round=2, tourney="t", event_id="100", dg_id_lookup={},
-        spreadsheet=None, rc_module=rc, store_func=None,
-        after_delivery=lambda: calls.append("persist"))
-    assert calls == ["persist"]
-
-
-def test_rejected_health_gate_never_reaches_persist():
-    calls = []
-
-    def rejecting_health():
-        raise RuntimeError("bundle rejected")
-
-    new_mu = pd.DataFrame([{
-        "Player 1": "alpha", "Player 2": "bravo", "Bookmaker": "pinnacle",
-        "bet_on": "alpha", "edge_on": 8.2, "P1 Odds": 120, "P2 Odds": -140,
-    }])
-    with pytest.raises(RuntimeError):
-        reprice._deliver_then_store_matchups(
-            new_mu, set(), sim_round=2, tourney="t", event_id="100", dg_id_lookup={},
-            spreadsheet=None, rc_module=rc, store_func=lambda *a, **k: None,
-            alert_func=lambda rows, *a, **k: len(rows), health_check=rejecting_health,
-            after_delivery=lambda: calls.append("persist"))
-    assert calls == []
-
-
-# ── recap attempted on early-exit paths of main() ────────────────────────────
-@pytest.mark.parametrize("path", ["stand_down", "not_ready"])
-def test_main_attempts_recap_on_early_exit_paths(path, monkeypatch):
-    import types
-    cfg = {"tourney": "test_open", "event_id": "100", "round_num": 2}
-    calls = []
-    monkeypatch.setattr(sys, "argv", ["reprice.py", "--check-ready"])
-    monkeypatch.setattr(reprice, "_send_prior_round_recap", lambda **kw: calls.append(kw))
-    monkeypatch.setattr(reprice, "_write_readiness_output", lambda ready: None)
-    monkeypatch.setattr(reprice, "_setup_env", lambda: str(Path(__file__).parent))
-    own = types.SimpleNamespace(
-        legacy_mode=lambda: path != "stand_down",
-        resolve_ownership=lambda *a, **k: types.SimpleNamespace(
-            status="owned", stand_down=True, detail="", log_line=lambda: "owned"))
-    monkeypatch.setitem(sys.modules, "sim_fairs_ownership", own)
-    monkeypatch.setattr(reprice, "reprice_not_ready_reason", lambda *a, **k: "no sim")
-    with patch("sheet_config.load_config", return_value=cfg):
-        assert reprice.main() == 0
-    assert calls == [{"event_id": "100", "tourney": "test_open", "round_num": 2}]

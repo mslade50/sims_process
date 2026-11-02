@@ -180,6 +180,7 @@ def fetch_live_stats(round_num, api_key, include_score=False, timeout=None):
         api_key: DataGolf API key
         include_score: If True, adds "score" to requested stats (needed for R1 
                        satellite course proxy when ShotLink unavailable)
+        timeout: Seconds for the HTTP call. None keeps the requests default.
     
     Returns:
         DataFrame with live stats + metadata columns, or None on failure.
