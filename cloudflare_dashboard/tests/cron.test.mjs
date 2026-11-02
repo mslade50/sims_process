@@ -99,6 +99,15 @@ test("the weekly table at New York times (EDT, October 2026)", () => {
   assert.deepEqual(slotTypes(et("2026-10-10T18:30:00Z")), ["after_round"]); // Sat 14:30
   assert.deepEqual(slotTypes(et("2026-10-11T18:30:00Z")), ["after_round"]); // Sun 14:30
   assert.deepEqual(slotTypes(et("2026-10-19T00:00:00Z")), ["sunday_week"]); // Sun 20:00 EDT: Sunday-night pricing (owner 2026-10-12)
+  // Retry slots (owner 2026-10-30): 22:30 Sunday, then 00:30 and 01:30 Monday belong to the same Sunday run; any other minute does not fire it
+  assert.deepEqual(slotTypes(et("2026-10-26T02:30:00Z")), ["sunday_week"]); // Sun 22:30 EDT
+  assert.deepEqual(slotTypes(et("2026-10-26T04:30:00Z")), ["sunday_week"]); // Mon 00:30 EDT
+  assert.deepEqual(slotTypes(et("2026-10-26T05:30:00Z")), ["sunday_week"]); // Mon 01:30 EDT
+  assert.deepEqual(slotTypes(et("2026-10-26T03:30:00Z")), []); // Sun 23:30: no slot
+  assert.deepEqual(slotTypes(et("2026-10-26T06:30:00Z")), []); // Mon 02:30: no slot
+  assert.deepEqual(slotTypes(et("2026-11-02T04:30:00Z")), []); // Sun 23:30 EST: the clock is New York wall time, not a UTC hour
+  assert.deepEqual(slotTypes(et("2026-11-02T05:30:00Z")), ["sunday_week"]); // Mon 00:30 EST (winter): the same wall-clock slot one UTC hour later
+  assert.deepEqual(slotTypes(et("2026-11-02T06:30:00Z")), ["sunday_week"]); // Mon 01:30 EST
   assert.deepEqual(types(et("2026-10-18T22:00:00Z")), ["watch", "odds_reprice"]); // Sun 18:00 EDT: odds + bet card from Sunday evening (owner 2026-10-22)
   assert.deepEqual(types(et("2026-10-18T21:30:00Z")), ["watch"]); // Sun 17:30: not yet
   assert.deepEqual(slotTypes(et("2026-10-08T05:00:00Z")), []); // Thu 01:00: no round slot on Thursday 01:00

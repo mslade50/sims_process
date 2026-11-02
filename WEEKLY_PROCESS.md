@@ -1,5 +1,15 @@
 # Weekly Tournament Process: Step-by-Step Guide
 
+> **DEPRECATED 2026-10-30.** The legacy weekly chain described in this file is
+> retired by owner decision. Production is golfprice (`mslade50/sim_prep`, branch
+> `research/rebuild-v1`, `research/sportsbook_model/rebuild_v1`), driven by the Worker
+> cron in `cloudflare_dashboard`. Do not follow this playbook for a new week. Still
+> running: ETR legacy weekly (`weekly_pipeline.py --etr-only`) and Monday grading
+> (`monday-grading.yml`, `clv-alert.yml`). The nightly sim, archetypes, midweek,
+> and weekly-cleanup schedules/dispatch triggers are off (manual `workflow_dispatch`
+> only); see the "Legacy weekly chain: DEPRECATED" section in `AGENTS.md`. Kept as a
+> historical reference and for rollback.
+
 Complete operational playbook for running the golf simulation system from Monday grading and cleanup through the next event.
 
 ---

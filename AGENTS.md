@@ -1,99 +1,59 @@
 # Golf Tournament Monte Carlo Simulation System
 
-<!-- owner-maintenance-authority:start -->
-# Maintenance authority -- owner instruction, October 26, 2026
-
-This rule covers every repository and machine the owner uses. It applies to every
-agent: Claude, Codex, their subagents and unattended agents. Where an older
-instruction in a repository (for example a research-only boundary, or "no commits,
-pushes or deployments without approval") would require the owner's approval for the
-work below, this rule takes precedence. Those older limits still apply to research
-and strategy work.
-
-## Repair and maintain without asking
-
-When something that already exists is broken, stale or not running, fix it end to
-end without asking the owner. Examples:
-
-- a scraper, collector, odds feed or data pull that is down or returning bad data;
-- a scheduled task, workflow or job that failed, hung or did not run;
-- a crash, a broken path, a dependency or environment that drifted, or machines
-  that are out of sync;
-- a failed or partial deploy, release or publish.
-
-For that work you may edit code and configuration, rerun jobs, restart services and
-scheduled tasks, create branches and worktrees, commit, push, open and merge pull
-requests, and redeploy (Workers, releases, scheduled tasks). Use the repository's
-normal delivery path and review rules.
-
-A repair restores the intended behaviour. It does not change what the system is
-trying to do.
-
-## Ask the owner first: research and strategy
-
-- changing a model: its math, features, parameters, coefficients, training data or
-  calibration;
-- changing strategy or goals: what a repository produces, which markets, events or
-  instruments it covers, signals and thresholds, bet or trade sizing, staking and
-  risk limits;
-- new systems and structural redesigns, such as a new pipeline or replacing a
-  component, as opposed to repairing the existing one;
-- any change whose right answer depends on judgment about edge, data trade-offs or
-  intuition rather than "make it work as intended".
-
-If a repair can only be done through one of these, make the smallest safe holding
-move instead (pause the affected output, or fall back to the last good version) and
-leave the owner a short note naming the decision needed. If a repair needs the
-owner's login or a new secret, ask for exactly that.
-
-## Always ask immediately before
-
-- `git reset --hard`, force-push or history rewrite on a shared branch;
-- deleting existing branches, worktrees, run history or stored data (cloud objects,
-  databases, tables, Workers);
-- placing, sizing or cancelling a broker order, bet or trade, or changing a live
-  stop level.
-
-Deployment windows and safeguards written for specific systems (for example the
-07:30-11:30 New York blackout for New_Seasonals and trading_ibkr) still apply.
-
-## How to repair
-
-- Fix the root cause, not only the symptom. When practical, add a test or guard so
-  the same failure does not return.
-- Commit only the files the repair touches. Leave unrelated working-tree changes,
-  branches and worktrees alone: no stash, clean or reset.
-- Have an independent reviewer check a risky repair (one that publishes, deploys,
-  sends alerts or touches money paths) before it ships.
-- After deploying, confirm the next run or health check passes. If it does not,
-  roll back.
-- Never print or commit secrets.
-- Record what broke, what changed, where it shipped and how to undo it.
-<!-- owner-maintenance-authority:end -->
+Global rules come from `mslade50/agent-rules`, installed on this machine as `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. This file holds sims_process facts only.
 
 Monte Carlo simulation for golf tournament prediction and DFS (DraftKings). Combines EMA-weighted strokes gained distributions, course shape adjustments, weather effects, and live skill updates to price matchups, score cards, and finish positions.
 
 ## Review
 
-Read and follow `docs/REVIEW_POLICY.md` before opening a pull request.
-Run `python secret_free_tests.py`, paste the real output
-into the PR, name the risk tier, and write the rollback steps in plain
-words. Never print or commit secrets.
-Ordinary fixes still go straight to main, as AGENTS.md already says, and this
-policy applies whenever a pull request is opened.
+- Proof command (the one CI runs): `python secret_free_tests.py`, after `python -m pip install -r requirements.txt "pytest>=8.1,<10"`. Paste its real summary into the PR under Proof: the pytest counts, the script counts and the not-collected list. "Tests passed" alone is not proof. No linter config exists; do not invent one.
+- HIGH item: pricing, edge, simulation or model logic, and published data outputs.
+- A displayed page or alert also needs a sample alert text, screenshot or JSON sample.
+- The PR template is `.github/PULL_REQUEST_TEMPLATE.md`. Its headings: Risk tier, Proof, Rollback steps, Test changes. Other bots and coding agents must fill it; only Dependabot and Renovate PRs skip the body, weakening and inventory checks.
+- CI is `.github/workflows/review-check.yml`, four jobs, run on `pull_request` (opened, edited, synchronize, reopened, ready_for_review) on `ubuntu-latest` with no secrets; each checkout uses `persist-credentials: false`. Other workflows run on a schedule, by hand or on push, and some use a self-hosted runner; review-check does not.
+  - `body`: `python3 scripts/check_pr_body.py` fails when Proof or Rollback is missing, empty or placeholder (`is_placeholder()` in that script). It does not require `## Test changes`.
+  - `test-weakening`: `scripts/check_test_weakening.py` reads the PR diff (`base...head`). It flags a deleted test file, a removed test, a new skip, xfail or importorskip (including a bare `importorskip`), a new or wider exclusion (`--ignore`, `--deselect`, `-k`, a list-style `"--ignore", "x"` pair, conftest `collect_ignore`) and a looser assert. It needs a real `## Test changes` note. A rename, an equivalent assert rewrite and a tighter tolerance are not weakenings. `secret_free_tests.py` and `scripts/secret_free_tests.py` are scanned as CI config. Any edit to a guard checker (`scripts/check_pr_body.py`, `scripts/check_test_weakening.py`, `scripts/check_test_inventory.py`, `secret_free_tests.py`) or to a workflow that runs one, even a comment-only edit, counts as a weakening.
+  - `test-inventory`: the workflow installs each commit's own `requirements.txt`, then `scripts/check_test_inventory.py` collects the suite on the base and head commits, using that tree's own conftest and runner flags. Added tests are fine. It records test ids (collected, or skipped with the reason, including conftest `SKIP_TESTS`), `CREDENTIAL_IMPORTS` and `KERNEL_IMPORTS` modules not collected, and each script program's check count. It fails when a test id disappears, a running test becomes skipped or not collected, or a script disappears or reports fewer checks, unless `## Test changes` is filled in. A plain rename is one removed id and one added id, so it needs an `old -> new` mapping. It does not parse the diff, so an exclusion hidden in a conftest hook, the runner, the workflow or the requirements still shows up.
+  - `tests`: `python secret_free_tests.py` with `COEFFS_FROM_CACHE=1`, `permissions: contents: read`. One pytest process per module. `conftest.py` lists modules that need Google credentials (`CREDENTIAL_IMPORTS`, which include external-service scripts) or the compiled `sims_kernel` (`KERNEL_IMPORTS`). They are not collected in CI, where those are missing, and they collect locally when the credential or the kernel is present. A collection error outside that list fails the job. One stale source-grep test is skipped (`SKIP_TESTS`); the rest of its module runs. A `SCRIPT_MODULES` entry that collects pytest items fails the job. Each script program must report a nonzero pass count.
 
-## Pipeline Execution Order
+## Legacy weekly chain: DEPRECATED (owner decision 2026-10-30)
+
+The legacy weekly chain is retired: sim_prep normal-mode `weekly_pipeline.py` prep
+(`sim_inputs.py` edit, publish to this repo's `main`) and this repo's sim chain
+(`new_sim.py` calibration and final pass, `mkt_regress.py`, round sims, reprice,
+midweek automation, legacy `publish_sim_fairs.py` publication).
+
+Production is golfprice: `mslade50/sim_prep`, branch `research/rebuild-v1`, under
+`research/sportsbook_model/rebuild_v1`, driven by the Worker cron in
+`cloudflare_dashboard`. Do not use the sections below for a new week.
+
+Still running on purpose:
+
+- ETR legacy weekly (`weekly_pipeline.py --etr-only`, `new_sim.py`, `mkt_regress.py`,
+  `skill_merge.py`, `sim_inputs.py`, `tools/etr_*`). ETR deliverables have no golfprice
+  replacement yet; this carve-out lasts until the owner says otherwise.
+- `monday-grading.yml` and `clv-alert.yml` (Google Sheet bet grading) until the ledgers
+  are reconciled.
+- `kalshi-preflight`, `deploy-cloudflare-dashboard`, `deploy-odds-screen`,
+  `publish-cloudflare-dashboard-data`, `local-runner-smoke`, and the
+  ownership/hand-back logic in `publish_sim_fairs.py`.
+
+`sim_inputs.py` identity (`tourney`, `event_ids`) is kept current by golfprice: each PGA
+board publish to this repo rewrites those two lines in the same commit as
+`sim_fairs.json`, so the Kalshi gate (`kalshi_maker.py`, `maker_guard.py`,
+`kalshi-preflight.yml`) keeps matching the live event.
+
+Triggers removed 2026-10-30 (each workflow keeps `workflow_dispatch` for rollback):
+`nightly-round-sim.yml` cron, `build-archetypes.yml` push and cron,
+`midweek-round-automation.yml` `repository_dispatch`, `weekly-cleanup.yml` cron.
+`reprice.yml` still lists `repository_dispatch` because open PRs #35 and #21 edit that
+file; remove the trigger there after they land.
+
+## Pipeline Execution Order (legacy, deprecated)
 
 When preparing ETR, run `hole_baselines.py`; it resolves historical editions
 by physical `course_id` and exact `(year, event_id)` pairs rather than assuming
 the current event ID was stable across venues.
-
-## Repository Branch Policy
-
-Commit and push ordinary requested fixes directly to `main`. Do not create a
-separate branch or pull request unless the user explicitly asks for one or the
-requested workflow specifically requires one. Preserve unrelated working-tree
-changes when committing directly to `main`.
 
 **Pre-tournament**: `init_weekly.py` → `humidity.py` → `scoring_baseline.py` → `write_base_rates.py`. The SG distribution files (`sg_dist_player.csv`, `this_week_dists_v2.csv`) are NOT built here — sim_prep's `cat_dists_player.py` is the single producer and fans them out to this repo, the OneDrive root, and etr-golf-sims (the local copy is archived).
 **Pre-event sim (two-pass)**: `new_sim.py` (first pass) → `mkt_regress.py` → `new_sim.py` (second pass with regressed preds)

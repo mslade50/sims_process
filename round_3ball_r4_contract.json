@@ -2,32 +2,32 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-10-25 10:00:00 UTC",
+  "generated_at": "2026-11-01 15:15:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:528:2026-10-22/R3_20261025T100000Z",
+      "run_id": "pga:540:2026-10-29/R3_20261101T151500Z",
       "model_version": "v2.4+v2.6 in-play",
       "after_round": 3,
-      "run_manifest_sha256": "05ff979cbceb9bb222f660104ad5e76f5a7a83e55df640e51d5b3741eee60557",
-      "base_run_as_of": "2026-10-22 09:31:00 UTC"
+      "run_manifest_sha256": "2d3d74634262fb30589e252a278a698c0148e0f7137fe3322c6139f5339a0719",
+      "base_run_as_of": "2026-10-29 11:12:00 UTC"
     },
     "event": {
-      "event_id": "528",
-      "tourney": "butterfield",
+      "event_id": "540",
+      "tourney": "vidantaworld",
       "round": 4
     },
     "source": {
-      "generated_at": "2026-10-25 10:00:00 UTC",
-      "root_generated_at": "2026-10-25 10:00:00 UTC"
+      "generated_at": "2026-11-01 15:15:00 UTC",
+      "root_generated_at": "2026-11-01 15:15:00 UTC"
     },
     "simulation": {
-      "num_players": 72,
+      "num_players": 67,
       "num_sims": 150000,
-      "player_set_sha256": "ef093c43e0311fae64283820945edfd37d8eda5bc6ffea965962e0d8a3069c3c",
+      "player_set_sha256": "3fd2376bf551985aef350c512a438ed28c491112427dc9be9e544fa0777f6a9d",
       "seeds": [
         20250929,
         20250930,
@@ -40,158 +40,142 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-10-25 10:00:00 UTC"
+      "at": "2026-11-01 15:15:00 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 10
     },
-    "manifest_sha256": "70bd0049db5c6d549901db010abea764095b0786b1965117eb3e4ecc6085a968"
+    "manifest_sha256": "96b9384ea09ee5abe2333531e8388b185ca6a1b009e0297f9660596bc4351263"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r4_meta.json",
-      "sha256": "a27a64fbb62a4a722d14c0a6b3e05ab5a7f04e579953a68f4ee61427da7aa95d"
+      "sha256": "e696ced156fb290e83510ef3e3206f29ed04bd1c037807d332275bee9004550f"
     },
     "threeball_parquet": {
       "path": "round_3ball_r4.parquet",
-      "sha256": "d30a779128d5899f8ee19f6b8142767f80f09c118a72a28569296cd18c6bb1a7"
+      "sha256": "f9a271d4c70c30dcded14470d87cdaa8810b63342dddad8e7e61803ae11f82db"
     }
   },
   "extra": {
     "status": "groups",
-    "event_id": "528",
+    "event_id": "540",
     "round": 4,
-    "num_groups": 24,
+    "num_groups": 21,
     "tee_group_source": {
       "status": "groups",
       "groups": [
         [
           "akina, kihei",
-          "garnett, brice",
-          "noh, s.y."
-        ],
-        [
-          "blair, zac",
-          "ford, david",
-          "malnati, peter"
-        ],
-        [
-          "blanchet, chandler",
-          "clanton, luke",
-          "davis, cameron"
-        ],
-        [
-          "byrd, jonathan",
-          "lebioda, hank",
-          "norlander, henrik"
-        ],
-        [
-          "campos, rafael",
-          "hirata, kensei",
-          "mack iii, willie"
-        ],
-        [
-          "chatfield, davis",
-          "eckroat, austin",
-          "grillo, emiliano"
-        ],
-        [
-          "cole, eric",
           "hughes, mackenzie",
-          "svensson, jesper"
+          "kim, tom"
         ],
         [
-          "conners, corey",
-          "hoge, tom",
-          "silverman, ben"
-        ],
-        [
-          "crowe, trace",
-          "martin, ben",
+          "bezuidenhout, christiaan",
+          "phillips, chandler",
           "ventura, kristoffer"
         ],
         [
-          "dahmen, joel",
-          "mcgreevy, max",
-          "novak, andrew"
+          "brown, blades",
+          "campbell, brian",
+          "hirata, kensei"
         ],
         [
-          "dou, zecheng",
-          "hubbard, mark",
-          "thompson, davis"
+          "campos, rafael",
+          "nakajima, keita",
+          "silverman, ben"
         ],
         [
+          "clanton, luke",
           "dumont de chassart, adrien",
-          "kohles, ben",
-          "sautron, rudy"
+          "suber, jackson"
         ],
         [
-          "dunlap, nick",
+          "conners, corey",
+          "grillo, emiliano",
+          "hossler, beau"
+        ],
+        [
+          "coody, pierceson",
+          "greyserman, max",
+          "griffin, ben"
+        ],
+        [
+          "crowe, trace",
+          "sargent, gordon",
+          "vilips, karl"
+        ],
+        [
+          "dahmen, joel",
+          "kang, jeffrey",
+          "neergaard-petersen, rasmus"
+        ],
+        [
+          "daly ii, john",
           "ewart, a.j.",
-          "laird, martin"
+          "meissner, mac"
         ],
         [
-          "frittelli, dylan",
-          "hardy, nick",
-          "paul, jeremy"
-        ],
-        [
-          "glover, lucas",
-          "shipley, neal",
-          "springer, hayden"
-        ],
-        [
-          "hadwin, adam",
-          "mccarthy, denny",
+          "davis, cameron",
+          "peterson, paul",
           "wu, dylan"
         ],
         [
-          "hodges, lee",
-          "kanaya, takumi",
-          "yonezawa, ren"
+          "dou, zecheng",
+          "duncan, tyler",
+          "garnett, brice"
         ],
         [
-          "hoey, rico",
-          "riley, davis",
-          "streb, robert"
+          "eckroat, austin",
+          "li, haotong",
+          "mccarthy, denny"
         ],
         [
-          "kang, jeffrey",
-          "ramey, chad",
-          "whaley, vince"
+          "endicott, garrett",
+          "rozo, marcelo",
+          "yellamaraju, sudarshan"
         ],
         [
-          "kim, chan",
-          "kirk, chris",
-          "walker, danny"
-        ],
-        [
-          "moore, taylor",
-          "power, seamus",
-          "smotherman, austin"
-        ],
-        [
-          "peterson, paul",
-          "svensson, adam",
+          "fisk, steven",
+          "hall, harry",
           "van rooyen, erik"
         ],
         [
-          "roy, kevin",
-          "russell, miles",
-          "todd, brendon"
+          "ghim, doug",
+          "novak, andrew",
+          "pavon, matthieu"
         ],
         [
-          "salinda, isaiah",
-          "sigg, greyson",
+          "hadwin, adam",
+          "mcgreevy, max",
+          "penge, marco"
+        ],
+        [
+          "higgo, garrick",
+          "ortiz, alvaro",
+          "tankersley, cameron"
+        ],
+        [
+          "james, ben",
+          "springer, hayden",
+          "whaley, vince"
+        ],
+        [
+          "lower, justin",
+          "smith, jordan",
+          "svensson, jesper"
+        ],
+        [
+          "ramey, chad",
+          "shipley, neal",
           "skinns, david"
         ]
       ],
       "field_players": 120,
-      "tee_time_players": 72,
+      "tee_time_players": 68,
       "group_sizes": [
-        3,
-        3,
+        2,
         3,
         3,
         3,
@@ -216,16 +200,26 @@
         3
       ],
       "round": 4,
-      "requested_event_id": "528",
-      "source_event_id": "528",
+      "requested_event_id": "540",
+      "source_event_id": "540",
       "event_identity_basis": "datagolf_event_id",
       "tour": "pga",
       "attempts": 1,
       "event_identity_verified": true,
       "simulation_field_overlap": 1.0,
       "simulation_tee_time_coverage": 1.0,
-      "field_player_set_sha256": "ee6d4c09230216c1046458f9201af8459a2fc01308e4e8ccc0eea7d376e8de32"
+      "field_player_set_sha256": "e1ee7db6667cd81a9c8fa1fb14866e89ec5dee71aa66aa98c1795c3f49c7af47",
+      "excluded_groups": [
+        [
+          "blanchet, chandler",
+          "fishburn, patrick",
+          "hardy, nick"
+        ]
+      ],
+      "excluded_players": [
+        "hardy, nick"
+      ]
     }
   },
-  "manifest_sha256": "3ce772cc9efdb3c9c0d83fce383d853d86b2dee0033c918dc3c9acfa8231efd0"
+  "manifest_sha256": "0bf3e6fec15cc799abda204b4eeaa8473e139f952f040ee6f5db2009a2a28e2c"
 }

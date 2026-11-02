@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { etTime } from "./lib";
-import { catalogFreshnessTone, freshnessTone, parseTimestamp, relativeAge, tweenText, type FreshnessTone } from "./ui-rules";
+import { badgeView, parseTimestamp, tweenText } from "./ui-rules";
 
 export type Tone = "positive" | "negative" | "warning" | "model" | "market" | "am" | "pm" | "accent" | "neutral";
 export type SegmentTone = Tone | "chart-1" | "chart-2" | "chart-3" | "chart-4" | "chart-5" | "chart-6" | "chart-7" | "chart-8";
@@ -152,17 +152,14 @@ export function SkeletonPage({ label = "Loading dashboard data" }: { label?: str
   );
 }
 
-const FRESH_LABEL: Record<FreshnessTone, string> = { live: "Live", fresh: "Fresh", aging: "Aging", stale: "Stale", unknown: "No run yet" };
-
 /** "Last run N minutes ago" that keeps ticking. `at` is an ISO (or golfprice folder-style) timestamp. */
-export function FreshnessBadge({ at, label = "Last run", scale = "run", title }: { at: unknown; label?: string; scale?: "run" | "catalog"; title?: string }) {
+export function FreshnessBadge({ at, label = "Last run", scale = "run", title, savedCopy = false }: { at: unknown; label?: string; scale?: "run" | "catalog"; title?: string; savedCopy?: boolean }) {
   const now = useNow(30_000);
   const parsed = parseTimestamp(at);
   const age = parsed === null ? null : now - parsed;
-  const tone = scale === "catalog" ? catalogFreshnessTone(age) : freshnessTone(age);
-  const text = age === null ? FRESH_LABEL.unknown : `${label} ${relativeAge(age)}${scale === "catalog" && tone === "aging" ? " · stale" : ""}`;
+  const { tone, text } = badgeView(age, label, scale, savedCopy);
   return (
-    <span className={`freshness-badge fresh-${tone}`} title={title ?? (parsed === null ? undefined : `${label}: ${etTime(new Date(parsed).toISOString())}`)}>
+    <span className={`freshness-badge fresh-${tone}`} title={savedCopy ? `Saved copy: the data service could not be reached. ${title ?? ""}`.trim() : title ?? (parsed === null ? undefined : `${label}: ${etTime(new Date(parsed).toISOString())}`)}>
       <LivePulse status={tone === "live" || tone === "fresh" ? "fresh" : tone === "aging" ? "aging" : "stale"} />
       <span>{text}</span>
     </span>

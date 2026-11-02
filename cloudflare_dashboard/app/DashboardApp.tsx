@@ -19,10 +19,10 @@ import {
 } from "lucide-react";
 import { HeaderSearch } from "./HeaderSearch";
 import { EmptyState, PageIntro } from "./components";
-import { useDashboardData } from "./data";
+import { useDashboardData, useSavedCopies } from "./data";
 import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
 import { FreshnessBadge, useNow } from "./ui";
-import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
+import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
@@ -181,12 +181,13 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const viewer = useViewer();
   const navigation = navigationFor(viewer?.owner === true);
   const ownerOnly = route.kind === "view" && OWNER_ONLY_VIEWS.includes(route.key);
-  const { data: manifest } = useDashboardData<Manifest>("manifest.json");
+  const { data: manifest, stale: manifestSaved } = useDashboardData<Manifest>("manifest.json");
   // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
   // with no run shown when the golfprice index is unavailable (the legacy manifest is only the badge on the Legacy views, never a stand-in for the current week). Freshness is the OLDEST event's
   // newest run, so a stale event cannot hide behind a fresh one (site audit C3).
-  const { data: gpIndex } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
+  const { data: gpIndex, stale: indexSaved } = useDashboardData<{ events?: IndexEventLite[] }>("golfprice/index.json");
   const now = useNow(30_000);
+  const savedNotice = savedCopyNotice(useSavedCopies(), now);
   const week = useMemo(() => summarizeWeek(gpIndex, now), [gpIndex, now]);
   useEffect(() => {
     // After first render, once the browser is idle, warm the most used views so the next click is instant.
@@ -286,24 +287,25 @@ export function DashboardApp({ initialView }: { initialView: string }) {
             {activeKey === "shot-data" ? <span>Scheduled shot snapshots</span> : isLegacy ? (
               <>
                 <span className="legacy-pill">Legacy data</span>
-                <FreshnessBadge at={manifest?.generated_at} label="Data" />
+                <FreshnessBadge at={manifest?.generated_at} label="Data" savedCopy={manifestSaved} />
               </>
             ) : week ? (
               <>
                 <div><strong>{week.title}</strong>{week.sub && <small>{week.sub}</small>}</div>
                 {week.publishedLine && <span className="published-line">{week.publishedLine}</span>}
                 {week.heldBackNote && <p className="held-note" role="status" title={week.heldBackNote}>{week.heldBackNote}</p>}
-                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} />
+                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} savedCopy={indexSaved} />
               </>
             ) : (
               <>
                 <div><strong>This week</strong><small>Run data unavailable</small></div>
-                <FreshnessBadge at={null} />
+                <FreshnessBadge at={null} savedCopy={indexSaved} />
               </>
             )}
           </div>
         </header>
         <div className="content-frame">
+          {savedNotice && <p className="link-notice saved-copy-notice" role="alert" data-testid="saved-copy-notice">{savedNotice}</p>}
           {badEvent && <p className="link-notice" role="status">The event in this link is not in the published list, so the default event is shown instead.</p>}
           {route.kind === "notfound" ? <NotFound requested={route.requested} navigation={navigation} /> : ownerOnly && !viewer ? null : ownerOnly && !viewer?.owner ? <NotFound requested={activeKey} navigation={navigation} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
         </div>

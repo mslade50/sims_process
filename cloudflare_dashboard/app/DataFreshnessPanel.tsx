@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { INITIAL_PANEL, checkerLate as isCheckerLate, startFreshnessPolling, type PanelState } from "./freshness-poll";
+import { useNow } from "./ui";
 import { EmptyState, Panel } from "./components";
 import { etTime } from "./lib";
-import { FRESHNESS_STATUS_KEY, CHECKER_MAX_AGE_MS, fmtAge, parseFreshness, type FreshnessDoc } from "../worker/freshness-rules";
+import { FRESHNESS_STATUS_KEY, fmtAge } from "../worker/freshness-rules";
 import "./freshness.css";
 
 const URL_PATH = `/api/owner-data/${FRESHNESS_STATUS_KEY.replace(/^owner\//, "")}`;
@@ -11,24 +13,11 @@ const STATE_WORDS: Record<string, string> = { ok: "Current", stale: "Stale", mis
 
 /** Run page: what the 15-minute data-staleness check last found (owner/data_freshness.json, written by worker/freshness.ts). */
 export function DataFreshnessPanel() {
-  const [state, setState] = useState<{ phase: "loading" | "ready" | "none" | "error"; doc: FreshnessDoc | null }>({ phase: "loading", doc: null });
-  const [now] = useState(() => Date.now());
-  useEffect(() => {
-    let live = true;
-    fetch(URL_PATH, { cache: "no-store", headers: { accept: "application/json" } })
-      .then(async (response) => {
-        if (response.status === 404) return { phase: "none" as const, doc: null };
-        if (!response.ok) return { phase: "error" as const, doc: null };
-        const doc = parseFreshness(await response.json().catch(() => null));
-        return doc ? { phase: "ready" as const, doc } : { phase: "error" as const, doc: null };
-      })
-      .catch(() => ({ phase: "error" as const, doc: null }))
-      .then((next) => { if (live) setState(next); });
-    return () => { live = false; };
-  }, []);
+  const [state, setState] = useState<PanelState>(INITIAL_PANEL);
+  const now = useNow(30_000);
+  useEffect(() => startFreshnessPolling(URL_PATH, (url, init) => fetch(url, init), setState), []);
   const { doc } = state;
-  const checkedMs = doc ? Date.parse(doc.checked_at) : NaN;
-  const checkerLate = doc && (!Number.isFinite(checkedMs) || now - checkedMs > CHECKER_MAX_AGE_MS);
+  const checkerLate = isCheckerLate(doc, now);
   return (
     <Panel eyebrow="Data freshness" title="Is every dashboard data source current?" className="fresh-panel">
       {state.phase === "loading" ? <p className="inputs-muted">Loading the latest freshness check…</p>
@@ -50,6 +39,7 @@ export function DataFreshnessPanel() {
               </tr>
             ))}</tbody>
           </table>
+          {state.refreshFailed && <p className="inputs-muted" role="status">The latest refresh failed; this is the check from {etTime(doc.checked_at)}.</p>}
           {doc.notes.length > 0 && <p className="inputs-muted">{doc.notes.join(" · ")}</p>}
           {!doc.inbox.bound && <p className="inputs-muted">Findings are shown here only; routing to the repair inbox is switched off until the watcher side is ready.</p>}
         </>}

@@ -547,7 +547,7 @@ class WeatherForecastTests(unittest.TestCase):
 class ExternalOwnerLiveSkillSkipTests(unittest.TestCase):
     """golfprice ownership skips legacy live skill; force-production still runs it."""
 
-    def _run_pipeline(self, *, force: bool):
+    def _run_pipeline(self, *, force: bool, tourney=None):
         import sim_inputs
 
         readiness = automation.OddsReadiness(
@@ -561,7 +561,7 @@ class ExternalOwnerLiveSkillSkipTests(unittest.TestCase):
             "action": "advance",
             "config": {
                 "event_id": 528,
-                "tourney": sim_inputs.tourney,
+                "tourney": tourney or sim_inputs.tourney,
                 "course_id": int(sim_inputs.course_id),
                 "course_latitude": 32.3,
                 "course_longitude": -64.8,
@@ -685,6 +685,24 @@ class ExternalOwnerLiveSkillSkipTests(unittest.TestCase):
         self.assertIn("round_sim.py skipped", result["log"])
         self.assertIn("golfprice", result["log"])
         self.assertIn("SIM_FAIRS_FORCE_PRODUCTION=1", result["log"])
+
+    def test_owned_split_brain_mismatch_does_not_block_pointer_or_status(self):
+        result = self._run_pipeline(force=False, tourney="split_brain_sheet_event")
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn("Split-brain check skipped", result["log"])
+        result["run"].assert_not_called()
+        result["weather"].assert_called_once()
+        statuses = [
+            call.args[0].get("automation_status")
+            for call in result["params"].call_args_list
+        ]
+        self.assertEqual(statuses, ["running", "complete"])
+        self.assertEqual(result["params"].call_args_list[0].args[0]["round"], 1)
+
+    def test_unowned_split_brain_mismatch_still_raises(self):
+        with self.assertRaisesRegex(automation.PipelineFailure, "Split-brain config"):
+            self._run_pipeline(force=True, tourney="split_brain_sheet_event")
 
     def test_force_production_still_runs_live_skill_verify_and_round_sim(self):
         result = self._run_pipeline(force=True)

@@ -3,7 +3,7 @@ import test from "node:test";
 import { briefCurrency, calendarDate, dataThrough, daysSince, historyThrough, plainDate, scorecardLag, seasonField, shotFreshness, shotFreshnessLine, weatherRunKey } from "../app/freshness-rules.ts";
 import { parseCourseHistory } from "../app/course-history-rules.ts";
 import { inWindow } from "../worker/cron-rules.ts";
-import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, eventsActive, fieldFromHead, inboxRecord, judge, parseFreshness, windowOpenForMs } from "../worker/freshness-rules.ts";
+import { FRESHNESS_STATUS_KEY, SOURCES, carryForward, eventsActive, fieldFromHead, inboxRecord, judge, oddsCheckEvidence, parseFreshness, runnerSilent, windowOpenForMs } from "../worker/freshness-rules.ts";
 import { runFreshness } from "../worker/freshness.ts";
 
 const iso = (s) => Date.parse(s);
@@ -83,13 +83,39 @@ test("odds window: opens Sunday evening; the first hours of a window are not jud
   assert.ok(open >= 90 * 60_000 && open <= 105 * 60_000, `open for ${open}`);
   const spec = SOURCES.find((s) => s.id === "odds_signals");
   const read = { kind: "ok", uploadedMs: iso("2026-10-18T12:00:00Z"), head: '{"generated_at":"2026-10-18T12:00:00Z"}' };
-  assert.equal(judge(spec, read, { now: sunEvening, inWindow }).state, "ok");
   const monLate = iso("2026-10-26T22:00:00Z"); // Monday afternoon: window continuous for over 12 h
-  assert.equal(judge(spec, read, { now: monLate, inWindow }).state, "stale");
   const sat = iso("2026-10-24T15:00:00Z");
-  assert.equal(judge(spec, read, { now: sat, inWindow }).state, "ok", "outside the window the weekly limit applies (6 days old is fine)");
+  const okRun = (now) => ({ lastSuccessMs: now - 20 * 60_000, jobsSeen: 5 });
+  assert.equal(judge(spec, read, { now: sunEvening, inWindow, oddsCheck: okRun(sunEvening) }).state, "ok");
+  assert.equal(judge(spec, read, { now: sat, inWindow }).state, "skipped", "window closed: not judged");
   assert.equal(judge(spec, { kind: "absent" }, { now: sat, inWindow }).state, "skipped");
-  assert.equal(judge(spec, { kind: "absent" }, { now: monLate, inWindow }).state, "missing");
+  assert.equal(judge(spec, { kind: "absent" }, { now: monLate, inWindow, oddsCheck: okRun(monLate) }).state, "missing");
+  // quiet market: the published file is 8 days old but checks keep succeeding, so it is healthy
+  const quiet = judge(spec, read, { now: monLate, inWindow, oddsCheck: okRun(monLate) });
+  assert.equal(quiet.state, "ok");
+  assert.match(quiet.detail, /quiet market publishes nothing new/);
+  // the checker stopped: no clean run for 5 h while the window is open
+  const dead = judge(spec, read, { now: monLate, inWindow, oddsCheck: { lastSuccessMs: monLate - 5 * 3_600_000, jobsSeen: 8 } });
+  assert.equal(dead.state, "stale");
+  assert.equal(dead.via, "odds_reprice job");
+  assert.equal(judge(spec, read, { now: monLate, inWindow, oddsCheck: { lastSuccessMs: null, jobsSeen: 0 } }).state, "stale", "no odds job at all while the window is open");
+  assert.equal(judge(spec, read, { now: monLate, inWindow }).state, "unreadable", "queue unreadable: no judgment");
+  assert.equal(judge(spec, read, { now: sunEvening, inWindow, oddsCheck: { lastSuccessMs: null, jobsSeen: 0 } }).state, "ok", "first hours of a window are not judged");
+});
+
+test("odds check evidence: newest clean odds_reprice run; failures, other types and bad exit codes do not count", () => {
+  const queue = { jobs: [{ id: "a", type: "odds_reprice" }, { id: "b", type: "odds_reprice" }, { id: "c", type: "odds_reprice" }, { id: "d", type: "watch" }, { id: "e", type: "odds_reprice" }] };
+  const statuses = new Map([
+    ["a", { state: "done", finished_at: "2026-10-28T10:00:00Z", exit_code: 0 }],
+    ["b", { state: "failed", finished_at: "2026-10-28T11:30:00Z", exit_code: 1 }],
+    ["c", { state: "done", finished_at: "2026-10-28T11:00:00Z" }],
+    ["d", { state: "done", finished_at: "2026-10-28T11:55:00Z", exit_code: 0 }],
+    ["e", { state: "done", finished_at: "2026-10-28T11:45:00Z", exit_code: 2 }],
+  ]);
+  assert.deepEqual(oddsCheckEvidence(queue, statuses), { lastSuccessMs: iso("2026-10-28T11:00:00Z"), jobsSeen: 4 });
+  assert.deepEqual(oddsCheckEvidence({ jobs: [] }, new Map()), { lastSuccessMs: null, jobsSeen: 0 });
+  assert.equal(oddsCheckEvidence({ nope: 1 }, new Map()), null);
+  assert.equal(oddsCheckEvidence(null, new Map()), null);
 });
 
 test("weekly sources: 8 days; field first, upload time as fallback; read failure is never 'missing'", () => {
@@ -156,10 +182,13 @@ function fakeBucket(initial = {}, { failKeys = [] } = {}) {
       const text = options?.range ? o.text.slice(options.range.offset, options.range.offset + options.range.length) : o.text;
       return { text: async () => text, uploaded: o.uploaded };
     },
+    async list({ prefix }) { return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })) }; },
     async put(key, body) { puts.push(key); store.set(key, { text: String(body), uploaded: new Date() }); return { key }; },
   };
 }
 
+/** True when the tick was treated as a scheduled break (the scorecard is judged in a break, so not_judged is no longer the signal). */
+const inBreak = (doc) => doc.notes.join(" ").includes("Scheduled inactivity");
 const NOW = iso("2026-10-28T12:00:00Z"); // Wednesday 08:00 EDT: odds window open since Monday 00:00
 const fresh = (at) => ({ generated_at: at });
 
@@ -173,6 +202,8 @@ function healthyData() {
     "owner/bet_breakdowns.json": { schema: "x", built_at: "2026-10-26T22:00:00Z", cols: {} },
     "golfprice/scorecard/latest.json": { generated_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-22", event_start: "2026-10-22" }] },
     "golfprice/history/pga_2_2026-10-22.json": { source_through_date: "2026-10-18", editions: [] },
+    "jobs/queue.json": { schema: "x", jobs: [{ id: "odds-1", type: "odds_reprice", requested_at: "2026-10-28T11:30:00Z", requested_by: "cron" }] },
+    "jobs/status/odds-1.json": { id: "odds-1", state: "done", exit_code: 0, finished_at: "2026-10-28T11:31:00Z" },
   };
 }
 
@@ -244,26 +275,48 @@ test("bet_breakdowns has no scheduled producer and is not judged", () => {
   assert.ok(!SOURCES.some((s) => s.id === "bet_breakdowns" || s.key === "owner/bet_breakdowns.json"));
 });
 
-test("off weeks are not judged, but a dead pipeline is: a short gap skips, a lapsed index judges", async () => {
+test("off weeks and breaks are scheduled inactivity, however long; an announced event resumes judging", async () => {
   const data = healthyData();
   data["golfprice/index.json"] = { schema: "x", published_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-10", tour: "pga", date_start: "2026-10-10", date_end: "2026-10-13" }] };
   data["owner/bet_card.json"] = fresh("2026-10-01T04:00:00Z");
   data["golfprice/odds_signals/latest.json"] = fresh("2026-10-01T04:00:00Z");
   data["data/manifest.json"] = fresh("2026-09-01T00:00:00Z");
+  // the scorecard is judged in a break too (it compares against the newest completed event); here it has graded every indexed event
+  data["golfprice/scorecard/latest.json"] = { generated_at: "2026-10-27T12:00:00Z", events: [{ event_uid: "pga:2:2026-10-10", event_start: "2026-10-10" }, { event_uid: "pga:9:2026-11-12", event_start: "2026-11-12" }] };
   const out = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
-  assert.ok(out.doc.sources.every((s) => s.state === "skipped"));
-  assert.equal(out.doc.not_judged, true);
-  assert.equal(out.doc.ok, false); // all skipped is never reported as healthy
-  // the last event is 27 days old: publishing has stopped, so the stale weekly sources are reported
-  data["golfprice/index.json"].events[0].date_start = "2026-10-01";
-  const lapsed = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
-  assert.equal(lapsed.doc.not_judged, false);
-  assert.ok(lapsed.doc.stale_count > 0);
+  assert.ok(out.doc.sources.filter((s) => s.id !== "scorecard_lag").every((s) => s.state === "skipped"));
+  assert.equal(out.doc.stale_count, 0);
+  assert.match(out.doc.notes.join(" "), /Scheduled inactivity/);
+  // December break: the last event ended in mid-November and none is published ahead (over 21 days): still inactive, not stale
+  const december = iso("2026-12-20T15:00:00Z");
+  data["golfprice/index.json"].events[0] = { event_uid: "pga:9:2026-11-12", tour: "pga", date_start: "2026-11-12", date_end: "2026-11-15" };
+  const winter = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, december);
+  assert.equal(winter.doc.stale_count, 0);
+  assert.match(winter.doc.notes.join(" "), /Scheduled inactivity/);
+  // the first event of the new season is published ahead: judging resumes, and the old weekly sources now count
+  data["golfprice/index.json"].events.push({ event_uid: "pga:1:2026-12-24", tour: "pga", date_start: "2026-12-24", date_end: "2026-12-27" });
+  const resumed = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, december);
+  assert.equal(inBreak(resumed.doc), false);
+  assert.ok(resumed.doc.stale_count > 0);
   assert.equal(eventsActive([], NOW), null);
   assert.equal(eventsActive(null, NOW), null);
   assert.equal(eventsActive([{ date_start: "2026-10-30" }], NOW), true);
-  assert.equal(eventsActive([{ date_start: "2026-10-01" }], NOW), true);
+  assert.equal(eventsActive([{ date_start: "2026-10-01" }], NOW), false, "27 days back and nothing ahead is a break, not a lapse");
   assert.equal(eventsActive([{ date_start: "2026-10-10" }], NOW), false);
+  assert.equal(eventsActive([{ date_start: "2026-09-01" }], NOW), false, "a 57-day gap is inactivity, not a lapsed pipeline");
+});
+
+test("end to end: quiet market with a successful checker is healthy; a failed checker is the finding", async () => {
+  const data = healthyData();
+  data["golfprice/odds_signals/latest.json"] = fresh("2026-10-26T01:00:00Z"); // 59 h old, nothing new published
+  const quiet = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(quiet.doc.sources.find((x) => x.id === "odds_signals").state, "ok");
+  assert.equal(quiet.doc.ok, true);
+  data["jobs/status/odds-1.json"] = { id: "odds-1", state: "failed", exit_code: 1, finished_at: "2026-10-28T11:31:00Z" };
+  const dead = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(dead.doc.sources.find((x) => x.id === "odds_signals").state, "stale");
+  const unread = await runFreshness({ DASHBOARD_DATA: fakeBucket(healthyData(), { failKeys: ["jobs/queue.json"] }), DATA_FRESHNESS_ENABLED: "1" }, NOW);
+  assert.equal(unread.doc.sources.find((x) => x.id === "odds_signals").state, "unreadable");
 });
 
 test("orphaned episodes: a rolled-over history id is closed with a recovered record; an unjudged scorecard_lag stays open", () => {
@@ -297,4 +350,232 @@ test("scheduled(): the freshness check runs alongside the other cron work and ne
   }
   assert.ok(bucket.store.has(FRESHNESS_STATUS_KEY));
   assert.equal(fetched, 0);
+});
+
+test("a dead publisher in mid-season is flagged by about D+12 (silent runners); a break with live runners stays not_judged", async () => {
+  const data = healthyData();
+  data["golfprice/index.json"].events = [{ event_uid: "pga:1:2026-10-22", tour: "pga", date_start: "2026-10-22", date_end: "2026-10-25" }, { event_uid: "pga:2:2026-10-29", tour: "pga", date_start: "2026-10-29", date_end: "2026-11-01" }];
+  data["golfprice/scorecard/latest.json"] = { generated_at: "2026-11-02T12:00:00Z", events: [{ event_uid: "pga:1:2026-10-22", event_start: "2026-10-22" }, { event_uid: "pga:2:2026-10-29", event_start: "2026-10-29" }] };
+  data["data/manifest.json"] = fresh("2026-11-02T12:00:00Z");
+  data["golfprice/odds_signals/latest.json"] = fresh("2026-11-02T01:00:00Z");
+  data["owner/bet_card.json"] = fresh("2026-11-02T01:00:00Z");
+  const d12 = iso("2026-11-13T15:00:00Z"); // 12 days after the last event start; the old 21-day rule would still be quiet
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-03T09:00:00Z", state: "idle" };
+  const dead = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(inBreak(dead.doc), false);
+  assert.ok(dead.doc.stale_count > 0, JSON.stringify(dead.doc.sources.map((s) => [s.id, s.state])));
+  assert.match(dead.doc.notes.join(" "), /no job runner is reporting idle or running/);
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-13T14:50:00Z", state: "idle" };
+  const quiet = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(inBreak(quiet.doc), true);
+  assert.equal(quiet.doc.stale_count, 0);
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-03T09:00:00Z", state: "idle" };
+  data["jobs/heartbeat/home.json"] = { at: "2026-11-13T14:55:00Z", state: "fenced" };
+  const standby = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(inBreak(standby.doc), false, "a fresh fenced standby is not a live pipeline");
+  assert.ok(standby.doc.stale_count > 0);
+  for (const state of ["error", "refusing", undefined]) {
+    data["jobs/heartbeat/desktop.json"] = { at: "2026-11-13T14:50:00Z", state };
+    const bad = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+    assert.equal(inBreak(bad.doc), false, `fresh primary state ${state} is judged`);
+  }
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-13T14:50:00Z", state: "running" };
+  assert.equal((await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12)).doc.notes.join(" ").includes("Scheduled inactivity"), true);
+  delete data["jobs/heartbeat/home.json"];
+  delete data["jobs/heartbeat/desktop.json"];
+  const none = await runFreshness({ DASHBOARD_DATA: fakeBucket(data), DATA_FRESHNESS_ENABLED: "1" }, d12);
+  assert.equal(inBreak(none.doc), true, "no heartbeat object is no evidence");
+  assert.equal(runnerSilent([{ at: "2026-11-13T00:00:00Z", state: "idle" }, { at: "2026-11-13T14:00:00Z", state: "idle" }], d12), false, "newest heartbeat counts");
+  assert.equal(runnerSilent([], d12), false);
+});
+
+/* ------------------------------------------------------------------ round 2: breaks and unreadable evidence */
+const BREAK_NOW = iso("2026-11-13T15:00:00Z");
+function breakData() {
+  const data = healthyData();
+  data["data/manifest.json"] = fresh("2026-11-02T12:00:00Z");
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-13T14:50:00Z", state: "idle" };
+  return data;
+}
+const FRESH_ENV = (bucket) => ({ DASHBOARD_DATA: bucket, DATA_FRESHNESS_ENABLED: "1" });
+
+const noWarning = (doc) => doc.sources.forEach((s) => { if (s.state !== "stale" && s.state !== "missing") assert.equal(s.stale_since, null, `${s.id} (${s.state}) must not carry stale_since`); });
+const openLag = (extra = {}) => ({
+  id: "scorecard_lag", label: "scorecard vs newest completed event", key: "golfprice/scorecard/latest.json", schedule: "weekly", state: "stale", observed_at: null, age_hours: null, limit_hours: null, via: "events", detail: "behind",
+  stale_since: "2026-11-10T00:00:00.000Z", inboxed_at: "2026-11-10T00:15:00.000Z", unknown_since: null, ...extra,
+});
+const priorDoc = (sources) => ({ schema: "golfprice.dashboard_freshness.v1", checked_at: "2026-11-13T14:45:00.000Z", ok: false, not_judged: false, stale_count: 1, notes: [], inbox: { bound: true, written: [], failed: [] }, sources });
+
+test("scheduled break: a repaired scorecard is judged ok and closes its episode with the normal recovered record; no source carries stale_since", async () => {
+  const data = breakData();
+  data["golfprice/scorecard/latest.json"] = { generated_at: "2026-11-13T09:00:00Z", events: [{ event_uid: "pga:2:2026-10-22", event_start: "2026-10-22" }] }; // already repaired
+  data[FRESHNESS_STATUS_KEY] = priorDoc([openLag()]);
+  const inbox = fakeBucket();
+  const out = await runFreshness({ ...FRESH_ENV(fakeBucket(data)), AGENT_INBOX: inbox, DATA_FRESHNESS_INBOX: "1" }, BREAK_NOW);
+  const lag = out.doc.sources.find((s) => s.id === "scorecard_lag");
+  assert.equal(lag.state, "ok");
+  assert.equal(out.doc.stale_count, 0);
+  assert.ok(out.doc.sources.filter((s) => s.id !== "scorecard_lag").every((s) => s.state === "skipped"));
+  noWarning(out.doc);
+  assert.deepEqual(inbox.puts, ["ops/agent_inbox/dashboard-freshness/scorecard_lag.recovered.json"]);
+});
+
+test("scheduled break: an ungraded last event keeps scorecard_lag stale across the break (judged, not skipped)", async () => {
+  const data = breakData();
+  data["golfprice/scorecard/latest.json"] = { generated_at: "2026-11-13T09:00:00Z", events: [{ event_uid: "pga:1:2026-10-15", event_start: "2026-10-15" }] };
+  data[FRESHNESS_STATUS_KEY] = priorDoc([openLag()]);
+  const out = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  const lag = out.doc.sources.find((s) => s.id === "scorecard_lag");
+  assert.equal(lag.state, "stale");
+  assert.equal(lag.stale_since, "2026-11-10T00:00:00.000Z");
+  assert.equal(out.doc.stale_count, 1);
+});
+
+test("scheduled break: a skipped source with a pre-break episode is closed (recovered record once), then a new episode starts after the break", () => {
+  const base = { id: "bet_card", label: "owner bet card", key: "owner/bet_card.json", schedule: "odds_window", observed_at: null, age_hours: 30, limit_hours: 12, via: "generated_at", detail: "d" };
+  const t0 = iso("2026-11-13T15:00:00Z");
+  const open = { ...base, state: "stale", stale_since: "2026-11-10T00:00:00.000Z", inboxed_at: "2026-11-10T00:15:00.000Z", unknown_since: null };
+  let r = carryForward(t0, [{ ...base, state: "skipped", limit_hours: null }], [open], ["bet_card"], { scheduledBreak: true });
+  assert.equal(r.statuses[0].stale_since, null);
+  assert.equal(r.statuses[0].inboxed_at, null);
+  assert.deepEqual(r.transitions.map((t) => t.kind), ["recovered"]);
+  r = carryForward(t0 + 900_000, [{ ...base, state: "skipped", limit_hours: null }], r.statuses, ["bet_card"], { scheduledBreak: true });
+  assert.equal(r.transitions.length, 0, "no second record on the next break tick");
+  const after = t0 + 20 * 86_400_000;
+  r = carryForward(after, [{ ...base, state: "stale" }], r.statuses, ["bet_card"], { scheduledBreak: false });
+  assert.equal(r.statuses[0].stale_since, new Date(after).toISOString(), "a new episode starts at the first stale tick after the break");
+  assert.deepEqual(r.transitions.map((t) => t.kind), ["stale"]);
+  // an episode that was never filed in the inbox is dropped without any record
+  const quiet = carryForward(t0, [{ ...base, state: "skipped", limit_hours: null }], [{ ...open, inboxed_at: null }], ["bet_card"], { scheduledBreak: true });
+  assert.equal(quiet.statuses[0].stale_since, null);
+  assert.equal(quiet.transitions.length, 0);
+});
+
+test("scheduled break end to end: every skipped source drops its pre-break episode, so the doc has no warnings", async () => {
+  const data = breakData();
+  data["golfprice/scorecard/latest.json"] = { generated_at: "2026-11-13T09:00:00Z", events: [{ event_uid: "pga:2:2026-10-22", event_start: "2026-10-22" }] };
+  data[FRESHNESS_STATUS_KEY] = priorDoc([openLag({ id: "bet_card", label: "owner bet card", key: "owner/bet_card.json" }), openLag()]);
+  const inbox = fakeBucket();
+  const out = await runFreshness({ ...FRESH_ENV(fakeBucket(data)), AGENT_INBOX: inbox, DATA_FRESHNESS_INBOX: "1" }, BREAK_NOW);
+  noWarning(out.doc);
+  assert.equal(out.doc.stale_count, 0);
+  assert.deepEqual(inbox.puts.sort(), ["ops/agent_inbox/dashboard-freshness/bet_card.recovered.json", "ops/agent_inbox/dashboard-freshness/scorecard_lag.recovered.json"]);
+});
+
+test("nightly closed odds-window skip is not a break: the episode is kept and not churned", () => {
+  const base = { id: "odds_signals", label: "odds signals", key: "k", schedule: "odds_check", observed_at: null, age_hours: null, limit_hours: null, via: null, detail: "closed", state: "skipped" };
+  const open = { ...base, state: "stale", stale_since: "2026-10-27T12:00:00.000Z", inboxed_at: "2026-10-27T12:15:00.000Z", unknown_since: null };
+  const r = carryForward(iso("2026-10-28T05:00:00Z"), [base], [open], ["odds_signals"], { scheduledBreak: false });
+  assert.equal(r.statuses[0].stale_since, "2026-10-27T12:00:00.000Z");
+  assert.equal(r.statuses[0].inboxed_at, "2026-10-27T12:15:00.000Z");
+  assert.equal(r.transitions.length, 0);
+});
+
+test("unreadable evidence: non-stale for 12 h, then stale since the first unreadable tick; a readable tick clears it", () => {
+  const base = { id: "odds_signals", label: "odds signals", key: "k", schedule: "odds_check", observed_at: null, age_hours: null, limit_hours: 3, via: null, detail: "could not read", state: "unreadable" };
+  const t0 = iso("2026-10-28T12:00:00Z");
+  const hour = 3_600_000;
+  let r = carryForward(t0, [base], null);
+  assert.equal(r.statuses[0].unknown_since, new Date(t0).toISOString());
+  let prev = r.statuses;
+  for (const h of [6, 12]) {
+    r = carryForward(t0 + h * hour, [base], prev);
+    assert.equal(r.statuses[0].state, "unreadable", `${h} h`);
+    assert.equal(r.statuses[0].stale_since, null);
+    assert.equal(r.transitions.length, 0);
+    assert.equal(r.statuses[0].unknown_since, new Date(t0).toISOString());
+    prev = r.statuses;
+  }
+  r = carryForward(t0 + 13 * hour, [base], prev);
+  assert.equal(r.statuses[0].state, "stale");
+  assert.equal(r.statuses[0].stale_since, new Date(t0).toISOString());
+  assert.match(r.statuses[0].detail, /could not be verified since 2026-10-28T12:00:00\.000Z/);
+  assert.deepEqual(r.transitions.map((t) => t.kind), ["stale"]);
+  r.statuses[0].inboxed_at = new Date(t0 + 13 * hour).toISOString();
+  r = carryForward(t0 + 14 * hour, [base], r.statuses);
+  assert.equal(r.transitions.length, 0, "still unreadable: no duplicate filing");
+  assert.equal(r.statuses[0].stale_since, new Date(t0).toISOString());
+  r = carryForward(t0 + 15 * hour, [{ ...base, state: "ok" }], r.statuses);
+  assert.equal(r.statuses[0].unknown_since, null);
+  assert.equal(r.statuses[0].stale_since, null);
+  assert.deepEqual(r.transitions.map((t) => t.kind), ["recovered"]);
+  // a readable tick in between restarts the clock
+  let q = carryForward(t0, [base], null);
+  q = carryForward(t0 + 10 * hour, [{ ...base, state: "ok" }], q.statuses);
+  q = carryForward(t0 + 11 * hour, [base], q.statuses);
+  assert.equal(q.statuses[0].unknown_since, new Date(t0 + 11 * hour).toISOString());
+  q = carryForward(t0 + 20 * hour, [base], q.statuses);
+  assert.equal(q.statuses[0].state, "unreadable");
+});
+
+test("unreadable odds evidence end to end: warns only after more than 12 h of failing reads", async () => {
+  const bucket = fakeBucket(healthyData(), { failKeys: ["jobs/status/odds-1.json"] });
+  const seen = [];
+  for (const h of [0, 6, 12, 13]) {
+    const at = NOW + h * 3_600_000;
+    const odds = (await runFreshness(FRESH_ENV(bucket), at)).doc.sources.find((s) => s.id === "odds_signals");
+    seen.push({ state: odds.state, since: odds.stale_since });
+  }
+  assert.deepEqual(seen.map((x) => x.state), ["unreadable", "unreadable", "unreadable", "stale"]);
+  assert.equal(seen[3].since, new Date(NOW).toISOString());
+});
+
+test("a corrupt heartbeat is dropped, not no-evidence: silent detection still works", async () => {
+  const data = breakData();
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-03T09:00:00Z", state: "idle" }; // old
+  data["jobs/heartbeat/home.json"] = "{ not json";
+  const out = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  assert.match(out.doc.notes.join(" "), /no job runner is reporting idle or running/);
+  assert.equal(inBreak(out.doc), false);
+});
+
+test("all listed heartbeats corrupt: non-live evidence, runner silent and sources judged", async () => {
+  const data = breakData();
+  data["jobs/heartbeat/desktop.json"] = "{ not json";
+  data["jobs/heartbeat/home.json"] = "also not json";
+  const out = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  assert.match(out.doc.notes.join(" "), /no job runner is reporting idle or running/);
+  assert.equal(inBreak(out.doc), false);
+});
+
+test("scheduled break: a skipped tick never creates a stale episode", () => {
+  const skipped = { id: "scorecard_lag", label: "x", key: "k", schedule: "weekly", state: "skipped", observed_at: null, age_hours: null, limit_hours: null, via: "events", detail: "" };
+  const r = carryForward(iso("2026-11-13T15:00:00Z"), [skipped], null, ["scorecard_lag"]);
+  assert.equal(r.statuses[0].stale_since, null);
+  assert.equal(r.transitions.length, 0);
+});
+
+test("a failed odds status read is unreadable, not stale", async () => {
+  const data = healthyData();
+  const bucket = fakeBucket(data, { failKeys: ["jobs/status/odds-1.json"] });
+  const out = await runFreshness(FRESH_ENV(bucket), NOW);
+  const odds = out.doc.sources.find((s) => s.id === "odds_signals");
+  assert.equal(odds.state, "unreadable", odds.detail);
+  assert.equal(odds.stale_since, null);
+  assert.equal(out.doc.stale_count, 0, JSON.stringify(out.doc.sources.filter((s) => s.state === "stale")));
+  // A missing (not failed) status is a real "no success" and still goes stale.
+  const missing = healthyData();
+  delete missing["jobs/status/odds-1.json"];
+  const gone = await runFreshness(FRESH_ENV(fakeBucket(missing)), NOW);
+  assert.equal(gone.doc.sources.find((s) => s.id === "odds_signals").state, "stale");
+  // A failed read does not hide a success already inside the limit.
+  const two = healthyData();
+  two["jobs/queue.json"].jobs.push({ id: "odds-0", type: "odds_reprice", requested_at: "2026-10-28T11:00:00Z", requested_by: "cron" });
+  two["jobs/status/odds-0.json"] = { id: "odds-0", state: "done", exit_code: 0, finished_at: "2026-10-28T11:01:00Z" };
+  const proven = await runFreshness(FRESH_ENV(fakeBucket(two, { failKeys: ["jobs/status/odds-1.json"] })), NOW);
+  assert.equal(proven.doc.sources.find((s) => s.id === "odds_signals").state, "ok");
+});
+
+test("an unreadable heartbeat is no evidence: a partial list does not make the runner silent", async () => {
+  const data = breakData();
+  data["jobs/heartbeat/desktop.json"] = { at: "2026-11-03T09:00:00Z", state: "idle" }; // old
+  data["jobs/heartbeat/home.json"] = { at: "2026-11-13T14:55:00Z", state: "idle" }; // fresh, but its read fails
+  const partial = await runFreshness(FRESH_ENV(fakeBucket(data, { failKeys: ["jobs/heartbeat/home.json"] })), BREAK_NOW);
+  assert.equal(inBreak(partial.doc), true);
+  assert.equal(partial.doc.stale_count, 0);
+  const full = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  assert.equal(inBreak(full.doc), true, "the fresh idle heartbeat read normally is a live runner");
+  delete data["jobs/heartbeat/home.json"];
+  const silent = await runFreshness(FRESH_ENV(fakeBucket(data)), BREAK_NOW);
+  assert.equal(inBreak(silent.doc), false, "with only the old heartbeat readable the runner is silent");
 });
