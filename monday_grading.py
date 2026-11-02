@@ -349,6 +349,19 @@ def main():
         print("\n  Verification passed: all bets graded.")
 
     # ------------------------------------------------------------------
+    # Step 4b: Final-round (R4) matchup recap to Telegram. Best-effort and
+    # send-once (marker in the Round Recap Log tab); never affects grading.
+    # ------------------------------------------------------------------
+    for event_id, event_name, year in week_events:
+        try:
+            from round_recap import run_recap
+            status = run_recap(event_id, event_name, 4, spreadsheet=spreadsheet,
+                               expected_event_name=event_name)
+            print(f"  [recap] R4 {event_name}: {status}")
+        except Exception as exc:
+            print(f"  [recap] R4 {event_name} skipped ({type(exc).__name__}: {exc})")
+
+    # ------------------------------------------------------------------
     # Step 5: Run sg_diagnostic.py --no-email (always runs)
     # ------------------------------------------------------------------
     for event_id, event_name, year in week_events:

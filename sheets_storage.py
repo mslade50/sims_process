@@ -65,6 +65,20 @@ TAB_LIVE = "Live"
 TAB_DETAILS = "Details"
 TAB_SCORE_EDGES = "Score Edges"
 TAB_SCORING_SHADOW = "Scoring Shadow"
+TAB_KILLED_ROUND_MU = "Killed Round Matchups"
+TAB_ROUND_RECAP_LOG = "Round Recap Log"
+
+# Optional killed-edge rows the recap reads. This change does not write the tab.
+KILLED_ROUND_MU_HEADERS = [
+    "run_timestamp", "event_name", "year", "event_id", "round",
+    "player_1", "player_2", "bookmaker", "ties_rule",
+    "p1_odds", "p2_odds", "fair_p1", "fair_p2",
+    "edge_p1", "edge_p2", "bet_on", "edge_on", "pred_on", "sample_on",
+    "p1_line", "p2_line", "line_verified", "market_kind", "kill_reason",
+]
+
+# Send-once marker for the prior-round recap Telegram message.
+ROUND_RECAP_LOG_HEADERS = ["sent_at", "event_id", "round", "n_recommended", "n_killed"]
 
 DETAILS_HEADERS = ["Section", "Label", "Value", "Notes"]
 
@@ -1377,6 +1391,47 @@ def store_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup
 
     # Parquet write-through
     _ledger_write_round_matchups(combined_df, sim_round, tourney, event_id, dg_id_lookup, ts=ts)
+
+
+def load_killed_round_matchups(event_id, rnd, spreadsheet=None):
+    """Killed-edge records (dicts) for one event+round; [] if the tab does not exist."""
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    try:
+        ws = spreadsheet.worksheet(TAB_KILLED_ROUND_MU)
+    except gspread.exceptions.WorksheetNotFound:
+        return []
+    return [
+        row for row in ws.get_all_records()
+        if str(row.get("event_id", "")).strip() == str(event_id).strip()
+        and str(row.get("round", "")).strip() == str(rnd).strip()
+    ]
+
+
+def round_recap_sent(event_id, rnd, spreadsheet=None):
+    """True when a recap marker exists for this event+round."""
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    try:
+        ws = spreadsheet.worksheet(TAB_ROUND_RECAP_LOG)
+    except gspread.exceptions.WorksheetNotFound:
+        return False
+    return any(
+        str(r.get("event_id", "")).strip() == str(event_id).strip()
+        and str(r.get("round", "")).strip() == str(rnd).strip()
+        for r in ws.get_all_records()
+    )
+
+
+def mark_round_recap_sent(event_id, rnd, n_recommended, n_killed, spreadsheet=None):
+    """Record that the recap for this event+round was delivered."""
+    from etr_only_mode import refuse as _etr_refuse  # ETR-only mode guard
+    _etr_refuse('recap marker mark_round_recap_sent')
+    if spreadsheet is None:
+        spreadsheet = get_spreadsheet()
+    ws = _get_or_create_tab(spreadsheet, TAB_ROUND_RECAP_LOG, ROUND_RECAP_LOG_HEADERS)
+    _append_rows(ws, [[_now_est_iso(), str(event_id), int(rnd),
+                       int(n_recommended), int(n_killed)]])
 
 
 def store_round_3balls(combined_df, sim_round, tourney, event_id, dg_id_lookup=None, spreadsheet=None):

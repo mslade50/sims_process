@@ -169,7 +169,7 @@ def fetch_scoring_round(event_id, year, round_num, course_id, api_key):
     return frame
 
 
-def fetch_live_stats(round_num, api_key, include_score=False):
+def fetch_live_stats(round_num, api_key, include_score=False, timeout=None):
     """
     Fetch live tournament stats from DataGolf.
     
@@ -180,6 +180,7 @@ def fetch_live_stats(round_num, api_key, include_score=False):
         api_key: DataGolf API key
         include_score: If True, adds "score" to requested stats (needed for R1 
                        satellite course proxy when ShotLink unavailable)
+        timeout: Seconds for the HTTP call. None keeps the requests default.
     
     Returns:
         DataFrame with live stats + metadata columns, or None on failure.
@@ -197,7 +198,8 @@ def fetch_live_stats(round_num, api_key, include_score=False):
         "key": api_key,
     }
 
-    resp = requests.get(f"{DATAGOLF_BASE}/preds/live-tournament-stats", params=params)
+    resp = requests.get(f"{DATAGOLF_BASE}/preds/live-tournament-stats", params=params,
+                        timeout=timeout)
     if resp.status_code != 200:
         print(f"Error fetching stats: {resp.status_code} - {resp.text}")
         return None
