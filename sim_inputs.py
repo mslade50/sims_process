@@ -46,11 +46,11 @@ wind_speed_base=12.2
 
 start_yr=2019 #first year of data you want to consider in your course baslines
 tour='pga'
-event_ids = [528]
+event_ids = [457]
 # Butterfield Bermuda Championship, October 22-25, 2026.
 # DataGolf: Port Royal Golf Course; par 71. Derived by tools/etr_week_config.py (TEMPORARY ETR-only mode).
 course_id = 765
-tourney = 'butterfield'
+tourney = 'wide'
 
 # Yokohama has course history; no new-venue prior is needed.
 lat_override = None
