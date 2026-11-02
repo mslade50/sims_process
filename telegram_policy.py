@@ -118,8 +118,21 @@ def main():
     return 0
 
 
+def reexec_under_utf8(argv=None):
+    """Re-run this program in UTF-8 mode and return the child exit code.
+
+    On Windows, os.execv does not replace the process: the parent exits 0, so
+    the child's status is lost, and the command line splits arguments on spaces.
+    subprocess.run with an argument list keeps each argument intact and returns
+    the child status. PYTHONUTF8 is set first so the child does not re-run itself.
+    """
+    os.environ["PYTHONUTF8"] = "1"
+    args = [sys.executable, "-X", "utf8", *(sys.argv if argv is None else argv)]
+    completed = subprocess.run(args)
+    return int(completed.returncode)
+
+
 if __name__ == "__main__":
     if needs_windows_utf8_reexec():
-        os.environ["PYTHONUTF8"] = "1"
-        os.execv(sys.executable, [sys.executable, "-X", "utf8", *sys.argv])
+        sys.exit(reexec_under_utf8())
     sys.exit(main() or 0)

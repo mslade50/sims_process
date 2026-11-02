@@ -147,6 +147,41 @@ def test_windows_reexec_only_when_utf8_mode_is_off(monkeypatch):
     assert telegram_policy.needs_windows_utf8_reexec() is False
 
 
+def test_windows_reexec_uses_an_argument_list_and_returns_the_child_code(monkeypatch):
+    import subprocess
+
+    seen = {}
+
+    def fake_run(args):
+        seen["args"] = list(args)
+        seen["pythonutf8"] = os.environ.get("PYTHONUTF8")
+        return subprocess.CompletedProcess(args, 5)
+
+    monkeypatch.setattr(telegram_policy.subprocess, "run", fake_run)
+    monkeypatch.setattr(telegram_policy.sys, "executable", r"C:\Program Files\Python311\python.exe")
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+    argv = [
+        r"D:\golf sims\telegram_policy.py",
+        "--key",
+        "lag",
+        "--message",
+        "not ready yet",
+    ]
+    assert telegram_policy.reexec_under_utf8(argv) == 5
+    assert seen["args"] == [
+        r"C:\Program Files\Python311\python.exe",
+        "-X",
+        "utf8",
+        r"D:\golf sims\telegram_policy.py",
+        "--key",
+        "lag",
+        "--message",
+        "not ready yet",
+    ]
+    assert seen["pythonutf8"] == "1"
+    assert " " in seen["args"][0] and " " in seen["args"][3] and " " in seen["args"][-1]
+
+
 def test_state_read_failure_stays_exit_zero(monkeypatch):
     import subprocess
     import sys
