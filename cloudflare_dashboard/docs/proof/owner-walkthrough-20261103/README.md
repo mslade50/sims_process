@@ -36,7 +36,16 @@ Current-base focused checks: TypeScript, scoped lint, patch hygiene, 20 viewport
 
 The current-base Python proof command still fails collection in the unrelated scratch course-feedback test: 1037 collected, one ModuleNotFoundError for golfprice. This is not represented as a passed suite.
 
-Final focused command: production build followed by walkthrough, built owner-gate, rendered-view, freshness-UI and cron tests. Result: 76 tests, 76 passed, 0 failed. Immediate tab-return and out-of-order browser checks also passed. Live version and source commit are recorded below after publication.
+Final focused command: production build followed by walkthrough, built owner-gate, rendered-view, freshness-UI and cron tests. Result: 76 tests, 76 passed, 0 failed. Immediate tab-return and out-of-order browser checks also passed. ## Live result
+
+- Source commit on remote main: 801da25d5207d4dd2efebc4a6d2b29ba9bd29767.
+- Existing npm run deploy:cloudflare completed successfully. Worker version: 80546a06-9d6f-4dd7-bf17-bdecf4dee022. Existing 15-minute cron, owner Access protection, flags and R2 binding were preserved.
+- Authenticated live owner page: identity API returned owner=true, status200. The guide rendered all five sections. Event selection switched from Abu Dhabi to World Wide Technology Championship; both matching artifacts showed run20261103T051600Z, as_of2026-11-03T05:16:00Z.
+- PGA skill view showed 18 actual published contributions. The simulation view showed actual market probabilities and 12 finish bins with basis exact_tapes.
+- Live checks at1280px and375px found no horizontal overflow. The live in-event and validation explanations rendered correctly. Actual production screenshots are live-owner-desktop.png and live-owner-mobile.png.
+- Anonymous incognito access to /model-walkthrough redirected to Cloudflare Access login. No login was attempted. Colleague and RSC enforcement was checked against the built Worker.
+- Current weekly evidence for both selected events: 0green,8yellow,0red. Published price artifacts exist, but full stage content-verification receipts are not connected. The guide does not claim those stages succeeded.
+- No model changes, operational pricing runs, remote data writes, alerts, emails, bets or trades were made. No new branch, worktree or PR was created. Existing automatic CI was skipped through the source commit message under the updated owner policy.
 
 ## Rollback
 
