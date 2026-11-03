@@ -27,7 +27,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
-export type ViewKey = "shot-data" | "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
+export type ViewKey = "model-walkthrough" | "shot-data" | "ops" | "players" | "weekly-players" | "run" | "inputs" | "research" | "distributions" | "sg-distributions" | "round-scores" | "history" | "performance" | "diagnostics" | "weather-effects" | "weather-edits" | "this-week" | "why-priced" | "bet-breakdowns" | "bet-card";
 
 type Manifest = {
   generated_at: string;
@@ -50,6 +50,7 @@ const PlayersView = lazy(() => import("./PlayerProfilesView").then((m) => ({ def
 const WeeklyPlayersView = lazy(() => import("./WeeklyPlayersView").then((m) => ({ default: m.WeeklyPlayersView })));
 const ShotDataView = lazy(() => import("./ShotDataView").then((m) => ({ default: m.ShotDataView })));
 const OpsView = lazy(() => import("./OpsView").then((m) => ({ default: m.OpsView })));
+const WalkthroughView = lazy(() => import("./WalkthroughView").then((m) => ({ default: m.WalkthroughView })));
 const RunView = lazy(() => import("./RunView").then((m) => ({ default: m.RunView })));
 const InputsView = lazy(() => import("./InputsView").then((m) => ({ default: m.InputsView })));
 const ResearchView = lazy(() => import("./ResearchView").then((m) => ({ default: m.ResearchView })));
@@ -67,6 +68,7 @@ const BetCardView = lazy(() => import("./BetCardView").then((m) => ({ default: m
 const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.WhyPricedView })));
 
 const loaders: Record<string, () => Promise<unknown>> = {
+  "model-walkthrough": () => import("./WalkthroughView"),
   "shot-data": () => import("./ShotDataView"),
   "players": () => import("./PlayerProfilesView"),
   "weekly-players": () => import("./WeeklyPlayersView"),
@@ -99,6 +101,7 @@ function prefetchView(key: string) {
 const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
 
 const views: Record<ViewKey, React.ComponentType> = {
+  "model-walkthrough": WalkthroughView,
   "shot-data": ShotDataView,
   players: PlayersView,
   "weekly-players": WeeklyPlayersView,

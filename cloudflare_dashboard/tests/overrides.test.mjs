@@ -146,7 +146,7 @@ test("hard bounds reject and never clip", () => {
 });
 
 test("the server owns id, created_at and author", () => {
-  const built = buildRecord(goodBody(), "owner@example.com", NOW);
+  const built = buildRecord(goodBody({ expires_at: new Date(NOW + 3 * DAY).toISOString() }), "owner@example.com", NOW);
   assert.ok(built.record, built.problems.join());
   assert.equal(built.record.author, "owner@example.com");
   assert.equal(built.record.created_at, "2026-10-05T14:00:00Z");

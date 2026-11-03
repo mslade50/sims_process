@@ -27,6 +27,7 @@ test("Shot data and Ops remain registered lazy owner routes in the real dashboar
 });
 
 const VIEWS = [
+  ["model-walkthrough", "WalkthroughView.tsx", "WalkthroughView"],
   ["shot-data", "ShotDataView.tsx", "ShotDataView"],
   ["players", "PlayerProfilesView.tsx", "PlayersView"],
   ["weekly-players", "WeeklyPlayersView.tsx", "WeeklyPlayersView"],
