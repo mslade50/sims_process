@@ -14,6 +14,7 @@ import { COMPONENT_LABELS, parseWeather, runMoment, signedFixed, type WeatherDoc
 import { define } from "./glossary";
 import { weatherRunKey } from "./freshness-rules";
 import { CourseHistoryPanel } from "./CourseHistoryPanel";
+import { MarketScoringPanel } from "./MarketScoringPanel";
 import "./scoring.css";
 
 const COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-2)", "var(--chart-4)"];
@@ -46,11 +47,11 @@ function ScoringExplorer({ event }: { event: DistributionEvent }) {
   return <>
     <div className="score-controls"><label className="score-select">Simulation run<select aria-label="Simulation run" value={runKey} onChange={(e) => setRunKey(e.target.value)}>{runs.length ? runs.map((r) => <option key={r.key} value={r.key}>{runLabel(r)}{r.key === latest?.key ? " · Latest" : ""}</option>) : <option value={runKey}>Latest run</option>}</select></label></div>
     {runs.length > 1 && <nav className="score-timeline" aria-label="Simulation runs">{runs.map((r, i) => <button key={r.key} type="button" aria-current={r.key === runKey ? "step" : undefined} className={r.key === runKey ? "active" : ""} onClick={() => setRunKey(r.key)}><span>{i + 1}</span>{runLabel(r).split(" · ")[0]}<small>{runLabel(r).split(" · ")[1]}</small></button>)}</nav>}
-    <Snapshot key={runKey} runKey={runKey} expectedRun={selectedRun?.run ?? null} latest={runKey === latest?.key} weatherKey={weatherKey} weatherRunKey={weatherRunKey(weatherKey, selectedRun?.kind, selectedRun?.run) ?? undefined} historyKey={(event as DistributionEvent & { history_key?: string | null }).history_key ?? null} />
+    <Snapshot key={runKey} eventUid={event.event_uid} runKey={runKey} expectedRun={selectedRun?.run ?? null} latest={runKey === latest?.key} weatherKey={weatherKey} weatherRunKey={weatherRunKey(weatherKey, selectedRun?.kind, selectedRun?.run) ?? undefined} historyKey={(event as DistributionEvent & { history_key?: string | null }).history_key ?? null} />
   </>;
 }
 
-export function Snapshot({ runKey, expectedRun, latest, weatherKey, weatherRunKey: runWeatherKey, historyKey }: { runKey: string; expectedRun: string | null; latest: boolean; weatherKey?: string; weatherRunKey?: string; historyKey?: string | null }) {
+export function Snapshot({ eventUid, runKey, expectedRun, latest, weatherKey, weatherRunKey: runWeatherKey, historyKey }: { runKey: string; expectedRun: string | null; latest: boolean; weatherKey?: string; weatherRunKey?: string; historyKey?: string | null; eventUid?: string }) {
   const source = useDashboardData<unknown>(runKey);
   // The newest run reads the no-cache latest.json; an earlier run reads its own immutable <kind>_<run>.json copy, never today's forecast.
   const weatherSource = useDashboardData<unknown>((latest ? weatherKey : runWeatherKey) ?? "golfprice/none.json");
@@ -148,6 +149,7 @@ export function Snapshot({ runKey, expectedRun, latest, weatherKey, weatherRunKe
     </div>
 
     <WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={scoring.round} latest={latest} />
+    {eventUid && <MarketScoringPanel eventUid={eventUid} modelRun={scoring.run_id} round={scoring.round} />}
     {historyKey !== undefined && <CourseHistoryPanel historyKey={historyKey} />}
 
     <details className="score-details score-investigate"><summary>See how hard each hole plays</summary><Panel title="Course difficulty by hole" eyebrow={holeProfile.length ? "Expected strokes vs par on each hole" : "Hole-by-hole course difficulty"}>

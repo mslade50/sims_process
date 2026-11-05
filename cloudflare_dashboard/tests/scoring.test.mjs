@@ -103,6 +103,7 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "./scoring-rules") return scoringRules;
     if (id === "./lib") return libRules;
     if (id === "./weather-rules") return weatherRules;
+    if (id === "./MarketScoringPanel") return { MarketScoringPanel: () => null }; // tested with the real render harness in market-scoring.test.mjs
     if (id === "./CourseHistoryPanel") return { CourseHistoryPanel: () => null };
     if (id === "next/link") return { __esModule: true, default: ({ href, children, className }) => React.createElement("a", { href, className }, children) };
     if (id === "./glossary") return glossaryRules;
