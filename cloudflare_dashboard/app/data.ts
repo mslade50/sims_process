@@ -75,7 +75,10 @@ const lastGood = (): LastGoodStore | undefined => (store === null ? (store = (()
 
 /* ------------------------------------------------------------------ loading */
 // Identity data (golfer names), not prose: skip the spelling pass so a golfer called "Grey" stays "Grey" (and 16,600 names are not scanned).
-const VERBATIM = /(^|\/)search-index\.json(\?|$)/;
+// Round 5: the per-golfer deep batches (event and course names, shot numbers; 300 KB for a busy golfer) are identity data too. The spelling pass cost ~90 ms of the 332 ms phone task and rewrote course names ("Centre") and golfer names ("Grey").
+const VERBATIM = /(^|\/)search-index\.json(\?|$)|(^|\/)player_profiles\/deep(?:-reference)?-[a-f0-9]+\//;
+
+const LARGE = /(^|\/)player_profiles\/deep-[a-f0-9]+\//;
 
 /** The index and This week's explain document are requested by an inline <head> script (earlyFetchScript, shell-rules.ts) before the framework arrives; take that request once if it matches. */
 type EarlyMap = Record<string, { p: Promise<Response>; c: RequestCache } | undefined>;
@@ -105,6 +108,8 @@ function loadEntry(name: string, force: boolean): Promise<Entry> {
       store: lastGood(),
     });
     if (result.status === "error") throw new DataError(result.message, result.kind);
+    // Round 5: a large per-golfer document is handed to React in its own task, apart from the download, parse and cache write that just ran.
+    if (LARGE.test(name)) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const payload = VERBATIM.test(name) ? result.json : americanizeDeep(result.json);
     const entry: Entry = result.status === "ok"
       ? { payload, checkedAt: Date.now(), stale: false, savedAt: null }

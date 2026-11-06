@@ -118,3 +118,63 @@ Evidence
 - Drawer keyboard proof (`node scripts/a11y-drawer.mjs`): row Enter opens, focus inside, Tab x45 and Shift+Tab x12 stay inside, main and tab bar inert, Escape and the close button both close and return focus to the opener, on phone and desktop: 36 checks, 0 failures (`dist-visual/R4b/a11y-drawer.json`). The earlier "native actions timed out" was the harness sending `rawKeyDown` for Enter, which never fires a button click; a `keyDown` with text does.
 - Populated Bet card (`node scripts/bet-card-interact.mjs`, fixture `dist-visual/D-r2/bet_card.populated.json` swapped into `.wrangler/live/owner/bet_card.json`, preview restarted, then restored: sha256 96b4586d...679ebe1 verified identical before and after): Enter and Space expand and collapse rows, group and book filters change the count and the polite status, Clear restores all 5 rows, combined filters keep status and Clear: 30 checks, 0 failures (`dist-visual/R4b/bet-card-interact.json`).
 - Verification: `npx tsc --noEmit` clean; eslint 0/0; `npm test` 818 tests, 817 pass, 0 fail, 1 todo (150 KB target); `ui-check --extra --crops --out dist-visual/r4-full` 80 cases 0 errors 0 warnings; `contrast-check` 72 cases, 0 failing groups.
+
+# Round 5: golfer shift and task, first-screen data in the HTML (2026-11-06)
+
+Raw runs: `dist-visual/R5-codex/perf-before-golfer.json` (before), `perf-after.json`, `perf-golfer-desktop.json`, `perf-golfer-phone.json` (after); phone = 375x812, 4x CPU, fast 4G; desktop 1280x900; local preview (HTTP/1.1). The harness reports a median of 3 per route and profile (the full 4-route 3-run sweep stalled twice when another agent rebuilt the shared preview, so the golfer was re-run alone).
+
+| Route | Before | After |
+|---|---|---|
+| One golfer desktop CLS | 0.113 | 0.044 (median of 3) |
+| One golfer phone LCP / max task | 3052-3216 ms / 340-392 ms | 2800 ms / 164 ms |
+| This week phone LCP | 2688-2872 ms | 2624 ms |
+| Why priced phone LCP | 2652-2676 ms | 2620 ms |
+| Weather phone LCP (not touched) | 3396 ms | 3408 ms |
+
+LCP <= 2.5 s was NOT reached on any phone route (0.1-0.3 s short; the golfer is 0.3 s short). Golfer CLS < 0.05 desktop and phone, and no golfer task > 200 ms, are met. This week still shows a 170-209 ms hydration task (shell code, not changed here).
+
+What the golfer shift was (PerformanceObserver sources + a 20 ms geometry sampler of every hero node)
+- Desktop 0.0305: `div.nav-group` 68 -> 137 in the sidebar. The owner's pinned Bet card group is rendered only after `/api/whoami` answers (`DashboardApp.tsx`, `pinned` from `navigationFor(viewer.owner)`), pushing every nav group down 69 px. This is shell code and is on every route for the owner (This week and Why priced desktop show the same 0.03 of their 0.044-0.046). NOT fixed here; fix: reserve the pinned row's height until the viewer is known.
+- 0.033 + 0.006: the hero's "This week" card was reserved at 370 px (skeleton) and grew to 400 px when its numbers arrived, moving the story and meta rows 8 and 18 px. Now `min-height` is the loaded height (400 desktop, 381 phone) both while pending and once filled (`data-filled`).
+- 0.044 (sometimes absent, timing dependent): the small "country, tours, rounds, as of" line wraps differently when the web font swaps in. It now keeps the system face and a two-line minimum height (`.ph-meta p`).
+- The strokes-gained card is reserved at its loaded height (250 desktop, 580 phone) while loading, and the trend skeleton at 225 phone.
+
+The golfer's 337-392 ms phone task (profiler, CPU 4x): the 300 KB deep-profile document arriving at about 5.5 s. Parts, by self time: spelling pass over every string 93 ms, parse ~60 ms, `toLocaleDateString` built a new Intl formatter per call 72 ms, `parseDeep` re-run on every render, and layout of three tall sections nobody had scrolled to. Changes:
+- `app/data.ts`: deep-profile documents skip the spelling pass (they hold golfer, event and course names, e.g. "Grey" and "Centre", same rule as `search-index.json`) and hand over to React in a separate task.
+- `app/PlayerProfilesView.tsx`: `parseDeep` memoised; the deep document is applied through `useDeferredValue`, so React draws it in interruptible slices (hero and trend keep their loading state until it lands).
+- `app/player-deep-rules.ts`, `app/player-profile-rules.ts`: one shared `Intl.DateTimeFormat` (and a per-day cache); same output.
+- `app/player-hero.css`: `content-visibility: auto` on the three sections below the summary.
+Result: longest task 340-392 ms -> 164-194 ms.
+
+Cold-load chain (golfer, This week, Why priced): `worker/first-screen.ts` + a short additive block at the end of `worker/index.ts`. While the HTML renders, the Worker reads the same objects the browser would ask for first (`index.json`, then the slim explain document of the event the head script will pick, or for a golfer the one-golfer slice and its profile batch) through the existing handlers, and appends them to the page as a JSON script. A small script right after `<head>` wraps `window.fetch`, so the page's own early requests for exactly those URLs (`earlyFetchScript`, `app/data.ts`) are answered from that text, once; everything else, and any URL not inlined, goes to the network unchanged. If a read fails or takes more than 1.5 s the page simply inlines less. Nothing is written, no new endpoint, no change to `shell-rules.ts`/`data.ts` contracts. Cost: the HTML grows by about 60 KB gzip for This week/Why priced (the remembered-event case inlines an unused document). The gain is 20-70 ms of LCP locally because the link is bandwidth-bound (about 330 KB of script shares 1.6 Mbps): the sequential index round trip is gone, but the floor is script transfer. Going lower needs less script on these routes, not more data plumbing. Tests: `tests/route-preload.test.mjs` (event choice, paths, key mirroring, split-chunk marker insertion, script-safe JSON, wrapper serves once and passes everything else).
+
+Why priced result feedback (item 6, `ExplainWhy.tsx`, `ResultStatus.tsx`): the section title is singular/plural ("1 player, win"); a polite, atomic `role="status"` announces "N players shown" / "No players match"; one Reset (search, bet-type filters, sort, player types) appears whenever anything is non-default and returns focus to the search box. CDP keyboard run (`a11y-why-search.json`, script copy `a11y-why-search.mjs.txt`): typing a full name announces "1 player shown", Tab from the search box reaches Reset, Enter clears everything and focuses the search, an active filter alone shows Reset: 8 checks per viewport, 0 failures.
+
+
+# Round 5b: CSS budget, shell CLS, Weather LCP, hydration (2026-11-06, R5b)
+
+Raw runs: `dist-visual/R5b/` (`perf-before.txt`, `after-phone.txt`, `after-desktop.txt`, `perf-after-*.json`). Phone = 375x812, 4x CPU, fast 4G; desktop 1280x900; local preview; median of 3 per route. "Before" is the preview as left by round 5 (the desktop sweep and round-scores did not finish in that run; the phone figures are complete except round-scores, measured once alone: LCP 3916 ms).
+
+| Route | Metric | Before | After |
+|---|---|---|---|
+| Weather phone | LCP / JS | 3388 ms / 296 KB | 2348 ms / 188 KB |
+| This week phone | LCP / longest task | 2608 ms / 156-178 ms | 2580-2588 ms / 121-172 ms (varies run to run) |
+| Why priced phone | LCP / longest task | 2596 ms / 70 ms | 2584-2588 ms / 69-71 ms |
+| One golfer phone | LCP / longest task | 2796 ms / 170 ms | 2780 ms / 162 ms |
+| Players (weekly) phone | LCP | 2564 ms | 2584 ms |
+| Bet card phone | LCP | 2164 ms | 2172 ms |
+| Scoring phone (not touched) | LCP / longest task | 3916 ms / 214 ms | 3924 ms / 216 ms |
+| Every route desktop CLS | CLS | 0.044-0.046 (0.03 of it the shell) | 0.012-0.021 |
+| Phone CLS (all routes) | CLS | 0.000-0.010 | 0.000-0.010 |
+| Total CSS | gzip | 66.2 KB (test failing) | 65.1 KB, budget lowered 66 -> 65.5 KB |
+
+What changed
+- CSS: dead selectors removed (shot-monitor `sm-rail*`/`sm-verdict`/..., scoring `score-*`, bet-card `bc-*`, and others whose class names appear nowhere in `app/*.tsx`; classes built at run time such as `tone-${...}`, `fresh-${...}`, `dsp-${...}` were checked and kept), two unused keyframes and four unused tokens. Budget `tests/budgets.test.mjs` is now 65.5 KB (measured 65.12).
+- Shell CLS: until `/api/whoami` answers, `DashboardApp.tsx` renders the owner's pinned Bet card row invisibly (same markup, `visibility: hidden`), so the nav groups no longer drop 69 px when it appears. A colleague's page closes the row once. The Inter swap already had a metric-matched fallback (`"Inter Fallback"`, `size-adjust` in tokens.css); no change.
+- Weather LCP: (1) the Recharts hour-by-hour charts (about 100 KB gzip: CartesianChart, Bar, Area, Line, ComposedChart) were imported by `WeatherEffectsView` although a brief never draws them; they now live in `app/WeatherHourlyCharts.tsx`, loaded with `lazy()` only on the older no-brief page. (2) The Worker (`worker/first-screen.ts`, new `weather` page) and the head script (`earlyFetchScript`, `shell-rules.ts`) now inline/start the brief and the weather document for the event the page will show. (3) `useEventParam` returned "" for one tick after the index arrived, so the page asked for the wrong event's brief (the first with a brief) before the right one; it now reads the URL immediately once the index is there (`event-param.ts`). Tests: `tests/route-preload.test.mjs` (weather paths and inlining), `tests/shell.test.mjs` unchanged and green.
+- Hydration task: the CDP trace of This week showed the long tasks were Layout (about 200 ms) and a per-call `new Intl.DateTimeFormat` in `etStamp` (about 40 ms self time; one formatter per call, called for every run in the week tooltip). Formatters are now created once (`ui-rules.ts`, `freshness-rules.ts`, `weather-rules.ts`, `lib.ts`, `shell-rules.ts`; same output). `#chances` and `#course` use `content-visibility: auto` (`explain.css`). Trying the same on `#weather` and `#shapes` made `ui-check` report 13 text-overlap errors per desktop case, so those two are left alone.
+
+Still short of 9.5 on speed
+- Phone LCP on This week, Why priced, Players and the golfer is 2.58-2.78 s: the link is bandwidth-bound (about 215-240 KB of script on 1.6 Mbps plus 150 ms latency), so the floor is script size, not data plumbing. The shell is 147 KB gzip of it.
+- This week's longest task is 121-172 ms depending on the run (it was 156-178); the remaining cost is the first full layout of the board, not code. Under 150 ms every run needs the board to render in slices or a smaller first screen.
+- Scoring (`/round-scores`) is not in this round's scope and is the slowest route: 3.9 s LCP, 318 KB JS (Recharts on the first screen), 216 ms longest task, 164 ms interaction task.

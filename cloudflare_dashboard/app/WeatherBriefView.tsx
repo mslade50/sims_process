@@ -41,20 +41,21 @@ export function HeadlineCard({ brief, version }: { brief: Brief; version: string
       <div className="wb-headline-top">
         <Badge tone={badgeTone}>{statusTitle(level)}</Badge>
         <small className="wb-muted">
-          {brief.as_of ? `Updated ${etTime(brief.as_of)}` : ""}{brief.forecast.age_hours !== null ? ` · forecast ${ageWords(brief.forecast.age_hours)}` : ""}{version ? ` · model ${version}` : ""}
+          {brief.as_of ? `Updated ${etTime(brief.as_of)}` : ""}{brief.forecast.age_hours !== null ? ` · forecast was ${ageWords(brief.forecast.age_hours)} when priced` : ""}
         </small>
       </div>
       {shortHeadline(brief.rounds) && <h2 className="wb-headline-title">{shortHeadline(brief.rounds)}</h2>}
       {(() => {
         // The status line below already says whether tee times are out; a headline sentence opening the same way only repeats it.
         const lines = brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24));
-        const extra = lines.slice(2);
+        const extra = lines.slice(1);
         return (
           <>
-            {lines.length ? <ul className="wb-sentences">{lines.slice(0, 2).map((h, i) => <li key={i}>{h}</li>)}</ul> : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
-            {(extra.length > 0 || brief.status.plain) && (
+            {lines.length ? <ul className="wb-sentences">{lines.slice(0, 1).map((h, i) => <li key={i}>{h}</li>)}</ul> : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
+            {(extra.length > 0 || brief.status.plain || version) && (
               <details className="wb-more-brief">
                 <summary>More on this forecast</summary>
+                {version && <p className="wb-muted">Prices use model {version}.</p>}
                 {extra.length > 0 && <ul className="wb-sentences">{extra.map((h, i) => <li key={i}>{h}</li>)}</ul>}
                 {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}
               </details>

@@ -52,9 +52,10 @@ export function daysSince(value: unknown, now: number): number | null {
 }
 
 /** "Oct 22, 3:05 PM ET" for a UTC instant. */
+let etFormat: Intl.DateTimeFormat | undefined;
 export function etStamp(iso: unknown): string {
   const ms = typeof iso === "string" ? Date.parse(iso) : NaN;
-  return Number.isFinite(ms) ? `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms)} ET` : "an unknown time";
+  return Number.isFinite(ms) ? `${(etFormat ??= new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })).format(ms)} ET` : "an unknown time";
 }
 
 const obj = (x: unknown): Record<string, unknown> | null => (x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : null);

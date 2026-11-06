@@ -19,7 +19,6 @@
 .shp-glyph { display: inline-block; width: 9px; height: 9px; background: var(--shp-steady); border-radius: 50%; flex: none; }
 .shp-glyph[data-kind="bust"] { background: var(--shp-bust); border-radius: 1px; transform: rotate(45deg) scale(.85); }
 .shp-glyph[data-kind="typical"] { background: transparent; border: 1.5px solid var(--muted); }
-.shp-curves text { fill: var(--muted); font-size: 10px; font-family: inherit; }
 .shp-scatter text { fill: var(--muted); font-size: 13px; /* user units of a 360-wide viewBox: renders >= 12px on a 375px phone */ font-family: inherit; }
 .shp-fine { margin: 0; font-size: var(--fs-small); color: var(--muted); max-width: 70ch; }
 

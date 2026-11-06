@@ -26,8 +26,11 @@ export function useEventParam(): string {
     window.addEventListener("golf-event-changed", read);
     return () => window.removeEventListener("golf-event-changed", read);
   }, []);
-  if (!url || !data) return "";
-  return resolveEventUid(data, url.param, url.remembered, 0);
+  // Before the effect has read the URL, read it now once the index is here (data is null on the server and in the hydration render, so the markup still matches);
+  // otherwise a page's first request after the index would use the wrong event for one tick.
+  const now = url ?? (data && typeof window !== "undefined" ? { param: new URLSearchParams(window.location.search).get("e"), remembered: readRememberedEvent() } : null);
+  if (!now || !data) return "";
+  return resolveEventUid(data, now.param, now.remembered, 0);
 }
 
 /** A page's own event picker changed: remember it and put it in the URL (no reload) so the shell bar, the other pages and a shared link all name the same event. */

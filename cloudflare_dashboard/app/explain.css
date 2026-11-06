@@ -48,7 +48,7 @@
 .ex-chips button.clear { display: inline-flex; align-items: center; gap: 3px; border-style: dashed; }
 
 /* edge lists */
-.ex-edges, .ex-movers, .ex-hits, .ex-bias { margin: 0; padding: 0; list-style: none; }
+ .ex-hits, .ex-bias { margin: 0; padding: 0; list-style: none; }
 
 /* bars: waterfall and bias */
 .ex-wf { display: grid; gap: 2px; }
@@ -153,7 +153,7 @@
   .ex-cards td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; font-size: var(--fs-small); font-weight: 700; flex: none; }
   .ex-cards td.ex-why { display: block; text-align: left; min-width: 0; max-width: none; padding-top: 6px; }
   .ex-cards td.ex-why::before { display: block; margin-bottom: 2px; }
-  .ex-table-wrapper, .table-scroll:has(.ex-cards) { border: 0; overflow: visible; }
+   .table-scroll:has(.ex-cards) { border: 0; overflow: visible; }
   .kpi small { overflow-wrap: anywhere; }
 }
 
@@ -168,10 +168,7 @@
 .ex-shape-bar.neg { fill: var(--negative); }
 .ex-shape-bar.flat { fill: var(--muted); opacity: .45; }
 .ex-shape-lab { fill: var(--muted); font-size: 8.5px; }
-.ex-shape-cell { width: 1%; }
 .ex-shape-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 8px; }
-@media (max-width: 640px) {
-}
 .ex-wf-clip { position: absolute; top: -2px; bottom: -2px; display: flex; align-items: center; font-size: 13px; font-weight: 800; line-height: 1; }
 .ex-wf-clip.pos { right: 1px; color: var(--foreground); }
 .ex-wf-clip.neg { left: 1px; color: var(--foreground); }
@@ -443,9 +440,7 @@
   .ex-fact-sub { font-size: var(--fs-small); }
   /* contender rows: a ruled list, not a stack of cards */
   .ex-cards tr { display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); margin: 0; padding: var(--sp-3) 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
-  .ex-cards th[scope="row"], .ex-cards td.ex-shape-cell, .ex-cards td.ex-why { flex: 1 1 100%; }
-  .ex-cards td[data-label]:not(.ex-shape-cell):not(.ex-why) { flex: 1 1 56px; flex-direction: column; align-items: flex-start; gap: 0; padding: 0; text-align: left; }
-  .ex-cards td[data-label]:not(.ex-shape-cell):not(.ex-why)::before { font-size: var(--fs-small); font-weight: 600; }
+  .ex-cards th[scope="row"], .ex-cards td.ex-why { flex: 1 1 100%; }
   .ex-gap-col button { min-height: 48px; }
   p.ex-muted .ex-term-btn { display: inline-flex; align-items: center; min-height: 40px; }
 }
@@ -499,3 +494,7 @@
 .ex-dbar i.flat { left: calc(50% - 2px); }
 /* Round 4: one hero card pattern (flat surface, one line border, large radius, no shadow) shared with .stat */
 .ex-fact { box-shadow: none; border-radius: var(--radius-lg); }
+.ex-reset { align-self: center; min-height: 44px; }
+
+/* R5b: sections below the first screen of This week skip layout until scrolled near (the cold-load layout task was ~200 ms on a phone). */
+#chances.ds-section, #course.ds-section { content-visibility: auto; contain-intrinsic-size: auto 640px; }

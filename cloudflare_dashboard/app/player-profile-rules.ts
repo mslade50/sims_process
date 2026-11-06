@@ -101,10 +101,12 @@ export function sortProfiles(players:ProfileEntry[]):ProfileEntry[] {
   return keyed.map(k=>k.p);
 }
 /** Calendar dates ("2026-08-30") print as plain dates; full timestamps read in US Eastern time ("Oct 8, 12:10 PM ET"). */
+// Round 5: shared formatters (a new Intl.DateTimeFormat per call was a visible share of the golfer page main thread).
+let profileDay:Intl.DateTimeFormat|null=null,profileStamp:Intl.DateTimeFormat|null=null;
 export function shortProfileDate(value:string|undefined):string {
   if(!value || !Number.isFinite(Date.parse(value))) return "Unavailable";
-  if(/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});
-  return `${new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value))} ET`;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(value)) return (profileDay??=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"})).format(new Date(`${value}T00:00:00Z`));
+  return `${(profileStamp??=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})).format(new Date(value))} ET`;
 }
 export function selectWeeklyEvent<T extends {event_uid:string;tour?:string;date_start?:string;player_ids?:number[]}>(events:T[],explicit:string|null,player:string|null,fields:Array<{event_uid:string;player_ids:number[]}> = []):T|undefined {
   const requested=events.find(e=>e.event_uid===explicit); if(requested) return requested;

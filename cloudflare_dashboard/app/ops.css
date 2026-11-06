@@ -4,8 +4,7 @@
 .ops-page .ds-section { margin-top: var(--sp-6); }
 .ops-page .inputs-button { min-height: 40px; padding: 0 var(--sp-4); font-size: var(--fs-small); border-radius: var(--radius-control); }
 .ops-toolbar, .ops-week-controls, .ops-week-picker, .ops-actions, .ops-calendar-options { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; justify-content: space-between; }
-.ops-updated, .ops-explain, .ops-empty-day, .ops-frequent { color: var(--muted-strong); font-size: var(--fs-small); margin: 0; }
-.ops-explain { margin-bottom: var(--sp-3); }
+.ops-updated, .ops-empty-day, .ops-frequent { color: var(--muted-strong); font-size: var(--fs-small); margin: 0; }
 .ops-week-controls { margin-bottom: 0; align-items: flex-end; }
 .ops-week-picker strong { font-size: var(--fs-data); font-variant-numeric: tabular-nums; }
 .ops-week-controls label, .ops-editor label { display: grid; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); font-weight: 600; }

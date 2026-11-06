@@ -149,3 +149,9 @@
 
 .wb-more-brief summary{cursor:pointer;color:var(--muted-strong);font-size:var(--fs-small);min-height:44px;display:flex;align-items:center}
 .wb-more-brief[open] summary{margin-bottom:var(--sp-2)}
+@media(max-width:720px){
+  .wb-headline{gap:6px;padding:var(--sp-2) var(--sp-3);margin-bottom:var(--sp-2)}
+  .wb-headline-top{gap:4px 8px}
+  .wb-headline-title{font-size:17px}
+  .wb-more-brief summary{min-height:44px}
+}

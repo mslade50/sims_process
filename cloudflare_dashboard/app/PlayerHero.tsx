@@ -114,7 +114,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
           </div>
         </article>
 
-        <article className="ph-week" aria-label="This week" data-pending={weekly.pending ? "true" : undefined}>
+        <article className="ph-week" aria-label="This week" data-pending={weekly.pending ? "true" : undefined} data-filled={weekly.savedDoc && row ? "true" : undefined}>
           <span className="eyebrow">This week</span>
           {weekly.savedDoc && row ? (
             <>

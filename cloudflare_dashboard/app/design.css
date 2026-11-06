@@ -172,3 +172,9 @@ td.negative { color: var(--neg); }
 .pagination button:disabled, .pp-pagination button:disabled, .inputs-button:disabled, .inputs-button.primary:disabled, .inputs-button.danger:disabled {
   opacity: 1; color: var(--muted-strong); background: var(--surface-soft); border-color: var(--line); box-shadow: none; cursor: not-allowed;
 }
+/* Scroll cue for a clipped section strip: fade the clipped edge (set by OnThisPage via data-clip). */
+@media (max-width: 820px) {
+  .on-this-page[data-clip="end"] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+  .on-this-page[data-clip="start"] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); }
+  .on-this-page[data-clip="both"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 36px), transparent); }
+}

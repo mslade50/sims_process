@@ -10,8 +10,6 @@
 .wt-page :is(button, select, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .wt-page summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--accent); }
 .wt-page label { display: grid; gap: var(--sp-1); font-size: var(--fs-small); font-weight: 650; color: var(--muted-strong); min-width: 0; }
-.wt-event-row { display: flex; }
-.wt-event-row label { width: min(100%, 560px); }
 
 /* The pipeline at a glance: five linked steps, the first thing on the page. */
 .wt-flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }

@@ -44,17 +44,12 @@ export function displayDate(value: unknown): string {
   return etTime(value, "Not available");
 }
 
+let etFormat: Intl.DateTimeFormat | undefined;
 /** Owner rule: every timestamp on the site reads in US Eastern time ("Oct 8, 12:10 PM ET"), never UTC or raw ISO. */
 export function etTime(value: unknown, fallback = "—"): string {
   const date = new Date(String(value ?? ""));
   if (value == null || value === "" || Number.isNaN(date.getTime())) return fallback;
-  return `${new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)} ET`;
+  return `${(etFormat ??= new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })).format(date)} ET`;
 }
 
 export function safeMean(values: number[]): number {

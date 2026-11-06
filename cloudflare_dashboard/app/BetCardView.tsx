@@ -34,7 +34,7 @@ function BetRow({ bet }: { bet: Bet }) {
   return (
     <li className={`bc-bet ${bet.tier === "LEAN IN" ? "lean" : "small"}`}>
       <details>
-        <summary aria-label={`${betText(bet)}, edge ${pctText(bet.edge)}, stake ${bet.stakeU.toFixed(2)} units. Show details`}>
+        <summary aria-label={`${betText(bet)}, edge ${(bet.edge * 100).toFixed(1)} points (our chance minus the break-even chance), stake ${bet.stakeU.toFixed(2)} units. Show details`}>
           <div className="bc-main">
             <strong className="bc-name">{betText(bet)}</strong>
             <span className="bc-sub">
@@ -44,7 +44,7 @@ function BetRow({ bet }: { bet: Bet }) {
             </span>
           </div>
           <div className="bc-edge" title="Our chance minus the break-even chance at this price">
-            <b className="num">+{(bet.edge * 100).toFixed(1)}%</b>
+            <b className="num">+{(bet.edge * 100).toFixed(1)} pts</b>
             <small>edge</small>
           </div>
           <dl className="bc-price">
@@ -117,10 +117,9 @@ function EventSection({ event, filters }: { event: CardEvent; filters: Filters }
 }
 
 /** One compact line per event that has nothing to suggest: what state it is in, why, and when it is checked next. */
-function QuietEvents({ events }: { events: CardEvent[] }) {
+function QuietEvents({ events, sole }: { events: CardEvent[]; sole: boolean }) {
   if (events.length === 0) return null;
-  return (
-    <Section id="quiet" title="Nothing to suggest" purpose="Events with no bet right now, where each stands and when it is checked again.">
+  const list = (
       <ul className="bc-status">
         {events.map((e) => {
           const stage = stageText(e);
@@ -132,36 +131,47 @@ function QuietEvents({ events }: { events: CardEvent[] }) {
               <Chip tone="warning">{stage}</Chip>
             </div>
             <p>{quietReason(e, stage)}</p>
-            <p className="bc-next">{nextCheckForStage(e, stage)}</p>
+            <p className="bc-next"><span>Next check</span> {nextCheckForStage(e, stage).replace(/^Next check:\s*/, "")}</p>
             <Coverage event={e} />
           </li>
           );
         })}
       </ul>
-    </Section>
   );
+  // With no bets anywhere the answer line above already says "nothing to suggest": go straight to the per-event rows.
+  return sole ? <div className="bc-quiet-list">{list}</div> : <Section id="quiet" title="Nothing to suggest" purpose="Events with no bet right now, where each stands and when it is checked again.">{list}</Section>;
 }
 
 function FilterBar({ filters, setFilters, books, count }: { filters: Filters; setFilters: (f: Filters) => void; books: string[]; count: number }) {
   const active = activeFilterCount(filters);
+  const [open, setOpen] = useState(false);
+  const tierLabel = filters.tier === "all" ? "All tiers" : filters.tier === "lean" ? "Lean in" : "Small";
+  const marketLabel = GROUP_OPTIONS.find((o) => o.value === filters.group)?.label ?? "All markets";
+  const bookText = filters.book === "all" ? "All books" : bookLabel(filters.book);
   return (
     <div className="bc-bar" role="group" aria-label="Filter the bet card">
-      <SegmentedControl<TierFilter> label="Tier" value={filters.tier} onChange={(tier) => setFilters({ ...filters, tier })} options={[{ value: "all", label: "All" }, { value: "lean", label: "Lean in" }, { value: "small", label: "Small" }]} />
-      <label className="bc-sel"><span>Market</span>
-        <select value={filters.group} onChange={(e) => setFilters({ ...filters, group: e.target.value as Group })}>
-          {GROUP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </label>
-      <label className="bc-sel"><span>Book</span>
-        <select value={filters.book} onChange={(e) => setFilters({ ...filters, book: e.target.value })}>
-          <option value="all">All books</option>
-          {books.map((b) => <option key={b} value={b}>{bookLabel(b)}</option>)}
-        </select>
-      </label>
-      <span className="bc-bar-end">
-        <span className="num" role="status" aria-live="polite" aria-atomic="true">{count} {count === 1 ? "bet" : "bets"} shown</span>
-        {active > 0 && <button type="button" className="bc-reset" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear {active} {active === 1 ? "filter" : "filters"}</button>}
-      </span>
+      <div className="bc-bar-row">
+        <span className="bc-applied">{tierLabel} · {marketLabel} · {bookText}</span>
+        <button type="button" className="bc-reset" aria-expanded={open} onClick={() => setOpen(!open)}>Filters{active > 0 ? ` (${active})` : ""}</button>
+        {active > 0 && <button type="button" className="bc-reset" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>}
+        <span className="bc-count num" role="status" aria-live="polite" aria-atomic="true">{count} {count === 1 ? "bet" : "bets"} shown</span>
+      </div>
+      {open && (
+        <div className="bc-bar-controls">
+          <SegmentedControl<TierFilter> label="Tier" value={filters.tier} onChange={(tier) => setFilters({ ...filters, tier })} options={[{ value: "all", label: "All" }, { value: "lean", label: "Lean in" }, { value: "small", label: "Small" }]} />
+          <label className="bc-sel"><span>Market</span>
+            <select value={filters.group} onChange={(e) => setFilters({ ...filters, group: e.target.value as Group })}>
+              {GROUP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+          <label className="bc-sel"><span>Book</span>
+            <select value={filters.book} onChange={(e) => setFilters({ ...filters, book: e.target.value })}>
+              <option value="all">All books</option>
+              {books.map((b) => <option key={b} value={b}>{bookLabel(b)}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
     </div>
   );
 }
@@ -179,14 +189,14 @@ function CardBody({ card }: { card: Card }) {
       <div className="bc-answer" role="status">
         <div>
           <strong className="bc-headline">{all.bets === 0 ? "No bets to suggest right now" : `${all.bets} ${all.bets === 1 ? "bet" : "bets"} worth considering`}</strong>
-          <span className="bc-meta num">{all.bets > 0 ? `${all.units.toFixed(2)} units in total, best edge +${(top * 100).toFixed(1)}%. ` : ""}Card built {formatET(card.generatedAt)} ({timeAgo(card.generatedAt)}).</span>
+          <span className="bc-meta num">{all.bets > 0 ? `${all.units.toFixed(2)} units in total, best edge +${(top * 100).toFixed(1)} pts (our chance minus the break-even chance). ` : ""}Card built {formatET(card.generatedAt)} ({timeAgo(card.generatedAt)}).</span>
         </div>
         <span className="bc-quiet">Suggestions only. Nothing is placed automatically.</span>
       </div>
       {all.bets > 0 && <FilterBar filters={filters} setFilters={setFilters} books={books} count={shownCount} />}
       {card.events.length === 0 && <EmptyState title="No events" detail="The card lists no events right now." nextCheck="Next check: within 30 minutes" />}
       {withBets.map((e) => <EventSection key={e.eventUid} event={e} filters={filters} />)}
-      <QuietEvents events={quiet} />
+      <QuietEvents events={quiet} sole={all.bets === 0} />
       {card.notes.length > 0 && (
         <details className="bc-howto">
           <summary>How to read this card</summary>

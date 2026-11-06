@@ -55,9 +55,11 @@ export function parseTimestamp(value: unknown): number | null {
   return Number.isFinite(direct) ? direct : null;
 }
 
+// One shared formatter: building an Intl.DateTimeFormat per call cost ~40 ms of the phone main thread (the week tooltip formats every run).
+let etFormat: Intl.DateTimeFormat | undefined;
 /** "Oct 8, 12:10 PM ET" for a millisecond timestamp (kept local so this file stays free of imports; same format as lib.etTime). */
 export function etStamp(ms: number): string {
-  return `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms)} ET`;
+  return `${(etFormat ??= new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })).format(ms)} ET`;
 }
 
 export function relativeAge(ms: number): string {

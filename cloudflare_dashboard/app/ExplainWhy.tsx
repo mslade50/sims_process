@@ -1,13 +1,14 @@
 "use client";
 
 /** Why priced: every player's price against the market, with the reasons. Split from ExplainViews so This week does not ship it. */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { EmptyState, SegmentedControl } from "./components";
 import { LegendGroups } from "./ExplainBits";
 import { MARKET_LABEL, TAG_GROUPS, biggestGaps, favourites, gapPtsText, plainName, availableMarkets, availableTags, edgeBadge, filterWhy, gapText, pct, shapeMap, shapeOf, signed, sortWhy, tagLabel, type SortKey } from "./explain-rules";
 import { etTime } from "./lib";
 import { Section } from "./ui";
+import { ResultStatus, plural } from "./ResultStatus";
 import "./explain.css";
 import { ExplainShell, PriceList, RAIL_RANGE, type Shell, type PriceRowData } from "./ExplainViews";
 
@@ -55,6 +56,9 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
     const map = shapeMap(doc);
     return doc.players.map((p) => { const s = p.withdrawn ? null : shapeOf(p, map, markets); return { ...p, edge_sg: s ? s.skill_gap : null, why_edge: s ? s.sentence : null }; });
   }, [doc, live, markets]);
+  const searchRef = useRef<HTMLInputElement>(null);
+  // The Reset button disappears once everything is default, so focus moves to the search box instead of dropping to the page.
+  const resetAll = () => { setQuery(""); setTags([]); setOnly("all"); setTop("25"); setSort({ key: "edge_sg", dir: "desc" }); searchRef.current?.focus(); };
   const rows = useMemo(() => sortWhy(filterWhy(players, { query, tags, market, onlyEdge: only, top: top === "all" ? null : Number(top) }), sort.key, sort.dir, market), [players, query, tags, market, only, top, sort]);
   const hasMarket = !live && rows.some((p) => p.probs[market].market !== null);
   const hasModel = rows.some((p) => p.probs[market].model !== null);
@@ -75,10 +79,12 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   return (
     <>
       {!live && <WhyGlance doc={doc} openPlayer={openPlayer} />}
-      <Section id="players" title={`${rows.length} players, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the driver breakdown.${hasMarket ? " Bars to the right of the zero tick: we are higher than the book." : ""}`}
+      <Section id="players" title={`${plural(rows.length, "player")}, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the driver breakdown.${hasMarket ? " Bars to the right of the zero tick: we are higher than the book." : ""}`}
         actions={<SegmentedControl label="Bet type" value={market} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
         <div className="ex-filters">
-          <label className="search-box"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search player" aria-label="Search player" /></label>
+          <label className="search-box"><Search size={15} /><input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search player" aria-label="Search player" /></label>
+          <ResultStatus count={rows.length} noun="player" />
+          {(query.trim() !== "" || activeFilters > 0) && <button type="button" className="ex-clear ex-reset" onClick={resetAll}><X size={12} /> Reset search and filters</button>}
         </div>
         <details className="ex-details ex-typefilter ex-filterbox" open={undefined}>
           <summary>Filters{activeFilters > 0 ? ` (${activeFilters})` : ""}</summary>
@@ -103,7 +109,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
           </div>
         </details>
         {rows.length > 0 && <PriceList rows={plRows} range={RAIL_RANGE[market]} label="Player prices" onOpen={openPlayer} heads={["Player", "Numbers", "Model vs book (points)", "Why"]} />}
-        {rows.length === 0 && <EmptyState title="No players match" detail="Clear a filter or the search." />}
+        {rows.length === 0 && <EmptyState title="No players match" detail="Use Reset to clear the search and filters." />}
         {!hasMarket && !live && rows.length > 0 && <p className="ex-muted">No sportsbook prices are posted for {MARKET_LABEL[market].toLowerCase()}, so only our own numbers are shown.</p>}
         <p className="ex-muted ex-marketnote">The strokes gap and its reasons are the same for every bet type; only the probability gap changes.{live ? " Sportsbook prices are not shown during play because they are not live." : ""}</p>
       </Section>

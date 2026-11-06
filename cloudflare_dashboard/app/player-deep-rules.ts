@@ -54,8 +54,17 @@ export const GLOSS={
   finish:"Final finishing position for the whole event, not just the selected rounds.",
 } as const;
 /** Calendar dates (event and round days) read as plain dates; real timestamps read in US Eastern time. */
+// Round 5: one formatter and a per-day cache. toLocaleDateString builds a new Intl formatter on every call, which cost ~70 ms of the phone main thread on a golfer with hundreds of rounds.
+let dayFormatter:Intl.DateTimeFormat|null=null;
+const dayCache=new Map<string,string>();
+function plainDay(v:string):string|null{
+  const hit=dayCache.get(v); if(hit!==undefined) return hit;
+  const d=new Date(`${v}T00:00:00Z`); if(Number.isNaN(d.getTime())) return null;
+  dayFormatter??=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});
+  const text=dayFormatter.format(d); dayCache.set(v,text); return text;
+}
 export function dayText(v:string|null|undefined,fallback="Not available"):string{
   if(!v)return fallback;
-  if(/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=new Date(`${v}T00:00:00Z`);return Number.isNaN(d.getTime())?fallback:d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"});}
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)){return plainDay(v)??fallback;}
   return etTime(v,fallback);
 }

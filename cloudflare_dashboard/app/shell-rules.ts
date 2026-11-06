@@ -184,9 +184,10 @@ export function searchPlayers(players: ProfileEntry[], query: string, limit = 8)
 
 /* ------------------------------------------------------------------ Run page (C4) */
 export type RunGroupName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "During event" | "Anytime";
+let weekdayFormat: Intl.DateTimeFormat | undefined;
 /** The weekday group that matches today in America/New_York (the schedule's clock); Friday to Sunday are "During event". */
 export function suggestedGroup(now: Date | number): RunGroupName {
-  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" }).format(now);
+  const weekday = (weekdayFormat ??= new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" })).format(now);
   return weekday === "Monday" || weekday === "Tuesday" || weekday === "Wednesday" || weekday === "Thursday" ? weekday : "During event";
 }
 
@@ -238,8 +239,9 @@ export function stageOf(e: StageEvent, now: number): { stage: string; tone: "neu
 export type EventStatus = { stageNow: string; pricesLabel: string; pricedRound: number | null; inPlay: boolean; state: "ok" | "behind" | "none" | "final"; consequence: string; next: string };
 const DAY_MS = 86_400_000;
 const IN_PLAY_STALE_MS = 3 * 3_600_000;
+let easternFormat: Intl.DateTimeFormat | undefined;
 function easternParts(ms: number): { date: string; hour: number } {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(ms);
+  const parts = (easternFormat ??= new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" })).formatToParts(ms);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   return { date: `${get("year")}-${get("month")}-${get("day")}`, hour: Number(get("hour")) };
 }
@@ -366,7 +368,7 @@ export function earlyFetchScript(): string {
   return `(function(){try{if(localStorage.getItem("golf-fonts")==="1")document.documentElement.classList.add("fonts-ready")}catch(x){}try{var E={};window.__earlyFetch=E;var go=function(u,c){var p=fetch(u,{headers:{accept:"application/json"},cache:c,priority:"high",credentials:"same-origin"});p.catch(function(){});E[u]={p:p,c:c};return p};`
     + `var ix=go("/api/golfprice/index.json","no-cache"),P=location.pathname;`
     + `if(P==="/players"){var sp=new URLSearchParams(location.search),pid=sp.get("player");if(pid&&/^(?:[1-9][0-9]*|historical-[a-z0-9]+)$/.test(pid)&&!sp.get("generation"))go("/api/golfprice/player_profiles/golfer/search-index.json?id="+pid,"no-cache")}`
-    + `var W=P==="/why-priced";if(P!=="/"&&P!=="/this-week"&&!W)return;`
+    + `var W=P==="/why-priced",X=P==="/weather-effects";if(P!=="/"&&P!=="/this-week"&&!W&&!X)return;`
     + `ix.then(function(r){return r.ok?r.clone().json():null}).then(function(j){var ev=j&&j.events;if(!ev)return;`
     + `var known=ev.filter(function(e){return e.event_uid}),dated=known.filter(function(e){return e.date_start}),q=new URLSearchParams(location.search).get("e"),m=null,uid="";`
     + `try{m=localStorage.getItem("${EVENT_STORAGE_KEY}")}catch(x){}`
@@ -374,7 +376,11 @@ export function earlyFetchScript(): string {
     + `rows=dated.filter(function(e){return e.date_start===n});rows.sort(function(a,b){return String(a.tour||"").toLowerCase().localeCompare(String(b.tour||"").toLowerCase())});`
     + `var l=-1;rows.some(function(e,i){if(e.explain_key){l=i;return true}});if(l>0)rows.unshift(rows.splice(l,1)[0]);`
     + `uid=m&&rows.some(function(e){return e.event_uid===m})?m:rows[0].event_uid}`
-    + `var e=known.filter(function(x){return x.event_uid===uid})[0];if(!e||!e.explain_key)return;`
+    + `var e=known.filter(function(x){return x.event_uid===uid})[0];if(!e)return;`
+    // Weather: the brief (or, without one, the weather document) is the first screen; ask for both now (mirrors briefKeyFor / weatherKey and fetchCacheMode in the view).
+    + `if(X){var wc=function(k){return /(^|\\/)(latest|brief_latest)\\.json(\\?|$)/.test(k)&&!/(^|\\/)(?:[a-z]+-)*[0-9a-f]{20}(\\/|\\.json|$)/.test(k)?"no-cache":"default"};`
+    + `if(e.weather_brief_key)go("/api/"+e.weather_brief_key,wc(e.weather_brief_key));var wd=e.weather_key||"golfprice/weather/"+e.event_uid.replace(/:/g,"_")+"/latest.json";go("/api/"+wd,wc(wd));return}`
+    + `if(!e.explain_key)return;`
     + `var runs=e.distribution_runs||[],live=runs.some(function(r){return r&&r.kind==="live"});`
     + `if(W){var cur=String(e.explain_run||"").indexOf("live_")===0;if(live||cur){var v=new URLSearchParams(location.search).get("v");if(v&&v!=="pre")return;`
     + `var wk=runs.filter(function(r){return r&&r.kind==="week"&&typeof r.key==="string"&&r.key&&r.validated!==false}).sort(function(a,b){return String(a.as_of||"").localeCompare(String(b.as_of||""))}).pop();`

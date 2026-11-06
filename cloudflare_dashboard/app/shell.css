@@ -165,7 +165,7 @@ details.tech-details ul { margin: 6px 0 0; padding-left: 18px; }
   .chip button { width: 44px; height: 44px; }
   .search-box { min-height: 44px; }
   select, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .select-control select { min-height: 44px; }
-  .term-button, button.term, .ex-term, .name-button, td button, th button { min-height: 44px; }
+   button.term, .ex-term, td button, th button { min-height: 44px; }
 }
 
 /* context bar: search sits right, actions after it */

@@ -11,8 +11,6 @@
 @keyframes draw { from { stroke-dashoffset: 1; } }
 @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 @keyframes ping { 0% { transform: scale(0.6); opacity: 0.7; } 70%, 100% { transform: scale(2.1); opacity: 0; } }
-@keyframes pulse-green { 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-@keyframes breathe { 50% { opacity: 0.6; } }
 @keyframes sheet-up { from { transform: translateY(40px); opacity: 0; } }
 @keyframes chart-in { from { clip-path: inset(-30px 100% -30px 0); opacity: 0.3; } to { clip-path: inset(-30px -40px -30px -10px); opacity: 1; } }
 @keyframes tick { from { background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); } }

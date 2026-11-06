@@ -289,6 +289,8 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const activeMeta = (ownerOnly && viewer && !viewer.owner ? null : navEntryFor(activeKey)) ?? (route.kind === "notfound" || ownerOnly ? { label: "Page not found", description: "Choose a page from the navigation" } : route.kind === "retired" ? { label: "Retired", description: "This page was retired" } : null);
   const toggleTheme = () => setTheme(theme === "dark" || (theme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "light" : "dark");
   const pinned = navigation.flatMap((group) => group.items).find((item) => item.key === "bet-card");
+  // Until /api/whoami answers, hold the owner's pinned row open (invisible, same markup) so the groups below do not drop 69 px when it appears. A colleague's page closes it once.
+  const pinnedHold = !viewer ? navigationFor(true).flatMap((group) => group.items).find((item) => item.key === "bet-card") : undefined;
   const archiveActive = isLegacy;
   const [archiveOpen, setArchiveOpen] = useState(archiveActive);
 
@@ -306,6 +308,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           <button className="mobile-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
         <nav aria-label="Dashboard navigation">
+          {pinnedHold && <div className="nav-group nav-pinned" aria-hidden="true" style={{ visibility: "hidden" }}><NavLink item={pinnedHold} activeView={activeKey} collapsed={collapsed} /></div>}
           {pinned && <div className="nav-group nav-pinned"><NavLink item={pinned} activeView={activeKey} collapsed={collapsed} /></div>}
           {navigation.map((group) => {
             const items = group.items.filter((item) => item.key !== pinned?.key);

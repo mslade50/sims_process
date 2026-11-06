@@ -2,8 +2,6 @@
 .ps-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0}
 .ps-group{margin:18px 0 0;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-strong)}
 .ps-card{padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-raised);display:flex;flex-direction:column;gap:6px}
-.ps-card.ps-headline{border-color:var(--chart-1)}
-.ps-card.ps-typical{opacity:.85}
 .ps-card header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
 .ps-card header em{font-style:normal;font-size:var(--fs-small);color:var(--muted-strong)}
 .ps-card strong{font-size:19px}

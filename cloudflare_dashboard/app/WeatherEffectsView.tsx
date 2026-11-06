@@ -1,154 +1,33 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
-import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { EmptyState, Kpi, LoadingState, SegmentedControl } from "./components";
 import { OnThisPage, PageHeader, Section } from "./ui";
 import { useEventParam } from "./event-param";
 import { useDashboardData } from "./data";
 import { useIsOwner } from "./viewer";
 import { WeatherBriefBody } from "./WeatherBriefView";
-import { OwnerEditNote, WeatherHourTable, editTitle } from "./WeatherHourTable";
+import { OwnerEditNote, WeatherHourTable } from "./WeatherHourTable";
 import { briefCurrency, etStamp } from "./freshness-rules";
 import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
 import { etTime } from "./lib";
+import { waveName } from "./weather-rules";
+// The hour-by-hour charts (Recharts, about 100 KB gzip) load only on the full weather page; a brief never needs them.
+const HourlyCharts = lazy(() => import("./WeatherHourlyCharts").then((m) => ({ default: m.HourlyCharts })));
 import {
   COMPONENT_HINTS, COMPONENT_LABELS, filterPlayers, forecastAgeText, modelName, windSourceText, forecastAgeHours, hhmm, parseWeather, signedFixed, sortPlayers, toHour, weatherCheckpoint,
-  type HourlyPoint, type PlayerRow, type SortKey, type Wave, type WeatherDoc,
+  type PlayerRow, type SortKey, type Wave, type WeatherDoc,
 } from "./weather-rules";
 
 type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; course?: string; weather_key?: string | null; weather_brief_key?: string | null; weather_run?: string | null; weather_brief_run?: string | null; weather_brief_as_of?: string | null; weather_as_of?: string | null; explain_run?: string | null };
 type PublishIndex = { events?: IndexEvent[] };
 
-const WIND = "var(--wx-wind)";
-const GUST = "var(--wx-gust)";
-const TEMP = "var(--wx-temp)";
-const RAIN = "var(--wx-rain)";
-const WAVE_SHADES = ["var(--wave-am-fill)", "var(--wave-pm-fill)"];
 
 
 export const weatherKey = (event: IndexEvent) => event.weather_key || `golfprice/weather/${event.event_uid.replace(/:/g, "_")}/latest.json`;
 
 /* ------------------------------------------------------------------ small pieces */
-function Arrow({ cx, cy, dir }: { cx?: number; cy?: number; dir: number | null }) {
-  if (cx === undefined || cy === undefined || dir === null) return <g />;
-  // meteorological direction is where the wind comes FROM; the arrow points where it blows TO
-  return (
-    <g transform={`translate(${cx},${cy}) rotate(${dir + 180})`}>
-      <path d="M0,-14 L6,5 L0,1 L-6,5 Z" fill={WIND} stroke="var(--background)" strokeWidth={1} />
-    </g>
-  );
-}
-
-/** "early" as "Early wave"; a wave already named something else keeps its name; missing names become "Wave 2". */
-const waveName = (wave: string, index: number): string => {
-  const w = wave.trim();
-  if (!w) return `Wave ${index + 1}`;
-  return /wave/i.test(w) ? w : `${w.replace(/^./, (c) => c.toUpperCase())} wave`;
-};
-
-const compass = (deg: number) => ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round((((deg % 360) + 360) % 360) / 45) % 8];
-
-type Row = HourlyPoint & { windBand: [number, number] | null; tempBand: [number, number] | null };
-const band = (lo: number | null, hi: number | null): [number, number] | null => (lo !== null && hi !== null ? [lo, hi] : null);
-
-function WxTooltip({ active, payload, unit }: { active?: boolean; payload?: Array<{ payload: Row }>; unit: "wind" | "temp" | "rain" }) {
-  if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
-  return (
-    <div className="wx-tooltip">
-      <strong>{hhmm(p.hour)}</strong>
-      {unit === "wind" && (
-        <>
-          <span>Wind {p.wind?.toFixed(1) ?? "n/a"} mph{p.wind_p10 !== null && p.wind_p90 !== null ? ` (likely range ${p.wind_p10.toFixed(1)} to ${p.wind_p90.toFixed(1)})` : ""}</span>
-          {p.gust !== null && <span>Gusts {p.gust.toFixed(1)} mph</span>}
-          {p.dir !== null && <span>Blowing from the {compass(p.dir)}</span>}
-        </>
-      )}
-      {unit === "temp" && <span>Temperature {p.temp?.toFixed(1) ?? "n/a"}°F{p.temp_p10 !== null && p.temp_p90 !== null ? ` (likely range ${p.temp_p10.toFixed(1)} to ${p.temp_p90.toFixed(1)})` : ""}</span>}
-      {unit === "rain" && <span>Rain {p.rain?.toFixed(2) ?? "n/a"} mm</span>}
-      {(unit === "wind" ? (["wind", "gust", "dir"] as const) : unit === "temp" ? (["temp"] as const) : (["rain"] as const)).map((f) => { const t = editTitle(p, f); return t ? <span key={f} className="wx-edited-tip">{t}</span> : null; })}
-    </div>
-  );
-}
-
-function HourlyCharts({ points, waves }: { points: HourlyPoint[]; waves: Wave[] }) {
-  const rows: Row[] = points.map((p) => ({ ...p, windBand: band(p.wind_p10, p.wind_p90), tempBand: band(p.temp_p10, p.temp_p90) }));
-  const hours = rows.map((r) => r.hour);
-  const domain: [number, number] = [Math.floor(Math.min(...hours)), Math.ceil(Math.max(...hours))];
-  const windows = waves.filter((w) => w.window);
-  const shading = windows.map((w, i) => (
-    <ReferenceArea key={`${w.wave}-${i}`} x1={w.window![0]} x2={w.window![1]} fill={WAVE_SHADES[i % 2]} stroke="none" ifOverflow="hidden"
-      label={{ value: waveName(w.wave, i), position: i % 2 ? "insideTopRight" : "insideTopLeft", fill: "var(--muted)", fontSize: 10 }} />
-  ));
-  const axis = <XAxis type="number" dataKey="hour" domain={domain} allowDecimals={false} padding={{ left: 10 }} stroke="var(--muted)" tickFormatter={(v) => `${String(v).padStart(2, "0")}:00`} />;
-  const margin = { top: 14, right: 12, bottom: 4, left: 0 };
-  const hasWind = rows.some((r) => r.wind !== null);
-  const hasTemp = rows.some((r) => r.temp !== null);
-  const hasRain = rows.some((r) => r.rain !== null);
-  return (
-    <div className="wx-charts">
-      {hasWind && (
-        <div>
-          <h3 className="inputs-h3">Wind and gusts (mph). The shaded band is the likely range; arrows point where the wind blows.</h3>
-          <div className="wx-chart" role="img" aria-label="Hourly wind forecast with uncertainty band and tee windows">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} margin={margin}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                {axis}
-                <YAxis stroke="var(--muted)" width={34} />
-                <Tooltip content={<WxTooltip unit="wind" />} />
-                {shading}
-                <Area dataKey="windBand" stroke="none" fill={WIND} fillOpacity={0.2} isAnimationActive={false} />
-                <Line dataKey="gust" stroke={GUST} strokeDasharray="4 3" dot={false} strokeWidth={1.5} isAnimationActive={false} connectNulls />
-                <Line dataKey="wind" stroke={WIND} strokeWidth={2.5} isAnimationActive={false} connectNulls
-                  dot={(props: { cx?: number; cy?: number; payload?: Row; index?: number }) => <Arrow key={props.index} cx={props.cx} cy={props.cy} dir={props.payload?.dir ?? null} />} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-      {hasTemp && (
-        <div>
-          <h3 className="inputs-h3">Temperature (°F). The shaded band is the likely range.</h3>
-          <div className="wx-chart short" role="img" aria-label="Hourly temperature forecast with uncertainty band">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} margin={margin}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                {axis}
-                <YAxis stroke="var(--muted)" width={34} domain={["auto", "auto"]} />
-                <Tooltip content={<WxTooltip unit="temp" />} />
-                {shading}
-                <Area dataKey="tempBand" stroke="none" fill={TEMP} fillOpacity={0.2} isAnimationActive={false} />
-                <Line dataKey="temp" stroke={TEMP} strokeWidth={2.5} dot={false} isAnimationActive={false} connectNulls />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-      {hasRain && (
-        <div>
-          <h3 className="inputs-h3">Rain (mm per hour)</h3>
-          <div className="wx-chart short" role="img" aria-label="Hourly rain forecast">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} margin={margin}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                {axis}
-                <YAxis stroke="var(--muted)" width={34} />
-                <Tooltip content={<WxTooltip unit="rain" />} />
-                {shading}
-                <Bar dataKey="rain" fill={RAIN} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Expected strokes vs the field with its p10-p90 band, drawn on one shared symmetric scale. */
 function RangeBar({ rel, lo, hi, scale }: { rel: number | null; lo: number | null; hi: number | null; scale: number }) {
   if (rel === null) return <div className="wx-range empty" />;
   const pos = (v: number) => `${Math.max(0, Math.min(100, 50 + (v / scale) * 50))}%`;
@@ -367,7 +246,7 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
 
       <Section id="hourly" title="Forecast by hour" purpose={`Round ${round}`} actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
         <OwnerEditNote summary={doc.forecast.owner_overrides} eventUid={doc.event_uid} />
-        {points.length ? <><HourlyCharts points={points} waves={waves} /><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." nextCheck="Checked with each forecast update" />}
+        {points.length ? <><Suspense fallback={<div className="wx-charts" style={{ minHeight: 360 }} />}><HourlyCharts points={points} waves={waves} /></Suspense><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." nextCheck="Checked with each forecast update" />}
       </Section>
 
       <Section id="waves" title="Wave comparison and field effect" purpose={`Round ${round}: strokes per round against the field average`}>

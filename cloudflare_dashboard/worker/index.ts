@@ -13,6 +13,7 @@ import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
 import { withViewPreload } from "./route-preload";
+import { collectFirstScreen, firstScreenPage, withFirstScreen } from "./first-screen";
 import { handleExplainSlim } from "./explain-slim";
 
 interface Env {
@@ -215,7 +216,18 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
     }, allowedWidths);
   }
 
-  return withViewPreload(request, await handler.fetch(request, env, ctx), env.ASSETS);
+  // Round 5: read the page's first-screen data (index + slim explain / one golfer) while the HTML renders, and inline it (worker/first-screen.ts). Any problem inlines nothing.
+  const inlined = request.method === "GET" && firstScreenPage(url.pathname)
+    ? collectFirstScreen(url, async (path) => {
+        const internal = new Request(new URL(path, url.origin), { method: "GET" });
+        return (await handleExplainSlim(internal, env.DASHBOARD_DATA, ctx)) ?? (await handleOverridesApi(internal, env));
+      })
+    : null;
+  const page = await withViewPreload(request, await handler.fetch(request, env, ctx), env.ASSETS);
+  if (!inlined || page.status !== 200 || !page.body || !(page.headers.get("content-type") ?? "").includes("text/html")) return page;
+  const headers = new Headers(page.headers);
+  headers.delete("content-length");
+  return new Response(withFirstScreen(page.body, inlined), { status: page.status, statusText: page.statusText, headers });
 }
 
 export default worker;

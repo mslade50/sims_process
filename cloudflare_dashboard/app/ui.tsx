@@ -268,6 +268,20 @@ export function OnThisPage({ sections, label = "On this page", value, onSelect }
     if (!strip || !link || strip.scrollWidth <= strip.clientWidth) return;
     strip.scrollTo({ left: link.offsetLeft - (strip.clientWidth - link.offsetWidth) / 2, behavior: "auto" });
   }, [active]);
+  useEffect(() => {
+    // Scroll cue: mark which edges of the strip are clipped so CSS can fade them (phone only, where the strip scrolls).
+    const strip = navRef.current;
+    if (!strip) return;
+    const mark = () => {
+      const more = strip.scrollWidth - strip.clientWidth > 2;
+      const start = more && strip.scrollLeft > 2, end = more && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 2;
+      if (start && end) strip.dataset.clip = "both"; else if (start) strip.dataset.clip = "start"; else if (end) strip.dataset.clip = "end"; else delete strip.dataset.clip;
+    };
+    mark();
+    strip.addEventListener("scroll", mark, { passive: true });
+    window.addEventListener("resize", mark);
+    return () => { strip.removeEventListener("scroll", mark); window.removeEventListener("resize", mark); };
+  }, [key]);
   if (tabs) {
     // Tab mode: the same strip, as a WAI-ARIA tablist (roving tabindex, arrow keys, Home/End). The page owns the panels.
     const move = (event: React.KeyboardEvent<HTMLElement>) => {

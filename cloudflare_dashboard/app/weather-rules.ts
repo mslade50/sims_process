@@ -244,9 +244,10 @@ export function runMoment(run: string | null | undefined): string | null {
   return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z` : null;
 }
 
+let etFormat: Intl.DateTimeFormat | undefined;
 const etWords = (iso: string | null | undefined): string => {
   const ms = Date.parse(iso ?? "");
-  return Number.isFinite(ms) ? `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms)} ET` : "an unknown time";
+  return Number.isFinite(ms) ? `${(etFormat ??= new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })).format(ms)} ET` : "an unknown time";
 };
 
 /**
@@ -265,3 +266,10 @@ export function weatherCheckpoint(event: WeatherCheckpointIndex, docAsOf: string
   if (event.weather_as_of && docAsOf && !sameInstant(event.weather_as_of, docAsOf)) return { weatherRun, priceRun, weatherAsOf, state: "mismatch", message: `The loaded weather file is from ${etWords(docAsOf)}, but this run should have ${etWords(event.weather_as_of)}. Reload before trusting it.` };
   return { weatherRun, priceRun, weatherAsOf, state: "match", message: "Weather and prices come from the same run." };
 }
+
+/** "early" as "Early wave"; a wave already named something else keeps its name; missing names become "Wave 2". */
+export const waveName = (wave: string, index: number): string => {
+  const w = wave.trim();
+  if (!w) return `Wave ${index + 1}`;
+  return /wave/i.test(w) ? w : `${w.replace(/^./, (c) => c.toUpperCase())} wave`;
+};

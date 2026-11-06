@@ -11,6 +11,7 @@ import "./inputs.css";
 import { useIsOwner } from "./viewer";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
+import { playerDisplayName } from "./player-name";
 import { matchPlayers, matchText } from "./inputs-search";
 import { DataRow, etTime, numberValue, palette, titleCase } from "./lib";
 import { DataThrough } from "./DataThrough";
@@ -629,15 +630,13 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   return (
     <div className="stack-lg">
       <section className="in-finder" aria-label="Find a golfer">
-        <div>
-          <h2>Find a golfer</h2>
-          <p>Search by name to open their full breakdown, or click a row in the table.</p>
-        </div>
+        <h2 className="sr-only">Find a golfer</h2>
         <PlayerSearch players={choices} onPick={pickPlayer} />
+        <p className="in-finder-tip">Search a golfer, or tap a table row, for the full breakdown.</p>
       </section>
       <div className="kpi-grid">
         <Stat label="Players" value={String(players.length)} unit="in field" note={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "No amateurs"} hint="Players in this run's field." />
-        <Stat label="Strongest rating" value={signed(num(obj(best?.challenger).mu), 2)} unit="strokes/round" note={`${String(best?.name ?? "")}, vs this field's average`} hint={GLOSSARY.mu} />
+        <Stat label="Strongest rating" value={signed(num(obj(best?.challenger).mu), 2)} unit="strokes/round" note={`${playerDisplayName(String(best?.name ?? ""))}, vs this field's average`} hint={GLOSSARY.mu} />
         {fieldOffset !== null && <Stat label="Field strength" value={signed(fieldOffset, 2)} unit="strokes/round" note={`${fieldOffset < 0 ? "Weaker" : "Stronger"} than a typical PGA Tour field`} hint="How this field compares with a typical PGA Tour field. Reference only: prices use the rating against this field." />}
         <Stat label="Average std dev" value={sdMean.toFixed(2)} unit="strokes" note="Round-to-round spread, after overrides" hint="The average of the players' std dev, in strokes, including any override." />
         {withOverride > 0 && <Stat label="Players overridden" value={String(withOverride)} tone="accent" note="Original numbers are kept" hint="How many players have a manual override on them for this event." />}
@@ -1707,7 +1706,7 @@ export function InputsView() {
     <div>
       <PageHeader
         title="Model inputs"
-        purpose={`What went into the simulation, and what each input does to a price. Pick a golfer to see their rating, spread and adjustments${owner ? "; use Adjust for one-off overrides" : ""}.`}
+        purpose={`What went into the simulation, and what each input does to a price${owner ? ". Adjust makes one-off overrides" : ""}.`}
       />
       <div className="in-context">
         <div className="in-toolbar">
@@ -1723,7 +1722,7 @@ export function InputsView() {
         </div></details>
       </div>
       <OnThisPage label="Model inputs area" sections={tabOptions.map((t) => ({ id: t.value, label: t.label }))} value={activeTab} onSelect={(id) => setTab(id as Tab)} />
-      {activeTab !== "adjust" && <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>}
+      {activeTab !== "adjust" && activeTab !== "players" && <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>}
       {docLoading && activeTab !== "features" && <LoadingState label="Loading run" />}
       {docError && activeTab !== "features" && activeTab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
       {doc && activeTab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={owner ? (id) => { setPresetPlayer(id); setTab("adjust"); } : undefined} />}

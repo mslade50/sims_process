@@ -78,9 +78,6 @@ a { color: inherit; text-decoration: none; }
 .sidebar-collapsed .nav-group + .nav-group { padding-top: 10px; border-top: 1px solid var(--line); }
 .sidebar-collapsed .nav-group a { justify-content: center; padding: 8px; }
 .sidebar-collapsed .sidebar-footer button { justify-content: center; }
-.event-context { display: flex; align-items: center; }
-.event-context > div { display: grid; gap: 2px; }
-.event-context small { color: var(--muted); }
 .freshness { text-align: right; }
 
 .content-frame { margin: 0 auto; }
@@ -469,11 +466,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .nav-group a.active { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); }
 .nav-group a.active svg { color: var(--accent); }
 .nav-group a.active::before { animation: bar-grow-y var(--dur) var(--ease) backwards; top: 10px; bottom: 10px; }
-.event-context { min-width: 0; gap: 12px; }
-.event-context > div { min-width: 0; }
-.event-context strong { display: block; max-width: min(32vw, 340px); overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.event-context small { display: block; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.event-context .freshness-badge { flex: none; }
 .freshness { border-left: 0; padding-left: 0; }
 .content-frame { min-width: 0; }
 

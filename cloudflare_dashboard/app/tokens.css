@@ -68,7 +68,7 @@
   --fs-kpi: clamp(24px, 5.6vw, 30px);
   --fs-h1: 28px;
   /* 4px spacing scale */
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-16: 64px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-12: 48px; --sp-16: 64px;
   --bar-h: 56px;
   --tabbar-h: 60px;
   /* semantic aliases: favourable / adverse / actionable uncertainty / selection */
@@ -83,14 +83,12 @@
   --rail-market: var(--market);
   --rail-pos: var(--positive);
   --rail-neg: var(--negative);
-  --rail-zero: var(--line-strong);
   --rail-track: var(--tint-2);
   /* soft semantic fills + page glow (derived, so one definition serves both themes) */
   --positive-soft: color-mix(in srgb, var(--positive) 12%, transparent);
   --negative-soft: color-mix(in srgb, var(--negative) 12%, transparent);
   --warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --gutter: 16px;
   /* shape + motion */
   --radius-sm: 6px;
   --radius-control: 8px;

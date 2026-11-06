@@ -55,9 +55,15 @@
 .ph-meta-photo{flex:none}.ph-meta .pp-photo-wrap{width:40px;gap:0}.ph-meta .pp-photo{width:40px;height:40px}.ph-meta .pp-photo span{font-size:var(--fs-small);letter-spacing:0}
 .ph-hero{padding-top:var(--sp-4)}
 @media(max-width:700px){.ph-hero{gap:var(--sp-3)}.ph-stats>*{padding-top:var(--sp-3)}.ph-bar{margin:var(--sp-6) 0 var(--sp-5)}}
-.ph-week[data-pending=true]{min-height:370px}
-@media(max-width:1100px){.ph-week[data-pending=true]{min-height:300px}}
 .ph-trend-loading{min-height:250px}
 /* Round 4: the weekly skill is a proper Stat inside the This week block, not a floating chip */
 .ph-chip.ph-stat{border:0;background:transparent;padding:0;gap:var(--sp-1)}
 .ph-chip.ph-stat b{font-size:var(--fs-kpi);line-height:1.1;font-weight:700}
+/* Round 5: the This week card and the strokes-gained card reserve their loaded height, so the data arriving does not push the story and meta rows down (golfer CLS .113 -> under .05). */
+.ph-week[data-pending=true],.ph-week[data-filled=true]{min-height:400px}
+.ph-sg[data-testid=sg-skeleton]{min-height:250px}
+@media(max-width:1100px){.ph-week[data-pending=true],.ph-week[data-filled=true]{min-height:381px}.ph-sg[data-testid=sg-skeleton]{min-height:580px}.ph-trend-loading{min-height:225px}}
+/* Round 5: this small line wraps differently once the web font swaps in (the last shift on the page, 18 px). It keeps the system face the page starts with, so it never reflows. */
+.ph-meta p{font-family:Inter,"Inter Fallback",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:calc(var(--fs-small)*1.5*2);align-self:flex-start}
+/* Round 5: sections below the summary are not laid out or painted until they scroll near the viewport (the golfer's deep profile arriving was a 300+ ms phone task). */
+#player-shape.ph-section,#player-history.ph-section,#player-more.ph-section{content-visibility:auto;contain-intrinsic-size:auto 900px}

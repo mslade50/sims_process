@@ -2,8 +2,6 @@
 .dist-controls { display:grid;grid-template-columns:repeat(2,minmax(0,300px));gap:var(--sp-3);margin-bottom:var(--sp-4); }
 .dist-select { display:grid;gap:4px;font-size:var(--fs-small);font-weight:650;color:var(--muted);min-width:0; }
 .dist-select select { min-height:44px;width:100%;min-width:0;max-width:100%;border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--foreground);padding:0 12px;font:inherit;font-size:var(--fs-body); }
-.dist-context { display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:var(--fs-small);color:var(--muted); }
-.dist-status { color:var(--positive);background:var(--tint-1);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-weight:700; }
 .dist-explorer > .ds-section { margin-top:var(--sp-8); }
 .dist-pickers { display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-4);align-items:center;justify-content:space-between; }
 .dist-player-chips { display:flex;flex-wrap:wrap;gap:8px; }
@@ -69,7 +67,6 @@
 .dist-setup{margin:0 0 var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface)}
 .dist-setup>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;padding:0 12px;font-size:var(--fs-small);font-weight:650;color:var(--muted-strong)}
 .dist-setup .dist-controls{padding:0 12px 12px;margin:0}
-.dist-context{margin-bottom:var(--sp-3)}
 .dist-explorer>.ds-section#compare{margin-top:var(--sp-4)}
 .dist-pickers{margin-bottom:var(--sp-3)}
 .dist-chart-title{font-size:var(--fs-h3);font-weight:700;color:var(--foreground)}
