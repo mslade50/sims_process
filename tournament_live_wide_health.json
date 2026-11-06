@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-11-06 02:16:00 UTC",
+  "generated_at": "2026-11-06 02:31:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:457:2026-11-05/R0m_20261106T021600Z",
+      "run_id": "pga:457:2026-11-05/R0m_20261106T023100Z",
       "model_version": "B8+v2.6 in-play",
       "after_round": 0,
-      "run_manifest_sha256": "b434baaf5cc7ff55b7f5ebb6570865fd8d6980db26616c13caaa6f89752f99d6",
+      "run_manifest_sha256": "368449a19f74669d8eafc7e2680dee0d5bedc4e3a434f9d0c143cb090220a0d3",
       "base_run_as_of": "2026-11-05 10:30:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-11-06 02:16:00 UTC",
-      "root_generated_at": "2026-11-06 02:16:00 UTC"
+      "generated_at": "2026-11-06 02:31:00 UTC",
+      "root_generated_at": "2026-11-06 02:31:00 UTC"
     },
     "simulation": {
       "num_players": 120,
@@ -40,13 +40,13 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-11-06 02:16:00 UTC"
+      "at": "2026-11-06 02:31:00 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 13
     },
-    "manifest_sha256": "30dc3b3ed1c80c9eb540581a653f95bb433b6508e7bed2a5fd2294d10e523347"
+    "manifest_sha256": "e801f6b6f171d6103d4c8e7d66d911a336d54d49acebd7f380bcb5b395f909ab"
   },
   "files": {
     "final_scores": {
@@ -74,5 +74,5 @@
     "num_players": 120,
     "num_sims": 150000
   },
-  "manifest_sha256": "af21843bb4ec3b793c91333e1de602537b3ff96a2754fd73d07bd228f12e154e"
+  "manifest_sha256": "ec309b86ab7fcbb8c6c3e957724dc6ee6d262a08ebfaef96607d3b433c94df4a"
 }
