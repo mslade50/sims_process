@@ -13,7 +13,8 @@ import { EmptyState, LoadingState, SegmentedControl } from "./components";
 import { DeltaBar, RangeBar, ShapeBars, shapeCap, Term } from "./ExplainBits";
 import { MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, gapPtsText, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
-import { useDashboardData } from "./data";
+import { useDashboardData, warmDashboardData } from "./data";
+import { slimExplainKey } from "./shell-rules";
 
 // Heavy parts load on demand so the summary (key facts, what changed) renders without Recharts, the weather views or the course-geometry viewer.
 const HoleStrip = lazy(() => import("./ExplainCharts").then((m) => ({ default: m.HoleStrip })));
@@ -97,7 +98,17 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
   const offerToggle = preEventFirst && choices.hasLive && !!choices.preKey && !!choices.liveKey;
   const view: View = offerToggle ? params.v ?? defaultView : "live";
   const key = !preEventFirst || !choices.hasLive ? explainKeyFor(event) : view === "pre" && choices.preKey ? choices.preKey : choices.liveKey ?? explainKeyFor(event);
-  const { data, loading, error } = useDashboardData<unknown>(key);
+  // First screen: the slim document (Worker-computed, about half the bytes). The full one (round-score grid, drawer detail) is fetched once the page is idle, and at once when a drawer opens.
+  const { data, loading, error } = useDashboardData<unknown>(slimExplainKey(key));
+  useEffect(() => {
+    if (!data) return;
+    let idle = 0;
+    const timer = window.setTimeout(() => {
+      const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+      if (w.requestIdleCallback) idle = w.requestIdleCallback(() => warmDashboardData(key), { timeout: 3000 }); else warmDashboardData(key);
+    }, 5000);
+    return () => { window.clearTimeout(timer); if (idle) (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(idle); };
+  }, [data, key]);
   // "What changed" needs the stored diff of the latest run: ask for it now, in parallel with the run's document, so the strip arrives with the page instead of pushing it down later.
   const early = useDashboardData<unknown>(defaultView === "live" && view === "live" ? latestChangesDataName(event) : null);
   const doc = useMemo(() => parseExplain(data), [data]);
@@ -121,10 +132,19 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
       <RunNotes doc={doc} />
       {preEventFirst && choices.hasLive && !choices.preKey && <p className="ex-muted ex-notice">The pre-tournament explanation was not kept for this event, so this shows the live pricing.</p>}
       {children({ doc, event, latest: !!event.explain_run && `${doc.kind}_${doc.run}` === event.explain_run, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
-      {player && <Suspense fallback={null}><PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
-        setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} /></Suspense>}
+      {player && <DrawerHost dataKey={key} playerId={player.id} competitors={competitors} market={market}
+        setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} />}
     </>
   );
+}
+
+/** The player drawer reads the full document (scores, neighbours, form, peers), which the slim first-screen document leaves out; usually already prefetched. */
+function DrawerHost({ dataKey, playerId, competitors, market, setCompetitors, onSelect, onClose }: { dataKey: string; playerId: number; competitors: number[]; market: Market; setCompetitors: (ids: number[]) => void; onSelect: (id: number) => void; onClose: () => void }) {
+  const { data, error } = useDashboardData<unknown>(dataKey);
+  const full = useMemo(() => parseExplain(data), [data]);
+  const player = full?.players.find((p) => p.id === playerId) ?? null;
+  if (!full || !player) return error ? <p className="ex-muted ex-notice" role="alert">Player detail could not be loaded. <button type="button" className="ex-linkbtn" onClick={onClose}>Close</button></p> : <p className="ex-muted ex-notice" role="status">Loading player detail…</p>;
+  return <Suspense fallback={null}><PlayerDrawer doc={full} player={player} competitors={competitors} market={market} setCompetitors={setCompetitors} onSelect={onSelect} onClose={onClose} /></Suspense>;
 }
 
 /** Shown only when the page is not on the latest run, so the bar's "Prices after R1" is never silently contradicted. */

@@ -13,6 +13,7 @@ import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
 import { withViewPreload } from "./route-preload";
+import { handleExplainSlim } from "./explain-slim";
 
 interface Env {
   ASSETS: Fetcher;
@@ -139,6 +140,10 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
   // Owner-only pages and APIs are refused before any handler sees them (worker/owner.ts).
   const ownerGate = await handleOwnerGate(request, env);
   if (ownerGate) return ownerGate;
+
+  // Slim explain document (read-only, computed in memory; worker/explain-slim.ts). Null for every other request.
+  const slimResponse = await handleExplainSlim(request, env.DASHBOARD_DATA, ctx);
+  if (slimResponse) return slimResponse;
 
   const apiResponse = await handleOverridesApi(request, env);
   if (apiResponse) return apiResponse;

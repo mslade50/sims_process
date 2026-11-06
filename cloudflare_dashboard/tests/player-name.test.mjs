@@ -26,3 +26,22 @@ test("amateur tag and initials", () => {
   assert.equal(nameInitials("Aberg(Am), Ludvig"), "LA");
   assert.equal(nameInitials("Tiger"), "T");
 });
+
+// R4b: one name format site-wide (explain documents parse to "First Last"; the raw name is kept for sorting) and compact tour labels.
+import { tourLabel } from "../app/player-name.ts";
+import { parseExplain, sortValue } from "../app/explain-rules.ts";
+
+test("tourLabel shows at most two tours and counts the rest", () => {
+  assert.equal(tourLabel(["pga"]), "PGA");
+  assert.equal(tourLabel(["pga", "dpwt"]), "PGA · DPWT");
+  assert.equal(tourLabel(["pga", "dpwt", "kft", "liv"]), "PGA · DPWT +2");
+  assert.equal(tourLabel([]), "");
+  assert.equal(tourLabel(undefined), "");
+});
+
+test("explain players are displayed First Last everywhere; the raw name still sorts by surname", () => {
+  const p = (id, name) => ({ id, name, probs: {}, components: {} });
+  const doc = parseExplain({ schema: "golfprice.explain.v1", players: [p(1, "Laporta, Francesco"), p(2, "McIlroy, Rory"), p(3, "van Rooyen, Erik")], event: { name: "E" }, finish: {} });
+  assert.deepEqual(doc.players.map((x) => x.name), ["Francesco Laporta", "Rory McIlroy", "Erik van Rooyen"]);
+  assert.equal(sortValue(doc.players[0], "name", "win"), "Laporta, Francesco");
+});

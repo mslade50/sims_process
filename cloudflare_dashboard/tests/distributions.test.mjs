@@ -79,3 +79,21 @@ test("positionRows gives one row per finish position plus a missed-cut row", asy
   assert.deepEqual(positionTicks(35, true), ["1", "10", "20", "30", "Missed cut"]);
   assert.deepEqual(positionTicks(72, false), ["1", "10", "20", "30", "40", "50", "60", "70"]);
 });
+
+// R4b: bounded near-certain odds.
+import { boundedPct, boundedOdds, exactTitle, NEAR_CERTAIN } from "../app/distributions-rules.ts";
+
+test("near-certain chances are bounded; everything at or below 99% keeps the standard format", () => {
+  const fmt = (p, d = 1) => (p == null ? "n/a" : `${(p * 100).toFixed(d)}%`);
+  const odds = (p) => `odds(${p})`;
+  assert.equal(NEAR_CERTAIN, 0.99);
+  assert.equal(boundedPct(0.9999, fmt), ">99%");
+  assert.equal(boundedPct(0.99, fmt), "99.0%");
+  assert.equal(boundedPct(0.5, fmt), "50.0%");
+  assert.equal(boundedPct(null, fmt), "n/a");
+  assert.equal(boundedOdds(0.995, odds), "−9900 or shorter");
+  assert.equal(boundedOdds(0.99, odds), "odds(0.99)");
+  assert.equal(exactTitle(0.9995, fmt, odds), "Exact: 99.950% (odds(0.9995))");
+  assert.equal(exactTitle(0.5, fmt, odds), undefined);
+  assert.equal(exactTitle(undefined, fmt, odds), undefined);
+});

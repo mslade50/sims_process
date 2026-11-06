@@ -23,7 +23,8 @@ test("/players?player=17639 renders Blair's PGA benchmark card value from the fi
   const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, search: "?player=17639&layout=classic", pathname: "/players" });
   const expected = catalog.players.find((p) => p.dg_id === 17639).pga_benchmark.value;
   const signed = `${expected > 0 ? "+" : ""}${expected.toFixed(3)}`;
-  assert.match(html, /recent form vs the average PGA Tour round, 2017–2025/);
+  assert.match(html, /Positive means fewer strokes per round than the average PGA Tour round, 2017–2025/);   // R4b: the eyebrow is just "vs PGA avg"; the reference is named once, in the sentence
+  assert.doesNotMatch(html, /vs PGA avg<\/span>[^]*?· recent form vs the average PGA Tour round/);
   assert.ok(html.includes(signed), `benchmark value ${signed} rendered`);
   assert.match(html, /strokes\/round/);
   assert.match(html, /What the headline number means/);

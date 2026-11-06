@@ -354,7 +354,7 @@ test("the early-fetch script requests the index, then exactly the explain docume
     const want = explainWarmKey(index.events, uid);
     assert.equal(calls[0].url, "/api/golfprice/index.json");
     assert.equal(calls[0].cache, "no-cache");
-    assert.deepEqual(calls.slice(1).map((x) => x.url), want ? [`/api/${want}`] : [], JSON.stringify(c));
+    assert.deepEqual(calls.slice(1).map((x) => x.url), want ? [`/api/${want}?slim=1`] : [], JSON.stringify(c));
   }
   const live = { events: [EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "pre_x", distribution_runs: [{ kind: "live" }] })] };
   assert.equal((await runEarly({ path: "/this-week", index: live })).calls.length, 1, "a live run newer than the explain run leaves the choice to the page");
@@ -370,9 +370,9 @@ test("the early-fetch script warms the one-golfer slice and Why priced's documen
   assert.equal((await runEarly({ path: "/players", search: "?player=10091&generation=" + "a".repeat(20), index })).calls.length, 1, "a pinned generation uses another URL: left to the page");
   assert.equal((await runEarly({ path: "/players", search: "?player=../x", index })).calls.length, 1);
   const pre = await runEarly({ path: "/why-priced", index });
-  assert.deepEqual(pre.calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2_2026-11-05/latest.json"]);
+  assert.deepEqual(pre.calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2_2026-11-05/latest.json?slim=1"]);
   const withLive = { events: [EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "live_R1_x", distribution_runs: [{ kind: "week", key: "golfprice/explain/pga_2/week_x.json", as_of: "2026-11-05T01:00:00Z" }, { kind: "live", key: "golfprice/explain/pga_2/live_R1_x.json" }] })] };
-  assert.deepEqual((await runEarly({ path: "/why-priced", index: withLive })).calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2/week_x.json"], "with a live run Why priced opens on the pre-tournament document");
+  assert.deepEqual((await runEarly({ path: "/why-priced", index: withLive })).calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2/week_x.json?slim=1"], "with a live run Why priced opens on the pre-tournament document");
   assert.equal((await runEarly({ path: "/why-priced", search: "?v=live", index: withLive })).calls.length, 1);
 });
 
@@ -382,4 +382,22 @@ test("a deploy under an open tab reloads once a minute at most", () => {
   assert.equal(mayReloadForChunk(String(1_000_000 - 61_000), 1_000_000), true);
   assert.equal(isChunkLoadError(new TypeError("Failed to fetch dynamically imported module: /_next/static/chunks/x.js")), true);
   assert.equal(isChunkLoadError(new Error("boom")), false);
+});
+
+import { latestChangesDataName } from "../app/explain-rules.ts";
+test("the early-fetch script also asks for the stored diff of the latest run, exactly the name the page will use", async () => {
+  const runs = [
+    { kind: "week", run: "w1", key: "golfprice/explain/pga_2/week_w1_aaaaaaaaaaaa.json", as_of: "2026-11-05T01:00:00Z", validated: true },
+    { kind: "live", run: "R1_a", key: "golfprice/explain/pga_2/live_R1_a_bbbbbbbbbbbb.json", as_of: "2026-11-05T14:00:00Z", validated: true },
+    { kind: "live", run: "R1_b", key: "golfprice/explain/pga_2/live_R1_b_cccccccccccc.json", as_of: "2026-11-05T15:00:00Z", validated: true },
+    { kind: "live", run: "bad", key: "golfprice/explain/pga_2/live_bad_dddddddddddd.json", as_of: "2026-11-05T14:30:00Z", validated: false },
+  ];
+  const ev = EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "live_R1_b", explain_key: runs[2].key, distribution_runs: runs });
+  const want = latestChangesDataName(ev);
+  assert.match(want, /^golfprice\/changes\.json\?event=/);
+  const { calls } = await runEarly({ path: "/this-week", index: { events: [ev] } });
+  assert.deepEqual(calls.slice(1).map((x) => x.url), [`/api/${ev.explain_key}?slim=1`, `/api/${want}`]);
+  const lone = EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "week_w1", explain_key: runs[0].key, distribution_runs: [runs[0]] });
+  assert.equal(latestChangesDataName(lone), null);
+  assert.deepEqual((await runEarly({ path: "/this-week", index: { events: [lone] } })).calls.slice(1).map((x) => x.url), [`/api/${lone.explain_key}?slim=1`], "nothing earlier to compare with: no diff request");
 });

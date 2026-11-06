@@ -93,3 +93,28 @@ Other fixes: Why priced rows use one stretched name button (one tab stop per row
 
 Budgets unchanged: shell 146.5 KB gz (148), This week + view 200.1 KB (201), CSS 65.3 KB (66). CSS did not get back to 64 KB: the contenders rows and weather axis added about 0.4 KB; removed `.in-tabs` and dead differ rules.
 Verification: tsc clean, eslint 0/0, `npm test` 807 pass / 0 fail / 1 todo; ui-check r3-full 80 cases 0/0; r3-events 56 cases 0/0; contrast 0 failing groups.
+
+# Round 4b: slim explain document, early diff, drawer on demand (2026-11-06)
+
+Raw runs: `perf-r4b.json` (after), before = `dist-visual/R4b/perf-before.json`; phone = 375x812, 4x CPU, fast 4G, medians of 3, local preview (HTTP/1.1, so the index request queues behind ~40 script requests; a deployed HTTP/2 edge will do better than these numbers).
+
+| Route (phone) | LCP before | LCP after | CLS before | CLS after | TBT before | TBT after |
+|---|---|---|---|---|---|---|
+| this-week | 2968 ms | 2688-2708 ms | 0.007 | 0.007 | 158 ms | about 130 ms |
+| why-priced | 2876 ms | 2652-2660 ms | 0.000 | 0.000 | 1 ms | 0 ms |
+
+LCP < 2.5 s was NOT reached (about 0.2-0.3 s short); the gain is -270 ms (This week) and -220 ms (Why priced).
+
+What changed
+- Slim explain variant, computed in memory by the Worker (`worker/explain-slim.ts`, `GET /api/golfprice/explain/<event>/<run>.json?slim=1`): same document without `scoring` (the round-score grid, 47% of the raw bytes) and `head_to_heads` (Distributions only), and per player without `scores`, `neighbors`, `form` and the drawer-only parts of `diverge` (peers, compare, sentences; `dg_check` and an empty `edge_split` stay because the Data Golf skill board and the `why_edge` wording read them). No R2 write, no write path; the body is cached in the Cache API per object etag; any miss or error falls through to the normal full document (older Workers ignore the query and serve the full one). Abu Dhabi live document: 88.7 KB to 41.3 KB brotli; the pre-tournament document 110.9 KB to about 67 KB. Parity: `node scripts/slim-parity.mjs` loads This week and Why priced for both live events with the slim document and with the `?slim=1` request rewritten to the full document; the visible text is identical (dist-visual/R4b/slim-parity.json).
+- Client: This week and Why priced fetch the slim document first (head script, shell warm-up and `ExplainBody` all use `slimExplainKey`); the full document is prefetched when the page is idle (5 s after the data arrives, requestIdleCallback) and fetched at once when a player drawer opens (`DrawerHost`, shows "Loading player detail" until it is in).
+- The head script now also asks for the stored "What changed" diff of the latest run in parallel with the document (it used to start after the document arrived and held the page back about 0.25 s). It computes exactly the name `latestChangesDataName` computes (tests/shell.test.mjs).
+- Remaining floor: the document request still starts only after `index.json` names it (index arrival about 1.25 s locally because it shares the link with the 330 KB shell), then about 1 s for the slim document, then render about 0.3 s at 4x CPU. Going below 2.5 s needs the first screen's data resolved server side in one request (the Worker reading index.json and the slim document and returning them together, keyed by the event the head script already knows from `?e=` or local storage), or server-rendered markup; both change the loading contract and were not done.
+- Budget: This week + view ratchet 201 to 201.5 KB gz (measured 201.05, +0.9 KB for the early diff request, drawer host and idle prefetch).
+
+Other R4b changes (no performance impact): Round scores phone headline is one compact row so the complete histogram with its axis sits above the tab bar (dist-visual/R4b/s1); explain players display as "First Last" everywhere (parsed once in `parseExplain`, raw name kept for sorting); `tourLabel` shows two tours and "+N" in pickers; `bet-card-rules` STAGE_CLAIM regex had literal backspace characters instead of `\b` (so "R1 complete" notes were never treated as stage claims) and is fixed; the shell bar names "All events" on /bet-card and drops the single-event status chips there.
+
+Evidence
+- Drawer keyboard proof (`node scripts/a11y-drawer.mjs`): row Enter opens, focus inside, Tab x45 and Shift+Tab x12 stay inside, main and tab bar inert, Escape and the close button both close and return focus to the opener, on phone and desktop: 36 checks, 0 failures (`dist-visual/R4b/a11y-drawer.json`). The earlier "native actions timed out" was the harness sending `rawKeyDown` for Enter, which never fires a button click; a `keyDown` with text does.
+- Populated Bet card (`node scripts/bet-card-interact.mjs`, fixture `dist-visual/D-r2/bet_card.populated.json` swapped into `.wrangler/live/owner/bet_card.json`, preview restarted, then restored: sha256 96b4586d...679ebe1 verified identical before and after): Enter and Space expand and collapse rows, group and book filters change the count and the polite status, Clear restores all 5 rows, combined filters keep status and Clear: 30 checks, 0 failures (`dist-visual/R4b/bet-card-interact.json`).
+- Verification: `npx tsc --noEmit` clean; eslint 0/0; `npm test` 818 tests, 817 pass, 0 fail, 1 todo (150 KB target); `ui-check --extra --crops --out dist-visual/r4-full` 80 cases 0 errors 0 warnings; `contrast-check` 72 cases, 0 failing groups.

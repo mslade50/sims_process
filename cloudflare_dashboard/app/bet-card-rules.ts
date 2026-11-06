@@ -201,7 +201,7 @@ export function nextCheckShort(e: Pick<CardEvent, "status" | "note" | "moment">)
 }
 
 /** Notes that restate a round or stage ("round 2 in play: ...") can disagree with the stage derived from the calendar; those are replaced by wording built from the derived stage. */
-const STAGE_CLAIM = /round \d|in play|after round|pre-?event|R\d/i;
+const STAGE_CLAIM = /round \d|in play|after round|pre-?event|\bR\d\b/i;
 
 /** Why an event has nothing to suggest, in words consistent with the derived stage (never the file's own stage claim). */
 export function quietReason(e: Pick<CardEvent, "note">, stage: string): string {

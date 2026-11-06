@@ -5,7 +5,7 @@ import { Archive, BookOpen, ChartColumn, ChartNoAxesCombined, ChevronLeft, Chevr
 import { readRememberedEvent, rememberEvent } from "./event-param";
 import { ArchivedStatus, EventStatusBar, EventSwitcher, SearchToggle, TabBar, ThemeToggle, useDialogFocus } from "./ShellParts";
 import { useDashboardData, useSavedCopies, warmDashboardData } from "./data";
-import { LEGACY_VIEWS, explainWarmKey, isChunkLoadError, OWNER_ONLY_VIEWS, type NavGroup, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavItem } from "./shell-rules";
+import { LEGACY_VIEWS, explainWarmKey, slimExplainKey, isChunkLoadError, OWNER_ONLY_VIEWS, type NavGroup, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavItem } from "./shell-rules";
 import { EmptyState, FreshnessBadge, PageGroupContext, PageHeader, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary, reloadOnceForStaleChunk, useChunkLoadRecovery } from "./ViewBoundary";
@@ -223,7 +223,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const resolvedUid = resolveEventUid(gpIndex, eventParam, rememberedEvent, now);
   // This week reads the selected event's latest explanation document. Ask for it as soon as the index names it, rather than after the page's own code has loaded.
   const warmKey = activeKey === "this-week" ? explainWarmKey(gpIndex?.events, resolvedUid) : null;
-  useEffect(() => { if (warmKey) warmDashboardData(warmKey); }, [warmKey]);
+  useEffect(() => { if (warmKey) warmDashboardData(slimExplainKey(warmKey)); }, [warmKey]);
   const selectedEvent = shellEventFor(gpIndex, resolvedUid, now) ?? selectedShellEvent(events, null);
   useEffect(() => { if (eventParam && !badEvent) rememberEvent(eventParam); }, [eventParam, badEvent]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -342,12 +342,12 @@ export function DashboardApp({ initialView }: { initialView: string }) {
                 <ArchivedStatus lastData={manifest?.generated_at} />
               </>
             ) : selectedEvent ? (
-              <EventSwitcher events={events} selected={selectedEvent} onNavigate={navigateWithReload} />
+              <EventSwitcher events={events} selected={selectedEvent} onNavigate={navigateWithReload} allEvents={activeKey === "bet-card"} />
             ) : (
               <div className="ctx-static"><strong>This week</strong><small>Run data unavailable</small></div>
             )}
           </div>
-          {!isLegacy && activeKey !== "shot-data" && (
+          {!isLegacy && activeKey !== "shot-data" && activeKey !== "bet-card" && (
             <div className="ctx-meta">
               {selectedEvent ? <EventStatusBar event={selectedEvent} savedCopy={indexSaved} owner={viewer?.owner === true} /> : <FreshnessBadge at={week?.oldestAsOf ?? null} label="Run" title={week?.tooltip || "When the model last priced this event"} savedCopy={indexSaved} />}
               {week?.heldBackNote && <span className="evstat-held" role="status" title={week.heldBackNote}>Newer run held back</span>}

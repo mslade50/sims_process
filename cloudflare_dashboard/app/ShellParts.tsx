@@ -132,7 +132,8 @@ export function ArchivedStatus({ lastData }: { lastData?: unknown }) {
 }
 
 /** Current event as the single identity in the bar; opens a list of this week's events (grouped by tour) that swaps ?e= on the current page. Fully keyboard operable. */
-export function EventSwitcher({ events, selected, onNavigate }: { events: ShellEvent[]; selected: ShellEvent; onNavigate: Navigate }) {
+/** `allEvents`: the page is cross-event (Bet card), so the bar names that scope instead of implying the selected event; the list stays usable. */
+export function EventSwitcher({ events, selected, onNavigate, allEvents = false }: { events: ShellEvent[]; selected: ShellEvent; onNavigate: Navigate; allEvents?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -144,7 +145,12 @@ export function EventSwitcher({ events, selected, onNavigate }: { events: ShellE
     (ref.current?.querySelector<HTMLElement>('.evsw-pop a[aria-current="true"]') ?? ref.current?.querySelector<HTMLElement>(".evsw-pop a"))?.focus();
   }, [open]);
   const tours = [...new Set(events.map((e) => e.tour))];
-  const identity = (
+  const identity = allEvents ? (
+    <>
+      <span className="evsw-tour">All</span>
+      <span className="evsw-name"><strong>All events</strong><small>{events.length} this week</small></span>
+    </>
+  ) : (
     <>
       <span className="evsw-tour">{tourShort(selected.tour)}</span>
       <span className="evsw-name"><strong title={selected.name}>{selected.name}</strong>{selected.course && <small title={selected.course}>{selected.course}</small>}</span>
@@ -163,7 +169,7 @@ export function EventSwitcher({ events, selected, onNavigate }: { events: ShellE
   };
   return (
     <div className="evsw" ref={ref} onBlur={(event) => { const next = event.relatedTarget as Node | null; if (open && next && !event.currentTarget.contains(next)) setOpen(false); }}>
-      <button ref={trigger} type="button" aria-expanded={open} aria-haspopup="true" aria-controls={open ? popId : undefined} aria-label={`Event: ${selected.name}. Switch event`} onClick={() => setOpen((o) => !o)} onKeyDown={(event) => { if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setOpen(true); } }}>
+      <button ref={trigger} type="button" aria-expanded={open} aria-haspopup="true" aria-controls={open ? popId : undefined} aria-label={allEvents ? "Scope: all events. Switch event" : `Event: ${selected.name}. Switch event`} onClick={() => setOpen((o) => !o)} onKeyDown={(event) => { if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setOpen(true); } }}>
         {identity}<ChevronDown size={16} aria-hidden="true" />
       </button>
       {open && (
@@ -175,7 +181,7 @@ export function EventSwitcher({ events, selected, onNavigate }: { events: ShellE
               {events.filter((e) => e.tour === tour).map((e) => {
                 const href = eventHref(window.location.pathname, window.location.search, e.uid);
                 return (
-                  <a key={e.uid} href={href} aria-current={e.uid === selected.uid ? "true" : undefined} onClick={(event) => onNavigate(event, href)}>
+                  <a key={e.uid} href={href} aria-current={!allEvents && e.uid === selected.uid ? "true" : undefined} onClick={(event) => onNavigate(event, href)}>
                     <strong>{e.name}</strong>
                     {e.course && <small>{e.course}</small>}
                     <span className="evsw-row"><span className={`evsw-stage${e.status.inPlay ? " is-live" : ""}`}>{e.status.stageNow}</span><span>{e.status.pricesLabel}</span><span className="evsw-age">Run {ageWords(e.asOf, now)}</span></span>

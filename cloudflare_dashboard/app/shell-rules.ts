@@ -353,6 +353,9 @@ export function explainWarmKey(events: Array<{ event_uid?: string; explain_key?:
   return hasLive && !(event.explain_run ?? "").startsWith("live_") ? null : event.explain_key;
 }
 
+/** The slim variant of an explain document key (Worker-computed, without the round-score grid and head-to-head table the first screens never read). */
+export const slimExplainKey = (key: string): string => `${key}?slim=1`;
+
 /**
  * Inline <head> script: start the two requests every first screen waits on (the event index, then This week's explain document for the event
  * the page will resolve) while the framework is still downloading, instead of after hydration. app/data.ts takes each promise once
@@ -375,9 +378,14 @@ export function earlyFetchScript(): string {
     + `var runs=e.distribution_runs||[],live=runs.some(function(r){return r&&r.kind==="live"});`
     + `if(W){var cur=String(e.explain_run||"").indexOf("live_")===0;if(live||cur){var v=new URLSearchParams(location.search).get("v");if(v&&v!=="pre")return;`
     + `var wk=runs.filter(function(r){return r&&r.kind==="week"&&typeof r.key==="string"&&r.key&&r.validated!==false}).sort(function(a,b){return String(a.as_of||"").localeCompare(String(b.as_of||""))}).pop();`
-    + `if(wk&&(live||cur))go("/api/"+wk.key,"default");return}go("/api/"+e.explain_key,"default");return}`
+    + `if(wk&&(live||cur))go("/api/"+wk.key+"?slim=1","default");return}go("/api/"+e.explain_key+"?slim=1","default");return}`
     + `if(live&&String(e.explain_run||"").indexOf("live_")!==0)return;`
-    + `go("/api/"+e.explain_key,"default")}).catch(function(){})}catch(x){}})()`;
+    + `go("/api/"+e.explain_key+"?slim=1","default");`
+    // The "What changed" strip waits for the stored diff of the latest run against the run before it; ask for it now (mirrors latestChangesDataName).
+    + `var rs=runs.filter(function(r){return r&&typeof r.key==="string"&&r.key&&typeof r.kind==="string"&&typeof r.run==="string"&&r.validated!==false}),L=null;`
+    + `rs.forEach(function(r){if(r.kind+"_"+r.run===e.explain_run)L=r});`
+    + `if(L){var at=Date.parse(L.as_of||""),pv=rs.filter(function(r){var t=Date.parse(r.as_of||"");return r.kind+"_"+r.run!==e.explain_run&&isFinite(at)&&(isFinite(t)?t:Infinity)<at}).sort(function(a,b){return (Date.parse(b.as_of||"")||0)-(Date.parse(a.as_of||"")||0)});`
+    + `if(pv[0]&&pv[0].key!==L.key)go("/api/golfprice/changes.json?event="+encodeURIComponent(e.event_uid)+"&from="+encodeURIComponent(pv[0].key)+"&to="+encodeURIComponent(L.key),"default")}}).catch(function(){})}catch(x){}})()`;
 }
 
 /* ------------------------------------------------------------------ stale-chunk recovery (used by ViewBoundary.tsx) */

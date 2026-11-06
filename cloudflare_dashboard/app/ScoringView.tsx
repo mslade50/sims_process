@@ -34,7 +34,7 @@ export function ScoringView() {
   if (index.loading) return <LoadingState label="Loading scoring checkpoints" />;
   if (index.error || !event) return <EmptyState title="No simulations available" detail={index.error ?? "Scoring expectations appear after the next simulation is published."} nextCheck="Checked after each published simulation" />;
   return <>
-    <PageHeader title="Round scores" purpose="Expected score in strokes and how widely it could land." />
+    <PageHeader title="Round scores" purpose="Expected score and how widely it could land." />
     <ScoringExplorer key={event.event_uid} event={event} />
   </>;
 }

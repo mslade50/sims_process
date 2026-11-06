@@ -4,6 +4,8 @@
  * Everything optional is tolerated missing; anything that is not the document gives null (the views then show their empty state).
  */
 
+import { playerDisplayName } from "./player-name.ts";
+
 export const EXPLAIN_SCHEMA = "golfprice.explain.v1";
 export const MARKETS = ["win", "top_5", "top_10", "top_20", "make_cut"] as const;
 export type Market = (typeof MARKETS)[number];
@@ -19,7 +21,7 @@ export type LiveState = {
   d_contention_since_last: number | null; pre_event: Partial<Record<Market, number | null>>; since_last: Partial<Record<Market, number | null>>; rounds: LiveRound[];
 };
 export type ExPlayer = {
-  id: number; name: string; country: string | null; amateur: boolean; withdrawn: boolean; n_prior_rounds: number | null; wave: string | null; tee_r1: string | null; tee_r2: string | null;
+  id: number; name: string; name_raw?: string; country: string | null; amateur: boolean; withdrawn: boolean; n_prior_rounds: number | null; wave: string | null; tee_r1: string | null; tee_r2: string | null;
   mu: number | null; mu_rel: number | null; sd: number | null; components: Record<string, number>; probs: Record<Market, MarketProb>;
   edge_sg: number | null; attribution: Record<string, number>; why: string; why_edge: string | null; tags: string[]; neighbors: number[];
   finish: { pos: number[]; p_miss_cut: number; mean_pos: number; p10: number; median: number; p90: number } | null;
@@ -133,7 +135,7 @@ export function parseExplain(raw: unknown): ExplainDoc | null {
       const e = probs[m] ?? {};
       full[m] = { model: num(e.model), market: num(e.market), fair: num(e.fair), n_books: num(e.n_books), edge: num(e.edge), rel: num(e.rel), logit: num(e.logit) };
     }
-    return { ...(p as object), probs: full, components: isObject(p.components) ? p.components : {}, attribution: isObject(p.attribution) ? p.attribution : {},
+    return { ...(p as object), name: typeof p.name === "string" ? playerDisplayName(p.name) || p.name : "Unnamed player", name_raw: typeof p.name === "string" ? p.name : "", probs: full, components: isObject(p.components) ? p.components : {}, attribution: isObject(p.attribution) ? p.attribution : {},
       tags: Array.isArray(p.tags) ? p.tags : [], neighbors: Array.isArray(p.neighbors) ? p.neighbors : [], scores: isObject(p.scores) ? p.scores : {},
       finish: isObject(p.finish) && Array.isArray((p.finish as { pos?: unknown }).pos) ? p.finish : null, live: isObject(p.live) ? p.live : null, why: typeof p.why === "string" ? plainWhy(neutralPronouns(p.why)) : "",
       why_edge: typeof p.why_edge === "string" ? (isObject(p.diverge) && isObject(p.diverge.edge_split) ? neutralPronouns(p.why_edge) : plainWhyEdge(neutralPronouns(p.why_edge))) : null, dg: parseDg(p.dg),
@@ -430,7 +432,7 @@ export function filterWhy(players: ExPlayer[], f: WhyFilter): ExPlayer[] {
 export function sortValue(p: ExPlayer, key: SortKey, market: Market): number | string | null {
   const e = p.probs[market];
   switch (key) {
-    case "name": return p.name;
+    case "name": return p.name_raw || p.name;
     case "model": return e.model;
     case "market": return e.market;
     case "edge": return e.edge;

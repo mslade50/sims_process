@@ -18,3 +18,10 @@ export function playerDisplayName(raw: string | null | undefined): string {
 
 /** Up to two initials from a display name ("Ludvig Aberg" -> "LA"). */
 export const nameInitials = (raw: string | null | undefined): string => playerDisplayName(raw).split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+
+/** Compact tour label for list rows: first two tours upper-case, the rest as "+N" ("PGA · DPWT +2"); the full list stays in the title/detail. */
+export function tourLabel(tours: readonly string[] | null | undefined, max = 2): string {
+  const list = (tours ?? []).filter(Boolean).map(t => t.toUpperCase());
+  if (!list.length) return "";
+  return list.length <= max ? list.join(" · ") : `${list.slice(0, max).join(" · ")} +${list.length - max}`;
+}

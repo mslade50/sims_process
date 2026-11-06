@@ -106,3 +106,18 @@
   .score-answer .score-decision-compact h2{font-size:var(--fs-kpi);margin:2px 0}
   .score-answer .score-ci{margin-top:var(--sp-2);padding:var(--sp-2) 0 0}
 }
+
+/* R4b: on a phone the whole histogram (with its axis) sits above the tab bar. Headline is one compact row: score and par gap left, 80% range right. */
+@media(max-width:600px){
+  .score-answer .score-decision-main{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:var(--sp-4);align-items:center;padding:var(--sp-2) var(--sp-3)}
+  .score-answer .score-kicker{grid-column:1/-1;font-size:var(--fs-small)}
+  .score-answer .score-decision-compact h2{grid-column:1;margin:0;font-size:30px}
+  .score-answer .score-vspar{grid-column:1;margin:0;font-size:var(--fs-small)}
+  .score-answer .score-ci{grid-column:2;grid-row:2/4;margin:0;padding:0 0 0 var(--sp-3);border-top:0;border-left:1px solid var(--line);align-self:stretch;justify-content:center;gap:0}
+  .score-answer .score-ci span{font-size:12px;line-height:1.3}
+  .score-answer .score-ci b{font-size:var(--fs-body,16px)}
+  .score-answer .score-ci small{font-size:12px}
+  .score-answer .score-chart-tools > span{display:none}
+  .score-answer .score-chart-tools{margin-bottom:var(--sp-2)}
+  .score-answer .score-chart{height:220px}
+}

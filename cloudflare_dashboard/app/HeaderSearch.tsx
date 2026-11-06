@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import { playerDisplayName } from "./player-name";
+import { playerDisplayName, tourLabel } from "./player-name";
 import { usePlayerDirectory } from "./player-directory";
 import type { ProfileEntry } from "./player-profile-rules";
 import { playerHref, searchPlayers } from "./shell-rules";
@@ -24,7 +24,7 @@ function Results({ query, active, hits, loading, available, onNavigate }: { quer
       {hits.map((p, i) => (
         <li key={p.profile_key} role="option" aria-selected={i === active}>
           <a className={i === active ? "hit-active" : ""} href={playerHref(p)} onClick={(event) => onNavigate(event, playerHref(p))}>
-            <strong>{playerDisplayName(p.display_name ?? p.name)}</strong><small>{(p.tours ?? []).join(" · ").toUpperCase() || "Tour unavailable"}{p.country ? ` · ${p.country}` : ""}</small>
+            <strong>{playerDisplayName(p.display_name ?? p.name)}</strong><small title={(p.tours ?? []).join(", ").toUpperCase()}>{tourLabel(p.tours) || "Tour unavailable"}{p.country ? ` · ${p.country}` : ""}</small>
           </a>
         </li>
       ))}

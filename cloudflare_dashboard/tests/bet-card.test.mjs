@@ -141,3 +141,22 @@ test("stage and next-check wording is honest about the round", () => {
   assert.match(nextCheckShort({ status: "x", note: "round 1 in play", moment: "" }), /after the round/);
   assert.match(nextCheckShort({ status: "priced", note: null, moment: "after round 1" }), /30 minutes/);
 });
+
+// R4b: quiet-event wording follows the derived stage, never the file's own stage claim.
+import { quietReason, nextCheckForStage } from "../app/bet-card-rules.ts";
+
+test("quietReason: in-play stage wins; a plain note is kept; a stage-claiming note is ignored", () => {
+  assert.equal(quietReason({ note: "Off week" }, "R2 in play"), "No next-round prices until the after-round run.");
+  assert.equal(quietReason({ note: "Off week" }, "Pre-tournament"), "Off week");
+  assert.equal(quietReason({ note: "R1 complete" }, "Pre-tournament"), "No bet clears the rules at the current prices.");
+  assert.equal(quietReason({ note: "Round 1 in play" }, "Pre-tournament"), "No bet clears the rules at the current prices.");
+  assert.equal(quietReason({ note: null }, "Pre-tournament"), "No bet clears the rules at the current prices.");
+});
+
+test("nextCheckForStage: wording cannot contradict the stage chip", () => {
+  const e = { status: "priced", note: "Off week", moment: "pre-event" };
+  assert.match(nextCheckForStage(e, "R2 in play"), /after the round finishes/);
+  assert.match(nextCheckForStage(e, "Pre-tournament"), /when the next event is priced/);
+  assert.match(nextCheckForStage({ ...e, note: "R1 complete" }, "Pre-tournament"), /within 30 minutes/);
+  assert.match(nextCheckForStage({ ...e, note: "Round 1 in play" }, "Pre-tournament"), /within 30 minutes/);
+});

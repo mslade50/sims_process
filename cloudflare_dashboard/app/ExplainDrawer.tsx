@@ -56,7 +56,7 @@ export function PlayerDrawer({ doc, player, competitors, market, setCompetitors,
 
         <div className="ex-drawer-kpis">
           <Kpi label={`${MARKET_LABEL[market]} chance`} value={pct(player.probs[market].model)} detail={doc.kind === "live" ? "our chance now" : `sportsbook ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Std dev ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
+          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={signed(player.mu_rel)} detail={`strokes a round · std dev ${player.sd?.toFixed(2) ?? "-"}`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
           {f && <div className="ex-kpi-wrap"><Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" /><small className="ex-modal">{modalFinishText(modalFinish(f, !!doc.event.cut_round))}</small></div>}
           {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
         </div>
