@@ -1,11 +1,11 @@
 {
  "owner": "golfprice",
- "since": "2026-11-06 13:04:00 UTC",
+ "since": "2026-11-06 13:16:00 UTC",
  "event_id": "457",
- "run_id": "pga:457:2026-11-05/R0m_20261106T130400Z",
+ "run_id": "pga:457:2026-11-05/R0m_20261106T131600Z",
  "event_ids": [
   "457"
  ],
- "expires_at": "2026-11-14T13:04:00Z",
+ "expires_at": "2026-11-14T13:16:00Z",
  "note": "sim_fairs.json is published by `python -m golfprice.board publish`; production publish_sim_fairs must not overwrite it while this file exists on origin/main. Hand back with `python -m golfprice.board release --push`."
 }
