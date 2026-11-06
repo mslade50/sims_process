@@ -230,9 +230,7 @@ test("W1: layout guards - hero identity keeps a minimum column; legacy header ro
   const { readFileSync: rf } = await import("node:fs");
   const hero = rf(new URL("../app/player-hero.css", import.meta.url), "utf8");
   assert.match(hero, /\.ph-identity\{grid-template-columns:auto minmax\(180px,1fr\) auto/);
-  assert.match(hero, /@media\(max-width:1100px\)\{\.ph-stats\{grid-template-columns:minmax\(0,1fr\)\}/);
-  const shell = rf(new URL("../app/shell.css", import.meta.url), "utf8");
-  assert.match(shell, /\.topbar \.event-context \{[^}]*flex-wrap: wrap/);
+  assert.match(hero, /@media\(max-width:1100px\)\{\.ph-stats\{grid-template-columns:minmax\(0,1fr\)[;}]/);
 });
 
 test("week chip shows saved model skill on the PGA scale (mu_tour) with its label; live variant; fallback keeps vs field", () => {

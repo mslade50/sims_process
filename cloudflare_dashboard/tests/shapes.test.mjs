@@ -296,11 +296,11 @@ test("ShapeExplorer renders scatter, ranked list and table for both runs, and an
   const empty = renderView("ShapeViews.tsx", "ShapeExplorer", { props: { doc: { ...week, players: [] } } });
   assert.match(empty, /Fewer than five|No simulation/);
 });
-test("the Distributions page shows the shapes panel above the player comparison", () => {
+test("the Distributions page leads with the player comparison and keeps the shapes explorer below it", () => {
   const event = { event_uid: "e1", name: "Fixture Open", tour: "euro", date_start: "2026-10-08", explain_key: "golfprice/explain/e1/week.json", distribution_runs: [{ run: "w", kind: "week", as_of: "2026-10-08T02:31:00Z", after_round: null, key: "golfprice/explain/e1/week.json", validated: true }] };
   const html = renderView("DistributionView.tsx", "DistributionView", { data: { "golfprice/index.json": { events: [event] }, "golfprice/explain/e1/week.json": weekRaw }, pathname: "/distributions" });
-  const shapes = html.indexOf("Same win chance, different finishes");
-  assert.ok(shapes > 0 && shapes < html.indexOf("Up to four on the same axes"));
+  const shapes = html.indexOf("Why the same win chance can mean different finishes");
+  assert.ok(shapes > 0 && html.indexOf("Compare players") > 0 && html.indexOf("Compare players") < shapes);
   assert.doesNotMatch(html, /\[object Object\]|undefined|NaN/);
 });
 

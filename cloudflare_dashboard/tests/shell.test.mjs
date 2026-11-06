@@ -145,6 +145,15 @@ test("the header source has no static Published dot or duplicate date, and label
   assert.match(app, /<HeaderSearch /);
 });
 
+test("the redesigned shell shows the selected event's tour, name and course, and truncates instead of wrapping", async () => {
+  const parts = await readFile(new URL("../app/ShellParts.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/shell.css", import.meta.url), "utf8");
+  assert.match(app, /<EventSwitcher events=\{events\} selected=\{selectedEvent\}/);
+  assert.match(parts, /evsw-tour[\s\S]*selected\.name[\s\S]*selected\.course/);
+  assert.match(css, /\.evsw-name strong \{[^}]*text-overflow: ellipsis/);
+  assert.match(css, /\.evsw > button \{[^}]*max-width: min\(46vw/);
+});
+
 test("?e= that names no published event is flagged; absent or valid is not", () => {
   const events = [{ event_uid: "pga:1" }, { event_uid: "euro:2" }];
   assert.equal(unknownEventParam("nope", events), true);
@@ -226,7 +235,7 @@ test("Run page source: Suggested now, collapsed rest, and a plain runner-unavail
   const run = await readFile(new URL("../app/RunView.tsx", import.meta.url), "utf8");
   assert.match(run, /Suggested now/);
   assert.match(run, /run-collapsed/);
-  assert.match(run, /desktop runner status could not be loaded/);
+  assert.match(run, /desktop runner status could not be loaded/i);
   assert.doesNotMatch(run, /Unknown until the page can load/);
 });
 
@@ -247,4 +256,25 @@ test("lib helpers: finite, unsigned pct, signed pct, short date", () => {
   assert.equal(signedPct(-0.004), "-0.4%");
   assert.equal(shortDate("not a date"), "—");
   assert.match(shortDate("2026-10-08T12:00:00Z"), /^Oct 8$/);
+});
+
+test("context bar: one event identity, stage from the newest run, default event matches the pages", async () => {
+  const { eventHref, primaryTabKeys, selectedShellEvent, shellEvents, stageOf } = await import("../app/shell-rules.ts");
+  const now = Date.parse("2026-10-08T20:00:00Z");
+  const index = { events: [
+    { event_uid: "pga:1", name: "Baycurrent", tour: "pga", date_start: "2026-10-08", date_end: "2026-10-11", explain_key: "k", runs: [{ as_of: "2026-10-08T12:21:00Z", kind: "live", after_round: 1 }, { as_of: "2026-10-07T12:00:00Z", kind: "week" }] },
+    { event_uid: "euro:2", name: "Open de Espana", tour: "euro", date_start: "2026-10-08", runs: [{ as_of: "2026-10-07T09:00:00Z", kind: "week" }] },
+    { event_uid: "pga:0", name: "Old", tour: "pga", date_start: "2026-10-01", runs: [] },
+  ] };
+  const events = shellEvents(index, now);
+  assert.deepEqual(events.map((e) => e.uid), ["pga:1", "euro:2"], "only the newest week, explain-key event first");
+  assert.equal(events[0].stage, "Live, after R1");
+  assert.equal(events[0].tourLabel, "PGA Tour");
+  assert.equal(events[1].stage, "Pre-event");
+  assert.equal(selectedShellEvent(events, "euro:2")?.uid, "euro:2");
+  assert.equal(selectedShellEvent(events, "nope")?.uid, "pga:1");
+  assert.equal(stageOf({ date_end: "2026-10-04", runs: [] }, now).stage, "Final");
+  assert.equal(eventHref("/this-week", "?e=a&player=7&x=1", "b"), "/this-week?e=b&x=1");
+  assert.deepEqual(primaryTabKeys(true), ["this-week", "weekly-players", "bet-card", "weather-effects"]);
+  assert.ok(!primaryTabKeys(false).includes("bet-card"));
 });

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useDashboardData } from "./data";
-import { Panel } from "./components";
+import { Block } from "./score-block";
 import { DataThrough } from "./DataThrough";
 import { dataThrough } from "./freshness-rules";
 import { historyRoundRows, parseCourseHistory, signed, type HistoryMetric, type RoundCell } from "./course-history-rules";
@@ -25,14 +25,14 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
   const doc = useMemo(() => parseCourseHistory(src.data), [src.data]);
   const [metric, setMetric] = useState<HistoryMetric>("vs_par");
   const title = "This event in past years", eyebrow = "Field scoring, weather and field skill by round";
-  if (!historyKey) return <Panel title={title} eyebrow={eyebrow}><p className="score-footnote">No course history is published for this event yet. It appears after the next publish.</p></Panel>;
+  if (!historyKey) return <Block id="history" title={title} eyebrow={eyebrow}><p className="score-footnote">No course history is published for this event yet. It appears after the next publish.</p></Block>;
   if (src.loading) return null;
-  if (!doc || doc.status !== "available") return <Panel title={title} eyebrow={eyebrow}><p className="score-footnote">{doc?.reason ?? src.error ?? "Course history is unavailable for this event."}</p></Panel>;
+  if (!doc || doc.status !== "available") return <Block id="history" title={title} eyebrow={eyebrow}><p className="score-footnote">{doc?.reason ?? src.error ?? "Course history is unavailable for this event."}</p></Block>;
   const m = METRICS.find((x) => x.key === metric)!;
   const { rows, years } = historyRoundRows(doc, metric);
   const multiCourse = new Set(doc.editions.flatMap((e) => e.rounds.map((r) => r.course))).size > 1;
   const otherEvents = doc.editions.filter((e) => !e.same_event);
-  return <Panel title={title} eyebrow={eyebrow}>
+  return <Block id="history" title={title} eyebrow={eyebrow}>
     <DataThrough text={dataThrough(doc.through, "Course history through")} />
     {doc.by_round.length > 0 && <div className="score-hist-cards">{doc.by_round.map((r) => <div key={r.round}>
       <span>Round {r.round} · {r.editions} edition{r.editions === 1 ? "" : "s"}</span>
@@ -59,7 +59,7 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
     {otherEvents.length > 0 && <p className="score-footnote">* A different event played at this course: {[...new Set(otherEvents.map((e) => `${e.name ?? e.event_uid} (${e.year})`))].join(", ")}.</p>}
     {doc.weather_model && <p className="score-footnote">{doc.weather_model}</p>}
     <p className="score-footnote">Round averages above use this course only, weighted by players. Field skill is the model&rsquo;s skill estimate for those players at the time; weather cost comes from the weather model. Shown for context; nothing on this panel changes the prices.</p>
-  </Panel>;
+  </Block>;
 }
 
 type CardProps = { metric: HistoryMetric; active?: boolean; payload?: Array<{ dataKey?: unknown; payload?: Record<string, unknown> }> };

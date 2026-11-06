@@ -15,12 +15,12 @@ test("/players fixture: catalog lists Hideki and Blair and shows the catalog as-
   const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, pathname: "/players" });
   assert.match(html, /Hideki Matsuyama/);
   assert.match(html, /Zac Blair/);
-  assert.match(html, /Player list as of Oct 8, 12:27 PM ET/);
+  assert.match(html, /Golfer list as of Oct 8, 12:27 PM ET/);
   assert.doesNotMatch(html, /freshness-badge/, "the freshness pill was removed from the catalog line; the date stays");
 });
 
 test("/players?player=17639 renders Blair's PGA benchmark card value from the fixture shard", () => {
-  const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, search: "?player=17639", pathname: "/players" });
+  const html = renderView("PlayerProfilesView.tsx", "PlayersView", { data, search: "?player=17639&layout=classic", pathname: "/players" });
   const expected = catalog.players.find((p) => p.dg_id === 17639).pga_benchmark.value;
   const signed = `${expected > 0 ? "+" : ""}${expected.toFixed(3)}`;
   assert.match(html, /recent form vs the average PGA Tour round, 2017–2025/);
@@ -37,10 +37,10 @@ test("/players with the catalog missing shows the not-published empty state, not
 test("/players: an old catalog as_of carries the amber stale badge, a recent one does not", () => {
   const old = { ...catalog, as_of: "2026-09-01T00:00:00Z" };
   const stale = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/index.json": old }, pathname: "/players" });
-  assert.match(stale, /Player list as of Aug 31, 8:00 PM ET/);
+  assert.match(stale, /Golfer list as of Aug 31, 8:00 PM ET/);
   assert.doesNotMatch(stale, /fresh-aging/);
   const fresh = renderView("PlayerProfilesView.tsx", "PlayersView", { data: { ...data, "golfprice/player_profiles/index.json": { ...catalog, as_of: new Date().toISOString() } }, pathname: "/players" });
-  assert.match(fresh, /Player list as of /);
+  assert.match(fresh, /Golfer list as of /);
   assert.doesNotMatch(fresh, /fresh-aging/);
 });
 
@@ -97,8 +97,8 @@ test("/players?layout=next stores the typical-regular tick only when the catalog
   assert.match(html, /data-testid="regular-tick"/);
 });
 
-test("default layout is unchanged: no hero, the old benchmark card and shape panel are still there", () => {
-  const html = next("?player=17639");
+test("layout=classic keeps the previous profile: no hero, the old benchmark card and shape panel are still there", () => {
+  const html = next("?player=17639&layout=classic");
   assert.equal(html.includes("data-layout=\"next\""), false);
   assert.equal(html.includes("player-hero"), false);
   assert.match(html, /What the headline number means/);
@@ -130,7 +130,7 @@ function savedData(inputsPatch = {}) {
     "golfprice/explain/fx.json": explain, [run.key]: inputs };
 }
 test("/players default layout: secondary card shows mu_tour with the PGA-scale label; vs field stays secondary", () => {
-  const html = next("?player=17639", savedData());
+  const html = next("?player=17639&layout=classic", savedData());
   assert.match(html, /This week \(PGA scale\)/);
   assert.match(html, /data-testid="pga-skill"[^>]*>\+0\.40 /);
   assert.match(html, /\(\+0\.100, how this field compares with a normal PGA field\)/);
@@ -144,7 +144,7 @@ test("/players?layout=next: This-week chip shows mu_tour; the Method names the s
 });
 test("/players: no mu_tour in the matching document (or no matching document) keeps the old vs-field display", () => {
   for (const d of [savedData({ players: [{ dg_id: 17639, challenger: {} }] }), savedData({ generated_for_as_of: "2020-01-01T00:00:00Z" })]) {
-    const html = next("?player=17639", d);
+    const html = next("?player=17639&layout=classic", d);
     assert.match(html, /vs field · saved model/);
     assert.doesNotMatch(html, /data-testid="pga-skill"/);
     assert.doesNotMatch(next("?player=17639&layout=next", d), /data-testid="pga-chip"/);

@@ -19,10 +19,6 @@ import "./shapes.css";
 const lastName = (raw: string) => { const n = shortName(raw).split(" "); return n[n.length - 1] ?? ""; };
 
 function Glyph({ kind }: { kind: ShapeKind }) { return <i className="shp-glyph" data-kind={kind} aria-hidden="true" />; }
-function KindWord({ kind }: { kind: ShapeKind }) {
-  const k = kind === "steady" ? "steady" : kind === "bust" ? "boom_bust" : "typical_shape";
-  return <Term k={k}>{kindLabel(kind)}</Term>;
-}
 
 
 /* ------------------------------------------------------------------ bet ladder: the finding in one sentence, then one row per bet */
@@ -125,7 +121,7 @@ export function ShapeScatter({ a, selectedId, onSelect }: { a: ShapeAnalysis; se
         return (
           <g key={p.id} className="pt" role="button" tabIndex={0} data-selected={sel ? "" : undefined} aria-label={`${shortName(p.name)}: win ${pct(p.win)}, ${marketLabel} ${pct(p.p)}, ${kindLabel(p.kind)}, ${signedPp(p.residualPp)} against the typical shape`}
             onClick={act} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); act(); } }}>
-            <circle cx={x} cy={y} r={13} fill="transparent" />
+            <circle cx={x} cy={y} r={22} fill="transparent" />
             {p.kind === "bust" ? <rect className="pt-bust" x={x - 4.6} y={y - 4.6} width={9.2} height={9.2} transform={`rotate(45 ${x} ${y})`} /> : <circle className={p.kind === "steady" ? "pt-steady" : "pt-typical"} cx={x} cy={y} r={p.kind === "steady" ? 5 : 3.6} />}
             <circle className="ring" cx={x} cy={y} r={9} />
           </g>

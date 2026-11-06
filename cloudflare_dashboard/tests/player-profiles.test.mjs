@@ -57,9 +57,9 @@ test("saved field secondary centers a single estimator over the full active fiel
   assert.equal(savedFieldSkill(null,1).value,null);
 });
 
-test("layout=next is flag-gated: hero, SG bars and the single Method disclosure are mounted, and the default markers remain until wave 2",async()=>{
+test("layout=next is the default (layout=classic keeps the old page): hero, SG bars and the single Method disclosure are mounted, and the default markers remain until wave 2",async()=>{
   const {readFile}=await import("node:fs/promises");const view=await readFile(new URL("../app/PlayerProfilesView.tsx",import.meta.url),"utf8");
-  for(const needle of ['params.get("layout")==="next"',"<PlayerHero","<PlayerSgBars","<PlayerMethod","<FilterBar","<ProfileDeepDive","<FilteredPlayerShapes","<SearchablePlayerPicker","<PlayerHistoryFilters"])assert.ok(view.includes(needle),needle);
+  for(const needle of ['params.get("layout")!=="classic"',"<PlayerHero","<PlayerSgBars","<PlayerMethod","<FilterBar","<ProfileDeepDive","<FilteredPlayerShapes","<SearchablePlayerPicker","<PlayerHistoryFilters"])assert.ok(view.includes(needle),needle);
   assert.equal((view.match(/<PlayerMethod/g)??[]).length,1);
   assert.ok(view.includes("<ProfileBenchmark profile={p}"));
 });

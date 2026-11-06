@@ -3,7 +3,8 @@
 // layout checks in scripts/visual-rules.mjs, writes dist-visual/<timestamp>/{report.json,report.html,shots/*.png}.
 //
 //   node scripts/visual-check.mjs [--base http://localhost:3111] [--routes this-week,run] [--viewports phone,desktop] [--themes dark,light]
-//                                 [--jobs 3] [--browser <path-to-chrome-or-edge>] [--out <dir>] [--no-shots] [--keep-going]
+//                                 [--jobs 3] [--browser <path-to-chrome-or-edge>] [--out <dir>] [--no-shots] [--keep-going] [--extra] [--crops]
+//   --extra adds players?player=10091 and inputs?tab=adjust; --crops writes top-of-page crops (900px desktop / 1000px phone) to <out>/crops
 // Exit code: 0 no "error" issues, 1 at least one error issue, 2 setup failure (server or browser unreachable).
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,6 +26,8 @@ function parseArgs(argv) {
     const a = argv[i], next = () => argv[++i];
     if (a === "--base") o.base = next();
     else if (a === "--routes") o.routes = next().split(",").map((s) => s.trim().replace(/^\//, ""));
+    else if (a === "--extra") o.extra = true;
+    else if (a === "--crops") o.crops = true;
     else if (a === "--viewports") o.viewports = next().split(",");
     else if (a === "--themes") o.themes = next().split(",");
     else if (a === "--jobs") o.jobs = Math.max(1, Number(next()) || 1);
@@ -42,6 +45,10 @@ const VIEWPORTS = {
   phone: { name: "phone", width: 375, height: 812, mobile: true, touch: true },
   desktop: { name: "desktop", width: 1280, height: 900, mobile: false, touch: false },
 };
+/** Query-string routes checked in addition to the nav routes with --extra (or alone via --routes "players?player=10091,inputs?tab=adjust"). */
+const EXTRA_ROUTES = ["players?player=10091", "inputs?tab=adjust"];
+const routeSlug = (route) => (route.slice(1) || "root").replace(/[?=&]+/g, "_").replace(/[^A-Za-z0-9._-]+/g, "_");
+const CROP_HEIGHT = { phone: 1000, desktop: 900 };
 const MAX_SHOT_HEIGHT = 16000; // Chrome's texture limit is 16384
 
 /** Routes come from the app's own NAVIGATION table (plus toggle targets), so a new nav entry is covered automatically. */
@@ -320,6 +327,11 @@ async function runCase(cdp, base, c, opts, shotsDir) {
       const file = `${c.id}.png`;
       writeFileSync(join(shotsDir, file), Buffer.from(png.data, "base64"));
       out.shot = `shots/${file}`;
+      if (opts.crops) {
+        mkdirSync(join(shotsDir, "..", "crops"), { recursive: true });
+        const cp = await S("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: d.vw, height: Math.min(H, CROP_HEIGHT[v.name] ?? 900), scale: 1 } });
+        writeFileSync(join(shotsDir, "..", "crops", file), Buffer.from(cp.data, "base64"));
+      }
       const jpg = await S("Page.captureScreenshot", { format: "jpeg", quality: 55, captureBeyondViewport: true, clip: { ...clip, scale: 0.5 } });
       out.thumb = jpg.data; out.thumbSize = { w: d.vw, h: H, full: d.docHeight };
     }
@@ -450,12 +462,12 @@ async function main() {
   if (!browserPath) { console.error("No Chrome/Edge found. Pass --browser <path> or set CHROME_PATH."); process.exit(2); }
 
   const allRoutes = loadRoutes();
-  const routes = args.routes ? args.routes.map((r) => `/${r}`) : allRoutes;
+  const routes = args.routes ? args.routes.map((r) => `/${r}`) : [...allRoutes, ...(args.extra ? EXTRA_ROUTES.map((r) => `/${r}`) : [])];
   const key = themeKey();
   const cases = [];
   for (const route of routes) for (const vp of args.viewports) for (const theme of args.themes) {
     if (!VIEWPORTS[vp]) { console.error(`Unknown viewport ${vp}`); process.exit(2); }
-    cases.push({ route, viewport: VIEWPORTS[vp], theme, id: `${route.slice(1) || "root"}__${vp}__${theme}` });
+    cases.push({ route, viewport: VIEWPORTS[vp], theme, id: `${routeSlug(route)}__${vp}__${theme}` });
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const outDir = args.out ?? join(ROOT, "dist-visual", stamp);
@@ -475,7 +487,7 @@ async function main() {
     await Promise.all(Array.from({ length: args.jobs }, async () => {
       for (;;) {
         const i = next++; if (i >= cases.length) return;
-        const r = await runCase(cdp, args.base, cases[i], { themeKey: key, shots: args.shots }, shotsDir);
+        const r = await runCase(cdp, args.base, cases[i], { themeKey: key, shots: args.shots, crops: args.crops }, shotsDir);
         done[i] = r;
         const e = r.issues.filter((x) => x.severity === "error").length, w = r.issues.filter((x) => x.severity === "warn").length;
         console.log(`  [${String(++results.length).padStart(2)}/${cases.length}] ${r.route.padEnd(18)} ${r.viewport.padEnd(7)} ${r.theme.padEnd(5)} ${e} error ${w} warn`);

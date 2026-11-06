@@ -70,7 +70,7 @@ test("opponent history: optional column, filter keeps only matching single-oppon
   assert.equal(breakdown(d, { ...f, oppHist: [0, 3] }).grand.n, 2, "finish-market rows (no opponent) drop out once a bucket is chosen");
   const byOpp = breakdown(d, { ...f, rowDim: "opp_hist" });
   assert.deepEqual(byOpp.rows.map((r) => r.label).sort(), ["No single opponent", "vs 300+", "vs <60 rounds"]);
-  const { oppHist, ...legacy } = f;
+  const legacy = { ...f }; delete legacy.oppHist;
   assert.equal(breakdown(d, legacy).grand.n, 3, "filters saved without oppHist still work");
 });
 

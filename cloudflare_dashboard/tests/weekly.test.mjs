@@ -178,8 +178,8 @@ test("/weekly-players renders the table through DataTable with the Method senten
   );
   assert.match(html, /This event has no cut, so make-cut odds are not shown/);
   assert.match(thead, /class="sticky-first"/);
-  assert.match(thead, /class="mobile-hide"/);
-  assert.equal([...thead.matchAll(/<th class="(?!mobile-hide)[^"]*"/g)].length, 3, "phone keeps Player, This week, Win");
+  assert.match(thead, /class="[^"]*mobile-hide"/);
+  assert.equal([...thead.matchAll(/<th class="(?![^"]*mobile-hide)[^"]*"/g)].length, 3, "phone keeps Player, This week, Win");
   assert.doesNotMatch(html, /Unavailable<\/td>|>Unavailable</);
 });
 

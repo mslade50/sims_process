@@ -25,3 +25,56 @@
 .wx-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
 .wx-actions .inputs-button { min-height: 40px; padding: 0 16px; }
 @media (max-width: 600px) { .wx-input { width: 72px; } }
+
+/* ---- Weather edits: step flow, hour editor, sticky action tray ---- */
+.wx-body { display: grid; gap: var(--sp-5); }
+.wx-how { color: var(--muted-strong); font-size: var(--fs-data); }
+.wx-how summary { min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); cursor: pointer; }
+.wx-edit-help { font-size: var(--fs-data); max-width: 70ch; }
+.wx-kind { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); }
+.wx-kind-label { color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
+.wx-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); counter-reset: none; }
+.wx-step { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-3) 0; border-top: 2px solid var(--line-strong); min-width: 0; }
+.wx-step strong, .wx-step small { display: block; }
+.wx-step strong { font-size: var(--fs-data); }
+.wx-step small { color: var(--muted-strong); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.wx-step-n { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid currentColor; border-radius: 50%; font-size: var(--fs-small); font-weight: 700; color: var(--muted-strong); }
+.wx-step.wx-done { border-top-color: var(--pos); }
+.wx-step.wx-done .wx-step-n { color: var(--pos); }
+.wx-step.wx-current { border-top-color: var(--accent); }
+.wx-step.wx-current .wx-step-n { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.wx-step.wx-todo { opacity: .85; }
+.wx-edit-table table { font-size: var(--fs-data); }
+.wx-edit-table th.wx-h { font-size: var(--fs-small); letter-spacing: .04em; }
+.wx-edit-table td small, .wx-fc { font-size: var(--fs-small); }
+.wx-input { min-height: 44px; font-size: 16px; width: 92px; border-radius: var(--radius-control); }
+.wx-edited { background: var(--accent-soft); }
+.wx-diff { color: var(--accent) !important; font-weight: 650; }
+.wx-lab { display: none; }
+.wx-note-field { font-size: var(--fs-small); font-weight: 650; color: var(--muted-strong); }
+.wx-note-field textarea { font-size: 16px; border-radius: var(--radius-control); }
+.wx-actions .inputs-button { min-height: 44px; }
+.inputs-banner.ok { background: var(--pos-soft); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
+.wx-tray { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); background: var(--popover); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); }
+.wx-tray-state { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-small); color: var(--muted-strong); flex-wrap: wrap; }
+.wx-tray .wx-actions { margin: 0; }
+@media (max-width: 820px) {
+  .wx-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--sp-4); }
+  .wx-tray .wx-actions { width: 100%; }
+  .wx-tray .wx-actions .inputs-button { flex: 1 1 auto; }
+}
+@media (max-width: 640px) {
+  /* Each hour becomes a small card: hour heading, then labelled fields two across. */
+  .wx-edit-table table, .wx-edit-table tbody, .wx-edit-table tr, .wx-edit-table td { display: block; }
+  .wx-edit-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .wx-edit-table tbody { display: grid; gap: var(--sp-3); }
+  .wx-edit-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) var(--sp-3); padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+  .wx-edit-table tr.wx-row-edited { border-color: var(--accent); }
+  .wx-edit-table td.wx-hour { grid-column: 1 / -1; font-size: var(--fs-h3); padding: 0; border: 0; }
+  .wx-edit-table td { padding: 0; border: 0; white-space: normal; }
+  .wx-edit-table td.wx-edited { box-shadow: none; background: transparent; }
+  .wx-edit-table td.wx-edited .wx-input { border-color: var(--accent); background: var(--accent-soft); }
+  .wx-lab { display: block; color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
+  .wx-input { width: 100%; }
+  .wx-problem { max-width: none; }
+}

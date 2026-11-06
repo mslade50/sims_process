@@ -6,9 +6,9 @@ import { measureAllCss, measureChunks, measureRoute } from "../scripts/measure-b
 const KB = 1024;
 const SHELL_JS_GZIP_BUDGET = 150 * KB; // framework + shell, the JS in the first HTML, before any view chunk
 const LAZY_CHUNK_GZIP_BUDGET = 250 * KB;
-const TOTAL_CSS_GZIP_BUDGET = 60 * KB;
+const TOTAL_CSS_GZIP_BUDGET = 66 * KB; // 66: design system v2 redesign of every page measured 63.2 KB gz on 2026-11-05 (was 60)
 // Ratchet for shell + the This week view chunks together. Lower it whenever the view's heavy imports (Recharts) go lazy.
-const THIS_WEEK_WITH_VIEW_RATCHET = 206 * KB; // measured 195.6 KB gz on 2026-10-14 after lazy Recharts; was 432 KB. 206: the Bet card nav entry (2026-10-22) added ~0.1 KB at 205.0
+const THIS_WEEK_WITH_VIEW_RATCHET = 212 * KB; // 212: design system v2 shell (event switcher, phone tab bar, per-page nav icons, design primitives) measured 209.0 KB gz on 2026-11-05. Earlier: measured 195.6 KB gz on 2026-10-14 after lazy Recharts; was 432 KB. 206: the Bet card nav entry (2026-10-22) added ~0.1 KB at 205.0
 const THIS_WEEK_WITH_VIEW_TARGET = 150 * KB;
 
 const root = await measureRoute("/");
@@ -29,10 +29,10 @@ test("no single built JS chunk exceeds 250 KB gzip", () => {
   assert.deepEqual(big.map((c) => `${c.file} ${(c.gzip / KB).toFixed(1)} KB`), []);
 });
 
-test("total CSS stays within 60 KB gzip", async () => {
+test("total CSS stays within 66 KB gzip", async () => {
   const css = await measureAllCss();
   const total = css.reduce((a, f) => a + f.gzip, 0);
-  assert.ok(total <= TOTAL_CSS_GZIP_BUDGET, `CSS is ${(total / KB).toFixed(1)} KB gzip (budget 60 KB)`);
+  assert.ok(total <= TOTAL_CSS_GZIP_BUDGET, `CSS is ${(total / KB).toFixed(1)} KB gzip (budget 66 KB)`);
 });
 
 test("dist has no stale duplicate chunks (same chunk name under two hashes)", () => {

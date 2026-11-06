@@ -40,3 +40,21 @@
 .score-hist-legend{justify-content:flex-start;flex-wrap:wrap;gap:6px 14px}
 .score-hist-card{display:grid;gap:3px;min-width:210px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--popover);box-shadow:var(--shadow);font-size:11px;color:var(--muted-strong)}
 .score-hist-card strong{margin-bottom:3px;color:var(--foreground);font-size:12px}.score-hist-card>div{display:flex;justify-content:space-between;gap:14px}.score-hist-card b{color:var(--foreground);font-variant-numeric:tabular-nums}.score-hist-card small{margin-top:3px;color:var(--muted);font-size:10px;line-height:1.4}
+
+/* Round-scores page: sections, par readout, tap targets. */
+.score-page > .ds-section{margin-top:var(--sp-8)}
+.score-vspar{margin:6px 0 0;font-size:var(--fs-h3);color:var(--muted-strong)}
+.score-vspar b{font-size:22px;font-variant-numeric:tabular-nums;margin-right:4px}
+.score-vspar b.under{color:var(--positive)}
+.score-vspar b.over{color:var(--warning)}
+.score-controls{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 14px}
+.score-select{display:grid;gap:4px;min-width:230px;color:var(--muted);font-size:var(--fs-small);font-weight:650}
+.score-select select{min-height:44px;font-size:var(--fs-body)}
+.score-player-chips button,.score-segments button,.score-shift-presets button{min-height:44px}
+.score-selected-chips button{min-width:32px;min-height:32px}
+.score-market-inputs input{min-height:44px;font-size:16px}
+.score-chart{height:340px}
+@media(max-width:600px){.score-chart{height:280px}.score-select{width:100%}}
+.score-select select{width:100%;min-width:0;max-width:100%}
+@media(max-width:600px){.score-select{min-width:0;max-width:100%}.score-wx-head .score-select{width:100%}}
+.score-page .section-actions a{display:inline-flex;align-items:center;min-height:44px}

@@ -1,9 +1,11 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
-import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl, humanValue } from "./components";
+import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, humanValue } from "./components";
+import { Chip, PageHeader, SegmentedControl, Stat } from "./ui";
+import "./inputs.css";
 import { useIsOwner } from "./viewer";
 import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
@@ -209,6 +211,17 @@ const TABS = [
   { value: "adjust", label: "Adjust" },
 ] as const;
 type Tab = (typeof TABS)[number]["value"];
+/** One line under the tab strip: the question this tab answers. */
+const TAB_PURPOSE: Record<Tab, string> = {
+  players: "Who is rated how well, how much their scores swing, and what pieces make up each rating. Search a golfer or click a row.",
+  course: "How this course changes scoring: hole table, difficulty and who it favours.",
+  variance: "How widely each golfer's round scores spread (std dev, in strokes) and why.",
+  weather: "The forecast weather and tee-time waves the simulation used, round by round.",
+  odds: "Which sportsbook prices were pulled, when, and how old they are.",
+  config: "Settings and files behind this run. Reference only.",
+  features: "Every skill measurement the model can use, what it means and how much weight it gets.",
+  adjust: "Owner-only one-off fixes to the model price. Saving does not change prices until the next run.",
+};
 
 function ChartTip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: unknown; color?: string; payload?: { name?: string; hint?: string } }>; label?: unknown }) {
   if (!active || !payload?.length) return null;
@@ -481,6 +494,10 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
         </>
       }
     >
+      <p className="in-answer">
+        Rated <b className="num">{signed(ch.mu)}</b> strokes per round {(num(ch.mu) ?? 0) >= 0 ? "better" : "worse"} than this week&apos;s average player, with a round-to-round spread of <b className="num">{fx(ch.sd, 2)}</b> strokes{overridden ? ", including your override" : ""}.
+        {num(prob.p_win) !== null && <> Model win chance <b className="num">{pct(prob.p_win, 2)}</b>, top 10 <b className="num">{pct(prob.p_top_10)}</b> (before blending with the market).</>}
+      </p>
       <div className="mini-stat-grid">
         <div><span><Term k="mu">Rating vs this week&apos;s field</Term></span><strong>{signed(ch.mu)}</strong></div>
         {overridden && <div><span><Term k="mu_untouched">Rating before your override</Term></span><strong>{signed(ch.mu_untouched)}</strong></div>}
@@ -498,8 +515,8 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={steps} layout="vertical" margin={{ top: 6, right: 24, bottom: 6, left: 8 }}>
             <CartesianGrid stroke="var(--line)" horizontal={false} />
-            <XAxis type="number" tickCount={7} tickFormatter={(v: number) => (Math.round(v * 100) / 100).toFixed(2)} tick={{ fill: "var(--muted)", fontSize: 10 }} />
-            <YAxis type="category" dataKey="name" width={200} tick={{ fill: "var(--muted-strong)", fontSize: 10 }} />
+            <XAxis type="number" tickCount={7} tickFormatter={(v: number) => (Math.round(v * 100) / 100).toFixed(2)} tick={{ fill: "var(--muted-strong)", fontSize: 12 }} />
+            <YAxis type="category" dataKey="name" width={200} tick={{ fill: "var(--muted-strong)", fontSize: 12 }} />
             <ReferenceLine x={0} stroke="var(--line-strong)" />
             <Tooltip content={<ChartTip />} />
             <Bar dataKey="range" name="Component (start to end)" radius={3} isAnimationActive={false}>
@@ -582,6 +599,11 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   const showUntouched = useMemo(() => players.some(playerHasOverride), [players]);
   const rows = useMemo(() => playerRows(players, showUntouched), [players, showUntouched]);
   const [selected, setSelected] = useState<number | null>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const pickPlayer = (id: number | null) => {
+    setSelected(id);
+    window.setTimeout(() => detailRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 30);
+  };
   const current = players.find((p) => num(p.dg_id) === selected) ?? players[0];
   const currentRow = rows.find((row) => row.dg_id === num(current?.dg_id)) ?? null;
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
@@ -605,21 +627,26 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   return (
     <div className="stack-lg">
       <div className="kpi-grid">
-        <Kpi label="Players" value={String(players.length)} detail={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "in the field"} tone="accent" />
-        <Tip text={GLOSSARY.mu}><Kpi label="Strongest player" value={signed(num(obj(best?.challenger).mu), 2)} detail={`${String(best?.name ?? "")}: strokes per round better than the average player in this week's field${fieldOffset !== null && num(obj(best?.challenger).mu) !== null ? ` (${signed((num(obj(best?.challenger).mu) as number) + fieldOffset, 2)} vs an average PGA Tour player)` : ""}`} /></Tip>
-        {fieldOffset !== null && (
-          <Tip text="How this field compares with a typical PGA Tour field, in strokes per round. Reference only: prices use the rating against this field.">
-            <Kpi
-              label="Field strength"
-              value={signed(fieldOffset, 2)}
-              detail={`The average player in this field is ${gap} strokes per round ${fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour player. Player ratings on this page are measured against this field, so add ${signed(fieldOffset, 2)} to put them on the PGA Tour scale. Prices are not affected.${ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}`}
-            />
-          </Tip>
-        )}
-        <Tip text="The average of the players' std dev, in strokes, including any override."><Kpi label="Average std dev" value={sdMean.toFixed(2)} detail="strokes, after overrides" /></Tip>
-        {withOverride > 0 && <Tip text="How many players have a manual override on them for this event."><Kpi label="Players with an override" value={String(withOverride)} detail="the original model numbers are kept alongside" tone="positive" /></Tip>}
+        <Stat label="Players" value={String(players.length)} unit="in field" note={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "No amateurs"} hint="Players in this run's field." />
+        <Stat label="Strongest rating" value={signed(num(obj(best?.challenger).mu), 2)} unit="strokes/round" note={`${String(best?.name ?? "")}, vs this field's average`} hint={GLOSSARY.mu} />
+        {fieldOffset !== null && <Stat label="Field strength" value={signed(fieldOffset, 2)} unit="strokes/round" note={`${fieldOffset < 0 ? "Weaker" : "Stronger"} than a typical PGA Tour field`} hint="How this field compares with a typical PGA Tour field. Reference only: prices use the rating against this field." />}
+        <Stat label="Average std dev" value={sdMean.toFixed(2)} unit="strokes" note="Round-to-round spread, after overrides" hint="The average of the players' std dev, in strokes, including any override." />
+        {withOverride > 0 && <Stat label="Players overridden" value={String(withOverride)} tone="accent" note="Original numbers are kept" hint="How many players have a manual override on them for this event." />}
       </div>
-      <Panel eyebrow="Saved model inputs" title="Every player, every component" actions={<span className="inputs-muted">Click a row, or search below, for the breakdown. Hover a column header for what it means.</span>}>
+      {fieldOffset !== null && (
+        <details className="in-fieldnote">
+          <summary>How to read ratings against the PGA Tour scale</summary>
+          <p>The average player in this field is {gap} strokes per round {fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour player. Player ratings on this page are measured against this field, so add {signed(fieldOffset, 2)} to put them on the PGA Tour scale. Prices are not affected.{ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}</p>
+        </details>
+      )}
+      <section className="in-finder" aria-label="Find a golfer">
+        <div>
+          <h2>Find a golfer</h2>
+          <p>Search by name to open their full breakdown, or click a row in the table.</p>
+        </div>
+        <PlayerSearch players={choices} onPick={pickPlayer} />
+      </section>
+      <Panel eyebrow="Whole field" title="Every player, every component" actions={<span className="inputs-muted">Click a row for the breakdown. Hover a column header for what it means.</span>}>
         <DataTable
           rows={rows}
           preferredColumns={preferred}
@@ -638,13 +665,14 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
             return undefined;
           }}
           label="Model inputs players"
-          pageSize={30}
-          onRowClick={(row) => setSelected(num(row.dg_id))}
+          pageSize={15}
+          onRowClick={(row) => pickPlayer(num(row.dg_id))}
           activeRow={currentRow}
         />
         {showUntouched && <p className="inputs-muted">The &quot;before your override&quot; columns stay empty for players you have not adjusted.</p>}
       </Panel>
-      {current && <PlayerDetail player={current} choices={choices} onPick={setSelected} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
+      <div ref={detailRef} className="in-detail-anchor" />
+      {current && <PlayerDetail player={current} choices={choices} onPick={pickPlayer} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
     </div>
   );
 }
@@ -1368,6 +1396,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   const [expires, setExpires] = useState(() => localInput(Date.now() + 3 * 86_400_000));
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState<{ record: OverrideRecord; mode: "expire" | "remove" } | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string; problems?: string[] } | null>(null);
 
   const reload = useCallback(async () => {
@@ -1472,7 +1501,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   }
 
   async function change(record: OverrideRecord, mode: "expire" | "remove") {
-    if (!window.confirm(mode === "remove" ? `Remove this override (${fieldLabel(record.field)}: ${describeValue(record)})? It stops applying and is deleted from the active list (the history log keeps it).` : `Expire this override (${fieldLabel(record.field)}: ${describeValue(record)}) now?`)) return;
+    setConfirming(null);
     setBusy(true);
     const result = await apiJson(`/api/overrides/${encodeURIComponent(record.id)}?mode=${mode}`, { method: "DELETE" });
     setBusy(false);
@@ -1539,6 +1568,16 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           {problems.length > 0 && (reason.trim() || value.trim() || Object.keys(cut).length > 0) && (
             <ul className="problem-list">{problems.filter((p) => !p.startsWith("missing") || reason.trim()).map((p) => <li key={p}>{p}</li>)}</ul>
           )}
+          <div className="in-tray" aria-label="Review before saving">
+            <b>Review before saving</b>
+            <dl>
+              <div><dt>Applies to</dt><dd>{eventKey === "all" ? "All events" : String(eventObj.name ?? "This event")}{scope === "player" ? ` · ${target ? playerName.get(target) ?? `Player ${target}` : "no player chosen yet"}` : scope === "course" ? " · the course" : " · the cut rule"}</dd></div>
+              <div><dt>Change</dt><dd>{fieldLabel(field)}: {spec?.kind === "number" ? (value.trim() ? value : "no value yet") : spec?.kind === "bool" ? "withdraw" : Object.keys(cut).filter((k) => cut[k]?.trim()).map((k) => `${k} ${cut[k]}`).join(", ") || "no value yet"}</dd></div>
+              <div><dt>Effect</dt><dd>{impact ?? "Applied on the next run. The original model number is kept."}</dd></div>
+              <div><dt>Expires</dt><dd>{expiresMs === null ? "no date" : etTime(isoSeconds(expiresMs))}</dd></div>
+            </dl>
+            <span className="inputs-muted">Saving does not change prices by itself. Remove or expire it any time from the list below.</span>
+          </div>
           <div className="form-actions">
             <button type="submit" className="inputs-button primary" disabled={busy || problems.length > 0}>{busy ? "Saving…" : "Save override"}</button>
             <span className="inputs-muted">Times are shown in Eastern.</span>
@@ -1555,6 +1594,13 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
         {loadError && <EmptyState title="Couldn't load overrides" detail="Try again with Refresh." />}
         {!loadError && records === null && <LoadingState label="Loading overrides" />}
         {records && records.length === 0 && <EmptyState title="No overrides" detail="golfprice prices the model untouched." />}
+        {confirming && (
+          <div className="inputs-banner warn in-confirm" role="alertdialog" aria-label="Confirm change to override">
+            <strong>{confirming.mode === "remove" ? "Remove" : "Expire"} this override?</strong>
+            <span>{fieldLabel(confirming.record.field)}: {describeValue(confirming.record)}. {confirming.mode === "remove" ? "It stops applying and leaves the active list; the history log keeps it." : "It stops applying now and stays in the list as expired."} Prices change only on the next run.</span>
+            <span className="form-actions"><button type="button" className="inputs-button danger" onClick={() => void change(confirming.record, confirming.mode)}>{confirming.mode === "remove" ? "Yes, remove it" : "Yes, expire it"}</button><button type="button" className="inputs-button" onClick={() => setConfirming(null)}>Keep it</button></span>
+          </div>
+        )}
         {records && records.length > 0 && (
           <div className="table-scroll">
             <table>
@@ -1576,8 +1622,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
                       <td>{etTime(record.created_at)}</td>
                       <td>{etTime(record.expires_at)}</td>
                       <td className="row-actions">
-                        {!expired && <button type="button" className="inputs-button subtle" disabled={busy} onClick={() => void change(record, "expire")}>Expire now</button>}
-                        <button type="button" className="inputs-button danger" disabled={busy} onClick={() => void change(record, "remove")}>Remove</button>
+                        {!expired && <button type="button" className="inputs-button subtle" disabled={busy} onClick={() => setConfirming({ record, mode: "expire" })}>Expire now</button>}
+                        <button type="button" className="inputs-button danger" disabled={busy} onClick={() => setConfirming({ record, mode: "remove" })}>Remove</button>
                       </td>
                     </tr>
                   );
@@ -1604,21 +1650,12 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
 }
 
 /* ------------------------------------------------------------------ page */
-const subscribeNarrow = (notify: () => void) => {
-  const query = window.matchMedia("(max-width: 640px)");
-  query.addEventListener("change", notify);
-  return () => query.removeEventListener("change", notify);
-};
-/** True on a phone-width screen, where the sub-tab strip becomes a dropdown so no tab is hidden off-screen. */
-function useNarrow(): boolean {
-  return useSyncExternalStore(subscribeNarrow, () => window.matchMedia("(max-width: 640px)").matches, () => false);
-}
-
 const OWN_TECHNICAL: Tab[] = ["course", "variance", "weather", "config"];
 
 export function InputsView() {
   const { data: index, loading, error } = useDashboardData<PublishIndex>("golfprice/index.json");
-  const [eventUid, setEventUid] = useState<string>("");
+  // Start on the event chosen in the top bar (?e=...), else the newest one.
+  const [eventUid, setEventUid] = useState<string>(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("e") ?? ""));
   const [runKey, setRunKey] = useState<string>("");
   const [tab, setTab] = useState<Tab>(() => {
     // Deep link: /inputs?tab=course|variance|weather|odds|config|features|adjust
@@ -1626,7 +1663,6 @@ export function InputsView() {
     return TABS.find((t) => t.value === wanted)?.value ?? "players";
   });
   const [presetPlayer, setPresetPlayer] = useState<number | null>(null);
-  const narrow = useNarrow();
   // Adjust (overrides) is owner-only: hidden for colleagues, and the Worker refuses /api/overrides for them (worker/owner.ts).
   const owner = useIsOwner();
 
@@ -1649,26 +1685,29 @@ export function InputsView() {
   const activeTab: Tab = !owner && tab === "adjust" ? "players" : tab;
   return (
     <div>
-      <PageIntro
+      <PageHeader
         eyebrow="Model"
         title="Model inputs"
-        description={`What went into the simulation: player skill, the course, how much scores swing, weather, odds and settings. Features explains every skill measurement${owner ? "; Adjust applies one-off overrides" : ""}.`}
-        controls={
-          <div className="control-row wrap">
-            <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
-            <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
-          </div>
-        }
+        purpose={`What went into the simulation, and what each input does to a price. Pick a golfer to see their rating, spread and adjustments${owner ? "; use Adjust for one-off overrides" : ""}.`}
       />
-      <div className="inputs-meta">
-        <span><b>{event.course}</b></span>
-        <span>{ymd(event.date_start)} to {ymd(event.date_end)}</span>
-        {asOf && <span title="When this model run was built.">model run {asOf}</span>}
-        {pulled && <span title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">odds pulled {pulled}</span>}
-        {run && <span>{run.n_players} players</span>}
-        <span>{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "no overrides applied"}</span>
+      <div className="in-context">
+        <div className="in-toolbar">
+          <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
+          <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
+        </div>
+        <div className="in-chips" aria-label="Run summary">
+          <Chip tone="neutral" title="The course this event is played on.">{event.course}</Chip>
+          <Chip tone="neutral">{ymd(event.date_start)} to {ymd(event.date_end)}</Chip>
+          {asOf && <Chip tone="neutral" title="When this model run was built.">Model run {asOf}</Chip>}
+          {pulled && <Chip tone="neutral" title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">Odds pulled {pulled}</Chip>}
+          {run && <Chip tone="neutral">{run.n_players} players</Chip>}
+          <Chip tone={run?.overrides_applied.length ? "warning" : "neutral"} title="Owner overrides applied to this run's prices.">{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "No overrides applied"}</Chip>
+        </div>
       </div>
-      {narrow ? <Select label="Section" value={activeTab} onChange={(v) => setTab(v as Tab)} options={tabOptions} /> : <SegmentedControl label="Model inputs area" value={activeTab} onChange={setTab} options={tabOptions} />}
+      <nav className="in-tabs" aria-label="Model inputs area">
+        {tabOptions.map((t) => <button key={t.value} type="button" className={activeTab === t.value ? "active" : ""} aria-current={activeTab === t.value ? "page" : undefined} onClick={() => setTab(t.value as Tab)}>{t.label}</button>)}
+      </nav>
+      <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>
       {docLoading && activeTab !== "features" && <LoadingState label="Loading run" />}
       {docError && activeTab !== "features" && activeTab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
       {doc && activeTab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={owner ? (id) => { setPresetPlayer(id); setTab("adjust"); } : undefined} />}

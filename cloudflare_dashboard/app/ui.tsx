@@ -1,10 +1,25 @@
 "use client";
 
 /**
- * Design-system building blocks (see engine_notes/dash_design.md). Colors come only from CSS tokens (tokens.css);
+ * Design-system building blocks (docs/ui-overhaul/DESIGN_SYSTEM.md). Colors come only from CSS tokens (tokens.css, design.css);
  * motion respects prefers-reduced-motion (CSS media query plus useReducedMotion for JS-driven animation).
+ *
+ * Page primitives (design system v2):
+ *   PageHeader      eyebrow, h1, one-line purpose, optional actions. One per page.
+ *   Section         anchored section (id) with a rule + h2, optional purpose line and actions. Replaces a card per section.
+ *   OnThisPage      sticky in-page section nav (horizontal scroller on phone); pass the same ids as the Sections.
+ *   Stat            KPI tile: label, value, unit, signed Delta (arrow + colour), note. Same look as components.Kpi.
+ *   Delta           signed change with arrow glyph; favourable green / adverse red; `inverse` when lower is better.
+ *   GapRail         zero-centred model-vs-book bar with direct label "model 24.0% vs book 19.7% = +4.3 pts".
+ *   Chip            small status/stage tag (neutral, positive, negative, warning, accent).
+ *   Badge           pill with optional live dot (older API, same look).
+ *   SegmentedControl  exclusive choice with aria-pressed buttons.
+ *   EmptyState      compact honest empty/unavailable note: title, reason, optional next-check time, optional retry.
+ *   Skeleton / SkeletonPage  shaped loading placeholders (no spinners).
+ *   InfoTip         jargon explainer: dotted term that opens a one-sentence definition (click, Escape closes).
+ *   AnimatedNumber  counts up once, tweens with an accent wash on later changes.
  */
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { etTime } from "./lib";
 import { badgeView, parseTimestamp, tweenText } from "./ui-rules";
 
@@ -162,6 +177,156 @@ export function FreshnessBadge({ at, label = "Last run", scale = "run", title, s
     <span className={`freshness-badge fresh-${tone}`} title={savedCopy ? `Saved copy: the data service could not be reached. ${title ?? ""}`.trim() : title ?? (parsed === null ? undefined : `${label}: ${etTime(new Date(parsed).toISOString())}`)}>
       <LivePulse status={tone === "live" || tone === "fresh" ? "fresh" : tone === "aging" ? "aging" : "stale"} />
       <span>{text}</span>
+    </span>
+  );
+}
+
+
+/* ------------------------------------------------------------------ design system v2 primitives */
+
+export function PageHeader({ eyebrow, title, purpose, actions }: { eyebrow?: string; title: string; purpose?: string; actions?: React.ReactNode }) {
+  return (
+    <div className="page-intro">
+      <div>
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+        <h1>{title}</h1>
+        {purpose && <p>{purpose}</p>}
+      </div>
+      {actions && <div className="page-controls">{actions}</div>}
+    </div>
+  );
+}
+
+/** An anchored section: rule + h2 (+ purpose line, actions), no card. Pair with OnThisPage by id. */
+export function Section({ id, title, purpose, actions, children, className = "" }: { id: string; title: string; purpose?: string; actions?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  const headingId = `${id}-h`;
+  return (
+    <section id={id} className={`ds-section ${className}`.trim()} aria-labelledby={headingId}>
+      <header>
+        <div><h2 id={headingId}>{title}</h2>{purpose && <p>{purpose}</p>}</div>
+        {actions && <div className="section-actions">{actions}</div>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** Sticky in-page navigation for long pages. Highlights the section in view; scrolls horizontally on phones. */
+export function OnThisPage({ sections, label = "On this page" }: { sections: Array<{ id: string; label: string }>; label?: string }) {
+  const [current, setCurrent] = useState(sections[0]?.id ?? "");
+  const key = sections.map((s) => s.id).join("|");
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const ids = key.split("|");
+    const seen = new Map<string, boolean>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting);
+      const first = ids.find((id) => seen.get(id));
+      if (first) setCurrent(first);
+    }, { rootMargin: "-72px 0px -60% 0px" });
+    for (const id of ids) { const el = document.getElementById(id); if (el) observer.observe(el); }
+    return () => observer.disconnect();
+  }, [key]);
+  return (
+    <nav className="on-this-page" aria-label={label}>
+      {sections.map((s) => <a key={s.id} href={`#${s.id}`} aria-current={current === s.id ? "true" : undefined}>{s.label}</a>)}
+    </nav>
+  );
+}
+
+/** KPI tile. `value` is pre-formatted text; `unit` sits beside it; `delta` is signed (use inverse when lower is better). */
+export function Stat({ label, value, unit, delta, deltaSuffix = "", deltaDigits = 1, inverse = false, note, tone = "neutral", spark, hint }: {
+  label: string; value: string; unit?: string; delta?: number; deltaSuffix?: string; deltaDigits?: number; inverse?: boolean; note?: string;
+  tone?: "neutral" | "positive" | "negative" | "accent"; spark?: number[]; hint?: string;
+}) {
+  const toneClass = tone === "positive" ? "stat-pos" : tone === "negative" ? "stat-neg" : "";
+  return (
+    <div className={`stat ${toneClass}`.trim()}>
+      <span className="stat-label" title={hint}>{label}</span>
+      <div className="kpi-row">
+        <strong className="stat-value"><AnimatedNumber text={value} />{unit && <small>{unit}</small>}</strong>
+        {spark && spark.length > 1 && <Sparkline values={spark} tone={tone === "neutral" ? "accent" : tone} label={`${label} trend`} />}
+      </div>
+      {(note || delta !== undefined) && (
+        <div className="stat-foot">
+          {delta !== undefined && <Delta value={delta} suffix={deltaSuffix} digits={deltaDigits} inverse={inverse} />}
+          {note && <span className="stat-note">{note}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Small tag for a stage, status or category. Meaning is in the words; colour only reinforces it. */
+export function Chip({ tone = "neutral", children, title }: { tone?: Tone; children: React.ReactNode; title?: string }) {
+  return <span className={`tag tone-${tone}`} title={title}>{children}</span>;
+}
+
+/**
+ * Model vs book on a shared zero. `model` and `book` are probabilities in percent (24 = 24%). The bar spans `range` points each side of zero
+ * (default 10) and clips beyond it. A positive gap (model above book) is favourable for backing; the label states the numbers, the sign and an arrow.
+ */
+export function GapRail({ model, book, range = 10, digits = 1, unit = "%", modelLabel = "model", bookLabel = "book" }: { model: number; book: number; range?: number; digits?: number; unit?: string; modelLabel?: string; bookLabel?: string }) {
+  if (!Number.isFinite(model) || !Number.isFinite(book)) return <span className="num">—</span>;
+  const raw = model - book;
+  const gap = Number(Math.abs(raw).toFixed(digits)) === 0 ? 0 : raw;
+  const half = Math.min(50, (Math.abs(gap) / range) * 50);
+  const side = gap > 0 ? "pos" : gap < 0 ? "neg" : "";
+  const signed = `${gap > 0 ? "+" : gap < 0 ? "−" : ""}${Math.abs(gap).toFixed(digits)}`;
+  const text = `${modelLabel} ${model.toFixed(digits)}${unit} vs ${bookLabel} ${book.toFixed(digits)}${unit} = ${signed} pts`;
+  return (
+    <div className="gap-rail" role="img" aria-label={text}>
+      <div className="gap-rail-track" aria-hidden="true">{side && <i className={`gap-rail-bar ${side}`} style={{ width: `${half}%` }} />}</div>
+      <div className="gap-rail-label" aria-hidden="true">
+        <span>{modelLabel} <b className="gap-model">{model.toFixed(digits)}{unit}</b></span>
+        <span>vs {bookLabel} <b className="gap-book">{book.toFixed(digits)}{unit}</b></span>
+        <span className={`gap-pts ${side}`}>{gap > 0 ? "▲ " : gap < 0 ? "▼ " : ""}{signed} pts</span>
+      </div>
+    </div>
+  );
+}
+
+/** Exclusive choice. Buttons carry aria-pressed; the group is labelled. */
+export function SegmentedControl<T extends string>({ value, options, onChange, label }: { value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void; label: string }) {
+  return (
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button key={option.value} type="button" className={value === option.value ? "active" : ""} aria-pressed={value === option.value} onClick={() => onChange(option.value)}>{option.label}</button>
+      ))}
+    </div>
+  );
+}
+
+/** Compact, honest note for missing or unavailable content. Say why, and when it will be checked again. Sentence case. */
+export function EmptyState({ title, detail, nextCheck, tone, onRetry }: { title: string; detail?: string; /** e.g. "Next check: Thursday 6:00 ET" */ nextCheck?: string; tone?: "warning"; onRetry?: () => void }) {
+  return (
+    <div className={`empty-state${tone ? ` tone-${tone}` : ""}`} role={onRetry ? "alert" : undefined}>
+      <div className="empty-body">
+        <strong>{title}</strong>
+        {detail && <span>{detail}</span>}
+        {nextCheck && <span className="empty-next">{nextCheck}</span>}
+        {onRetry && <button type="button" className="ex-link" onClick={onRetry}>Try again</button>}
+      </div>
+    </div>
+  );
+}
+
+/** Jargon explainer: the term stays in the sentence, a click shows a one-sentence definition. Escape or an outside click closes it. */
+export function InfoTip({ children, definition }: { children: React.ReactNode; definition: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: Event) => { if (event instanceof KeyboardEvent ? event.key === "Escape" : !ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("keydown", close);
+    document.addEventListener("pointerdown", close);
+    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
+  }, [open]);
+  return (
+    <span className="info-tip" ref={ref}>
+      <button type="button" aria-expanded={open} aria-describedby={open ? id : undefined} onClick={() => setOpen((o) => !o)}>{children}<span className="info-i" aria-hidden="true">i</span></button>
+      {open && <span className="info-tip-pop" role="note" id={id}>{definition}</span>}
     </span>
   );
 }

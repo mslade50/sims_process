@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
+import { EmptyState, Kpi, LoadingState, SegmentedControl } from "./components";
+import { OnThisPage, PageHeader, Section } from "./ui";
+import { useEventParam } from "./event-param";
 import { useDashboardData } from "./data";
 import { useIsOwner } from "./viewer";
 import { WeatherBriefBody } from "./WeatherBriefView";
@@ -331,8 +333,9 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
   const v = doc.venue;
   return (
     <div className="wx-body">
+      <OnThisPage sections={[{ id: "venue", label: "Venue" }, { id: "hourly", label: "Hour by hour" }, { id: "waves", label: "Waves" }, { id: "players", label: "Players" }]} />
       {doc.synthetic && <p className="inputs-note accent">Sample data: this is a made-up forecast shown to preview the page. Do not use it for pricing.</p>}
-      <Panel eyebrow="Venue" title={v.name || doc.event_uid}>
+      <Section id="venue" title={v.name || doc.event_uid} purpose="Venue and forecast source">
         <div className="kpi-grid">
           {v.class && <Kpi label="Course type" value={v.class.replace(/^./, (c) => c.toUpperCase())} detail="How exposed the course is to weather" hint="The course's weather profile, for example links or desert, which sets how much wind and temperature matter." />}
           {v.wind_slope !== null && <Kpi label="Wind sensitivity" value={`${v.wind_slope.toFixed(3)} strokes`} detail={`Per mph of wind, per round${windSourceText(v.wind_slope_source) ? `. ${windSourceText(v.wind_slope_source)}` : ""}`} tone="accent" hint="How many extra strokes a player loses per round for each additional mph of average wind at this course." />}
@@ -340,29 +343,29 @@ export function WeatherBody({ doc, now }: { doc: WeatherDoc; now: number }) {
           {doc.forecast.models.length > 0 && <Kpi label="Forecast sources" value={String(doc.forecast.models.length)} detail={doc.forecast.models.map(modelName).join(", ")} hint="The weather models averaged together to make this forecast." />}
         </div>
         {doc.notes.filter((n) => !(doc.synthetic && /synthetic/i.test(n))).length > 0 && <ul className="wx-notes">{doc.notes.filter((n) => !(doc.synthetic && /synthetic/i.test(n))).map((n, i) => <li key={i} className="inputs-note">{n}</li>)}</ul>}
-      </Panel>
+      </Section>
 
       {doc.rounds.length > 0 && (
         <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={doc.rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
       )}
 
-      <Panel eyebrow={`Round ${round}`} title="Forecast by hour" actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
+      <Section id="hourly" title="Forecast by hour" purpose={`Round ${round}`} actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
         <OwnerEditNote summary={doc.forecast.owner_overrides} eventUid={doc.event_uid} />
-        {points.length ? <><HourlyCharts points={points} waves={waves} /><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." />}
-      </Panel>
+        {points.length ? <><HourlyCharts points={points} waves={waves} /><h3 className="inputs-h3 wx-table-title">Hour by hour</h3><WeatherHourTable points={points} /></> : <EmptyState title="No hourly forecast for this round" detail="This round is too far away for the forecast to reach yet." nextCheck="Checked with each forecast update" />}
+      </Section>
 
-      <Panel eyebrow={`Round ${round}`} title="Wave comparison and field effect">
+      <Section id="waves" title="Wave comparison and field effect" purpose={`Round ${round}: strokes per round against the field average`}>
         <WaveCards waves={waves} scale={scale} />
         <div className="kpi-grid wx-field">
           {field && field.common_strokes !== null && <Kpi label="Whole-field shift" value={fieldWords(field.common_strokes)} detail="How much weather moves scoring for everyone" hint="The change in the average score for the whole field because of the weather." />}
           {field && field.cut_line_shift !== null && <Kpi label="Cut-line shift" value={fieldWords(field.cut_line_shift)} detail="Expected move of the projected cut" hint="How far the weather is expected to move the projected cut score." />}
         </div>
         {field && field.cut_line_shift === null && <p className="inputs-muted">No cut-line shift for this round: the cut is only projected once round 2 is in view.</p>}
-      </Panel>
+      </Section>
 
-      <Panel eyebrow="All players" title="Weather effect by player (rounds 1 and 2)">
+      <Section id="players" title="Weather effect by player (rounds 1 and 2)" purpose="Strokes per round: negative helps the player, positive hurts">
         <PlayersTable doc={doc} />
-      </Panel>
+      </Section>
     </div>
   );
 }
@@ -374,10 +377,10 @@ function BriefHourly({ doc }: { doc: WeatherDoc }) {
   const [pick, setPick] = useState<number | null>(null);
   const round = pick !== null && rounds.includes(pick) ? pick : rounds[0];
   return (
-    <Panel eyebrow="Hour by hour" title="Forecast numbers by round" actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
+    <Section id="hourly" title="Hour by hour" purpose="Forecast numbers by round" actions={owner ? <a className="inputs-button" href={`/weather-edits?e=${encodeURIComponent(doc.event_uid)}`} title="Replace the forecast for chosen hours with your own numbers, then reprice">Edit hourly weather</a> : undefined}>
       <SegmentedControl label="Round" value={String(round)} onChange={(x) => setPick(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}` }))} />
       <WeatherHourTable points={doc.forecast.hourly.filter((h) => h.round === round)} />
-    </Panel>
+    </Section>
   );
 }
 
@@ -385,12 +388,8 @@ function BriefHourly({ doc }: { doc: WeatherDoc }) {
 export function WeatherEffectsView() {
   const { data: index, loading } = useDashboardData<PublishIndex>("golfprice/index.json");
   const events = useMemo(() => index?.events ?? [], [index]);
-  const [pick, setPick] = useState("");
+  const pick = useEventParam();
   const [now] = useState(() => Date.now());
-  // A deep link (?e=<event_uid>) opens that event; read after mount so the server render matches.
-  useEffect(() => {
-    queueMicrotask(() => setPick((current) => current || new URLSearchParams(window.location.search).get("e") || ""));
-  }, []);
   const event = events.find((e) => e.event_uid === pick) ?? events.find((e) => e.weather_brief_key) ?? events.find((e) => e.weather_key) ?? events[0];
   const briefKey = briefKeyFor(event);
   const briefLoad = useDashboardData<unknown>(briefKey);
@@ -400,24 +399,16 @@ export function WeatherEffectsView() {
   const doc = useMemo(() => parseWeather(data), [data]);
 
   const intro = (
-    <PageIntro
-      eyebrow="This week's conditions"
+    <PageHeader
+      eyebrow={event ? `${event.tour ? tourWord(event.tour) + " · " : ""}${event.name}` : "This week's conditions"}
       title="Weather"
-      description="How the weather changes scoring at this course this week, who it helps and hurts, and what would change if the forecast moves."
-      controls={events.length > 0 ? (
-        <label className="select-control">
-          <span>Event</span>
-          <select value={event?.event_uid ?? ""} onChange={(e) => setPick(e.target.value)}>
-            {events.map((e) => <option key={e.event_uid} value={e.event_uid}>{e.name}{e.tour ? ` (${tourWord(e.tour)})` : ""}</option>)}
-          </select>
-        </label>
-      ) : undefined}
+      purpose="How the forecast changes scoring this week: how hard each round plays against a typical day, which tee wave has the edge, and who the weather helps or hurts."
     />
   );
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;
   if (!event) return <div>{intro}<EmptyState title="No run is published yet" detail="Weather appears here once a run has been published with a forecast." /></div>;
   if (briefKey && briefLoad.loading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
-  if (brief) return <div>{intro}<BriefCurrencyBanner event={event} /><OwnerEditNote summary={doc?.forecast.owner_overrides ?? null} eventUid={event.event_uid} /><WeatherBriefBody key={event.event_uid} brief={brief} />{doc && doc.forecast.hourly.length > 0 && <BriefHourly key={event.event_uid} doc={doc} />}</div>;
+  if (brief) return <div>{intro}<BriefCurrencyBanner event={event} /><OwnerEditNote summary={doc?.forecast.owner_overrides ?? null} eventUid={event.event_uid} /><WeatherBriefBody key={event.event_uid} brief={brief}>{doc && doc.forecast.hourly.length > 0 ? <BriefHourly key={event.event_uid} doc={doc} /> : null}</WeatherBriefBody></div>;
   if (docLoading) return <div>{intro}<LoadingState label="Loading weather" /></div>;
   if (!doc) {
     return (

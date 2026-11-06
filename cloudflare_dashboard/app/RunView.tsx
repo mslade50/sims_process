@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { EmptyState, LoadingState, PageIntro, Panel } from "./components";
+import { EmptyState, LoadingState } from "./components";
+import { Chip, OnThisPage, PageHeader, Section, type Tone } from "./ui";
+import "./run.css";
 import { etTime } from "./lib";
 import { DataFreshnessPanel } from "./DataFreshnessPanel";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { suggestedGroup } from "./shell-rules";
-import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
+import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, typicalTake, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
 type Heartbeat = MachineBeat & { version?: string };
@@ -60,30 +62,53 @@ function runningName(id: string | null, jobs: JobRow[] | undefined): string {
   return job ? (specFor(job.type)?.label ?? "a job") : "a job";
 }
 
+const STATE_TONE: Record<string, Tone> = { done: "positive", failed: "negative", expired: "neutral", cancelled: "neutral", running: "accent", claimed: "accent", queued: "warning" };
+
+/** Status as icon + word + colour, never colour alone. */
+function StateIcon({ state }: { state: string }) {
+  const common = { viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true, className: `run-icon ${state}` };
+  if (state === "done") return <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="m6.8 10.2 2.2 2.2 4.2-4.6" /></svg>;
+  if (state === "failed") return <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="m7.4 7.4 5.2 5.2M12.6 7.4l-5.2 5.2" /></svg>;
+  if (state === "running" || state === "claimed") return <svg {...common}><circle cx="10" cy="10" r="7.5" opacity=".25" /><path d="M10 2.5a7.5 7.5 0 0 1 7.5 7.5" /></svg>;
+  if (state === "queued") return <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="M10 6v4.2l2.8 1.6" /></svg>;
+  return <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="m5.2 14.8 9.6-9.6" /></svg>;
+}
+const StatusChip = ({ state }: { state: string }) => <Chip tone={STATE_TONE[state] ?? "neutral"}><StateIcon state={state} />{stateLabel(state)}</Chip>;
+
 /* ------------------------------------------------------------------ confirm sheet */
-function ConfirmSheet({ spec, busy, target, onSubmit, onClose }: { spec: JobSpec; busy: boolean; target: Target; onSubmit: (params: JobParams) => void; onClose: () => void }) {
+function ConfirmSheet({ spec, busy, target, took, onSubmit, onClose }: { spec: JobSpec; busy: boolean; target: Target; took: string; onSubmit: (params: JobParams) => void; onClose: () => void }) {
   const [round, setRound] = useState<"auto" | "1" | "2" | "3">("auto");
   const [noPull, setNoPull] = useState(false);
   const [supersede, setSupersede] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
   const params: JobParams = {
     ...(spec.after_round && round !== "auto" ? { after_round: Number(round) as 1 | 2 | 3 } : {}),
     ...(spec.no_pull && noPull ? { no_pull: true } : {}),
     ...(spec.supersede && supersede ? { supersede: true } : {}),
   };
+  const optionCount = [spec.after_round, spec.no_pull, spec.supersede].filter(Boolean).length;
   return (
-    <div className="run-sheet" role="dialog" aria-modal="true" aria-label={`Confirm ${spec.label}`}>
-      <button className="run-sheet-backdrop" type="button" onClick={onClose} aria-label="Cancel" />
+    <div className="run-sheet" role="dialog" aria-modal="true" aria-labelledby="run-sheet-title">
+      <button className="run-sheet-backdrop" type="button" onClick={onClose} aria-label="Cancel" tabIndex={-1} />
       <div className="run-sheet-body">
         <span className="eyebrow">{spec.group}</span>
-        <h2>{spec.label}</h2>
+        <h2 id="run-sheet-title">{spec.label}</h2>
         <p>{spec.does}</p>
-        <p className="inputs-muted">{spec.when}</p>
-        <p className="run-target-note">Runs on: <b>{target === "auto" ? "Automatic (the always-on desktop; the backup only if it is down)" : machineLabel(target)}</b></p>
+        <dl className="run-sheet-facts">
+          <div><dt>Runs on</dt><dd>{target === "auto" ? "Automatic: the always-on desktop (the backup only if it is down)" : machineLabel(target)}</dd></div>
+          <div><dt>Takes</dt><dd>{took}</dd></div>
+          <div><dt>Press it</dt><dd>{spec.when}</dd></div>
+        </dl>
+        {optionCount > 0 && <p className="run-sheet-options">Options (the defaults are right for almost every run)</p>}
         {spec.after_round && (
           <label className="run-field">
             <span>Round just finished</span>
             <select value={round} onChange={(event) => setRound(event.target.value as typeof round)}>
-              <option value="auto">Automatic</option>
+              <option value="auto">Automatic (works it out)</option>
               <option value="1">After round 1</option>
               <option value="2">After round 2</option>
               <option value="3">After round 3</option>
@@ -104,7 +129,8 @@ function ConfirmSheet({ spec, busy, target, onSubmit, onClose }: { spec: JobSpec
         )}
         <div className="run-sheet-actions">
           <button type="button" className="inputs-button run-big" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="inputs-button primary run-big" onClick={() => onSubmit(params)} disabled={busy}>{busy ? "Sending…" : "Run it"}</button>
+          <button type="button" className="inputs-button primary run-big" onClick={() => onSubmit(params)} disabled={busy} autoFocus // eslint-disable-line jsx-a11y/no-autofocus
+>{busy ? "Sending…" : "Run it"}</button>
         </div>
       </div>
     </div>
@@ -118,6 +144,7 @@ export function RunView() {
   const [now, setNow] = useState(() => Date.now());
   const [pending, setPending] = useState<JobSpec | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
   const [target, setTarget] = useState<Target>("auto");
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string; problems?: string[] } | null>(null);
@@ -150,6 +177,14 @@ export function RunView() {
     };
   }, [reload]);
 
+  // A one-second clock so a running job's elapsed time counts up and ages stay honest.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const refreshNow = async () => { setRefreshing(true); await reload(); setRefreshing(false); };
+
   const submit = async (params: JobParams) => {
     if (!pending) return;
     const chosen = machines.find((m) => m.name === target && m.status !== "offline") ? target : "auto";   // never send a job to a machine that went offline since it was picked
@@ -157,7 +192,7 @@ export function RunView() {
     const result = await api<{ job?: JobRecord }>("/api/jobs", { method: "POST", body: JSON.stringify({ type: pending.type, params, ...(chosen !== "auto" ? { target_machine: chosen } : {}) }) });
     setBusy(false);
     if (result.ok) {
-      setNotice({ tone: "ok", text: `${pending.label} is queued${chosen === "auto" ? "" : ` for ${machineLabel(chosen)}`}. ${chosen === "auto" ? "The always-on desktop" : machineLabel(chosen)} picks it up within a minute or two.` });
+      setNotice({ tone: "ok", text: `${pending.label} is queued${chosen === "auto" ? "" : ` for ${machineLabel(chosen)}`}. ${chosen === "auto" ? "The always-on desktop" : machineLabel(chosen)} picks it up within a minute or two. Follow it in the timeline below.` });
       setPending(null);
       void reload();
     } else {
@@ -173,144 +208,188 @@ export function RunView() {
   };
 
   // The automatic 30-minute odds checks and hourly watches would bury everything else: hide the finished ones unless asked.
-  const isAutoCheck = (job: JobRow) => job.requested_by === "cron" && (job.type === "odds_reprice" || job.type === "watch") && job.state === "done";
-  const visibleJobs = (data?.jobs ?? []).filter((job) => showChecks || !isAutoCheck(job));
-  const hiddenChecks = (data?.jobs ?? []).length - visibleJobs.length;
+  const allJobs = [...(data?.jobs ?? [])].sort((a, b) => (parseUtc(b.requested_at) ?? 0) - (parseUtc(a.requested_at) ?? 0));
+  const isAutoCheck = (job: JobRow) => job.requested_by === "cron" && (job.type === "odds_reprice" || job.type === "watch") && ["done", "queued", "expired", "cancelled"].includes(job.state);
+  const visibleJobs = allJobs.filter((job) => showChecks || !isAutoCheck(job));
+  const hiddenChecks = allJobs.length - visibleJobs.length;
 
   const suggested = suggestedGroup(now);
-  const busyTypes = new Set((data?.jobs ?? []).filter((job) => !isTerminal(job.state) && now - (parseUtc(job.requested_at) ?? 0) < 6 * 3_600_000).map((job) => job.type));
+  const activeAll = allJobs.filter((job) => !isTerminal(job.state) && now - (parseUtc(job.requested_at) ?? 0) < 6 * 3_600_000);
+  const busyTypes = new Set(activeAll.map((job) => job.type));
+  const active = activeAll.filter((job) => !isAutoCheck(job));
+  const autoWaiting = activeAll.length - active.length;
+  const lastResult = allJobs.find((job) => isTerminal(job.state) && !isAutoCheck(job) && job.state !== "cancelled");
+  const everyOffline = !!data && machines.length > 0 && machines.every((m) => m.status === "offline");
+  /** How long this job type took last time it finished, else a plain estimate. */
+  const tookFor = (type: string) => {
+    const last = allJobs.find((job) => job.type === type && job.state === "done" && job.status?.finished_at && (job.status.started_at ?? job.status.claimed_at));
+    const text = last ? duration(last.status, now) : "";
+    return text ? `Last took ${text}` : typicalTake(type);
+  };
+
+  const sections = [{ id: "now", label: "Right now" }, { id: "start", label: "Start a job" }, { id: "history", label: "Timeline" }, { id: "health", label: "Data health" }];
 
   return (
     <div className="run-page">
-      <PageIntro eyebrow="Operate" title="Run" description="Start a pricing job from here, for example from your phone. The desktop checks for requests every minute and the results appear at the bottom of the page." />
+      <PageHeader eyebrow="Operate" title="Run" purpose="Start a pricing job from your phone. The always-on desktop checks the queue every minute, runs the job and posts the result in the timeline." actions={<button type="button" className="inputs-button" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
+      <OnThisPage sections={sections} />
 
-      <Panel eyebrow="Run on" title="Machine">
+      <Section id="now" title="Right now" purpose="What is running, the last result, and whether a machine can take work.">
+        {notice && (
+          <div className={`run-notice ${notice.tone === "error" ? "error" : "ok"}`} role="status">
+            <span><strong>{notice.tone === "error" ? "Not started." : "Done."}</strong> {notice.text}</span>
+            {notice.problems?.map((problem) => <span key={problem}>{problem}</span>)}
+            <button type="button" className="inputs-button subtle" onClick={() => setNotice(null)}>Dismiss</button>
+          </div>
+        )}
         {!data ? (
-          error ? <p className="inputs-muted">The desktop runner status could not be loaded, so jobs cannot be started from here right now. Try again in a minute.</p> : <LoadingState label="Loading machines" />
+          error ? <EmptyState tone="warning" title="The desktop runner status could not be loaded" detail="Jobs cannot be started from here right now. Try again in a minute." onRetry={() => void refreshNow()} /> : <LoadingState label="Loading machines" />
         ) : (
           <>
-            {machines.every((m) => m.status === "offline") && (
-              <div className="inputs-banner warn"><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong>Jobs wait in the queue until a machine comes back online.</div>
+            {everyOffline && (
+              <div className="run-notice error" role="alert"><span><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong> Jobs wait in the queue until a machine comes back online.</span></div>
             )}
-            {(data.roles_invalid || data.roles_read_error) && <div className="inputs-banner warn" role="alert">Role configuration could not be verified. Built-in defaults are shown for reference; they do not establish runner ownership or backup readiness.</div>}
-            <div className="run-machines" role="radiogroup" aria-label="Machine to run on">
-              <label className={`run-machine ${target === "auto" ? "selected" : ""}`} aria-label="Automatic: the always-on desktop, the backup only if it is down">
+            {(data.roles_invalid || data.roles_read_error) && <div className="run-notice error" role="alert"><span>Role configuration could not be verified. Built-in defaults are shown for reference; they do not establish runner ownership or backup readiness.</span></div>}
+            <div className="run-now-grid">
+              <div className="run-now-card">
+                <h3>Running</h3>
+                {active.length === 0 ? <p className="run-quiet">Nothing you started is running or waiting.</p> : (
+                  <ul className="run-active">{active.map((job) => (
+                    <li key={job.id}><StateIcon state={job.state} /><span><strong>{specFor(job.type)?.label ?? job.type}</strong><small>{stateLabel(job.state)}{duration(job.status, now) ? `, ${duration(job.status, now)} so far` : `, requested ${ago(job.requested_at, now)}`}</small></span></li>
+                  ))}</ul>
+                )}
+                {autoWaiting > 0 && <p className="run-hint">{autoWaiting} automatic check{autoWaiting === 1 ? " is" : "s are"} waiting for a machine. They start by themselves once one is online.</p>}
+              </div>
+              <div className="run-now-card">
+                <h3>Last result</h3>
+                {lastResult ? (
+                  <p className="run-last"><StatusChip state={lastResult.state} /><span><strong>{specFor(lastResult.type)?.label ?? lastResult.type}</strong><small>{ago(lastResult.status?.finished_at ?? lastResult.requested_at, now)}{duration(lastResult.status, now) ? `, took ${duration(lastResult.status, now)}` : ""}</small></span></p>
+                ) : <p className="run-quiet">No finished run in the list yet.</p>}
+              </div>
+              <div className="run-now-card">
+                <h3>Machines</h3>
+                <ul className="run-machine-list">{machines.map((m) => (
+                  <li key={m.name}><i aria-hidden="true" className={`run-dot ${m.status}`} /><span><strong>{m.label}</strong><small>{m.status === "offline" ? (m.lastSeen ? `Offline, last heard ${ago(m.lastSeen, now)}` : "Offline, has not reported in") : m.status === "running" ? `Running ${runningName(m.jobId, data.jobs)}` : `Online and idle, checked in ${ago(m.lastSeen ?? undefined, now)}`}</small></span></li>
+                ))}</ul>
+              </div>
+            </div>
+          </>
+        )}
+      </Section>
+
+      <Section id="start" title="Start a job" purpose={`Suggested jobs for ${suggested === "During event" ? "an event day" : suggested} come first. Pressing one asks you to confirm before anything runs.`}>
+        {data && (
+          <fieldset className="run-target">
+            <legend>Run on</legend>
+            <div className="run-target-options" role="radiogroup" aria-label="Machine to run on">
+              {/* eslint-disable-next-line jsx-a11y/label-has-associated-control -- radio input is nested */}
+              <label className={`run-target-opt ${target === "auto" ? "selected" : ""}`}>
                 <input type="radio" name="run-target" checked={target === "auto"} onChange={() => setTarget("auto")} />
-                <span>
-                  <strong>Automatic</strong>
-                  <small>The always-on desktop. The backup takes over only if the desktop has stopped reporting in.</small>
-                </span>
+                <span><strong>Automatic</strong><small>Always-on desktop; backup only if it is down</small></span>
               </label>
               {machines.map((m) => (
-                <label key={m.name} className={`run-machine ${m.status} ${target === m.name ? "selected" : ""}`} aria-label={`${m.label}, ${m.status === "offline" ? "offline" : m.status === "running" ? "running a job" : "online, idle"}`}>
+                // eslint-disable-next-line jsx-a11y/label-has-associated-control -- radio input is nested
+                <label key={m.name} className={`run-target-opt ${m.status} ${target === m.name ? "selected" : ""}`}>
                   <input type="radio" name="run-target" checked={target === m.name} disabled={m.status === "offline"} onChange={() => setTarget(m.name)} />
-                  <span>
-                    <strong>{m.label}</strong>
-                    <small title={m.lastSeen ? `Last heard from ${etTime(m.lastSeen)}` : undefined}>
-                      <i aria-hidden="true" className={`run-dot ${m.status}`} />
-                      {m.status === "offline" ? (m.lastSeen ? `Offline (last heard from ${ago(m.lastSeen, now)})` : "Offline (has not reported in)") : m.status === "running" ? `Running ${runningName(m.jobId, data?.jobs)}` : `Online and idle (checked in ${ago(m.lastSeen ?? undefined, now)})`}
-                    </small>
-                    <small>{machineRoleEvidence(m.name, data.roles ?? null, data.roles_read_error ? "roles_read_error" : data.roles_invalid ? "roles_invalid" : null, data.heartbeats, now).message}</small>
-                  </span>
+                  <span><strong>{m.label}</strong><small title={machineRoleEvidence(m.name, data.roles ?? null, data.roles_read_error ? "roles_read_error" : data.roles_invalid ? "roles_invalid" : null, data.heartbeats, now).message}><i aria-hidden="true" className={`run-dot ${m.status}`} />{m.status === "offline" ? "Offline" : m.status === "running" ? "Busy" : "Online"}{m.role === "backup" ? ", backup" : ""}</small></span>
                 </label>
               ))}
             </div>
-            {targetOffline && <p className="inputs-muted">The selected machine went offline, so new jobs will use Automatic until it is back.</p>}
+            {targetOffline && <p className="run-hint">The selected machine went offline, so new jobs will use Automatic until it is back.</p>}
             {target !== "auto" && !targetOffline && machines.find((m) => m.name === target)?.role === "backup" && (
-              <p className="inputs-muted">The backup only takes a job addressed to it when the main desktop is not busy and both run the same version of the code.</p>
+              <p className="run-hint">The backup only takes a job addressed to it when the main desktop is not busy and both run the same version of the code.</p>
             )}
-          </>
+          </fieldset>
         )}
-      </Panel>
+        {[suggested, ...GROUPS.filter((group) => group !== suggested)].map((group) => {
+          const specs = JOB_TYPES.filter((spec) => spec.group === group);
+          const grid = (
+            <div className="run-grid">
+              {specs.map((spec) => {
+                const waiting = busyTypes.has(spec.type);
+                return (
+                  <button type="button" key={spec.type} className="run-card" onClick={() => setPending(spec)} disabled={waiting || !data}>
+                    <span className="run-card-head"><strong>{spec.label}</strong><Chip tone={waiting ? "warning" : "neutral"}>{waiting ? "Already queued or running" : tookFor(spec.type)}</Chip></span>
+                    <span className="run-card-does">{spec.does}</span>
+                    <small>{!data ? "Unavailable until the runner status loads" : <><b>When:</b> {spec.when}</>}</small>
+                  </button>
+                );
+              })}
+            </div>
+          );
+          const title = group === "During event" ? "During the event" : group === "Anytime" ? "Anytime tools" : group;
+          return group === suggested ? (
+            <div key={group} className="run-suggested">
+              <h3><Chip tone="accent">Suggested now</Chip> {title}</h3>
+              {grid}
+            </div>
+          ) : (
+            <details key={group} className="run-collapsed"><summary>{title}<small>{specs.length} job{specs.length === 1 ? "" : "s"}</small></summary>{grid}</details>
+          );
+        })}
+      </Section>
 
-      {notice && (
-        <div className={`inputs-banner ${notice.tone === "error" ? "warn" : ""}`} role="status">
-          <strong>{notice.tone === "error" ? "Not started" : "Done"}</strong>
-          {notice.text}
-          {notice.problems?.map((problem) => <span key={problem}>{problem}</span>)}
-          <button type="button" className="inputs-button subtle run-dismiss" onClick={() => setNotice(null)}>Dismiss</button>
-        </div>
-      )}
-
-      {[suggested, ...GROUPS.filter((group) => group !== suggested)].map((group) => {
-        const specs = JOB_TYPES.filter((spec) => spec.group === group);
-        const grid = (
-          <div className="run-grid">
-            {specs.map((spec) => (
-              <button type="button" key={spec.type} className="run-card" onClick={() => setPending(spec)} disabled={busyTypes.has(spec.type) || !data}>
-                <strong>{spec.label}</strong>
-                <span>{spec.does}</span>
-                <small>{busyTypes.has(spec.type) ? "Already waiting or running" : !data ? "Unavailable until the runner status loads" : spec.when}</small>
-              </button>
-            ))}
-          </div>
-        );
-        // Today's weekday group is open and highlighted; the rest are collapsed (site audit C4).
-        return group === suggested ? (
-          <Panel key={group} eyebrow="Suggested now" title={group} className="run-suggested">{grid}</Panel>
-        ) : (
-          <details key={group} className="run-collapsed"><summary>{group}<small>{specs.length} job{specs.length === 1 ? "" : "s"}</small></summary>{grid}</details>
-        );
-      })}
-
-      <DataFreshnessPanel />
-      <OddsSignalsPanel />
-
-      <Panel eyebrow="Latest 50" title="Recent runs" actions={<button type="button" className="inputs-button" onClick={() => void reload()}>Refresh</button>}>
-        <label className="run-check">
-          <input type="checkbox" checked={showChecks} onChange={(event) => setShowChecks(event.target.checked)} />
-          <span>Also show finished automatic checks (odds and input watch){hiddenChecks > 0 && !showChecks ? `: ${hiddenChecks} hidden` : ""}</span>
-        </label>
-        {error && <div className="inputs-banner warn" role="alert"><strong>Could not load the recent runs</strong>{error}</div>}
+      <Section id="history" title="Timeline" purpose="Newest first. Each run shows its state, who asked, which machine ran it and how long it took."
+        actions={<label className="run-check run-check-inline"><input type="checkbox" checked={showChecks} onChange={(event) => setShowChecks(event.target.checked)} /><span>Show automatic checks{hiddenChecks > 0 && !showChecks ? ` (${hiddenChecks} hidden)` : ""}</span></label>}>
+        {error && <div className="run-notice error" role="alert"><span><strong>Could not load the recent runs.</strong> {error}</span></div>}
         {!data && !error && <LoadingState label="Loading recent runs" />}
-        {data && data.jobs.length === 0 && <EmptyState title="Nothing has run yet" detail="Press one of the buttons above to start the first run." />}
-        <div className="run-jobs">
+        {data && data.jobs.length === 0 && <EmptyState title="Nothing has run yet" detail="Press one of the jobs above to start the first run." />}
+        <ol className="run-timeline">
           {visibleJobs.map((job) => {
             const status = job.status;
             const spec = specFor(job.type);
+            const wait = waitingFor(job, job.state, data?.heartbeats, now);
             return (
-              <article key={job.id} className={`run-job state-${job.state}`}>
-                <header>
-                  <strong>{spec?.label ?? job.type}</strong>
-                  <span className={`run-badge ${job.state}`}>{stateLabel(job.state)}</span>
-                </header>
-                <p className="inputs-muted" title={`${ago(job.requested_at, now)}`}>
-                  Requested {etTime(job.requested_at)} by {requesterLabel(job.requested_by)}{paramsSentence(job.params) ? ` (${paramsSentence(job.params)})` : ""}
-                </p>
-                {(status?.machine || duration(status, now)) && (
-                  <div className="run-facts">
-                    {status?.machine && <span>Ran on <b>{machineLabel(status.machine)}</b></span>}
-                    {job.target_machine && !status?.machine && <span>For <b>{machineLabel(job.target_machine)}</b></span>}
-                    {duration(status, now) && <span>Took <b>{duration(status, now)}</b></span>}
-                  </div>
-                )}
-                {waitingFor(job, job.state, data?.heartbeats, now) && <p className="run-summary run-waiting">{waitingFor(job, job.state, data?.heartbeats, now)}</p>}
-                {status?.summary && <p className="run-summary">{status.summary}</p>}
-                {job.state === "queued" && <button type="button" className="inputs-button danger" onClick={() => void cancel(job.id)}>Cancel</button>}
-                {(status?.log_tail || (status && status.state !== "claimed")) && (
-                  <details className="tech-details">
-                    <summary>Technical details</summary>
-                    <p className="inputs-muted">Job {job.id} · {job.type}{status?.exit_code !== undefined && status?.exit_code !== null ? ` · exit code ${status.exit_code}` : ""}</p>
-                    <pre className="run-log">{status?.log_tail || "The log is empty."}</pre>
-                    <a className="inputs-muted" href={`/api/jobs/${encodeURIComponent(job.id)}/log`} target="_blank" rel="noreferrer">Open the full log</a>
-                  </details>
-                )}
-              </article>
+              <li key={job.id} className={`run-job state-${job.state}`}>
+                <span className="run-rail" aria-hidden="true"><StateIcon state={job.state} /></span>
+                <div className="run-job-body">
+                  <header>
+                    <strong>{spec?.label ?? job.type}</strong>
+                    <StatusChip state={job.state} />
+                  </header>
+                  <p className="run-when" title={ago(job.requested_at, now)}>
+                    {etTime(job.requested_at)} by {requesterLabel(job.requested_by)}{paramsSentence(job.params) ? ` (${paramsSentence(job.params)})` : ""}
+                  </p>
+                  {(status?.machine || duration(status, now) || (job.target_machine && !status?.machine)) && (
+                    <div className="run-facts">
+                      {status?.machine && <span>Ran on <b>{machineLabel(status.machine)}</b></span>}
+                      {job.target_machine && !status?.machine && <span>For <b>{machineLabel(job.target_machine)}</b></span>}
+                      {duration(status, now) && <span>{isTerminal(job.state) ? "Took" : "Running for"} <b className="num">{duration(status, now)}</b></span>}
+                    </div>
+                  )}
+                  {wait && <p className="run-summary run-waiting">{wait}</p>}
+                  {status?.summary && <p className="run-summary">{status.summary}</p>}
+                  {job.state === "queued" && <button type="button" className="inputs-button danger" onClick={() => void cancel(job.id)}>Cancel this request</button>}
+                  {(status?.log_tail || (status && status.state !== "claimed")) && (
+                    <details className="tech-details">
+                      <summary>Log and technical details</summary>
+                      <p className="inputs-muted">Job {job.id} · {job.type}{status?.exit_code !== undefined && status?.exit_code !== null ? ` · exit code ${status.exit_code}` : ""}</p>
+                      <pre className="run-log">{status?.log_tail || "The log is empty."}</pre>
+                      <a href={`/api/jobs/${encodeURIComponent(job.id)}/log`} target="_blank" rel="noreferrer">Open the full log</a>
+                    </details>
+                  )}
+                </div>
+              </li>
             );
           })}
-        </div>
-      </Panel>
+        </ol>
+      </Section>
+
+      <Section id="health" title="Data health" purpose="Is every data source current, and what the latest odds check found.">
+        <DataFreshnessPanel />
+        <OddsSignalsPanel />
+      </Section>
 
       {data && (
         <details className="tech-details">
-          <summary>Technical details</summary>
+          <summary>Machine versions and names</summary>
           <ul className="inputs-muted">
             {machines.map((m) => <li key={m.name}>{m.label}: machine name {m.name}{m.commit ? `, code version ${m.commit}` : ""}{m.lastSeen ? `, last heard from ${etTime(m.lastSeen)}` : ""}</li>)}
           </ul>
         </details>
       )}
 
-      {pending && <ConfirmSheet spec={pending} busy={busy} target={targetOffline ? "auto" : target} onSubmit={(params) => void submit(params)} onClose={() => setPending(null)} />}
+      {pending && <ConfirmSheet spec={pending} busy={busy} target={targetOffline ? "auto" : target} took={tookFor(pending.type)} onSubmit={(params) => void submit(params)} onClose={() => setPending(null)} />}
     </div>
   );
 }

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { EmptyState, Kpi, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
+import { EmptyState, LoadingState, Panel, SegmentedControl } from "./components";
+import { Chip, PageHeader, Section as UiSection, Stat } from "./ui";
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
 import { weatherKey } from "./WeatherEffectsView";
 import { BOUNDS, FIELDS, MAX_NOTE, checkHourFields, compassLetters, completedRounds, eventSafe, eventStarted, liveStatus, repriceForMode, validateWeatherOverride, type Phase, type RunLike, type Section, type WeatherField, type WeatherOverrideDocV2 } from "./weather-overrides-rules";
 import { hhmm, parseWeather, type HourlyPoint, type WeatherDoc } from "./weather-rules";
+import "./inputs.css";
 import "./weather-edits.css";
 
 type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; weather_key?: string | null; weather_brief_key?: string | null; distribution_runs?: RunLike[] | null };
@@ -90,15 +92,19 @@ function EditorBody({ event, doc }: { event: IndexEvent; doc: WeatherDoc }) {
 
   return (
     <div className="wx-body">
-      <Panel eyebrow="How this works" title="Replace the forecast for chosen hours">
+      <details className="wx-how">
+        <summary>How weather edits work</summary>
         <ul className="wx-edit-help">
           <li>An edit replaces the forecast for that hour only. Leave a box blank to keep the forecast.</li>
           <li>The weather model still adds its usual uncertainty around your number, so a single edit does not make the hour certain.</li>
           <li>Prices change only after a reprice finishes (about 12 minutes). Saving alone changes nothing.</li>
-          <li>Edits stay in place for later runs until you clear them (in-event edits also end by themselves, see below). The original forecast is kept beside each edit.</li>
+          <li>Edits stay in place for later runs until you clear them (in-event edits also end by themselves). The original forecast is kept beside each edit.</li>
         </ul>
-      </Panel>
+      </details>
+      <div className="wx-kind">
+        <span className="wx-kind-label">Kind of edit</span>
       <SegmentedControl label="Kind of edit" value={mode} onChange={setMode} options={[{ value: "pre", label: "Before the event" }, { value: "live", label: "During the event" }]} />
+      </div>
       {loaded.state === "loading" && <LoadingState label="Loading your saved edits" />}
       {loaded.state === "error" && <div className="inputs-banner warn" role="alert"><strong>Your saved edits could not be loaded.</strong>{loaded.message} Saving is turned off until they load, so nothing can be overwritten by mistake. Reload the page to try again.</div>}
       <SectionEditor key={`${mode}-${completed}-${loaded.state}`} event={event} doc={doc} mode={mode} completed={completed} started={started} now={now} saved={saved} setSaved={setSaved} ready={loaded.state === "ready"} />
@@ -179,8 +185,18 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
   if (locked) {
     return <Panel eyebrow="During the event" title="In-event edits"><EmptyState title="In-event edits open after round 1 is complete" detail="Before then, use Before the event. Once a round finishes, you can edit the hours still to play and reprice the in-play prices." /></Panel>;
   }
+  const stateChip = dirty ? <Chip tone="warning">Unsaved changes</Chip> : savedCount > 0 ? <Chip tone="accent">Saved, prices not changed yet</Chip> : <Chip tone="neutral">No edits</Chip>;
+  const step = !editedCount && !savedCount ? 2 : dirty ? 3 : choice && savedCount ? 4 : 3;
+  const steps: Array<[string, string]> = [["Pick round", `${live ? "In-event" : "Pre-event"}${round ? `, R${round}` : ""}`], ["Edit hours", editedCount ? `${editedCount} hour${editedCount === 1 ? "" : "s"} edited` : "Type over the forecast"], ["Save", dirty ? "Unsaved changes" : savedCount ? "Saved" : "Nothing to save"], ["Reprice", choice ? "Applies edits to prices" : "Not available"]];
   return (
     <>
+      <ol className="wx-steps" aria-label="Steps">
+        {steps.map(([title, detail], i) => {
+          const n = i + 1;
+          const state = n < step || n === 1 ? "done" : n === step ? "current" : "todo";
+          return <li key={title} className={`wx-step wx-${state}`} aria-current={state === "current" ? "step" : undefined}><span className="wx-step-n" aria-hidden="true">{state === "done" ? "✓" : n}</span><span><strong>{title}</strong><small>{detail}</small></span></li>;
+        })}
+      </ol>
       {live ? (
         <p className="inputs-note accent">These edits apply to in-play prices after round {completed} (tonight and during round {completed + 1}) and are cleared automatically once round {completed + 1} is complete.</p>
       ) : (
@@ -189,15 +205,16 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
       {live && status.expiredFrom !== null && <div className="inputs-banner" role="status"><strong>Your in-event edits from after round {status.expiredFrom} have expired.</strong>They no longer affect prices. The boxes below start empty.</div>}
       {preDead && <div className="inputs-banner warn" role="status"><strong>The event has started.</strong>Pre-tournament edits no longer affect any prices. You can still save or clear them, but Reprice is turned off here. Use During the event for in-play weather.</div>}
       <div className="kpi-grid">
-        <Kpi label="Saved edits" value={String(savedCount)} detail={stamp} hint="Hours with at least one number of yours, as last saved." tone={savedCount ? "accent" : "neutral"} />
-        <Kpi label="On this page" value={String(editedCount)} detail={dirty ? "Unsaved changes" : "Matches what is saved"} hint="Hours with at least one number on this page right now." tone={dirty ? "negative" : "neutral"} />
-        <Kpi label="Reprice runs as" value={!choice ? "Not available" : choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"} detail={choice ? choice.reason : "Pre-tournament edits no longer apply."} hint="Chosen from the kind of edit, the event start date and how many tee times are known." />
+        <Stat label="Saved edits" value={String(savedCount)} unit={savedCount === 1 ? "hour" : "hours"} tone={savedCount ? "accent" : "neutral"} note={stamp} hint="Hours with at least one number of yours, as last saved." />
+        <Stat label="On this page" value={String(editedCount)} unit={editedCount === 1 ? "hour" : "hours"} tone={dirty ? "negative" : "neutral"} note={dirty ? "Unsaved changes" : "Matches what is saved"} hint="Hours with at least one number on this page right now." />
+        <Stat label="Reprice runs as" value={!choice ? "Not available" : choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"} note={choice ? choice.reason : "Pre-tournament edits no longer apply."} hint="Chosen from the kind of edit, the event start date and how many tee times are known." />
       </div>
       {orphaned > 0 && <p className="inputs-note accent">{orphaned} saved {orphaned === 1 ? "edit is" : "edits are"} for hours that are not in the current forecast. They are kept and saved with the rest.</p>}
 
-      {rounds.length > 1 && <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}${hasEdit(r) ? " •" : ""}` }))} />}
-
-      <Panel eyebrow={round ? `Round ${round}` : undefined} title="Hours" actions={<a className="inputs-button" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`} title="See the charts with your saved edits applied">Weather page</a>}>
+      <UiSection id="wx-hours" title={round ? `Round ${round} hours` : "Hours"} purpose="Type your number over any hour. Blank keeps the forecast; an edited hour is highlighted and shows how far it moves from the forecast." actions={<>
+        {rounds.length > 1 && <SegmentedControl label="Round" value={String(round)} onChange={(x) => setRound(Number(x))} options={rounds.map((r) => ({ value: String(r), label: `R${r}${hasEdit(r) ? " •" : ""}` }))} />}
+        <a className="inputs-button" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`} title="See the charts with your saved edits applied">See the effect on Weather</a>
+      </>}>
         <div className="table-scroll wx-edit-table">
           <table>
             <thead>
@@ -212,20 +229,24 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
                 const row = drafts[time] ?? {};
                 const problems = checkHourFields(row);
                 return (
-                  <tr key={time}>
+                  <tr key={time} className={Object.values(row).some((v) => (v ?? "").trim() !== "") ? "wx-row-edited" : undefined}>
                     <td className="wx-hour">{hhmm(p.hour)}</td>
                     {COLUMNS.map((c) => {
                       const fc = forecastValue(p, c.field);
                       const value = row[c.field] ?? "";
                       const problem = problems[c.field];
+                      const typed = value.trim() === "" ? NaN : Number(value);
+                      const diff = c.field !== "dir" && fc !== null && Number.isFinite(typed) ? typed - fc : null;
                       return (
                         <td key={c.field} className={value.trim() !== "" ? "wx-edited" : undefined}>
+                          <span className="wx-lab">{c.head}</span>
                           <span className="wx-fc" title="The published forecast, before any edit">Forecast {show(c.field, fc)}</span>
                           <input
                             className={`wx-input${problem ? " bad" : ""}`} type="text" inputMode="decimal" autoComplete="off" disabled={off}
                             value={value} placeholder={fc === null ? "" : String(Number(fc.toFixed(1)))} onChange={(e) => setField(time, c.field, e.target.value)}
                             aria-label={`${c.head} at ${hhmm(p.hour)}`} aria-invalid={problem ? true : undefined} title={c.hint}
                           />
+                          {diff !== null && Math.abs(diff) >= 0.05 && !problem && <small className="wx-diff">{diff > 0 ? "+" : "−"}{Number(Math.abs(diff).toFixed(1))} vs forecast</small>}
                           {problem && <small className="wx-problem" role="alert">{problem}</small>}
                         </td>
                       );
@@ -237,35 +258,39 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
           </table>
         </div>
         {points.length === 0 && <EmptyState title="No hourly forecast for this round" detail={live ? "There are no hours left to play in the published forecast." : "This round is too far away for the forecast to reach yet."} />}
-      </Panel>
+        <p className="inputs-muted">Allowed values: wind {BOUNDS.wind.lo} to {BOUNDS.wind.hi} mph, gusts {BOUNDS.gust.lo} to {BOUNDS.gust.hi} mph (not below the wind), temperature {BOUNDS.temp.lo} to {BOUNDS.temp.hi} °F, rain {BOUNDS.rain.lo} to {BOUNDS.rain.hi} mm per hour, direction {BOUNDS.dir.lo} to {BOUNDS.dir.hi}°.</p>
+      </UiSection>
 
-      <Panel eyebrow="Save and reprice" title="Note and actions">
+      <div className="wx-tray" role="group" aria-label="Save and reprice actions">
+        <div className="wx-tray-state">{stateChip}<span>{dirty && ready ? "Save before repricing." : `${editedCount} edited ${editedCount === 1 ? "hour" : "hours"}`}</span></div>
+        <div className="wx-actions">
+          <button type="button" className="inputs-button primary" onClick={save} disabled={off || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
+          <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={off || dirty || !choice} title={!choice ? "Pre-tournament edits no longer affect prices" : dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
+          <button type="button" className="inputs-button danger" onClick={() => setConfirmClear(true)} disabled={off || confirmClear || (savedCount === 0 && editedCount === 0)} title={live ? "Remove the in-event edits for this event" : "Remove the pre-tournament edits for this event"}>{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
+        </div>
+      </div>
+
+      <UiSection id="wx-save" title="Save and reprice" purpose="Saving keeps your numbers. Prices change only after you reprice and it finishes.">
         <label className="wx-note-field">
           <span>Note for the record (optional)</span>
           <textarea value={note} maxLength={MAX_NOTE} rows={2} disabled={off} onChange={(e) => { setNotice(null); setNote(e.target.value); }} placeholder="For example: local radar shows the front arriving two hours early" />
           <small>{note.length} of {MAX_NOTE} characters</small>
         </label>
         {checked.problems.length > 0 && <div className="inputs-banner warn" role="alert"><strong>Fix these before saving</strong>{checked.problems.slice(0, 4).join(" ")}</div>}
-        <div className="wx-actions">
-          <button type="button" className="inputs-button primary" onClick={save} disabled={off || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
-          <button type="button" className="inputs-button danger" onClick={() => setConfirmClear(true)} disabled={off || confirmClear || (savedCount === 0 && editedCount === 0)} title={live ? "Remove the in-event edits for this event" : "Remove the pre-tournament edits for this event"}>{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
-          <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={off || dirty || !choice} title={!choice ? "Pre-tournament edits no longer affect prices" : dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
-        </div>
         {confirmClear && (
           <div className="inputs-banner warn" role="alertdialog" aria-label="Confirm clearing edits">
             <strong>Clear every {live ? "in-event" : "pre-tournament"} edit for this event?</strong>The model goes back to the plain forecast for these hours on the next run. The other kind of edit is not touched.
             <span className="wx-actions"><button type="button" className="inputs-button danger" onClick={clearAll}>Yes, clear them</button><button type="button" className="inputs-button" onClick={() => setConfirmClear(false)}>Keep them</button></span>
           </div>
         )}
-        {dirty && ready && <p className="inputs-muted">You have unsaved changes. Save them before repricing.</p>}
         {notice && (
-          <div className={`inputs-banner ${notice.tone === "error" ? "warn" : ""}`} role="status">
+          <div className={`inputs-banner ${notice.tone === "error" ? "warn" : "ok"}`} role="status">
             <strong>{notice.tone === "error" ? "That did not work" : "Done"}</strong>{notice.text}
             {notice.link && <a className="ex-link" href={notice.link.href}>{notice.link.label}</a>}
           </div>
         )}
-      </Panel>
-      <p className="inputs-muted">Allowed values: wind {BOUNDS.wind.lo} to {BOUNDS.wind.hi} mph, gusts {BOUNDS.gust.lo} to {BOUNDS.gust.hi} mph (not below the wind), temperature {BOUNDS.temp.lo} to {BOUNDS.temp.hi} °F, rain {BOUNDS.rain.lo} to {BOUNDS.rain.hi} mm per hour, direction {BOUNDS.dir.lo} to {BOUNDS.dir.hi}°.</p>
+      </UiSection>
+
     </>
   );
 }
@@ -282,11 +307,11 @@ export function WeatherEditsView() {
   const doc = useMemo(() => parseWeather(data), [data]);
 
   const intro = (
-    <PageIntro
+    <PageHeader
       eyebrow="Your call on the weather"
       title="Weather edits"
-      description="Replace the forecast for chosen hours with your own numbers, save them, then reprice. Useful when you know something the forecast does not."
-      controls={events.length > 0 ? (
+      purpose="Replace the forecast for chosen hours with your own numbers, save, then reprice. Use it when you know something the forecast does not."
+      actions={events.length > 0 ? (
         <label className="select-control">
           <span>Event</span>
           <select value={event?.event_uid ?? ""} onChange={(e) => setPick(e.target.value)}>

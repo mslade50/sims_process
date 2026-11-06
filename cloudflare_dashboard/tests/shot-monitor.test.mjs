@@ -288,7 +288,7 @@ test("all technical evidence is inside default-closed tour or monitor disclosure
   let visible = html;
   while (/<details\b/.test(visible)) visible = visible.replace(/<details\b[^>]*>(?:(?!<details\b)[\s\S])*?<\/details>/g, "");
   assert.doesNotMatch(visible, /TECHNICAL_LOG_MARKER|SHA-256|Captured shots|Generation|schema|snapshot/i);
-  assert.equal((visible.match(/class="sm-golf"/g) ?? []).length, 3);
+  assert.equal((visible.match(/class="sm-golf"/g) ?? []).length, 0, "decorative golf-hole art was removed (design review)");
   assert.equal((visible.match(/aria-label="Pipeline stages"/g) ?? []).length, 3);
 });
 

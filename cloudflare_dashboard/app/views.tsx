@@ -18,6 +18,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { PageHeader, Section } from "./ui";
+import "./performance.css";
 import { DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import { GolfpriceScorecardSection } from "./ScorecardSection";
@@ -650,11 +652,11 @@ export function PerformanceView() {
   const [showLegacy, setShowLegacy] = useState(false);
   return (
     <>
-      <PageIntro eyebrow="Review" title="Scorecard and P&L" description="How the current model is doing against the market. The older bet-by-bet results are one click below." />
+      <PageHeader eyebrow="Review" title="Scorecard and P&L" purpose="How the current model is doing against the market's closing prices, in log-loss (lower is better) and betting units." />
       <GolfpriceScorecardSection />
-      <Panel title="Older bet results" eyebrow="Retired simulation pipeline" actions={<button type="button" className="icon-button" aria-expanded={showLegacy} onClick={() => setShowLegacy((value) => !value)}>{showLegacy ? "Hide older results" : "Show older results"}</button>}>
+      <Section id="older" title="Older bet results" purpose="From the retired simulation pipeline; kept for reference, not the current model's bets." actions={<button type="button" className="icon-button" aria-expanded={showLegacy} onClick={() => setShowLegacy((value) => !value)}>{showLegacy ? "Hide older results" : "Show older results"}</button>}>
         <LegacyNotice>These bet results come from the retired simulation pipeline. They are kept for reference and do not include the current model&apos;s bets.</LegacyNotice>
-      </Panel>
+      </Section>
       {showLegacy && <LegacyBetResults />}
     </>
   );

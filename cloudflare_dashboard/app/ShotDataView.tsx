@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createShotMonitor, initialMonitorState, type MonitorState } from "./shot-monitor-client";
 import { collectorStatus, publicationStatus, sourceFreshness, SOURCES, TOURS, TOUR_LABELS, timestamp, type Collector, type Metric, type Publication, type Source } from "./shot-monitor-rules";
+import { Chip } from "./ui";
 import "./shot-monitor.css";
 import { checkedAge, tourSummary, type Stage } from "./shot-monitor-summary";
 
@@ -57,16 +58,6 @@ function StageIcon({ stage }: { stage: string }) {
     {stage === "Collect" ? <><path d="M8 31h24M11 27l15-15 5 5-15 15M25 13l4-4 5 5-4 4"/><circle cx="10" cy="18" r="3"/><path d="M9 9c8-4 14-3 19 0" strokeDasharray="2 4"/></> : stage === "Check" ? <><path d="M13 7H8v26h24V7h-5M15 5h10v6H15z"/><path d="m13 22 5 5 10-12"/></> : <><ellipse cx="20" cy="10" rx="13" ry="5"/><path d="M7 10v18c0 7 26 7 26 0V10M7 19c0 7 26 7 26 0"/><path d="m16 27 3 3 6-6"/></>}
   </svg>;
 }
-function GolfIllustration({ tour }: { tour: string }) {
-  const paths: Record<string, string> = { pga: "M38 82C72 20 120 22 157 60S219 82 252 34", dpwt: "M38 82C69 32 87 94 133 65S208 13 252 34", kft: "M38 82C75 59 106 21 152 45S225 81 252 34" };
-  return <svg className="sm-golf" viewBox="0 0 300 110" role="img" aria-label="Illustrative golf hole and shot path; not venue geometry">
-    <path d="M12 88C7 55 37 15 101 28S171 3 218 14 298 48 285 80 209 105 163 93 22 119 12 88Z" fill="var(--surface-soft)" stroke="var(--line-strong)"/>
-    <ellipse cx="247" cy="47" rx="32" ry="19" fill="var(--surface-raised)" stroke="var(--line-strong)"/>
-    <path d={paths[tour]} fill="none" stroke="var(--muted)" strokeWidth="2" strokeDasharray="4 5"/>
-    <ellipse cx="252" cy="48" rx="6" ry="2.5" fill="var(--foreground)"/><path d="M252 48V12l23 8-23 8" fill="none" stroke="var(--foreground)" strokeWidth="2" strokeLinejoin="round"/>
-    <circle cx="38" cy="82" r="6" fill="var(--foreground)"/><circle cx="36" cy="80" r="1" fill="var(--surface)"/>
-  </svg>;
-}
 function StageRail({ stages }: { stages: Stage[] }) {
   return <ol className="sm-rail" aria-label="Pipeline stages">{stages.map(stage => <li key={stage.label} className={`sm-rail-${stage.tone}`}><StageIcon stage={stage.label}/><strong>{stage.label}</strong><span>{stage.state}</span></li>)}</ol>;
 }
@@ -80,18 +71,18 @@ export function ShotDataContent({ sources, refreshing, now, onRefresh }: Monitor
   const attention = summaries.filter(s => s.attention);
   const loading = sources.length > 0 && sources.every(s => s.status === "loading");
   return <div className="shot-monitor">
-    <header className="sm-intro">
-      <div role="status" aria-live="polite" aria-atomic="true"><p className="sm-muted">Shot data</p><h1>{loading ? "Checking shot data…" : attention.length ? `${attention.length} ${attention.length === 1 ? "tour needs" : "tours need"} attention` : "Tour checks are clear"}</h1></div>
-      <p className="sm-start">{loading ? "Waiting for the latest update." : attention.length ? `Start with ${TOUR_LABELS[attention[0].tour]}. ${attention[0].next}` : "No action needed. Paused collection stays paused."}</p>
+    <header className="sm-intro page-intro">
+      <div role="status" aria-live="polite" aria-atomic="true"><span className="eyebrow">Shot data</span><h1>{loading ? "Checking shot data…" : attention.length ? `${attention.length} ${attention.length === 1 ? "tour needs" : "tours need"} attention` : "Tour checks are clear"}</h1>
+      <p className="sm-start">{loading ? "Waiting for the latest update." : attention.length ? `Start with ${TOUR_LABELS[attention[0].tour]}. ${attention[0].next}` : "No action needed. Paused collection stays paused."}</p></div>
       <div className="sm-check"><span>{checkedAge(sources, now)}</span>{onRefresh && <button className="sm-refresh" type="button" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Checking…" : "Refresh"}</button>}</div>
     </header>
+    <ul className="sm-glance" aria-label="Health by tour">{summaries.map(summary => <li key={summary.tour}><a href={`#sm-${summary.tour}`}><strong>{TOUR_LABELS[summary.tour]}</strong><Chip tone={summary.attention ? "warning" : summary.badge === "Checks clear" ? "positive" : "neutral"}>{summary.badge}</Chip><span>{summary.next ?? "No action needed."}</span></a></li>)}</ul>
     <div className="sm-board">{summaries.map(summary => <section className="sm-tour" key={summary.tour} aria-labelledby={`sm-${summary.tour}`}>
-      <div className="sm-row-heading"><h2 id={`sm-${summary.tour}`}>{TOUR_LABELS[summary.tour]}</h2><span className={`sm-badge ${summary.attention ? "sm-warn" : "sm-muted"}`}>{summary.badge}</span></div>
+      <div className="sm-row-heading"><h2 id={`sm-${summary.tour}`}>{TOUR_LABELS[summary.tour]}</h2><Chip tone={summary.attention ? "warning" : summary.badge === "Checks clear" ? "positive" : "neutral"}>{summary.badge}</Chip></div>
       <p className="sm-headline">{summary.headline}</p>
-      <GolfIllustration tour={summary.tour}/>
+      {summary.next && <p className="sm-next"><strong>What to do</strong>{summary.next}</p>}
       <StageRail stages={summary.stages}/>
       <p className="sm-available"><strong>Data available</strong>{summary.available}</p>
-      {summary.next && <p className="sm-next"><strong>Next step</strong>{summary.next}</p>}
       <details className="sm-details"><summary>View details<span className="sm-sr-only"> for {TOUR_LABELS[summary.tour]}</span></summary>
         <div className="sm-tour-grid">
           <div className="sm-stage"><h3>Captured and cleaned</h3><p className="sm-muted">Captured data does not imply cleaned or published data.</p>

@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { DataRow, etTime, formatCell, numberValue, titleCase } from "./lib";
-import { AnimatedNumber, Delta, SkeletonPage, Sparkline } from "./ui";
+import { AnimatedNumber, Delta, EmptyState, SkeletonPage, Sparkline } from "./ui";
 
-export { AnimatedNumber, Delta, LivePulse, ScrollTable } from "./ui";
+export { AnimatedNumber, Chip, Delta, EmptyState, GapRail, InfoTip, LivePulse, OnThisPage, PageHeader, ScrollTable, Section, SegmentedControl, Stat } from "./ui";
 
 export function Panel({
   title,
@@ -13,7 +13,9 @@ export function Panel({
   actions,
   children,
   className = "",
+  id,
 }: {
+  id?: string;
   title?: string;
   eyebrow?: string;
   actions?: React.ReactNode;
@@ -21,7 +23,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`panel ${className}`}>
+    <section id={id} className={`panel ${className}`}>
       {(title || eyebrow || actions) && (
         <div className="panel-heading">
           <div>
@@ -84,7 +86,9 @@ export function PageIntro({
   title,
   description,
   controls,
+  actions,
 }: {
+  actions?: React.ReactNode;
   eyebrow: string;
   title: string;
   description: string;
@@ -97,7 +101,7 @@ export function PageIntro({
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      {controls && <div className="page-controls">{controls}</div>}
+      {(controls ?? actions) && <div className="page-controls">{controls ?? actions}</div>}
     </div>
   );
 }
@@ -107,49 +111,12 @@ export function LegacyNotice({ children }: { children?: React.ReactNode }) {
   return <p className="legacy-notice" role="note"><strong>Legacy data.</strong> {children ?? "This archived view comes from the retired simulation pipeline and does not show the current golfprice week."}</p>;
 }
 
-export function EmptyState({ title, detail, onRetry }: { title: string; detail: string; onRetry?: () => void }) {
-  return (
-    <div className="empty-state" role={onRetry ? "alert" : undefined}>
-      <strong>{title}</strong>
-      <span>{detail}</span>
-      {onRetry && <button type="button" className="ex-link" onClick={onRetry}>Try again</button>}
-    </div>
-  );
-}
-
 export function LoadingState({ label = "Loading dashboard data" }: { label?: string }) {
   return <SkeletonPage label={label} />;
 }
 
 export function ErrorState({ message }: { message: string }) {
   return <EmptyState title="This view is temporarily unavailable" detail={message} />;
-}
-
-export function SegmentedControl<T extends string>({
-  value,
-  options,
-  onChange,
-  label,
-}: {
-  value: T;
-  options: Array<{ value: T; label: string }>;
-  onChange: (value: T) => void;
-  label: string;
-}) {
-  return (
-    <div className="segmented" role="group" aria-label={label}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className={value === option.value ? "active" : ""}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 export function PlayerPicker({
@@ -333,8 +300,16 @@ export function DataTable({
   });
   const headText = (column: string) => headerLabels?.[column] ?? (verbatim ? column : COLUMN_NAMES[column] ?? titleCase(column));
   const headHint = (column: string) => headerTitles?.[column] ?? COLUMN_HINTS[column];
+  const numericColumns = useMemo(() => {
+    const out = new Set<string>();
+    for (const column of allColumns) {
+      const sample = rows.map((row) => row[column]).filter((v) => !isBlank(v)).slice(0, 12);
+      if (sample.length && sample.every((v) => typeof v === "number" || (typeof v === "string" && /^[+−-]?\$?\d[\d,]*\.?\d*%?$/.test(v.trim())))) out.add(column);
+    }
+    return out;
+  }, [allColumns, rows]);
   const cellClass = (column: string, index: number, tone = "") =>
-    [tone, stickyFirst && index === 0 ? "sticky-first" : "", mobileColumns && !mobileColumns.includes(column) ? "mobile-hide" : ""].filter(Boolean).join(" ");
+    [tone, index > 0 && numericColumns.has(column) ? "num" : "", stickyFirst && index === 0 ? "sticky-first" : "", mobileColumns && !mobileColumns.includes(column) ? "mobile-hide" : ""].filter(Boolean).join(" ");
 
   const activeColumns = visible.filter((column) => allColumns.includes(column));
   const filtered = useMemo(() => {

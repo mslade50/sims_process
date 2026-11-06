@@ -3,25 +3,34 @@
 import { lazy, useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  BookOpen,
+  ChartColumn,
   ChartNoAxesCombined,
   ChevronLeft,
   ChevronRight,
   CircleGauge,
+  CloudRain,
   CloudSun,
-  Menu,
+  Crosshair,
+  Flag,
+  LayoutDashboard,
+  ListChecks,
   Microscope,
   Play,
+  Scale,
   Settings2,
   SlidersHorizontal,
+  Ticket,
   TrendingUp,
   Users,
   X,
 } from "lucide-react";
 import { HeaderSearch } from "./HeaderSearch";
+import { EventSwitcher, SearchToggle, TabBar, ThemeToggle } from "./ShellParts";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData, useSavedCopies } from "./data";
-import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
-import { FreshnessBadge, useNow } from "./ui";
+import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, selectedShellEvent, shellEvents, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
+import { Chip, FreshnessBadge, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
@@ -41,8 +50,8 @@ type Manifest = {
 
 /** Icons by view key; the labels, groups and order live in shell-rules.ts (NAVIGATION) so tests can read them. */
 const NAV_ICONS: Record<string, typeof CircleGauge> = {
-  "this-week": CircleGauge, "weekly-players": Users, "why-priced": SlidersHorizontal, distributions: ChartNoAxesCombined, "round-scores": CircleGauge, "weather-effects": CloudSun, "weather-edits": CloudSun,
-  "shot-data": CircleGauge, ops: Settings2, inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": TrendingUp, "bet-card": TrendingUp, history: Archive, diagnostics: Microscope,
+  "this-week": LayoutDashboard, "weekly-players": Users, "why-priced": Scale, distributions: ChartNoAxesCombined, "round-scores": Flag, "weather-effects": CloudSun, "weather-edits": CloudRain,
+  "model-walkthrough": BookOpen, "shot-data": Crosshair, ops: ListChecks, inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": ChartColumn, "bet-card": Ticket, history: Archive, diagnostics: Microscope,
 };
 
 /** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
@@ -192,6 +201,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const now = useNow(30_000);
   const savedNotice = savedCopyNotice(useSavedCopies(), now);
   const week = useMemo(() => summarizeWeek(gpIndex, now), [gpIndex, now]);
+  const events = useMemo(() => shellEvents(gpIndex, now), [gpIndex, now]);
   useEffect(() => {
     // After first render, once the browser is idle, warm the most used views so the next click is instant.
     const run = () => IDLE_PREFETCH.forEach(prefetchView);
@@ -210,6 +220,11 @@ export function DashboardApp({ initialView }: { initialView: string }) {
     queueMicrotask(() => setEventParam(new URLSearchParams(window.location.search).get("e")));
   }, []);
   const badEvent = unknownEventParam(eventParam, gpIndex?.events);
+  const selectedEvent = selectedShellEvent(events, eventParam);
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    if (searchOpen) document.querySelector<HTMLInputElement>(".header-search input")?.focus();
+  }, [searchOpen]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -242,12 +257,14 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   }, [accent, density, theme]);
 
   const activeMeta = (ownerOnly && viewer && !viewer.owner ? null : navEntryFor(activeKey)) ?? (route.kind === "notfound" || ownerOnly ? { label: "Page not found", description: "Choose a page from the navigation" } : route.kind === "retired" ? { label: "Retired", description: "This page was retired" } : null);
+  const toggleTheme = () => setTheme(theme === "dark" || (theme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "light" : "dark");
+  const pinned = navigation.flatMap((group) => group.items).find((item) => item.key === "bet-card");
   const archiveActive = isLegacy;
   const [archiveOpen, setArchiveOpen] = useState(archiveActive);
 
   return (
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
+      <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`} aria-label="Site menu">
         <div className="brand-row">
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Native navigation avoids the deployed vinext client-router failure. */}
           <a className="brand" href="/this-week" onClick={(event) => navigateWithReload(event, "/this-week")} aria-label="Golf Model home">
@@ -257,19 +274,22 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           <button className="mobile-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
         <nav aria-label="Dashboard navigation">
-          {navigation.map((group) =>
-            group.collapsed && !collapsed ? (
+          {pinned && <div className="nav-group nav-pinned"><NavLink item={pinned} activeView={activeKey} collapsed={collapsed} /></div>}
+          {navigation.map((group) => {
+            const items = group.items.filter((item) => item.key !== pinned?.key);
+            if (!items.length) return null;
+            return group.collapsed && !collapsed ? (
               <details className="nav-group nav-archive" key={group.label} open={archiveOpen} onToggle={(event) => setArchiveOpen(event.currentTarget.open)}>
                 <summary><span className="nav-label">{group.label}</span></summary>
-                {group.items.map((item) => <NavLink item={item} activeView={activeKey} collapsed={collapsed} key={item.key} />)}
+                {items.map((item) => <NavLink item={item} activeView={activeKey} collapsed={collapsed} key={item.key} />)}
               </details>
             ) : (
               <div className="nav-group" key={group.label}>
                 {!collapsed && <span className="nav-label">{group.label}</span>}
-                {group.items.map((item) => <NavLink item={item} activeView={activeKey} collapsed={collapsed} key={item.key} />)}
+                {items.map((item) => <NavLink item={item} activeView={activeKey} collapsed={collapsed} key={item.key} />)}
               </div>
-            ),
-          )}
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <button type="button" onClick={() => setSettingsOpen(true)}><Settings2 size={18} /><span className="nav-text">Customize</span></button>
@@ -280,31 +300,32 @@ export function DashboardApp({ initialView }: { initialView: string }) {
       {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
 
       <main>
-        <header className="topbar">
-          <div className="topbar-left">
-            <button className="menu-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open navigation menu"><Menu size={20} /><span>Menu</span></button>
-            <div className="topbar-title"><span>{activeMeta?.label}</span></div>
-          </div>
-          <HeaderSearch onNavigate={navigateWithReload} />
-          <div className="event-context">
-            {activeKey === "shot-data" ? <span>Scheduled shot snapshots</span> : isLegacy ? (
+        <header className={`contextbar ${searchOpen ? "search-open" : ""}`}>
+          <span className="ctx-page">{activeMeta?.label}</span>
+          <span className="ctx-sep" aria-hidden="true">/</span>
+          <div className="ctx-identity">
+            {activeKey === "shot-data" ? <div className="ctx-static"><strong>Scheduled shot snapshots</strong></div> : isLegacy ? (
               <>
                 <span className="legacy-pill">Legacy data</span>
                 <FreshnessBadge at={manifest?.generated_at} label="Data" savedCopy={manifestSaved} />
               </>
-            ) : week ? (
-              <>
-                <div><strong>{week.title}</strong>{week.sub && <small>{week.sub}</small>}</div>
-                {week.publishedLine && <span className="published-line">{week.publishedLine}</span>}
-                {week.heldBackNote && <p className="held-note" role="status" title={week.heldBackNote}>{week.heldBackNote}</p>}
-                <FreshnessBadge at={week.oldestAsOf} label={week.events.length > 1 ? "Oldest" : "Run"} title={week.tooltip || "When the model last priced this week"} savedCopy={indexSaved} />
-              </>
+            ) : selectedEvent ? (
+              <EventSwitcher events={events} selected={selectedEvent} onNavigate={navigateWithReload} />
             ) : (
-              <>
-                <div><strong>This week</strong><small>Run data unavailable</small></div>
-                <FreshnessBadge at={null} savedCopy={indexSaved} />
-              </>
+              <div className="ctx-static"><strong>This week</strong><small>Run data unavailable</small></div>
             )}
+          </div>
+          {!isLegacy && activeKey !== "shot-data" && (
+            <div className="ctx-meta">
+              {selectedEvent && <Chip tone={selectedEvent.stageTone === "accent" ? "accent" : "neutral"}>{selectedEvent.stage}</Chip>}
+              <FreshnessBadge at={selectedEvent?.asOf ?? week?.oldestAsOf ?? null} label="Run" title={week?.tooltip || "When the model last priced this event"} savedCopy={indexSaved} />
+              {week?.heldBackNote && <span role="status" title={week.heldBackNote}><Chip tone="warning">Newer run held back</Chip></span>}
+            </div>
+          )}
+          <HeaderSearch onNavigate={navigateWithReload} />
+          <div className="ctx-actions">
+            <SearchToggle open={searchOpen} onClick={() => setSearchOpen((o) => !o)} />
+            <ThemeToggle onToggle={toggleTheme} />
           </div>
         </header>
         <div className="content-frame">
@@ -313,6 +334,8 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           {route.kind === "notfound" ? <NotFound requested={route.requested} navigation={navigation} /> : ownerOnly && !viewer ? null : ownerOnly && !viewer?.owner ? <NotFound requested={activeKey} navigation={navigation} /> : route.kind === "redirect" ? <Moved to={route.to} /> : ActiveView ? <ViewBoundary viewKey={activeKey}><ActiveView /></ViewBoundary> : null}
         </div>
       </main>
+
+      <TabBar activeKey={activeKey} owner={viewer?.owner === true} moreOpen={sidebarOpen} onMore={() => setSidebarOpen(true)} onNavigate={navigateWithReload} onPrefetch={prefetchView} />
 
       {settingsOpen && (
         <div className="settings-layer" role="dialog" aria-modal="true" aria-label="Customize dashboard">

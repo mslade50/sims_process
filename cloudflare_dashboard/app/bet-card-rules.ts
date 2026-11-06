@@ -151,3 +151,24 @@ export function historyText(b: Pick<Bet, "hist" | "oppHist" | "opponent">): stri
   const h = b.hist === null ? "no history" : `${Math.round(b.hist)} rounds`;
   return b.opponent && b.oppHist !== null ? `${h} vs ${Math.round(b.oppHist)} for the opponent` : h;
 }
+
+/* ------------------------------------------------------------------ status wording */
+/** Plain status for an event with no suggestions, e.g. "Round 1 in play". */
+export function statusHeadline(e: Pick<CardEvent, "status" | "note" | "moment">): string {
+  const m = /round (\d) in play/i.exec(e.note ?? "") ?? /round (\d) in play/i.exec(e.moment);
+  if (m) return `Round ${m[1]} in play`;
+  if (e.status === "priced") return "Priced, no bet clears the rules";
+  return e.status ? e.status.charAt(0).toUpperCase() + e.status.slice(1) : "No status";
+}
+
+/** Honest next-check text: round prices only appear after the round's own run; before play the card refreshes every 30 minutes. */
+export function nextCheckText(e: Pick<CardEvent, "status" | "note" | "moment">): string {
+  if (/in play/i.test(`${e.note ?? ""} ${e.moment}`)) return "Next check: after the round finishes (next-round prices come from the after-round run)";
+  if (/off week|not started|no event/i.test(e.note ?? "")) return "Next check: when the next event is priced";
+  return "Next check: within 30 minutes (the card refreshes every 30 minutes before play)";
+}
+
+/** Share of the edge bar that is filled: 15% edge or more fills it. */
+export const edgeFill = (edge: number): number => Math.max(0.04, Math.min(1, edge / 0.15));
+
+export const activeFilterCount = (f: Filters): number => Number(f.tier !== "all") + Number(f.group !== "all") + Number(f.book !== "all");

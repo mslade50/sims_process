@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { EmptyState, Kpi, Panel } from "./components";
+import { Chip, EmptyState, Section, Stat } from "./components";
 import { useDashboardData } from "./data";
 import { plainDate, scorecardLag, type EventLike } from "./freshness-rules";
 import { etTime } from "./lib";
-import { forwardRestartNote, MARKETS, MARKET_LABELS, SCORECARD_KEY, armName, dayLabel, deltaTone, fmt, forwardClockPaused, intervalText, latestWeekEvents, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
+import { forwardHeadline, forwardRestartNote, MARKETS, MARKET_LABELS, SCORECARD_KEY, dayLabel, fmt, forwardClockPaused, gapBar, latestWeekEvents, marketReading, parseScorecard, shownArms, signedFmt, tourLabel, type ScorecardEvent } from "./scorecard-rules";
+import "./performance.css";
 
-const SKILL_HINT = "How far off the model's skill estimates were in rounds 1 and 2, in strokes per round. Lower is better.";
-const MARKET_HINT = "Prediction error against the market's closing prices for this market. Negative means the model was closer to what happened than the market was; positive means the market was closer.";
+const MARKET_HINT = "Prediction error against the market's closing prices for this market (log-loss). Negative means the model was closer to what happened than the market was; positive means the market was closer.";
 
 function betsLine(event: ScorecardEvent): string {
   const parts = ([["live", "live bets"], ["shadow", "paper bets (tracked, not placed)"], ["placed", "placed bets"]] as const)
     .filter(([kind]) => event.bets[kind]?.n)
     .map(([kind, name]) => {
       const bet = event.bets[kind];
-      return `${bet.n} ${name}, ${bet.settled === bet.n ? "all settled" : `${bet.settled} settled`}, ${signedFmt(bet.pnl_units, 2)} units`;
+      return `${bet.n} ${bet.n === 1 ? name.replace("bets", "bet") : name}, ${bet.settled === bet.n ? "all settled" : `${bet.settled} settled`}, ${signedFmt(bet.pnl_units, 2)} units`;
     });
   return parts.length ? parts.join("; ") : "none recorded";
 }
@@ -25,58 +25,59 @@ function verdictLine(event: ScorecardEvent): string | null {
   const current = event.arms.find((arm) => arm.role === "production" || arm.arm === "challenger");
   if (!current) return null;
   const parts: string[] = [];
-  if (current.rmse !== null && current.rmse !== undefined) {
-    parts.push(`Skill error was ${fmt(current.rmse, 2)} strokes a round.`);
-  }
+  if (current.rmse !== null && current.rmse !== undefined) parts.push(`Skill error was ${fmt(current.rmse, 2)} strokes a round.`);
   if (current.markets_scored_vs_close) parts.push(`It beat the market's closing prices in ${current.markets_better_vs_close ?? 0} of ${current.markets_scored_vs_close} markets.`);
   return parts.length ? parts.join(" ") : null;
 }
 
+/** Markets as rows, each with a signed gap against the market close and a zero-centred bar (left = model closer, right = market closer). */
 function EventTable({ event }: { event: ScorecardEvent }) {
   const arms = shownArms(event.arms);
   const markets = MARKETS.filter((market) => arms.some((arm) => arm.logloss_vs_close?.[market] !== undefined));
-  const showAverage = arms.some((arm) => arm.logloss_vs_close_mean !== null && arm.logloss_vs_close_mean !== undefined);
+  const max = Math.max(0, ...arms.flatMap((arm) => markets.map((m) => Math.abs(arm.logloss_vs_close?.[m] ?? 0))));
   const verdict = verdictLine(event);
   return (
-    <div>
-      <h3 className="inputs-h3">
-        {event.name} <span className="inputs-muted">({tourLabel(event.tour)}, started {dayLabel(event.event_start)}; {event.status})</span>
-      </h3>
-      {verdict && <p>{verdict}</p>}
-      <div className="table-scroll">
-        <table aria-label={`Model scorecard for ${event.name}`}>
-          <thead>
-            <tr>
-              <th rowSpan={2}><span className="th-text">Model</span></th>
-              <th rowSpan={2} title={SKILL_HINT}><span className="th-text">Skill error (strokes)</span></th>
-              {(markets.length > 0 || showAverage) && <th colSpan={markets.length + (showAverage ? 1 : 0)} title={MARKET_HINT}><span className="th-text">Against the market close (negative is better)</span></th>}
-            </tr>
-            <tr>
-              {markets.map((market) => <th key={market} title={MARKET_HINT}><span className="th-text">{MARKET_LABELS[market]}</span></th>)}
-              {showAverage && <th title="The average of the markets to the left."><span className="th-text">Average</span></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {arms.map((arm) => (
-              <tr key={arm.arm} className={arm.role === "production" || arm.arm === "challenger" ? "active-row" : undefined}>
-                <td>{armName(arm)}</td>
-                <td>{fmt(arm.rmse)}</td>
-                {markets.map((market) => {
-                  const value = arm.logloss_vs_close?.[market];
-                  return <td key={market} className={deltaTone(value)}>{signedFmt(value, 4)}</td>;
-                })}
-                {showAverage && <td className={deltaTone(arm.logloss_vs_close_mean)}>{signedFmt(arm.logloss_vs_close_mean, 4)}</td>}
+    <div className="sc-event">
+      <h3>{event.name} <small>{tourLabel(event.tour)}, started {dayLabel(event.event_start)}, {event.status}</small></h3>
+      {verdict && <p className="sc-verdict">{verdict}</p>}
+      {markets.length > 0 && <p className="sc-note">Negative gap and a bar to the left mean the model was closer to what happened; positive and right mean the market was.</p>}
+      {markets.length > 0 && (
+        <div className="table-scroll">
+          <table className="sc-table" aria-label={`Model against the market close for ${event.name}`}>
+            <thead>
+              <tr>
+                <th scope="col">Market</th>
+                {arms.map((arm) => <th key={arm.arm} scope="col" className="num" title={MARKET_HINT}>Gap to market close</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="inputs-muted">Bets: {betsLine(event)}.</p>
+            </thead>
+            <tbody>
+              {markets.map((market) => (
+                arms.map((arm, i) => {
+                  const value = arm.logloss_vs_close?.[market];
+                  const reading = marketReading(value);
+                  return (
+                    <tr key={`${market}${arm.arm}`}>
+                      {i === 0 && <th scope="row" rowSpan={arms.length}>{MARKET_LABELS[market]}</th>}
+                      <td className={`num ${reading.tone}`}>{signedFmt(value, 4)}<span className="sc-word">{reading.word}</span>
+                        <span className="sc-gap" role="img" aria-label={`${MARKET_LABELS[market]}: ${reading.word}`}>
+                          <i className="l" style={{ width: `${value !== undefined && value < 0 ? gapBar(value, max) * 100 : 0}%` }} />
+                          <i className="r" style={{ width: `${value !== undefined && value > 0 ? gapBar(value, max) * 100 : 0}%` }} />
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="sc-note">Bets: {betsLine(event)}.</p>
     </div>
   );
 }
 
-/** The model scorecard inside the Scorecard and P&L view: latest settled week, the forward record, and a plain-English readout. */
+/** The model scorecard inside the Scorecard and P&L view: forward record first, then the latest settled week. */
 export function GolfpriceScorecardSection() {
   const { data, loading: fetching } = useDashboardData<unknown>(SCORECARD_KEY);
   const [now] = useState(() => Date.now());
@@ -92,29 +93,36 @@ export function GolfpriceScorecardSection() {
   const events = card ? latestWeekEvents(card) : [];
   const lag = card ? scorecardLag(card.events, index.data?.events ?? null, now) : null;
   const paused = forwardClockPaused(card);
+  const interval = card?.forward.by_arm.challenger?.logloss_vs_close_mean;
+  const reading = marketReading(interval?.mean);
+  const live = card?.forward.bets.live;
+  const paper = card?.forward.bets.shadow;
 
   return (
-    <Panel title="Model scorecard" eyebrow="How the current model did against the market" className="scorecard-panel">
+    <Section id="scorecard" title="Model scorecard" purpose="How the current model did against the market's closing prices.">
       {loading ? (
-        <p className="inputs-muted">Loading the weekly scorecard…</p>
+        <p className="sc-note">Loading the weekly scorecard...</p>
       ) : !card ? (
-        <EmptyState title={fetching ? "The scorecard is not available right now" : "No scorecard yet"} detail={fetching ? "It did not load. Reload in a minute; it updates after each Monday settle." : "It appears after the first Monday settle grades the previous week."} />
+        <EmptyState title={fetching ? "The scorecard is not available right now" : "No scorecard yet"} detail={fetching ? "It did not load. Reload in a minute; it updates after each Monday settle." : "It appears after the first Monday settle grades the previous week."} nextCheck="Next check: the Monday settle" />
       ) : (
-        <div className="scorecard-body">
-          {lag?.state === "behind" && <p className="inputs-note accent" role="status" data-testid="scorecard-behind">{lag.message}</p>}
+        <div>
+          {lag?.state === "behind" && <p className="sc-note" role="status" data-testid="scorecard-behind"><Chip tone="warning">Behind</Chip> {lag.message}</p>}
           {paused ? (
-            <p className="inputs-note accent" role="status" data-testid="forward-clock-paused">{forwardRestartNote(card.forward?.clock_start_event_uid)}</p>
+            <p className="sc-note" role="status" data-testid="forward-clock-paused">{forwardRestartNote(card.forward?.clock_start_event_uid)}</p>
           ) : (
-            <div className="kpi-grid">
-              <Kpi label="Events counted" value={`${card.forward.events_counted} of ${card.forward.futility_check_at}`} detail={`First checkpoint; full test is ${card.forward.horizon_events} events`} tone="accent" hint="PGA events graded since the forward test started. At the checkpoint we decide whether the model is worth continuing with." />
-              <Kpi label="Price error vs the market close" value={intervalText(card.forward.by_arm.challenger?.logloss_vs_close_mean, 4)} detail="Average over markets; negative is better" hint="How far the model's finish-position probabilities were from what happened, compared with the market's closing prices. Negative means closer than the market." />
-              {card.forward.bets.live?.n > 0 && <Kpi label="Live bets" value={`${signedFmt(card.forward.bets.live.pnl_units ?? 0, 2)}u`} detail={card.forward.bets.shadow?.n ? `Paper bets ${signedFmt(card.forward.bets.shadow.pnl_units ?? 0, 2)}u` : undefined} hint="Profit or loss in betting units on bets actually placed. Paper bets are tracked but not placed." />}
-            </div>
+            <>
+              <p className="sc-headline">{forwardHeadline(card.forward.events_counted, card.forward.futility_check_at, interval?.mean, interval?.lo, interval?.hi)}</p>
+              <div className="kpi-grid">
+                <Stat label="Events graded" value={String(card.forward.events_counted)} unit={`of ${card.forward.futility_check_at}`} note={`First checkpoint; the full test is ${card.forward.horizon_events} events`} hint="PGA events graded since the forward test started. At the checkpoint we decide whether the model is worth continuing with." />
+                <Stat label="Gap to market close" value={signedFmt(interval?.mean, 4)} unit="log-loss" tone={reading.tone === "" ? "neutral" : reading.tone} note={`${reading.word}${interval?.lo === null || interval?.lo === undefined ? "; too few events for a 95% range" : `; 95% range ${signedFmt(interval.lo, 4)} to ${signedFmt(interval.hi, 4)}`}. Negative is better.`} hint="How far the model's finish-position probabilities were from what happened, compared with the market's closing prices. Negative means closer than the market." />
+                {live && live.n > 0 && <Stat label="Live bets" value={signedFmt(live.pnl_units ?? 0, 2)} unit="units" tone={(live.pnl_units ?? 0) > 0 ? "positive" : (live.pnl_units ?? 0) < 0 ? "negative" : "neutral"} note={`${live.n} placed${paper?.n ? `; paper bets ${signedFmt(paper.pnl_units ?? 0, 2)} units (tracked, not placed)` : ""}`} hint="Profit or loss in betting units on bets actually placed. Paper bets are tracked but not placed." />}
+              </div>
+            </>
           )}
-          {events.length === 0 ? <EmptyState title="No graded event yet" detail="The latest week appears here once a settle has run." /> : events.map((event) => <EventTable key={event.event_uid} event={event} />)}
-          <p className="inputs-muted">{lag?.newestSettled ? `Newest graded event starts ${plainDate(lag.newestSettled)}. ` : ""}Updated {etTime(card.generated_at)}. Only PGA Tour events after the forward test starts count toward the forward record.</p>
+          {events.length === 0 ? <EmptyState title="No graded event yet" detail="The latest week appears here once a settle has run." nextCheck="Next check: the Monday settle" /> : events.map((event) => <EventTable key={event.event_uid} event={event} />)}
+          <p className="sc-note">{lag?.newestSettled ? `Newest graded event starts ${plainDate(lag.newestSettled)}. ` : ""}Updated {etTime(card.generated_at)}. Only PGA Tour events after the forward test starts count toward the forward record.</p>
         </div>
       )}
-    </Panel>
+    </Section>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable jsx-a11y/no-noninteractive-tabindex -- Scrollable data tables need keyboard focus (axe scrollable-region-focusable). */
 import { useMemo, useState } from "react";
-import { Panel } from "./components";
+import { Block } from "./score-block";
 import { useDashboardData } from "./data";
 import { bookName, historyRows, marketKey, matchingRecord, parseMarketScoring, signedScore, type MarketDocument, type MarketRecord } from "./market-scoring-rules";
 import "./market-scoring.css";
@@ -11,10 +11,10 @@ const at = (v: string) => v ? `${v.replace("T", " ").replace(/(?:\.\d+)?Z$/, "")
 export function MarketScoringPanel({ eventUid, modelRun, round }: { eventUid: string; modelRun: string; round: number | null }) {
   const source = useDashboardData<unknown>(marketKey(eventUid));
   const doc = useMemo(() => parseMarketScoring(source.data, eventUid), [source.data, eventUid]);
-  return <Panel title="What the books imply" eyebrow="Market versus our scoring forecast">
+  return <Block id="market" title="What the books imply" eyebrow="Market versus our scoring forecast, in strokes">
     {source.loading ? <p className="msc-note" role="status">Loading saved market comparisons…</p> : !doc ? <p className="msc-note">{source.errorKind === "missing" ? "No market comparison has been published for this event." : source.error ? "Market comparisons could not be loaded. Try refreshing the page." : "No valid market comparison is available for this event."}</p> : <MarketScoringContent key={`${eventUid}:${modelRun}:${round}`} doc={doc} modelRun={modelRun} round={round} />}
     {source.stale && <p className="msc-note" role="status">Showing a saved copy while the data service is unavailable.</p>}
-  </Panel>;
+  </Block>;
 }
 
 export function MarketScoringContent({ doc, modelRun, round }: { doc: MarketDocument; modelRun: string; round: number | null }) {

@@ -3,6 +3,7 @@
  * data-fallback decision, player search and the Run page's "suggested now" group. No DOM or React, so tests import it directly.
  */
 import type { ProfileEntry } from "./player-profile-rules";
+import type { IndexEventLite } from "./ui-rules";
 
 /* ------------------------------------------------------------------ routes */
 export const DEFAULT_VIEW = "this-week";
@@ -194,4 +195,64 @@ export function suggestedGroup(now: Date | number): RunGroupName {
 export function unknownEventParam(param: string | null | undefined, events: Array<{ event_uid?: string }> | undefined): boolean {
   if (!param || !events || events.length === 0) return false;
   return !events.some((e) => e.event_uid === param);
+}
+
+/* ------------------------------------------------------------------ context bar: one event identity (design system v2) */
+export type ShellEvent = {
+  uid: string; name: string; course: string;
+  tour: string; tourLabel: string;
+  /** "Pre-event", "Live, after R2" or "Final": what the newest saved run is about. */
+  stage: string; stageTone: "neutral" | "accent" | "positive";
+  asOf: string | null;
+};
+const TOUR_LABELS: Record<string, string> = { pga: "PGA Tour", euro: "DP World Tour", dpwt: "DP World Tour", korn: "Korn Ferry" };
+export function tourLabelOf(tour: string | undefined | null): string {
+  const key = (tour ?? "").toLowerCase();
+  return TOUR_LABELS[key] ?? (key ? key.toUpperCase() : "Tour");
+}
+/** Short chip text for a tour ("PGA", "DPWT"). */
+export function tourShort(tour: string | undefined | null): string {
+  const key = (tour ?? "").toLowerCase();
+  return key === "pga" ? "PGA" : key === "euro" || key === "dpwt" ? "DP World" : key ? key.toUpperCase() : "Tour";
+}
+type StageEvent = { date_end?: string; runs?: Array<{ as_of?: string; kind?: string; after_round?: number | null }> };
+/** Stage of an event from its newest saved run (and its end date). Honest about what is known: it says "after R2", not "in play". */
+export function stageOf(e: StageEvent, now: number): { stage: string; tone: "neutral" | "accent" | "positive" } {
+  const runs = [...(e.runs ?? [])].filter((r) => r.as_of).sort((a, b) => String(a.as_of).localeCompare(String(b.as_of)));
+  const last = runs.at(-1);
+  const end = e.date_end ? Date.parse(`${e.date_end}T23:59:59Z`) : NaN;
+  if (Number.isFinite(end) && now > end + 86_400_000) return { stage: "Final", tone: "neutral" };
+  if (last?.kind === "live") return { stage: typeof last.after_round === "number" && last.after_round > 0 ? `Live, after R${last.after_round}` : "Live", tone: "accent" };
+  return { stage: last ? "Pre-event" : "No run yet", tone: "neutral" };
+}
+/** The events of the newest week (same rule as the header always used), with tour, stage and freshness input. Default selection first. */
+export function shellEvents(index: { events?: IndexEventLite[] } | null | undefined, now: number): ShellEvent[] {
+  const dated = (index?.events ?? []).filter((e) => e.date_start && e.event_uid);
+  if (!dated.length) return [];
+  const newest = dated.map((e) => e.date_start as string).sort().at(-1);
+  const rows = dated.filter((e) => e.date_start === newest).map((e) => {
+    const stamps = (e.runs ?? []).map((r) => r.as_of).filter((v): v is string => !!v).sort();
+    const { stage, tone } = stageOf(e, now);
+    return { uid: e.event_uid as string, name: e.name ?? (e.event_uid as string), course: e.course ?? "", tour: (e.tour ?? "").toLowerCase(), tourLabel: tourLabelOf(e.tour), stage, stageTone: tone, asOf: stamps.at(-1) ?? null, hasExplain: !!e.explain_key };
+  });
+  // Same order as explain-rules.orderEvents (tour ascending within the week); pages default to the first event with an explanation document, so it leads.
+  rows.sort((a, b) => a.tour.localeCompare(b.tour));
+  const lead = rows.findIndex((r) => r.hasExplain);
+  if (lead > 0) rows.unshift(...rows.splice(lead, 1));
+  return rows.map(({ hasExplain: _drop, ...rest }) => { void _drop; return rest; });
+}
+/** The event the pages are showing: ?e= when it names a known event, else the default (first). */
+export function selectedShellEvent(events: ShellEvent[], param: string | null): ShellEvent | null {
+  return events.find((e) => e.uid === param) ?? events[0] ?? null;
+}
+/** Same page, other event: replaces ?e= and keeps every other query parameter that is not tied to the old event. */
+export function eventHref(pathname: string, search: string, uid: string): string {
+  const q = new URLSearchParams(search);
+  q.set("e", uid);
+  q.delete("player"); q.delete("vs");
+  return `${pathname}?${q.toString()}`;
+}
+/** Primary phone tabs: the first four keys the visitor can open; owners get Bet card, others get Why priced. */
+export function primaryTabKeys(owner: boolean): string[] {
+  return ["this-week", "weekly-players", owner ? "bet-card" : "why-priced", "weather-effects"];
 }

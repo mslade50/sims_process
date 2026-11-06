@@ -11,7 +11,7 @@ const W=640,H=250,L=58,R=16,T=14,B=34;
 /** Fewest points a moving-average line needs before it is drawn (a handful of points is a flat stub, not a trend). */
 const MIN_POINTS=20;
 /** About three round-number gridlines inside [lo, hi] (percent steps for rates). */
-function niceTicks(lo:number,hi:number,unit:string):number[]{
+function niceTicks(lo:number,hi:number):number[]{
   const span=hi-lo;if(!(span>0))return [lo];
   const raw=span/3,mag=10**Math.floor(Math.log10(raw)),step=[1,2,2.5,5,10].map(m=>m*mag).find(s=>s>=raw)??10*mag;
   const out:number[]=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-12;v+=step)out.push(Number(v.toFixed(10)));
@@ -55,7 +55,7 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
     <p className="pd-mt-trend" role="status"><b>{changeText}</b></p>
     <p className="pd-muted">{full.length?<>Latest {win}-{word} average <b>{fmt(sum.current)}</b> over {total.toLocaleString("en-US")} {words}</>:<>{total} {words} recorded</>}{ref!==null?<> · PGA average {fmt(ref)} (dashed line)</>:" · PGA average not published for this view"}.{lower&&" Lower is better for this measure (the radar flips it so further out is still better)."}{descriptive&&" Ball flight, not skill: higher is not better or worse."}</p>
     {full.length>=MIN_POINTS?<svg className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-${word} moving average over ${total} ${words}, from ${fmt(full[0].sma)} to ${fmt(sum.current)}. Use left and right arrows to read along the line.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
-      {niceTicks(lo,hi,unit).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="10" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
+      {niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="10" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
       {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title></g>}
       {bandOn&&<g><rect x={L} width={W-L-R} y={y(band!.hi)} height={Math.max(0,y(band!.lo)-y(band!.hi))} fill="var(--chart-2)" opacity=".1"/><line x1={L} x2={W-R} y1={y(band!.mean)} y2={y(band!.mean)} stroke="var(--chart-2)" strokeOpacity=".45" strokeDasharray="2 3"/></g>}
       <polyline points={line} fill="none" stroke="var(--chart-2)" strokeWidth="2.5" strokeLinejoin="round"/>
@@ -100,7 +100,7 @@ function RoundTrendPanel({metric,title,rows,filtered,descriptive,onClose,windowD
       <p className="pd-mt-trend" role="status"><b>{changeText}</b></p>
       <p className="pd-muted">{full.length?<>Latest {win}-round average <b>{fmt(sum.current)}</b> over {total} {descriptive?"radar rounds":"rounds"}</>:<>{total} {descriptive?"radar rounds":"rounds"} shown as single rounds</>}{ref!==null?<> · PGA average {fmt(ref)} (dashed line)</>:" · PGA average not published for this view"}.{lower&&" Lower is better for this measure (the radar flips it so further out is still better)."}{descriptive&&" Ball flight, not skill: higher is not better or worse."}</p>
       <svg className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-round moving average over ${total} rounds${full.length?`, from ${fmt(full[0].sma)} to ${fmt(sum.current)}`:" (not enough rounds yet; single rounds shown)"}. Use left and right arrows to read each round.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
-        {niceTicks(lo,hi,unit).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="10" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
+        {niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="10" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
         {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title></g>}
         {showDots&&shown.map(p=><circle key={p.index} cx={x(p.index)} cy={y(p.value)} r="2.2" fill="var(--chart-1)" opacity=".28"/>)}
         {full.length>1&&<polyline points={line} fill="none" stroke="var(--chart-2)" strokeWidth="2.5" strokeLinejoin="round"/>}

@@ -130,7 +130,7 @@ export function evaluateContrast({ color, chain, fontPx, weight, opacity = 1 }, 
 /* ------------------------------------------------------------------ allowlists */
 /** Elements deliberately layered on other text (badges, tooltips, chart overlays). Matched against "tag.class1.class2" descriptors. */
 export const OVERLAP_ALLOW = [
-  /\brecharts-tooltip/, /\brecharts-active/, /\bsr-only\b/, /\bvisually-hidden\b/, /\btooltip\b/, /\bbadge-float\b/, /\bpopover\b/, /\bsticky-corner\b/,
+  /\brecharts-tooltip/, /\brecharts-active/, /\bsr-only\b/, /\bvisually-hidden\b/, /\btooltip\b/, /\bbadge-float\b/, /\bpopover\b/, /\bsticky-corner\b/, /\btabbar\b/,
 ];
 export const CONTRAST_ALLOW = [/\bsr-only\b/, /\bvisually-hidden\b/];
 /** API paths where a 404 means "object not published yet": listed separately instead of failing. */

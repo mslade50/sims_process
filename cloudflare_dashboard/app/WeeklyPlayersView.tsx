@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useParams, BenchmarkCard, BenchmarkMethod, type WeeklyEvent } from "./PlayerProfilesView";
-import { DataTable, EmptyState, LoadingState, PageIntro, Panel } from "./components";
+import { DataTable, LoadingState, Panel } from "./components";
+import { Chip, EmptyState, PageHeader } from "./ui";
+import { WeeklyFieldBoard } from "./WeeklyFieldBoard";
 import { useDashboardData } from "./data";
 import { usePlayerBenchmarks } from "./player-directory";
 import { explainKeyFor, orderEvents, parseExplain, pct, type ExplainDoc, type ExPlayer } from "./explain-rules";
@@ -13,17 +15,18 @@ import { GAP_METHOD_SENTENCE, LABELS, ZERO_SENTENCE, plainName, plainPhrase } fr
 import { COL, activeWeatherRounds, buildTable, nameOf, expandEntries, fieldMethod, parseInputs, reconciliationHeaders, residualFlag, residualText, thisWeekGuide, type WeeklyDeps, type WeeklyInputs } from "./weekly-rules";
 import "./player-profiles.css";
 import "./weekly.css";
+import "./player-field-board.css";
 
 const DEPS: WeeklyDeps = { LABELS, gapSentence: GAP_METHOD_SENTENCE, plainName, plainPhrase, signedZ, pct, savedFieldSkill, checkpointBenchmarkValue, savedSkill };
 
 export function WeeklyPlayersView() {
-  const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params,update}=useParams();const event=selectWeeklyEvent(events,params.get("e"),params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
+  const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const event=selectWeeklyEvent(events,params.get("e"),params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
   if(load.loading || (params.get("player") && !params.get("e") && fields.loading)) return <LoadingState label="Loading events"/>;
-  return <div className="pp-page"><PageIntro eyebrow="Week" title="Weekly players" description="The model's view of the field for one saved run: each player's strength, the adjustments behind it, and event probabilities, with links to profiles." controls={event && <label className="pp-event" id="weekly-event-picker">Event<select value={event.event_uid} onChange={e=>update({e:e.target.value})}>{events.map(e=><option key={e.event_uid} value={e.event_uid}>{e.name ?? e.event_uid} · {e.date_start ? shortProfileDate(e.date_start) : "date unavailable"}</option>)}</select></label>}/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
+  return <div className="pp-page"><PageHeader eyebrow="Week" title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
 }
 function WeeklyBody({event,playerId}:{event:WeeklyEvent;playerId:string|null}) {
   const choices=dedupeRuns(checkpoints(event)); const [run,setRun]=useState(""); const checkpoint=choices.find(r=>r.run===run); const key=checkpoint?.key ?? explainKeyFor(event); const expected=matchingInputRun(event,checkpoint);
-  return <><label className="pp-event">Model run<select value={run} onChange={e=>setRun(e.target.value)}><option value="">Latest model run</option>{choices.map(r=><option key={`${r.kind}_${r.run}`} value={r.run}>{humanCheckpoint(r.as_of,r.kind)}</option>)}</select></label><WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId}/><SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/></>;
+  return <>{choices.length>1 && <label className="fb-runbar">Model run<select value={run} onChange={e=>setRun(e.target.value)}><option value="">Latest model run</option>{choices.map(r=><option key={`${r.kind}_${r.run}`} value={r.run}>{humanCheckpoint(r.as_of,r.kind)}</option>)}</select></label>}<WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId}/><SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/></>;
 }
 /** Two runs of one kind within ten minutes are a rerun of the same moment: keep the later one. */
 function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
@@ -40,7 +43,11 @@ function WeeklyExplain({event,dataKey,inputsKey,expected,playerId}:{event:Weekly
   if(playerId && !doc.players.some(p=>String(p.id)===playerId)) return <EmptyState title="This player is not in this field" detail="Choose another event above, or remove the player filter to see the full field."/>;
   const historicalCoverage=doc.players.filter(p=>checkpointBenchmarkValue(catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark,catalog?.pga_benchmark_reference,doc.as_of)!==null).length;
   const players=doc.players.filter(p=>!playerId || String(p.id)===playerId);
-  return <><div className="pp-run"><span className="eyebrow">{doc.kind==="live" ? `In play · after round ${doc.after_round}` : "Pre tournament"}</span><strong>{doc.event.name}</strong><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players</span></div>{(!!playerId || historicalCoverage>=5) && <Panel title="Recent form vs the PGA average" eyebrow="How each player has been playing lately · not a price forecast"><p className="pp-muted">Form ratings as of {shortProfileDate(catalog?.as_of)}. Model run: {humanCheckpoint(doc.as_of,doc.kind)}. Rounds played after the model run are left out. {historicalCoverage} of {doc.players.length} players have enough rounds for a rating.</p>{playerId && players.map(p=>{const rating=catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark;return <BenchmarkCard key={p.id} rating={rating} reference={catalog?.pga_benchmark_reference} fieldLabel={doc.event.name} checkpoint={doc.as_of} savedDoc={doc} playerId={p.id}/>;})}<BenchmarkMethod reference={catalog?.pga_benchmark_reference}/></Panel>}<Panel title="The field: skill and chances" eyebrow="Sort any column, choose columns, or download as CSV">{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}<WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players}/>{!players.length && <p>No players match this selection in the saved event.</p>}</Panel></>;
+  const stage=doc.kind==="live" ? `In play, after round ${doc.after_round}` : "Pre-tournament";
+  return <><p className="fb-runbar" role="status"><Chip tone={doc.kind==="live" ? "accent" : "neutral"}>{stage}</Chip><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players in {doc.event.name}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}</p>
+    <WeeklyFieldBoard doc={doc} playerId={playerId}/>
+    <details className="fb-more"><summary>All columns, column picker and CSV download</summary><div className="fb-more-body"><WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players}/>{!players.length && <p>No players match this selection in the saved event.</p>}</div></details>
+    {(!!playerId || historicalCoverage>=5) && <details className="fb-more"><summary>Recent form against the PGA average (not a price forecast)</summary><div className="fb-more-body"><p className="pp-muted">Form ratings as of {shortProfileDate(catalog?.as_of)}. Model run: {humanCheckpoint(doc.as_of,doc.kind)}. Rounds played after the model run are left out. {historicalCoverage} of {doc.players.length} players have enough rounds for a rating.</p>{playerId && players.map(p=>{const rating=catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark;return <BenchmarkCard key={p.id} rating={rating} reference={catalog?.pga_benchmark_reference} fieldLabel={doc.event.name} checkpoint={doc.as_of} savedDoc={doc} playerId={p.id}/>;})}<BenchmarkMethod reference={catalog?.pga_benchmark_reference}/></div></details>}</>;
 }
 
 type Catalog=ReturnType<typeof usePlayerBenchmarks>["catalog"];

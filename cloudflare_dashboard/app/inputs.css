@@ -1,0 +1,64 @@
+/* Model inputs page (and the form/banner idioms Weather edits shares). Tokens only; loaded after globals.css so these win. */
+
+/* Context: event + run pickers, then a chip row of what this run is. */
+.in-context { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.in-toolbar { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--sp-3); max-width: 760px; }
+.in-toolbar .select-control { min-width: 0; }
+.in-toolbar select { width: 100%; min-height: 44px; font-size: var(--fs-data); text-transform: none; letter-spacing: 0; }
+.in-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* Area tabs: one scrolling strip on every width, so no tab is hidden and nothing becomes a dropdown. */
+.in-tabs { display: flex; gap: var(--sp-1); overflow-x: auto; border-bottom: 1px solid var(--line); margin: 0 0 var(--sp-3); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.in-tabs::-webkit-scrollbar { display: none; }
+.in-tabs button { flex: none; min-height: 44px; padding: 0 var(--sp-4); color: var(--muted-strong); background: transparent; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; font: inherit; font-size: var(--fs-data); font-weight: 600; cursor: pointer; white-space: nowrap; transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.in-tabs button:hover { color: var(--foreground); }
+.in-tabs button.active { color: var(--foreground); border-bottom-color: var(--accent); }
+.in-tab-purpose { margin: 0 0 var(--sp-5); max-width: 70ch; color: var(--muted-strong); font-size: var(--fs-data); line-height: 1.5; }
+
+/* Player finder: the first thing after the headline numbers. */
+.in-finder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: var(--sp-4); align-items: center; padding: var(--sp-4) 0; border-block: 1px solid var(--line); }
+.in-finder h2 { margin: 0; font-size: var(--fs-h2); }
+.in-finder p { margin: var(--sp-1) 0 0; color: var(--muted-strong); font-size: var(--fs-small); }
+.in-finder .player-search { width: 100%; }
+.in-finder .search-box input { min-height: 44px; font-size: 16px; }
+.in-fieldnote { margin: calc(var(--sp-4) * -1) 0 0; color: var(--muted-strong); font-size: var(--fs-small); }
+.in-fieldnote summary { min-height: 44px; display: inline-flex; align-items: center; cursor: pointer; color: var(--accent); }
+.in-fieldnote p { margin: var(--sp-1) 0 0; max-width: 70ch; line-height: 1.55; }
+.in-detail-anchor { scroll-margin-top: calc(var(--bar-h) + var(--sp-4)); }
+.in-answer { margin: 0 0 var(--sp-4); max-width: 72ch; font-size: var(--fs-data); line-height: 1.6; color: var(--muted-strong); }
+.in-answer b { color: var(--foreground); }
+
+/* Readable small numbers: sentence case, 12px minimum. */
+.mini-stat-grid > div { background: var(--surface-soft); border-radius: var(--radius-control); }
+.mini-stat-grid span { font-size: var(--fs-small); text-transform: none; letter-spacing: 0; line-height: 1.35; }
+.mini-stat-grid strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.inputs-meta, .inputs-muted { font-size: var(--fs-small); }
+.inputs-note { font-size: var(--fs-data); }
+.inputs-h3 { font-size: var(--fs-small); letter-spacing: .06em; }
+.kv-table > div { font-size: var(--fs-data); padding: var(--sp-2) var(--sp-1); }
+.kv-table span { text-transform: none; }
+.inputs-banner { font-size: var(--fs-data); border-radius: var(--radius-control); }
+.field-label { font-size: var(--fs-small); text-transform: none; letter-spacing: 0; color: var(--muted-strong); font-weight: 650; }
+.field-label input, .field-label textarea, .override-form select { min-height: 44px; font-size: 16px; border-radius: var(--radius-control); }
+.problem-list { font-size: var(--fs-small); }
+.inputs-button { min-height: 40px; font-size: var(--fs-data); border-radius: var(--radius-control); padding: 0 var(--sp-4); }
+.inputs-button.primary:focus-visible, .inputs-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.form-actions { margin-top: var(--sp-1); }
+
+/* Override review tray: what exactly will be saved, before it is saved. */
+.in-tray { display: grid; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); background: var(--surface-soft); border: 1px solid var(--line-strong); border-left: 3px solid var(--accent); border-radius: var(--radius-control); font-size: var(--fs-data); }
+.in-tray dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; }
+.in-tray dt { color: var(--muted); font-size: var(--fs-small); }
+.in-tray dd { margin: 0; overflow-wrap: anywhere; }
+.in-confirm .form-actions { margin-top: var(--sp-2); }
+
+@media (max-width: 820px) {
+  .in-toolbar { grid-template-columns: 1fr; max-width: none; }
+  .in-finder { grid-template-columns: 1fr; gap: var(--sp-3); }
+  .in-tray dl { grid-template-columns: 1fr; gap: 0; }
+  .in-tray dd { margin-bottom: var(--sp-2); }
+  .inputs-button, .quick-expiry .inputs-button, .row-actions .inputs-button { min-height: 44px; }
+  .kv-table > div { flex-direction: row; justify-content: space-between; }
+  .kv-table b { text-align: right; }
+  .mini-stat-grid { grid-template-columns: 1fr 1fr; }
+}

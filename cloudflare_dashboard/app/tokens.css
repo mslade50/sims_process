@@ -1,5 +1,6 @@
+@font-face { font-family: "Inter Var"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/inter-var.woff2") format("woff2"); }
 /*
- * Golf Model design tokens. Cool navy and blue identity with a matching
+ * Golf Model design tokens (design system v2, see docs/ui-overhaul/DESIGN_SYSTEM.md). Cool navy and blue identity with a matching
  * bright neutral light theme. Theme selection: data-theme="dark|light" on <html> forces one; otherwise the
  * OS preference (prefers-color-scheme) decides. The accent is user-selectable (Customize): the app sets
  * --accent-d / --accent-l on <html>; --accent resolves to the right one per theme.
@@ -9,19 +10,19 @@
 :root {
   color-scheme: dark;
   /* surfaces */
-  --background: #09101d;
-  --surface: #101b2d;
-  --surface-raised: #16243a;
-  --surface-soft: #1d2d44;
-  --popover: #131f33;
-  --sidebar-bg: rgba(9, 16, 29, 0.98);
-  --topbar-bg: rgba(9, 16, 29, 0.88);
+  --background: #0a0f18;
+  --surface: #111824;
+  --surface-raised: #172030;
+  --surface-soft: #1f2a3c;
+  --popover: #162030;
+  --sidebar-bg: #0c121c;
+  --topbar-bg: rgba(10, 15, 24, 0.9);
   /* text */
-  --foreground: #f1f5fb;
-  --muted: #a6b6cb;
-  --muted-strong: #ced9e8;
-  --line: rgba(184, 204, 232, 0.13);
-  --line-strong: rgba(184, 204, 232, 0.26);
+  --foreground: #f3f6fb;
+  --muted: #a3b3c8;
+  --muted-strong: #ccd7e6;
+  --line: rgba(184, 204, 232, 0.12);
+  --line-strong: rgba(184, 204, 232, 0.24);
   --tint-1: rgba(255, 255, 255, 0.025);
   --tint-2: rgba(255, 255, 255, 0.045);
   /* accent: user-selectable, defaults to sky blue */
@@ -54,14 +55,34 @@
   --chart-7: #d6dc5c;
   --chart-8: #9fb3cc;
   /* type scale */
-  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter Var", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --fs-label: 11px;
+  --fs-label: 12px;
   --fs-small: 12px;
   --fs-body: 14px;
-  --fs-h2: 17px;
-  --fs-kpi: clamp(26px, 6.4vw, 34px);
-  --fs-h1: clamp(26px, 4.6vw, 38px);
+  --fs-data: 14px;
+  --fs-h3: 15px;
+  --fs-h2: 18px;
+  --fs-kpi: clamp(24px, 5.6vw, 30px);
+  --fs-h1: 28px;
+  /* 4px spacing scale */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-16: 64px;
+  --bar-h: 56px;
+  --tabbar-h: 60px;
+  /* semantic aliases: favourable / adverse / actionable uncertainty / selection */
+  --pos: var(--positive);
+  --neg: var(--negative);
+  --warn: var(--warning);
+  --pos-soft: var(--positive-soft);
+  --neg-soft: var(--negative-soft);
+  --warn-soft: var(--warning-soft);
+  /* gap rail: model vs market on a shared zero */
+  --rail-model: var(--model);
+  --rail-market: var(--market);
+  --rail-pos: var(--positive);
+  --rail-neg: var(--negative);
+  --rail-zero: var(--line-strong);
+  --rail-track: var(--tint-2);
   /* soft semantic fills + page glow (derived, so one definition serves both themes) */
   --positive-soft: color-mix(in srgb, var(--positive) 12%, transparent);
   --negative-soft: color-mix(in srgb, var(--negative) 12%, transparent);
@@ -69,11 +90,12 @@
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
   --gutter: 16px;
   /* shape + motion */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 6px;
+  --radius-control: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.16);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
   --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 16px 40px rgba(0, 0, 0, 0.4);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --dur-fast: 120ms;
@@ -85,18 +107,18 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --background: #eef2f8;
+    --background: #f3f5f8;
     --surface: #ffffff;
-    --surface-raised: #f7f9fc;
-    --surface-soft: #e9eff7;
+    --surface-raised: #f8fafc;
+    --surface-soft: #eceff4;
     --popover: #ffffff;
-    --sidebar-bg: rgba(255, 255, 255, 0.98);
-    --topbar-bg: rgba(238, 242, 248, 0.88);
-    --foreground: #142338;
-    --muted: #4d6078;
-    --muted-strong: #31465f;
-    --line: rgba(30, 55, 88, 0.12);
-    --line-strong: rgba(30, 55, 88, 0.25);
+    --sidebar-bg: #fbfcfd;
+    --topbar-bg: rgba(243, 245, 248, 0.92);
+    --foreground: #0e1a2b;
+    --muted: #4a5b72;
+    --muted-strong: #2a3b52;
+    --line: rgba(20, 40, 70, 0.11);
+    --line-strong: rgba(20, 40, 70, 0.24);
     --tint-1: rgba(30, 55, 88, 0.035);
     --tint-2: rgba(30, 55, 88, 0.06);
     --accent: var(--accent-l);
@@ -123,25 +145,25 @@
     --chart-7: #6e7400;
     --chart-8: #526781;
     --shadow: 0 14px 40px rgba(23, 44, 75, 0.08);
-    --shadow-card: 0 1px 2px rgba(23, 44, 75, 0.06), 0 6px 20px rgba(23, 44, 75, 0.06);
+    --shadow-card: 0 1px 2px rgba(20, 40, 70, 0.05);
     --shadow-lift: 0 14px 34px rgba(23, 44, 75, 0.14);
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #eef2f8;
+  --background: #f3f5f8;
   --surface: #ffffff;
-  --surface-raised: #f7f9fc;
-  --surface-soft: #e9eff7;
+  --surface-raised: #f8fafc;
+  --surface-soft: #eceff4;
   --popover: #ffffff;
-  --sidebar-bg: rgba(255, 255, 255, 0.98);
-  --topbar-bg: rgba(238, 242, 248, 0.88);
-  --foreground: #142338;
-  --muted: #4d6078;
-  --muted-strong: #31465f;
-  --line: rgba(30, 55, 88, 0.12);
-  --line-strong: rgba(30, 55, 88, 0.25);
+  --sidebar-bg: #fbfcfd;
+  --topbar-bg: rgba(243, 245, 248, 0.92);
+  --foreground: #0e1a2b;
+  --muted: #4a5b72;
+  --muted-strong: #2a3b52;
+  --line: rgba(20, 40, 70, 0.11);
+  --line-strong: rgba(20, 40, 70, 0.24);
   --tint-1: rgba(30, 55, 88, 0.035);
   --tint-2: rgba(30, 55, 88, 0.06);
   --accent: var(--accent-l);
@@ -168,6 +190,6 @@
   --chart-7: #6e7400;
   --chart-8: #526781;
   --shadow: 0 14px 40px rgba(23, 44, 75, 0.08);
-  --shadow-card: 0 1px 2px rgba(23, 44, 75, 0.06), 0 6px 20px rgba(23, 44, 75, 0.06);
+  --shadow-card: 0 1px 2px rgba(20, 40, 70, 0.05);
   --shadow-lift: 0 14px 34px rgba(23, 44, 75, 0.14);
 }

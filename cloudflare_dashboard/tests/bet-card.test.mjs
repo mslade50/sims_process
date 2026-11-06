@@ -113,3 +113,13 @@ test("minimum price is never shown below the threshold (decimal up, American at 
   assert.deepEqual(minPriceText(1.921), { dec: "1.93", american: "-108" });
   assert.deepEqual(minPriceText(2.084), { dec: "2.09", american: "+109" });
 });
+
+import { activeFilterCount, edgeFill, nextCheckText, statusHeadline } from "../app/bet-card-rules.ts";
+test("empty-event status wording is honest about the next check", () => {
+  const e = { status: "nothing to price now", note: "round 1 in play: no next-round prices until the after-round run", moment: "" };
+  assert.equal(statusHeadline(e), "Round 1 in play");
+  assert.match(nextCheckText(e), /after the round finishes/);
+  assert.match(nextCheckText({ status: "priced", note: null, moment: "pre-event" }), /30 minutes/);
+  assert.equal(edgeFill(0.3), 1);
+  assert.equal(activeFilterCount({ tier: "lean", group: "all", book: "x" }), 2);
+});

@@ -1,25 +1,77 @@
 /* Bet card (owner-only). Tokens only, so light and dark both work. Phone first. */
-.bc-banner { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); font-size: 13px; }
-.bc-banner strong { display: block; font-size: 14px; }
-.bc-banner small { color: var(--muted); }
-.bc-filters { display: grid; gap: 8px; }
-.bc-filters .segmented { flex-wrap: wrap; margin-bottom: 0; }
-.bc-filters label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.bc-filters select { min-height: 34px; }
-.bc-moment { margin: 0 0 8px; color: var(--muted-strong); font-size: 13px; }
-.bc-tier { margin: 14px 0 6px; color: var(--muted); font-size: 11px; font-weight: 780; letter-spacing: .06em; text-transform: uppercase; }
-.bc-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.bc-bet { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--surface-raised); }
-.bc-bet.small { border-left-color: var(--line-strong); }
-.bc-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
-.bc-head strong { font-size: 15px; }
-.bc-badge { padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--surface); font-size: 10px; font-weight: 800; letter-spacing: .05em; }
-.bc-price { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
-.bc-price b { font-size: 15px; }
-.bc-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
-.bc-bet details { font-size: 12px; color: var(--muted-strong); }
-.bc-bet summary { cursor: pointer; color: var(--muted); }
-.bc-totals { margin: 10px 0 0; color: var(--muted-strong); font-size: 13px; font-weight: 650; }
-.bc-cov table { width: 100%; font-size: 12px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.bc-cov th, .bc-cov td { padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--line); }
-.bc-notes { margin: 8px 0 0; padding-left: 18px; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+.bc-answer { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-4); margin: 0 0 var(--sp-4); }
+.bc-answer > div { display: grid; gap: 2px; min-width: 0; }
+.bc-headline { font-size: var(--fs-h2); font-weight: 700; letter-spacing: -.012em; }
+.bc-meta { color: var(--muted-strong); font-size: var(--fs-small); }
+.bc-quiet { color: var(--muted); font-size: var(--fs-small); }
+
+.bc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin: 0 0 var(--sp-4); padding: var(--sp-2) var(--sp-3); background: var(--tint-1); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.bc-bar .segmented { margin: 0; }
+.bc-sel { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); }
+.bc-sel select { min-height: 36px; }
+.bc-bar-end { display: inline-flex; align-items: center; gap: var(--sp-3); margin-left: auto; color: var(--muted-strong); font-size: var(--fs-small); }
+.bc-reset { min-height: 36px; padding: 0 var(--sp-3); border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+.bc-reset:hover { background: var(--tint-2); }
+
+.bc-total { color: var(--muted-strong); font-size: var(--fs-small); font-weight: 600; white-space: nowrap; }
+.bc-tier { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); margin: var(--sp-4) 0 var(--sp-2); color: var(--foreground); font-size: var(--fs-h3); font-weight: 650; }
+.bc-tier .num { color: var(--muted-strong); font-weight: 600; }
+.bc-tier small { color: var(--muted); font-size: var(--fs-small); font-weight: 400; }
+.bc-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+
+.bc-bet { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--radius-lg); }
+.bc-bet.lean { border-left-color: var(--pos); }
+.bc-bet summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main edge" "price price"; gap: var(--sp-2) var(--sp-4); align-items: start; min-height: 44px; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-lg); }
+.bc-bet summary::-webkit-details-marker { display: none; }
+.bc-bet summary:hover { background: var(--tint-1); }
+.bc-main { grid-area: main; display: grid; gap: 2px; min-width: 0; }
+.bc-name { font-size: var(--fs-body); font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
+.bc-sub { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); }
+.bc-edge { grid-area: edge; display: grid; justify-items: end; gap: 2px; min-width: 72px; }
+.bc-edge b { color: var(--pos); font-size: 22px; font-weight: 750; letter-spacing: -.02em; line-height: 1; }
+.bc-edge i { display: block; width: 72px; height: 4px; border-radius: 2px; background: var(--rail-track, var(--line)); overflow: hidden; }
+.bc-edge em { display: block; height: 100%; background: var(--pos); }
+.bc-edge small { color: var(--muted); font-size: var(--fs-small); }
+.bc-price { grid-area: price; display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-6); margin: 0; }
+.bc-price div { display: grid; gap: 1px; }
+.bc-price dt { color: var(--muted); font-size: var(--fs-small); }
+.bc-price dd { margin: 0; font-size: var(--fs-data); }
+.bc-price dd b { font-size: var(--fs-body); font-weight: 700; }
+.bc-price dd span { color: var(--muted-strong); font-size: var(--fs-small); }
+.bc-detail { display: grid; gap: var(--sp-1); padding: 0 var(--sp-4) var(--sp-3); color: var(--muted-strong); font-size: var(--fs-small); line-height: 1.5; }
+.bc-detail p { margin: 0; max-width: 70ch; }
+
+.bc-status { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.bc-status li { display: grid; gap: var(--sp-1); padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); }
+.bc-status-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.bc-status p { margin: 0; color: var(--muted-strong); font-size: var(--fs-small); line-height: 1.5; }
+.bc-status .bc-next { color: var(--foreground); font-weight: 600; }
+
+.bc-cov, .bc-howto { margin-top: var(--sp-3); font-size: var(--fs-small); color: var(--muted-strong); }
+.bc-cov summary, .bc-howto summary { display: flex; align-items: center; min-height: 44px; color: var(--muted-strong); cursor: pointer; }
+.bc-cov table { width: 100%; max-width: 520px; border-collapse: collapse; }
+.bc-cov th, .bc-cov td { padding: var(--sp-1) var(--sp-2); text-align: left; border-bottom: 1px solid var(--line); }
+.bc-cov th.num, .bc-cov td.num { text-align: right; }
+.bc-howto { margin-top: var(--sp-8); padding-top: var(--sp-2); border-top: 1px solid var(--line); }
+.bc-note { margin: var(--sp-2) 0 0; line-height: 1.5; }
+.bc-notes { margin: var(--sp-2) 0 0; padding-left: 18px; line-height: 1.6; }
+
+@media (max-width: 820px) {
+  .bc-bar { padding: var(--sp-2); }
+  .bc-bar .segmented button { min-height: 44px; }
+  .bc-sel select, .bc-reset { min-height: 44px; }
+  .bc-sel select { font-size: 16px; }
+  .bc-bar-end { width: 100%; justify-content: space-between; margin-left: 0; }
+  .bc-edge b { font-size: 24px; }
+}
+
+.bc-bar .segmented button { min-width: 44px; }
+.bc-cov summary::before, .bc-howto summary::before { content: "▸"; display: inline-block; width: 16px; color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
+.bc-cov[open] > summary::before, .bc-howto[open] > summary::before { transform: rotate(90deg); }
+.bc-bet details[open] > summary { background: var(--tint-1); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.bc-status p:first-of-type::first-letter { text-transform: uppercase; }
+@media (min-width: 821px) {
+  .bc-bet summary { grid-template-columns: minmax(0, 1fr) auto 96px; grid-template-areas: "main price edge"; align-items: center; }
+  .bc-price { gap: var(--sp-1) var(--sp-8); }
+}
+@media (max-width: 820px) { .bc-price { gap: var(--sp-1) var(--sp-4); } .bc-price dd span { white-space: nowrap; } }

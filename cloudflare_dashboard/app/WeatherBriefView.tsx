@@ -6,9 +6,9 @@
  * helps/hurts and easier/harder (weather-brief-rules.ts); the sliders interpolate the published what-if scenarios in the browser.
  */
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { ChevronRight, CloudSun, Search, Wind } from "lucide-react";
-import { Panel } from "./components";
+import { Section, OnThisPage } from "./ui";
 import { useDashboardData } from "./data";
 import { Badge } from "./ui";
 import { etTime } from "./lib";
@@ -44,11 +44,11 @@ export function HeadlineCard({ brief, version }: { brief: Brief; version: string
           {brief.as_of ? `Updated ${etTime(brief.as_of)}` : ""}{brief.forecast.age_hours !== null ? ` · forecast ${ageWords(brief.forecast.age_hours)}` : ""}{version ? ` · model ${version}` : ""}
         </small>
       </div>
-      {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}
       {brief.headline.length ? (
-        // The status line above already says whether tee times are out; a headline sentence opening the same way only repeats it.
+        // The status line below already says whether tee times are out; a headline sentence opening the same way only repeats it.
         <ul className="wb-sentences">{brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24)).map((h, i) => <li key={i} className={i === 0 ? "first" : undefined}>{h}</li>)}</ul>
       ) : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
+      {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}
     </section>
   );
 }
@@ -66,7 +66,7 @@ export function CoursePanel({ brief }: { brief: Brief }) {
     </div>
   );
   return (
-    <Panel eyebrow="This course and weather" title={s.label} actions={s.ratio !== null ? <Badge tone="accent">{s.ratio.toFixed(1)}x the tour average</Badge> : undefined}>
+    <Section id="course" title="How much wind matters here" purpose={s.label} actions={s.ratio !== null ? <Badge tone="accent">{s.ratio.toFixed(1)}x the tour average</Badge> : undefined}>
       <p className="wb-lead">{c.plain || (s.perFive !== null ? `Five more mph of wind makes the field about ${s.perFive.toFixed(1)} strokes harder per round.` : "No wind sensitivity published for this course yet.")}</p>
       {c.slope !== null && (
         <div className="wb-bars">
@@ -75,7 +75,7 @@ export function CoursePanel({ brief }: { brief: Brief }) {
         </div>
       )}
       <p className="wb-muted">Long-run cost of each extra mph of average wind at this course, from past events.{brief.whatIf ? " The sentence above re-runs the model on this week's forecast, so it can differ." : ""}{c.basis ? ` Based on: ${c.basis}.` : ""}{c.cls ? ` Course type: ${c.cls}.` : ""}</p>
-    </Panel>
+    </Section>
   );
 }
 
@@ -96,46 +96,59 @@ function Faint({ now, base, render }: { now: string; base: string; render?: bool
   return <>{now}{render && now !== base ? <small className="wb-faint"> (forecast: {base})</small> : null}</>;
 }
 
+/** A zero-centred bar on a scale shared by every round: right = positive value, left = negative. `goodNegative`: a negative value is the favourable side. */
+function CenterBar({ v, scale, tone: t }: { v: number | null; scale: number; tone: string }) {
+  if (v === null) return <div className="wb-cbar empty" aria-hidden="true" />;
+  const w = Math.min(50, (Math.abs(v) / scale) * 50);
+  return <div className="wb-cbar" aria-hidden="true"><i className="zero" /><i className={`fill ${t}`} style={v >= 0 ? { left: "50%", width: `${w}%` } : { right: "50%", width: `${w}%` }} /></div>;
+}
+
 export function RoundStrip({ rounds, live, sliders }: { rounds: BriefRound[]; live: RoundOut[] | null; sliders: Sliders }) {
   const changed = live !== null && !isNeutral(sliders);
+  const outs = rounds.map((r) => live?.find((x) => x.round === r.round) ?? { round: r.round, field: r.field, wave: r.wave, spread: r.spread });
+  const fScale = Math.max(0.3, ...outs.map((o) => Math.abs(o.field ?? 0)), ...rounds.map((r) => Math.abs(r.field ?? 0))) * 1.1;
+  const wScale = Math.max(0.15, ...outs.map((o) => Math.abs(o.wave ?? 0)), ...rounds.map((r) => Math.abs(r.wave ?? 0))) * 1.1;
   return (
-    <div className="wb-rounds">
-      {rounds.map((r) => {
-        const out = live?.find((x) => x.round === r.round) ?? { round: r.round, field: r.field, wave: r.wave, spread: r.spread };
-        const am = changed ? shiftSlot(r.forecast.AM, "AM", sliders) : r.forecast.AM;
-        const pm = changed ? shiftSlot(r.forecast.PM, "PM", sliders) : r.forecast.PM;
-        const day = r.forecast.day;
-        const side = waveSide(out.wave);
-        return (
-          <article key={r.round} className="wb-round" aria-label={`Round ${r.round}`}>
-            <header><b>Round {r.round}</b><small>{dayName(r.date_local)}</small>{r.status === "field_only" && <Badge tone="warning">Tee times not out</Badge>}</header>
-            <dl className="wb-fc">
-              {am || pm ? (
-                <>
-                  <dt className="am">Morning</dt><dd>{slotWords(am)}</dd>
-                  <dt className="pm">Afternoon</dt><dd>{slotWords(pm)}</dd>
-                </>
-              ) : (
-                <><dt>Day</dt><dd>{slotWords(dayAsSlot(changed ? "shift" : "base", day, sliders))}</dd></>
-              )}
-            </dl>
-            <div className="wb-effects">
+    <div className="wb-compare">
+      <p className="wb-baseline"><b>Zero is a typical day.</b> Scoring effects are strokes per round against typical conditions for this course: <span className="wb-key good">negative = easier</span>, <span className="wb-key bad">positive = harder</span>. Bars use the same scale in every round so they compare directly.</p>
+      <div className="wb-rounds">
+        {rounds.map((r, idx) => {
+          const out = outs[idx];
+          const am = changed ? shiftSlot(r.forecast.AM, "AM", sliders) : r.forecast.AM;
+          const pm = changed ? shiftSlot(r.forecast.PM, "PM", sliders) : r.forecast.PM;
+          const day = r.forecast.day;
+          const side = waveSide(out.wave);
+          return (
+            <article key={r.round} className="wb-round" aria-label={`Round ${r.round}`}>
+              <header><b>Round {r.round}</b><small>{dayName(r.date_local)}</small>{r.status === "field_only" && <Badge tone="warning">Tee times not out</Badge>}</header>
               <div className={`wb-effect ${tone(out.field)}`}>
-                <span>For everyone</span>
+                <span>Field difficulty (everyone)</span>
                 <strong>Scoring {changed ? <Faint now={fieldWords(out.field)} base={fieldWords(r.field)} render /> : fieldWords(out.field)}</strong>
-                <small>Moves scores and the cut line, not who wins.</small>
+                <CenterBar v={out.field} scale={fScale} tone={tone(out.field)} />
+                <small>Moves scores and the cut line, not who is favoured.</small>
               </div>
               <div className={`wb-effect wave-${side}`}>
-                <span>Morning vs afternoon wave</span>
+                <span>Wave advantage (AM vs PM)</span>
                 <strong>{out.wave === null ? "Tee sheet not out yet" : changed ? <Faint now={waveWords(out.wave)} base={waveWords(r.wave)} render /> : waveWords(out.wave)}</strong>
-                <small>{out.wave === null ? "Wave effects arrive with the tee sheet." : (Math.abs(out.wave) < 0.02 ? "Tee times make no real difference this round." : "For the same player, the other wave plays that much harder.")}</small>
+                <CenterBar v={out.wave === null ? null : -out.wave} scale={wScale} tone={side === "am" ? "am" : side === "pm" ? "pm" : "flat"} />
+                <small>{out.wave === null ? "Wave effects arrive with the tee sheet." : (Math.abs(out.wave) < 0.02 ? "Tee times make no real difference this round." : "Bar points to the favoured wave: left = morning, right = afternoon.")}</small>
               </div>
               <div className="wb-effect flat"><span>Spread of scores</span><strong>{spreadWords(out.spread)}</strong></div>
-            </div>
-            {r.plain && <p className="wb-muted wb-round-plain">{changed ? `With the actual forecast: ${r.plain}` : r.plain}</p>}
-          </article>
-        );
-      })}
+              <dl className="wb-fc">
+                {am || pm ? (
+                  <>
+                    <dt className="am">Morning</dt><dd>{slotWords(am)}</dd>
+                    <dt className="pm">Afternoon</dt><dd>{slotWords(pm)}</dd>
+                  </>
+                ) : (
+                  <><dt>Day</dt><dd>{slotWords(dayAsSlot(changed ? "shift" : "base", day, sliders))}</dd></>
+                )}
+              </dl>
+              {r.plain && <p className="wb-muted wb-round-plain">{changed ? `With the actual forecast: ${r.plain}` : r.plain}</p>}
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -176,7 +189,8 @@ export function PlayersPanel({ brief, result }: { brief: Brief; result: WhatIfRe
   const [sort, setSort] = useState<SortMode>("helped");
   const [topOnly, setTopOnly] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
-  const [limit, setLimit] = useState(40);
+  const [limit, setLimit] = useState(15);
+  const [expanded, setExpanded] = useState(false);
   const slopes = useMemo(() => medianProbSlopes(brief.players), [brief.players]);
   const liveOf = (p: BriefPlayer) => (result ? (result.totals.get(p.dg_id) ?? p.total) : p.total);
   const rows = useMemo(() => {
@@ -185,23 +199,36 @@ export function PlayersPanel({ brief, result }: { brief: Brief; result: WhatIfRe
     return orderPlayers(filtered, sort);
   }, [brief.players, result, query, sort, topOnly]);
   const scale = Math.max(0.05, ...brief.players.flatMap((p) => [p.total, result?.totals.get(p.dg_id) ?? null]).filter((v): v is number => v !== null).map(Math.abs));
-  if (!brief.players.length) return <Panel eyebrow="Who it helps and hurts" title="Player effects"><p className="wb-muted">No player effects yet: they appear once tee times are published. Until then only the field-wide effect above is in the prices.</p></Panel>;
-  const shown = query ? rows : rows.slice(0, limit);
+  const extremes = useMemo(() => {
+    const withLive = brief.players.map((p) => ({ name: p.name, v: result ? (result.totals.get(p.dg_id) ?? p.total) : p.total })).filter((p): p is { name: string; v: number } => p.v !== null);
+    const sorted = [...withLive].sort((a, b) => a.v - b.v);
+    return { helped: sorted.slice(0, 3).filter((p) => p.v < -0.005), hurt: sorted.slice(-3).reverse().filter((p) => p.v > 0.005) };
+  }, [brief.players, result]);
+  if (!brief.players.length) return <Section id="players" title="Who it helps and hurts" purpose="Each player's own weather and tee-time effect"><p className="wb-muted">No player effects yet: they appear once tee times are published. Until then only the field-wide effect above is in the prices.</p></Section>;
+  // Default view shows both ends of the ranking (most helped and most hurt) so the chart reads either side of zero.
+  const bothEnds = !expanded && !query && (sort === "helped" || sort === "hurt") && rows.length > 16;
+  const shown = bothEnds ? [...rows.slice(0, 8), ...rows.slice(-8)] : query ? rows : rows.slice(0, limit);
+  const gapAfter = bothEnds ? shown[7]?.dg_id : null;
   const pos = (v: number) => `${Math.min(50, (Math.abs(v) / scale) * 50)}%`;
   return (
-    <Panel eyebrow="Who it helps and hurts" title="Each player's weather effect" actions={<Badge tone="neutral">Rounds with a tee time</Badge>}>
-      <p className="wb-lead">The bars show how many strokes the weather and tee time move each player&apos;s skill, compared with the average player in the field. Green bars to the right help, red bars to the left hurt.</p>
+    <Section id="players" title="Who it helps and hurts" purpose="Strokes per round the weather and tee time move each player (rounds with a tee time), compared with the average player in the field. Zero is no effect.">
+      {(extremes.helped.length > 0 || extremes.hurt.length > 0) && (
+        <div className="wb-extremes">
+          <div className="good"><span>Helped most</span>{extremes.helped.map((p) => <b key={p.name}>{p.name} <em>{helpWords(p.v)}</em></b>)}</div>
+          <div className="bad"><span>Hurt most</span>{extremes.hurt.map((p) => <b key={p.name}>{p.name} <em>{helpWords(p.v)}</em></b>)}</div>
+        </div>
+      )}
       <div className="wb-toolbar">
         <label className="wb-search"><Search size={16} aria-hidden="true" /><input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search player" aria-label="Search player" /></label>
         <label className="wb-select"><span>Order</span>
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
+          <select value={sort} onChange={(e) => { setSort(e.target.value as SortMode); setExpanded(false); }}>
             <option value="helped">Helped most first</option><option value="hurt">Hurt most first</option><option value="skill">By skill rank</option><option value="name">By name</option>
           </select>
         </label>
         <label className="wb-check"><input type="checkbox" checked={topOnly} onChange={(e) => setTopOnly(e.target.checked)} /> Top {TOP_SKILL} by skill only</label>
         <small className="wb-muted">{rows.length} of {brief.players.length} players</small>
       </div>
-      <div className="wb-axis" aria-hidden="true"><span>← Hurts</span><span>Helps →</span></div>
+      <div className="wb-axis" aria-hidden="true"><span>Hurts: +{scale.toFixed(2)}</span><span>0</span><span>Helps: −{scale.toFixed(2)} strokes</span></div>
       <ul className="wb-players">
         {shown.map((p) => {
           const base = brief.players.find((b) => b.dg_id === p.dg_id)?.total ?? null;
@@ -209,7 +236,8 @@ export function PlayersPanel({ brief, result }: { brief: Brief; result: WhatIfRe
           const isOpen = open === p.dg_id;
           const t = tone(v);
           return (
-            <li key={p.dg_id} className={`${isTopSkill(p) ? "top" : ""} ${isOpen ? "open" : ""}`}>
+            <Fragment key={p.dg_id}>
+            <li className={`${isTopSkill(p) ? "top" : ""} ${isOpen ? "open" : ""}`}>
               <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : p.dg_id)}>
                 <span className="wb-pname">{p.name}{isTopSkill(p) && <em title={`Top ${TOP_SKILL} by skill`}>top {TOP_SKILL}</em>}</span>
                 <span className="wb-track" aria-hidden="true">
@@ -221,12 +249,14 @@ export function PlayersPanel({ brief, result }: { brief: Brief; result: WhatIfRe
               </button>
               {isOpen && <PlayerDetail p={brief.players.find((b) => b.dg_id === p.dg_id) ?? p} live={liveOf(p)} slopes={slopes} />}
             </li>
+            {gapAfter === p.dg_id && <li className="wb-gap" aria-hidden="true">{rows.length - 16} players in between</li>}
+            </Fragment>
           );
         })}
         {shown.length === 0 && <li className="wb-muted wb-none">No player matches.</li>}
       </ul>
-      {!query && rows.length > limit && <button type="button" className="inputs-button" onClick={() => setLimit((l) => l + 60)}>Show more ({rows.length - limit} left)</button>}
-    </Panel>
+      {!query && (bothEnds || rows.length > limit) && <button type="button" className="inputs-button wb-more" onClick={() => { if (bothEnds) setExpanded(true); else setLimit((l) => l + 45); }}>{bothEnds ? `Show all ${rows.length} players` : `Show more (${rows.length - limit} left)`}</button>}
+    </Section>
   );
 }
 
@@ -241,7 +271,7 @@ function sliderWords(s: Sliders): string {
 }
 
 export function WhatIfPanel({ model, sliders, onChange }: { model: WhatIfModel | null; sliders: Sliders; onChange: (s: Sliders) => void }) {
-  if (!model) return <Panel eyebrow="What if the forecast changes" title="Try a different forecast"><p className="wb-muted">What-if numbers are not published for this run yet.</p></Panel>;
+  if (!model) return <Section id="whatif" title="What if the forecast changes" purpose="Try a different forecast"><p className="wb-muted">What-if numbers are not published for this run yet.</p></Section>;
   const set = (patch: Partial<Sliders>) => onChange({ ...sliders, ...patch });
   // The ≈ note only when some player is actually scaled (briefs with player_totals give everyone an exact number).
   const approxNote = model.evaluate({ wind: model.ranges.wind[1], pm: model.ranges.pm[1], temp: model.ranges.temp[1], wet: model.axes.wet }).approx.size > 0;
@@ -253,7 +283,7 @@ export function WhatIfPanel({ model, sliders, onChange }: { model: WhatIfModel |
     </label>
   );
   return (
-    <Panel eyebrow="What if the forecast changes" title="Try a different forecast" actions={!isNeutral(sliders) ? <button type="button" className="inputs-button" onClick={() => onChange(NEUTRAL_SLIDERS)}>Reset to forecast</button> : undefined}>
+    <Section id="whatif" title="What if the forecast changes" purpose="Move a slider: the four rounds above and the player bars update live." actions={!isNeutral(sliders) ? <button type="button" className="inputs-button" onClick={() => onChange(NEUTRAL_SLIDERS)}>Reset to forecast</button> : undefined}>
       <p className="wb-lead" role="status" aria-live="polite">{sliderWords(sliders)}</p>
       <div className="wb-sliders">
         {slide("wb-wind", "Wind, all day", -10, 10, sliders.wind, "mph", "wind", model.axes.wind)}
@@ -262,7 +292,7 @@ export function WhatIfPanel({ model, sliders, onChange }: { model: WhatIfModel |
         <label className={`wb-check wb-wet${model.axes.wet ? "" : " off"}`}><input type="checkbox" checked={sliders.wet} disabled={!model.axes.wet} onChange={(e) => set({ wet: e.target.checked })} /> Wet weather</label>
       </div>
       <p className="wb-muted">The round cards above and the player bars update as you move these. The faint text and the faint tick marks show the current forecast. Between the published what-if runs the page blends them.{approxNote ? " Players outside the biggest movers are scaled from their current effect (shown with ≈)." : ""}</p>
-    </Panel>
+    </Section>
   );
 }
 
@@ -288,7 +318,7 @@ export function HistoryPanel({ brief }: { brief: Brief }) {
   const series = useMemo(() => historySeries(brief), [brief]);
   if (!series.length) return null;
   return (
-    <Panel eyebrow="How it has moved this week" title="Forecast changes since the first look">
+    <Section id="history" title="How the forecast has moved" purpose="Change in each round's effect since the first look this week">
       <div className="wb-history">
         {series.map((s) => {
           const f = movementWords(s.field, "field");
@@ -302,39 +332,42 @@ export function HistoryPanel({ brief }: { brief: Brief }) {
           );
         })}
       </div>
-    </Panel>
+    </Section>
   );
 }
 
 /* ------------------------------------------------------------------ (g) glossary */
 export function GlossaryPanel() {
   return (
-    <Panel eyebrow="In plain English" title="What the words mean">
+    <Section id="words" title="What the words mean" purpose="In plain English">
       <dl className="wb-gloss">
         {GLOSSARY_ORDER.map((k) => (
           <div key={k}><dt>{k === "field_effect" ? "Field effect" : k === "wave_split" ? "Wave split" : k === "spread" ? "Spread" : "Relative effect"}</dt><dd>{DEFAULT_GLOSSARY[k].replace(/^[^:]+: /, "")}</dd></div>
         ))}
       </dl>
-    </Panel>
+    </Section>
   );
 }
 
 /* ------------------------------------------------------------------ whole body */
-export function WeatherBriefBody({ brief, modelVersion }: { brief: Brief; modelVersion?: string }) {
+export function WeatherBriefBody({ brief, modelVersion, children }: { brief: Brief; modelVersion?: string; children?: React.ReactNode }) {
   const [sliders, setSliders] = useState<Sliders>(NEUTRAL_SLIDERS);
   const model = useMemo(() => buildWhatIf(brief), [brief]);
   const result = useMemo(() => (model && !isNeutral(sliders) ? model.evaluate(sliders) : null), [model, sliders]);
   const version = brief.model_version || modelVersion || "";
+  const nav = [{ id: "rounds", label: "Four rounds" }, { id: "players", label: "Players" }, { id: "whatif", label: "What if" }, { id: "course", label: "Course" }, ...(historySeries(brief).length ? [{ id: "history", label: "Forecast moves" }] : []), ...(children ? [{ id: "hourly", label: "Hour by hour" }] : []), { id: "words", label: "Glossary" }];
   return (
     <div className="wb-body">
       <HeadlineCard brief={brief} version={version} />
-      <CoursePanel brief={brief} />
-      <Panel eyebrow="Round by round" title="What the weather does each day" actions={<CloudSun size={18} aria-hidden="true" />}>
+      <OnThisPage sections={nav} />
+      <Section id="rounds" title="Four rounds at a glance" purpose="How hard the weather makes each day, and which tee wave has the edge." actions={<CloudSun size={18} aria-hidden="true" />}>
         {brief.rounds.length ? <RoundStrip rounds={brief.rounds} live={result ? result.rounds : null} sliders={sliders} /> : <p className="wb-muted">No round forecast yet.</p>}
-      </Panel>
+      </Section>
       <PlayersPanel brief={brief} result={result} />
       <WhatIfPanel model={model} sliders={sliders} onChange={setSliders} />
+      <CoursePanel brief={brief} />
       <HistoryPanel brief={brief} />
+      {children}
       <GlossaryPanel />
       <p className="wb-muted wb-foot"><Wind size={13} aria-hidden="true" /> {brief.forecast.source === "archive" ? "From an archived forecast." : "From the latest live forecast."}{brief.forecast.n_scenarios ? ` ${brief.forecast.n_scenarios} forecast scenarios.` : ""} Strokes are per round.</p>
     </div>
@@ -351,7 +384,7 @@ export function WeatherLinkCard({ event }: { event: { event_uid: string; weather
       <CloudSun size={20} aria-hidden="true" />
       <strong>Weather this week</strong>
       <span>{brief?.headline[0] ?? "How the forecast changes scoring at this course, who it helps and hurts, and what changes if the forecast moves."}</span>
-      <Link className="ex-link" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`}>Open the weather page <ChevronRight size={14} /></Link>
+      <Link prefetch={false} className="ex-link" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`}>Open the weather page <ChevronRight size={14} /></Link>
     </div>
   );
 }

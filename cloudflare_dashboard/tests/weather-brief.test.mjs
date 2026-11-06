@@ -158,7 +158,7 @@ test("history needs two captures per round and describes the movement in words",
 
 test("the page renders the brief top to bottom with plain words", () => {
   const html = renderView("WeatherEffectsView.tsx", "WeatherEffectsView", { data: { "golfprice/index.json": index, [KEY]: fixture }, pathname: "/weather-effects" });
-  for (const text of ["Weather headline", "This course and weather", "More wind-sensitive than average", "1.3x the tour average", "Round by round", "Who it helps and hurts", "What if the forecast changes", "How it has moved this week", "What the words mean", "Field effect", "Wave split", "Tee times not out", "model v2.7", "Wind, all day", "Extra afternoon wind", "Wet weather", "Search player"]) assert.ok(html.includes(text), text);
+  for (const text of ["Weather headline", "How much wind matters here", "More wind-sensitive than average", "1.3x the tour average", "Four rounds at a glance", "Who it helps and hurts", "What if the forecast changes", "How the forecast has moved", "What the words mean", "Field effect", "Wave split", "Tee times not out", "model v2.7", "Wind, all day", "Extra afternoon wind", "Wet weather", "Search player"]) assert.ok(html.includes(text), text);
   assert.ok(html.includes("by skill only"), "top-30 filter");
   assert.match(html, /Morning wave favored by|Afternoon wave favored by/);
   assert.match(html, /helps by|hurts by/);

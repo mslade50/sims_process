@@ -128,3 +128,23 @@ export const intervalText = (interval: Interval | undefined, digits = 3): string
   const ci = interval.lo === null || interval.hi === null ? "too few events for an interval" : `95% ${signedFmt(interval.lo, digits)} to ${signedFmt(interval.hi, digits)}`;
   return `${signedFmt(interval.mean, digits)} (${ci})`;
 };
+
+/** Plain-English reading of a log-loss gap against the market close (negative = the model was closer to what happened). */
+export function marketReading(value: number | null | undefined, tolerance = 0.0005): { word: string; tone: "positive" | "negative" | "" } {
+  if (value === null || value === undefined || !Number.isFinite(value)) return { word: "no data", tone: "" };
+  if (Math.abs(value) < tolerance) return { word: "level with the market", tone: "" };
+  return value < 0 ? { word: "better than the market", tone: "positive" } : { word: "worse than the market", tone: "negative" };
+}
+
+/** Headline for the whole forward test: how much evidence there is, and what it says so far. */
+export function forwardHeadline(events: number, checkpoint: number, mean: number | null | undefined, lo: number | null | undefined, hi: number | null | undefined): string {
+  const reading = marketReading(mean);
+  const range = lo !== null && lo !== undefined && hi !== null && hi !== undefined;
+  if (events < checkpoint || !range) return `Too early to call. ${events} of ${checkpoint} events are graded before the first checkpoint; so far the model is ${reading.word}.`;
+  if (hi! < 0) return `The model is beating the market's closing prices, and the 95% range sits below zero (${events} events).`;
+  if (lo! > 0) return `The market's closing prices are beating the model, and the 95% range sits above zero (${events} events).`;
+  return `No clear difference from the market yet: the 95% range includes zero (${events} events).`;
+}
+
+/** Width (0 to 1) of a diverging bar for a gap, given the largest absolute gap shown. */
+export const gapBar = (value: number | null | undefined, max: number): number => (value === null || value === undefined || !(max > 0) ? 0 : Math.min(1, Math.abs(value) / max));

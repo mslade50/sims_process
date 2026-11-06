@@ -167,6 +167,15 @@ export type JobStatus = {
   updated_at?: string;
 };
 
+/** Rough, honest duration hint per job type, shown on the button before the first real run is on record. Real durations from recent runs replace it. */
+const QUICK_JOBS = ["daily_health", "publish", "xtour_publish", "odds_reprice", "watch"];
+export function typicalTake(type: string): string {
+  if (type === "odds_reprice") return "Seconds";
+  if (QUICK_JOBS.includes(type)) return "Usually under 2 min";
+  if (type === "xtour") return "A few minutes";
+  return "Minutes (a full pricing run)";
+}
+
 export const specFor = (type: unknown): JobSpec | undefined => JOB_TYPES.find((spec) => spec.type === type);
 
 /** Plain words for a job state. */

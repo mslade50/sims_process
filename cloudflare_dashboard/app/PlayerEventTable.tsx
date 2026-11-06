@@ -5,9 +5,10 @@ import type {ContextEvent,ContextRound} from "./player-history-filters";
 import {SG_COLUMNS,SHOT_COLUMNS,buildRows,categoryValue,divergingBackground,formatShot,sortRows,type ShotRef,type ShotRoundRow,type SortKey} from "./player-event-table-rules";
 import "./player-events.css";
 const signed=(v:unknown)=>finite(v)?`${v>0?"+":""}${v.toFixed(2)}`:"—";
-const PAGE=20;
+const PAGE_DESKTOP=20,PAGE_PHONE=10;
 /** Event-by-event results: conditionally formatted strokes gained by category plus shot stats where published. */
 export function PlayerEventTable({events,anchor,shotRows,shotRef,windowDays}:{events:ContextEvent[];anchor:number|null|undefined;shotRows?:ShotRoundRow[];shotRef:ShotRef;windowDays?:number}){
+  const PAGE=typeof window!=="undefined"&&window.matchMedia("(max-width: 640px)").matches?PAGE_PHONE:PAGE_DESKTOP;
   const [sort,setSort]=useState<{key:SortKey;dir:"asc"|"desc"}>({key:"date",dir:"desc"}),[page,setPage]=useState(0),[open,setOpen]=useState<string[]>([]),[radar,setRadar]=useState(false);
   const rows=useMemo(()=>sortRows(buildRows(events,anchor,shotRows,shotRef),sort.key,sort.dir),[events,anchor,shotRows,shotRef,sort]);
   const pages=Math.max(1,Math.ceil(rows.length/PAGE)),cur=Math.min(page,pages-1),visible=rows.slice(cur*PAGE,cur*PAGE+PAGE);

@@ -100,8 +100,8 @@ export function catalogFreshnessTone(ageMs: number | null): FreshnessTone {
 
 /* ------------------------------------------------------------------ header freshness (site audit C3) */
 export type IndexEventLite = {
-  name?: string; course?: string; date_start?: string; event_uid?: string;
-  runs?: Array<{ as_of?: string }>;
+  name?: string; course?: string; date_start?: string; date_end?: string; event_uid?: string; tour?: string; explain_key?: string | null;
+  runs?: Array<{ as_of?: string; kind?: string; after_round?: number | null }>;
   /** Added by runner release 1; ignored until present. */
   published_at?: string; held_back?: unknown;
 };

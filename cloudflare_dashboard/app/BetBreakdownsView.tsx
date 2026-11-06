@@ -3,12 +3,43 @@
 import { useEffect, useMemo, useState } from "react";
 import { DataThrough } from "./DataThrough";
 import { dataThrough } from "./freshness-rules";
-import { EmptyState, LoadingState, PageIntro, Panel, SegmentedControl } from "./components";
+import { Chip, EmptyState, LoadingState, PageHeader, Panel, Section, SegmentedControl, Stat } from "./components";
 import {
   BET_BREAKDOWNS_KEY, EDGE_BUCKETS, MARKET_GROUPS, OWNER_BOOKS, OWNER_DATA_PREFIX, bookLabel, breakdown, decodeDataset, defaultFilters, examples, pct, verdict,
   type Basis, type Cell, type Dataset, type Filters, type Move, type RowDim, type Sample,
 } from "./bet-breakdowns-rules";
 import "./bet-breakdowns.css";
+
+const MOVE_WORD: Record<Move, string> = { all: "any line move", toward: "line moved toward us", flat_or_against: "line flat or against", flat: "line flat", against: "line moved against us" };
+
+function roiTone(v: ReturnType<typeof verdict>): "positive" | "negative" | "neutral" { return v === "pos" ? "positive" : v === "neg" ? "negative" : "neutral"; }
+
+/** ROI per edge bucket as zero-centred bars with the 95% range as a whisker and the bet count beside every bar. Tap a row for seasons and example bets. */
+function EdgeChart({ cells, basis, activeBucket, onOpen }: { cells: Cell[]; basis: Basis; activeBucket: number | null; onOpen: (bucket: number) => void }) {
+  const scale = Math.max(0.05, ...cells.flatMap((c) => (c.n ? [Math.abs(c.roi ?? 0), Math.abs(c.lo ?? 0), Math.abs(c.hi ?? 0)] : [0])));
+  const at = (v: number) => 50 + (Math.max(-scale, Math.min(scale, v)) / scale) * 50;
+  return (
+    <ul className="bb-chart" aria-label={`Return per 1-unit bet by edge size, at the ${basis}`}>
+      {cells.map((c, b) => {
+        const v = verdict(c);
+        const roi = c.roi ?? 0;
+        return (
+          <li key={EDGE_BUCKETS[b].key}>
+            <button type="button" className={activeBucket === b ? "on" : ""} disabled={!c.n} onClick={() => onOpen(b)} aria-label={c.n ? `Edge ${EDGE_BUCKETS[b].label}: ${pct(c.roi)} on ${c.n} bets. Show seasons and examples` : `Edge ${EDGE_BUCKETS[b].label}: no bets`}>
+              <span className="bb-ch-label">Edge {EDGE_BUCKETS[b].label}</span>
+              <span className="bb-ch-track" aria-hidden="true">
+                <i className="bb-ch-zero" />
+                {c.n > 0 && <i className={`bb-ch-bar ${roi >= 0 ? "pos" : "neg"} ${v ?? "thin"}`} style={{ left: `${Math.min(at(0), at(roi))}%`, width: `${Math.abs(at(roi) - at(0))}%` }} />}
+                {c.n > 0 && c.lo !== null && c.hi !== null && <i className="bb-ch-range" style={{ left: `${at(c.lo)}%`, width: `${at(c.hi) - at(c.lo)}%` }} />}
+              </span>
+              <span className="bb-ch-val num"><strong>{c.n ? pct(c.roi) : "–"}</strong><small>{c.n.toLocaleString()} bets{c.n && v === null ? ", thin" : ""}</small></span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; data: Dataset };
 
@@ -116,6 +147,45 @@ function Detail({ data, filters, rowKey, rowLabel, bucket, cell, onClose }: { da
   );
 }
 
+function filterSummary(data: Dataset, f: Filters): string {
+  const { meta } = data;
+  const names = (idx: number[], list: string[], all: number, label: (x: string) => string, noun: string) => idx.length === 0 ? `no ${noun}` : idx.length === all ? `all ${noun}` : idx.length <= 2 ? idx.map((i) => label(list[i])).join(" + ") : `${idx.length} ${noun}`;
+  const parts = [
+    f.basis === "open" ? "Open prices" : "Close prices",
+    names(f.markets, meta.markets, meta.markets.length, (m) => meta.market_labels[m] ?? m, "markets"),
+    names(f.tours, meta.tours, meta.tours.length, (t) => (t === "pga" ? "PGA Tour" : "DP World Tour"), "tours"),
+    names(f.books, meta.books, meta.books.length, bookLabel, "books"),
+    names(f.seasons, meta.seasons.map(String), meta.seasons.length, (x) => x, "seasons"),
+    MOVE_WORD[f.move],
+  ];
+  if (f.sample !== "all") parts.push(f.sample === "oos" ? "out of sample only" : "in-sample only");
+  if (f.hist.length) parts.push("history filtered");
+  if (f.skill.length) parts.push("skill filtered");
+  if (f.oppHist.length) parts.push("opponent history filtered");
+  if (f.minDec !== null || f.maxDec !== null) parts.push(`odds ${f.minDec ?? "any"} to ${f.maxDec ?? "any"}`);
+  return parts.join(" · ");
+}
+
+/** The answer first: overall return for the current selection, how many bets stand behind it, and whether the range clears zero. */
+function Answer({ data, filters, grand, considered }: { data: Dataset; filters: Filters; grand: Cell; considered: number }) {
+  void data;
+  if (considered === 0) return <EmptyState title="No bets match these filters" detail="Open Filters and widen the selection: add a market, a book or a season." />;
+  const v = verdict(grand);
+  const reading = v === "pos" ? "Reliably positive: the 95% range is above zero." : v === "neg" ? "Reliably negative: the 95% range is below zero." : v === "flat" ? "Not distinguishable from zero: the 95% range includes it." : "Too few bets or events to judge.";
+  return (
+    <div className="bb-answer">
+      <p className="bb-headline"><strong className={`num ${v === "pos" ? "pos" : v === "neg" ? "neg" : ""}`}>{pct(grand.roi)}</strong> return per unit staked <Chip tone={v === "pos" ? "positive" : v === "neg" ? "negative" : "warning"}>{v === "pos" ? "Reliable gain" : v === "neg" ? "Reliable loss" : v === "flat" ? "Inconclusive" : "Too few bets"}</Chip></p>
+      <p className="bb-reading">{reading} Flat 1-unit bets at the {filters.basis}.</p>
+      <div className="kpi-grid">
+        <Stat label="Return on investment (ROI)" value={pct(grand.roi)} tone={roiTone(v)} note={grand.lo !== null && grand.hi !== null ? `95% range ${pct(grand.lo)} to ${pct(grand.hi)}` : "too few events for a range"} hint="Average profit per 1-unit flat bet, as a share of the stake." />
+        <Stat label="Bets" value={grand.n.toLocaleString()} note={`${grand.events.toLocaleString()} events`} hint="The range counts whole events as one cluster, so many bets in one event do not look like many independent results." />
+        <Stat label="Won" value={grand.winRate === null ? "–" : `${(grand.winRate * 100).toFixed(0)}%`} note="of bets returned a profit" />
+        <Stat label="Claimed edge" value={pct(grand.meanEdge)} note="average at this price; ROI should land near it if the model is right" hint="Our probability times the decimal price, minus one." />
+      </div>
+    </div>
+  );
+}
+
 function Explorer({ data }: { data: Dataset }) {
   const { meta } = data;
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(meta));
@@ -130,7 +200,14 @@ function Explorer({ data }: { data: Dataset }) {
 
   return (
     <>
-      <Panel eyebrow="Filters" title="What to look at">
+      <Answer data={data} filters={filters} grand={result.grand} considered={result.considered} />
+
+      <details className="bb-filterbox">
+        <summary>
+          <span className="bb-fb-title">Filters</span>
+          <span className="bb-fb-sum">{filterSummary(data, filters)}</span>
+          <span className="bb-fb-act">Change</span>
+        </summary>
         <div className="bb-filters">
           <div className="bb-line">
             <span className="bb-chips-label">Price</span>
@@ -183,11 +260,17 @@ function Explorer({ data }: { data: Dataset }) {
             <button type="button" className="bb-chip bb-quick" onClick={() => { setFilters(defaultFilters(meta)); setOpen(null); }}>Reset filters</button>
           </div>
         </div>
-      </Panel>
+      </details>
+
+      {result.considered > 0 && (
+        <Section id="edge-chart" title="Return by edge size" purpose={`Profit per 1-unit flat bet at the ${filters.basis}. Bars start at zero; the thin line is the 95% range. Tap a bar for seasons and examples.`}>
+          <EdgeChart cells={result.total} basis={filters.basis} activeBucket={open?.rowKey === null ? open.bucket : null} onOpen={(bucket) => setOpen({ rowKey: null, bucket })} />
+        </Section>
+      )}
 
       <Panel
         eyebrow={`1-unit flat bets at the ${filters.basis} · range = 95%, events counted as clusters`}
-        title="Return by edge bucket"
+        title={`Return by ${ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label.toLowerCase()} and edge size`}
         actions={<label className="select-control bb-rows"><span>Rows</span><select value={filters.rowDim} onChange={(e) => set({ rowDim: e.target.value as RowDim })}>{ROW_OPTIONS.filter((o) => o.value !== "opp_hist" || data.hasOppHist).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
       >
         {result.considered === 0 ? (
@@ -224,12 +307,13 @@ function Explorer({ data }: { data: Dataset }) {
         <Detail data={data} filters={filters} rowKey={open.rowKey} rowLabel={open.rowKey === null ? "All selected" : openRow?.label ?? ""} bucket={open.bucket} cell={openCell} onClose={() => setOpen(null)} />
       )}
 
-      <Panel eyebrow="How to read this" title="About the data">
+      <details className="bb-about">
+        <summary>How to read this: about the data</summary>
         <ul className="bb-notes">
           {(meta.notes ?? []).map((n, k) => <li key={k}>{n}</li>)}
           <li>Data built {data.builtAt.replace("T", " ").replace("Z", " UTC")}. {data.n.toLocaleString()} priced bets in the file (edges above -5% at the open or the close).</li>
         </ul>
-      </Panel>
+      </details>
     </>
   );
 }
@@ -246,10 +330,10 @@ export function BetBreakdownsView() {
   }, [attempt]);
 
   const intro = (
-    <PageIntro
+    <PageHeader
       eyebrow="Owner only"
       title="Bet breakdowns"
-      description="How current production's edges have paid historically, by market, book and edge size. Choose open or close prices, line movement, player history and skill."
+      purpose="How the model's claimed edges have actually paid in past seasons, by edge size, book and market."
     />
   );
   if (load.state === "loading") return <div>{intro}<LoadingState label="Loading about 400,000 historical bets (about 4 MB)" /></div>;

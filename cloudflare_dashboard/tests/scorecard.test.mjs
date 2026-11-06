@@ -68,3 +68,12 @@ test("forward clock paused: shown only when the forward record counts exactly ze
   const counting = renderView("ScorecardSection.tsx", "GolfpriceScorecardSection", { data: { [SCORECARD_KEY]: { ...card, forward: { ...card.forward, events_counted: 2 } } } });
   assert.doesNotMatch(counting, /Forward test restarts/);
 });
+
+import { forwardHeadline, marketReading } from "../app/scorecard-rules.ts";
+test("plain-English readings: negative gap is better than the market; few events is too early", () => {
+  assert.equal(marketReading(-0.01).word, "better than the market");
+  assert.equal(marketReading(0.01).tone, "negative");
+  assert.equal(marketReading(0.0001).word, "level with the market");
+  assert.match(forwardHeadline(2, 40, -0.0001, null, null), /Too early to call/);
+  assert.match(forwardHeadline(50, 40, -0.02, -0.03, -0.01), /beating the market/);
+});

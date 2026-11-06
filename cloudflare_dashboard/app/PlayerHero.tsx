@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Badge, Skeleton } from "./ui";
+import { Badge, GapRail, Skeleton } from "./ui";
 import { LABELS, vsPgaAvgLong, zeroLabel, zeroSentence } from "./labels";
 import { etTime } from "./lib";
 import { entryName, pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, referenceSpan, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
@@ -90,6 +90,10 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
   const live = weekly.savedDoc?.kind === "live" ? liveChips((row as unknown as { live?: Parameters<typeof liveChips>[0] } | undefined)?.live) : null;
   const pga = weekly.pgaSkill ?? null;
   const unsupported = value === null && !withheld;
+  const ranked = (profile.radar ?? []).filter(m => typeof m.z === "number" && Number.isFinite(m.z)).sort((a, b) => (b.z as number) - (a.z as number));
+  const best = ranked[0], worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
+  const sd = (z: number | null | undefined) => `${(z as number) > 0 ? "+" : "−"}${Math.abs(z as number).toFixed(1)} SD`;
+  const strengths = best ? `Strongest part of the game: ${best.label.toLowerCase()} (${sd(best.z)} vs the typical PGA player).${worst && worst.key !== best.key ? ` Weakest: ${worst.label.toLowerCase()} (${sd(worst.z)}).` : ""}` : null;
   return (
     <section className="ph-hero" data-testid="player-hero" aria-label="Player summary">
       <div className="ph-row ph-identity">
@@ -106,6 +110,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
         </dl>
       </div>
 
+      {strengths && <p className="ph-story" data-testid="hero-story">{strengths}</p>}
       <div className="ph-row ph-stats">
         <article className="ph-headline" title={`${vsPgaAvgLong(referenceSpan(reference))}. ${zeroSentence(referenceSpan(reference))}`}>
           <span className="eyebrow">{LABELS.vsPgaAvg.short} · {zeroLabel(referenceSpan(reference))}</span>
@@ -130,8 +135,9 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
             <>
               <div className="ph-chips">
                 {pga ? <span className="ph-chip" data-testid="pga-chip" title={pgaSkillWords(pga).title}><b>{signed(pga.value)}</b><small>{pga.live ? `${LABELS.thisWeekPga.short}, live` : LABELS.thisWeekPga.short}</small></span> : <span className="ph-chip" title={LABELS.vsField.long}><b>{signed(model.value)}</b><small>{LABELS.vsField.short}</small></span>}
-                <span className="ph-chip" title="The model's chance of winning this event"><b>{pct1(row.probs.win.model)}</b><small>win</small></span>
-                <span className="ph-chip" title="The model's chance of finishing in the top 10"><b>{pct1(row.probs.top_10.model)}</b><small>top 10</small></span>
+              </div>
+              <div className="ph-books">
+                {(["win", "top_10"] as const).map(m => { const mp = row.probs?.[m]; const label = m === "win" ? "Chance to win" : "Chance to finish top 10"; return typeof mp?.model === "number" && typeof mp?.market === "number" ? <div key={m}><span className="ph-books-l">{label}</span><GapRail model={mp.model * 100} book={mp.market * 100} range={m === "win" ? 5 : 10} /></div> : <div key={m}><span className="ph-books-l">{label}</span><span className="ph-muted">Ours {pct1(mp?.model)} · no book price</span></div>; })}
               </div>
               {live && (
                 <div className="ph-chips" data-testid="live-chips">
@@ -147,13 +153,6 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
               {weekly.savedDoc ? "Not in this week's field." : weekly.eventName ? "No saved model run for this field yet." : "This golfer is not in any saved field."}{" "}
               {entry.dg_id ? <a className="ph-link" href={`/weekly-players${weekly.eventUid ? `?e=${encodeURIComponent(weekly.eventUid)}` : ""}`}>Show the full field</a> : null}
             </p>
-          )}
-          {weekly.options.length > 0 && (
-            <label className="ph-select">Compare with field
-              <select value={weekly.eventUid ?? ""} onChange={e => weekly.onEvent(e.target.value)}>
-                {weekly.options.map(o => <option key={o.uid} value={o.uid}>{o.label}</option>)}
-              </select>
-            </label>
           )}
           {entry.dg_id ? <a className="ph-link" href={`/weekly-players?player=${entry.dg_id}`}>This week&apos;s model inputs</a> : null}
         </article>

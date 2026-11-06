@@ -1,6 +1,14 @@
-.data-through { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
-.data-through.warn { padding: 8px 10px; border: 1px solid var(--warning, #b7791f); border-radius: 6px; color: var(--ink, inherit); background: color-mix(in oklab, var(--warning, #b7791f) 10%, var(--surface)); }
-.fresh-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.fresh-panel th, .fresh-panel td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
-.fresh-panel .fresh-stale { color: var(--negative, #b83232); font-weight: 600; }
-.fresh-panel .fresh-ok { color: var(--positive, #2f855a); }
+/* Data-through line and the Run page freshness block (agent F). */
+.data-through { margin: 0 0 var(--sp-2); font-size: var(--fs-small); color: var(--muted-strong); line-height: 1.5; }
+.data-through.warn { padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-left: 3px solid var(--warn); border-radius: var(--radius-control); color: var(--foreground); background: var(--warn-soft); }
+.fresh-panel { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-6); min-width: 0; }
+.fresh-title { margin: 0; font-size: var(--fs-h3); font-weight: 650; }
+.fresh-quiet { margin: 0; color: var(--muted-strong); font-size: var(--fs-small); }
+.fresh-summary { margin: 0; font-size: var(--fs-data); color: var(--foreground); }
+.fresh-summary:not(.warn) { padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--pos) 40%, transparent); border-left: 3px solid var(--pos); border-radius: var(--radius-control); background: var(--pos-soft); }
+.fresh-panel table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: var(--fs-data); white-space: normal; }
+.fresh-panel th, .fresh-panel td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; vertical-align: middle; }
+.fresh-panel th.num, .fresh-panel td.num { text-align: right; }
+.fresh-panel td { max-width: none; overflow: visible; text-overflow: clip; }
+.fresh-panel td:first-child { min-width: 180px; }
+@media (max-width: 820px) { .fresh-panel table { min-width: 560px; } }
