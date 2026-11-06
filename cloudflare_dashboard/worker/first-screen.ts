@@ -114,6 +114,8 @@ export type FetchApi = (path: string) => Promise<Response | null>;
 export type Inlined = Record<string, string>;
 
 async function text(fetchApi: FetchApi, path: string): Promise<string | null> {
+  // Only public golfprice data may be inlined; never owner-gated APIs (e.g. /api/overrides), whatever an index lists.
+  if (!path.startsWith("/api/golfprice/") || path.includes("..")) return null;
   try {
     const response = await fetchApi(path);
     if (!response || response.status !== 200) return null;
