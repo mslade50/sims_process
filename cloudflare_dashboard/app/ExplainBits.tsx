@@ -231,7 +231,7 @@ export function Term({ k, children, text }: { k: string; children: React.ReactNo
   if (!def) return <>{children}</>;
   return (
     <span className="ex-term" ref={ref}>
-      <button type="button" className="ex-term-btn" aria-expanded={open} title={def} onClick={() => setOpen((o) => !o)}>{children}</button>
+      <button type="button" className="ex-term-btn" aria-expanded={open} title={def} onClick={() => setOpen((o) => !o)}><span className="ex-term-text">{children}</span></button>
       {open && <span className="ex-term-pop" role="note">{def}</span>}
     </span>
   );

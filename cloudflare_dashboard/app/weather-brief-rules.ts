@@ -119,7 +119,20 @@ const unit = (v: number, d = 2) => (fix(v, d) === "1.00" ? "stroke" : "strokes")
 export function fieldWords(v: number | null, d = 2): string {
   if (v === null) return "not available";
   if (Math.abs(v) < TINY) return "no real change";
-  return `${v < 0 ? "easier" : "harder"} by ${fix(v, d)} ${unit(v, d)}`;
+  return `${fix(v, d)} ${unit(v, d)} ${v < 0 ? "easier" : "harder"}`;
+}
+/** One short bold headline (12 words or fewer) from the round effects: direction, size per round, and the day that carries it. */
+export function shortHeadline(rounds: BriefRound[]): string | null {
+  const have = rounds.filter((r) => r.field !== null) as Array<BriefRound & { field: number }>;
+  if (!have.length) return null;
+  const avg = have.reduce((s, r) => s + r.field, 0) / have.length;
+  if (Math.abs(avg) < 0.05 && have.every((r) => Math.abs(r.field) < 0.1)) return "Weather barely changes scoring this week";
+  const sign = avg < 0 ? "Easier" : "Harder";
+  const size = `${avg < 0 ? "−" : "+"}${Math.abs(avg).toFixed(1)} strokes a round`;
+  const top = [...have].sort((a, b) => Math.abs(b.field) - Math.abs(a.field))[0];
+  const day = Number.isFinite(Date.parse(`${top.date_local}T12:00:00Z`)) ? new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(Date.parse(`${top.date_local}T12:00:00Z`)) : "";
+  const concentrated = have.length >= 2 && Math.sign(top.field) === Math.sign(avg) && Math.abs(top.field) >= 1.6 * Math.abs(avg);
+  return `${sign} than usual: ${size}${concentrated && day ? `, mostly ${day}` : ""}`;
 }
 /** A player or group: the weather helps or hurts. */
 export function helpWords(v: number | null, d = 2): string {

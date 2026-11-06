@@ -47,7 +47,7 @@ function EventTable({ event }: { event: ScorecardEvent }) {
             <thead>
               <tr>
                 <th scope="col">Market</th>
-                {arms.map((arm) => <th key={arm.arm} scope="col" className="num" title={MARKET_HINT}>Gap to market close</th>)}
+                {arms.map((arm) => <th key={arm.arm} scope="col" className="num" title={MARKET_HINT}>Gap to market close <span className="sc-unit">log-loss, zero at centre</span></th>)}
               </tr>
             </thead>
             <tbody>

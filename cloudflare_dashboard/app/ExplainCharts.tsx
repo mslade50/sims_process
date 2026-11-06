@@ -4,7 +4,7 @@
  * Charts for the explain views (This week, Why priced, player drawer). Colors only from design tokens (var(--...)); every chart has a text alternative
  * (aria-label / visible numbers) and never relies on color alone (sign glyphs, labels). Pure data shaping lives in explain-rules.ts.
  */
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { MISSED_CUT_LABEL, positionRows, positionTicks } from "./distributions-rules";
 import {
   pct, signed, type HoleRow,
@@ -36,8 +36,8 @@ export function PositionChart({ series, hasCut, cumulative, height, ariaLabel }:
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} barCategoryGap={0} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="var(--line)" vertical={false} />
-          <XAxis dataKey="label" stroke="var(--muted)" ticks={positionTicks(n, withMc)} interval={0} tick={{ fontSize: 11 }} />
-          <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 11 }} domain={cumulative ? [0, 100] : [0, "auto"]} tickFormatter={(v: number) => String(Math.round(v))} />
+          <XAxis dataKey="label" stroke="var(--muted)" ticks={positionTicks(n, withMc)} interval={0} tick={{ fontSize: 12 }} />
+          <YAxis stroke="var(--muted)" width={38} unit="%" tick={{ fontSize: 12 }} domain={cumulative ? [0, 100] : [0, "auto"]} tickFormatter={(v: number) => String(Math.round(v))} />
           <Tooltip cursor={{ fill: "var(--tint-1)" }} content={<PositionTooltip series={series} cumulative={cumulative} />} />
           {bar && <Bar dataKey={bar.key} name={bar.name} fill={bar.color} fillOpacity={0.6} isAnimationActive={false} />}
           {series.filter((s) => s.style !== "bar").flatMap((s) => [
@@ -91,10 +91,12 @@ export function HoleStrip({ holes }: { holes: HoleRow[] }) {
     <figure className="ex-holes">
       <div className="ex-chart short" role="img" aria-label="Expected score versus par for each hole of the field-average player">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+          <BarChart data={data} margin={{ top: 8, right: 4, bottom: 16, left: 0 }}>
             <CartesianGrid stroke="var(--line)" vertical={false} />
-            <XAxis dataKey="hole" stroke="var(--muted)" tick={{ fontSize: 10 }} interval={0} />
-            <YAxis stroke="var(--muted)" width={34} tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "0")} />
+            <XAxis dataKey="hole" stroke="var(--muted)" tick={{ fontSize: 12 }} interval={0} label={{ value: "Hole", position: "insideBottom", offset: -10, fontSize: 12, fill: "var(--muted-strong)" }} />
+            <YAxis stroke="var(--muted)" width={52} tick={{ fontSize: 12 }} tickFormatter={(v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "0")}
+              label={{ value: "strokes vs field avg", angle: -90, position: "insideLeft", offset: 14, fontSize: 12, fill: "var(--muted-strong)", style: { textAnchor: "middle" } }} />
+            <ReferenceLine y={0} stroke="var(--line-strong)" />
             <Tooltip content={<HoleTooltip />} />
             <Bar dataKey="exp" isAnimationActive={false} radius={[2, 2, 2, 2]}>
               {data.map((d) => <Cell key={d.hole} fill={PAR_COLOR[d.par] ?? "var(--chart-4)"} fillOpacity={0.8} />)}
@@ -104,7 +106,7 @@ export function HoleStrip({ holes }: { holes: HoleRow[] }) {
       </div>
       <figcaption>
         <ul className="ex-legend"><li><i style={{ background: PAR_COLOR[3] }} />par 3</li><li><i style={{ background: PAR_COLOR[4] }} />par 4</li><li><i style={{ background: PAR_COLOR[5] }} />par 5</li></ul>
-        <p className="ex-muted">Strokes versus par on each hole, left to right by hole number. Below zero is an easier hole.</p>
+        <p className="ex-muted">Strokes versus par on each hole (0 = scores par for the average player). Below zero is an easier hole.</p>
       </figcaption>
     </figure>
   );

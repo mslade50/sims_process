@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { DataThrough } from "./DataThrough";
 import { dataThrough } from "./freshness-rules";
-import { Chip, EmptyState, LoadingState, PageHeader, Panel, Section, SegmentedControl, Stat } from "./components";
+import { Chip, EmptyState, PageHeader, Panel, Section, SegmentedControl, Stat } from "./components";
 import {
   BET_BREAKDOWNS_KEY, EDGE_BUCKETS, MARKET_GROUPS, OWNER_BOOKS, OWNER_DATA_PREFIX, bookLabel, breakdown, decodeDataset, defaultFilters, examples, pct, verdict,
   type Basis, type Cell, type Dataset, type Filters, type Move, type RowDim, type Sample,
@@ -41,9 +41,12 @@ function EdgeChart({ cells, basis, activeBucket, onOpen }: { cells: Cell[]; basi
   );
 }
 
-type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; data: Dataset };
+type Progress = { loaded: number; total: number | null };
+type Load = { state: "loading"; progress: Progress } | { state: "error"; message: string } | { state: "ready"; data: Dataset };
+const NO_PROGRESS: Progress = { loaded: 0, total: null };
 
-async function loadDataset(): Promise<Dataset> {
+/** Read the body in chunks so the skeleton can show real progress, then decode after the browser has painted. */
+async function loadDataset(onProgress: (p: Progress) => void): Promise<Dataset> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
   try {
@@ -51,13 +54,51 @@ async function loadDataset(): Promise<Dataset> {
     if (response.status === 403) throw new Error("This page is for the owner only.");
     if (response.status === 404) throw new Error("The bet breakdown data has not been published yet.");
     if (!response.ok) throw new Error(`The data could not be loaded (HTTP ${response.status}).`);
-    return decodeDataset(await response.json());
+    const length = Number(response.headers.get("content-length"));
+    const total = Number.isFinite(length) && length > 0 ? length : null;
+    let text: string;
+    if (response.body && typeof response.body.getReader === "function") {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const parts: string[] = [];
+      let loaded = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        loaded += value.byteLength;
+        parts.push(decoder.decode(value, { stream: true }));
+        onProgress({ loaded, total });
+      }
+      parts.push(decoder.decode());
+      text = parts.join("");
+    } else {
+      text = await response.text();
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    return decodeDataset(JSON.parse(text));
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw new Error("Loading the data timed out. Try again.");
     throw error;
   } finally {
     clearTimeout(timer);
   }
+}
+
+const mb = (n: number) => (n / 1_048_576).toFixed(1);
+
+/** The page's shape while ~4 MB downloads: answer, filter bar, edge rows. Fixed heights, so nothing jumps when data lands. */
+function BreakdownSkeleton({ progress }: { progress: Progress }) {
+  const { loaded, total } = progress;
+  const label = loaded === 0 ? "Starting the download of the historical bets" : `Downloading historical bets: ${mb(loaded)}${total ? ` of ${mb(total)}` : ""} MB`;
+  return (
+    <div className="bb-skel" aria-busy="true">
+      <p className="bb-skel-status num" role="status">{label}</p>
+      <div className="bb-skel-answer"><span className="skeleton" style={{ height: 36, width: "min(320px, 70%)" }} /><span className="skeleton" style={{ height: 16, width: "min(480px, 90%)" }} /></div>
+      <div className="kpi-grid">{[0, 1, 2, 3].map((i) => <span key={i} className="skeleton" style={{ height: 92 }} />)}</div>
+      <span className="skeleton" style={{ height: 46, marginTop: 16 }} />
+      <div className="bb-skel-rows">{[0, 1, 2, 3, 4, 5].map((i) => <span key={i} className="skeleton" style={{ height: 44 }} />)}</div>
+    </div>
+  );
 }
 
 function toggle(list: number[], value: number): number[] {
@@ -192,6 +233,8 @@ function Explorer({ data }: { data: Dataset }) {
   const [open, setOpen] = useState<{ rowKey: number | null; bucket: number } | null>(null);
   const set = (patch: Partial<Filters>) => { setFilters((f) => ({ ...f, ...patch })); setOpen(null); };
   const result = useMemo(() => breakdown(data, filters), [data, filters]);
+  // The answer and filters paint first; the chart and the by-row breakdown follow in a lower-priority render.
+  const later = useDeferredValue(result, null);
 
   const marketIdx = (keys: string[]) => keys.map((k) => meta.markets.indexOf(k)).filter((i) => i >= 0);
   const ownerBooks = OWNER_BOOKS.map((b) => meta.books.indexOf(b)).filter((i) => i >= 0);
@@ -262,46 +305,61 @@ function Explorer({ data }: { data: Dataset }) {
         </div>
       </details>
 
-      {result.considered > 0 && (
+      {later === null && result.considered > 0 && <div className="bb-skel-rows" aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((i) => <span key={i} className="skeleton" style={{ height: 44 }} />)}</div>}
+      {later !== null && later.considered > 0 && (
         <Section id="edge-chart" title="Return by edge size" purpose={`Profit per 1-unit flat bet at the ${filters.basis}. Bars start at zero; the thin line is the 95% range. Tap a bar for seasons and examples.`}>
-          <EdgeChart cells={result.total} basis={filters.basis} activeBucket={open?.rowKey === null ? open.bucket : null} onOpen={(bucket) => setOpen({ rowKey: null, bucket })} />
+          <EdgeChart cells={later.total} basis={filters.basis} activeBucket={open?.rowKey === null ? open.bucket : null} onOpen={(bucket) => setOpen({ rowKey: null, bucket })} />
         </Section>
       )}
 
+      {later !== null && (
       <Panel
-        eyebrow={`1-unit flat bets at the ${filters.basis} · range = 95%, events counted as clusters`}
-        title={`Return by ${ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label.toLowerCase()} and edge size`}
-        actions={<label className="select-control bb-rows"><span>Rows</span><select value={filters.rowDim} onChange={(e) => set({ rowDim: e.target.value as RowDim })}>{ROW_OPTIONS.filter((o) => o.value !== "opp_hist" || data.hasOppHist).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
+        eyebrow={`Same bets, split by ${ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label.toLowerCase()}. Range = 95%, events counted as clusters`}
+        title={`Return by ${ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label.toLowerCase()}`}
+        actions={<label className="select-control bb-rows"><span>Split by</span><select value={filters.rowDim} onChange={(e) => set({ rowDim: e.target.value as RowDim })}>{ROW_OPTIONS.filter((o) => o.value !== "opp_hist" || data.hasOppHist).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
       >
-        {result.considered === 0 ? (
+        {later.considered === 0 ? (
           <EmptyState title="No bets match these filters" detail="Widen the filters: add a market, a book or a season." />
         ) : (
-          <div className="bb-table">
-            <table>
-              <thead>
-                <tr><th>{ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label}</th>{EDGE_BUCKETS.map((b) => <th key={b.key}>Edge {b.label}</th>)}<th>All edges ≥ 0</th></tr>
-              </thead>
-              <tbody>
-                {result.rows.map((r) => (
-                  <tr key={r.key}>
-                    <th scope="row">{r.label}</th>
-                    {r.cells.map((c, b) => <CellView key={b} cell={c} active={open?.rowKey === r.key && open?.bucket === b} onOpen={() => setOpen({ rowKey: r.key, bucket: b })} />)}
-                    <td className={`bb-cell ${verdict(r.total) ?? "thin"}`}><span className="bb-static"><strong>{pct(r.total.roi)}</strong><small>{r.total.n.toLocaleString()} bets</small></span></td>
-                  </tr>
-                ))}
-                {result.rows.length > 1 && (
-                  <tr className="bb-total">
-                    <th scope="row">All selected</th>
-                    {result.total.map((c, b) => <CellView key={b} cell={c} active={open?.rowKey === null && open?.bucket === b} onOpen={() => setOpen({ rowKey: null, bucket: b })} />)}
-                    <td className={`bb-cell ${verdict(result.grand) ?? "thin"}`}><span className="bb-static"><strong>{pct(result.grand.roi)}</strong><small>{result.grand.n.toLocaleString()} bets</small></span></td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="bb-table">
+              <table>
+                <thead>
+                  <tr><th>{ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label}</th>{EDGE_BUCKETS.map((b) => <th key={b.key}>Edge {b.label}</th>)}<th>All edges ≥ 0</th></tr>
+                </thead>
+                <tbody>
+                  {later.rows.map((r) => (
+                    <tr key={r.key}>
+                      <th scope="row">{r.label}</th>
+                      {r.cells.map((c, b) => <CellView key={b} cell={c} active={open?.rowKey === r.key && open?.bucket === b} onOpen={() => setOpen({ rowKey: r.key, bucket: b })} />)}
+                      <td className={`bb-cell ${verdict(r.total) ?? "thin"}`}><span className="bb-static"><strong>{pct(r.total.roi)}</strong><small>{r.total.n.toLocaleString()} bets</small></span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ul className="bb-compact" aria-label={`Return by ${ROW_OPTIONS.find((o) => o.value === filters.rowDim)?.label.toLowerCase()}`}>
+              {later.rows.map((r) => {
+                const v = verdict(r.total);
+                return (
+                  <li key={r.key}>
+                    <div className="bb-cr-head"><strong>{r.label}</strong><span className={`num bb-cr-total ${v ?? "thin"}`}>{pct(r.total.roi)}<small>{r.total.n.toLocaleString()} bets</small></span></div>
+                    <div className="bb-cr-cells">
+                      {r.cells.map((c, b) => c.n ? (
+                        <button key={b} type="button" className={`bb-cr-cell ${verdict(c) ?? "thin"} ${open?.rowKey === r.key && open?.bucket === b ? "active" : ""}`} onClick={() => setOpen({ rowKey: r.key, bucket: b })} aria-label={`${r.label}, edge ${EDGE_BUCKETS[b].label}: ${pct(c.roi)} on ${c.n} bets. Show seasons and examples`}>
+                          <small>Edge {EDGE_BUCKETS[b].label}</small><strong className="num">{pct(c.roi)}</strong><small className="num">{c.n.toLocaleString()}</small>
+                        </button>
+                      ) : null)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
         <p className="bb-legend"><i className="pos" /> range above zero <i className="neg" /> range below zero <i className="flat" /> range includes zero <i className="thin" /> fewer than 30 bets or 10 events. Tap a cell for seasons and example bets.</p>
       </Panel>
+      )}
 
       {open && openCell && (
         <Detail data={data} filters={filters} rowKey={open.rowKey} rowLabel={open.rowKey === null ? "All selected" : openRow?.label ?? ""} bucket={open.bucket} cell={openCell} onClose={() => setOpen(null)} />
@@ -319,11 +377,11 @@ function Explorer({ data }: { data: Dataset }) {
 }
 
 export function BetBreakdownsView() {
-  const [load, setLoad] = useState<Load>({ state: "loading" });
+  const [load, setLoad] = useState<Load>({ state: "loading", progress: NO_PROGRESS });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    loadDataset()
+    loadDataset((progress) => { if (live) setLoad((cur) => (cur.state === "loading" ? { state: "loading", progress } : cur)); })
       .then((data) => { if (live) setLoad({ state: "ready", data }); })
       .catch((error: unknown) => { if (live) setLoad({ state: "error", message: error instanceof Error ? error.message : "The data could not be loaded." }); });
     return () => { live = false; };
@@ -331,13 +389,12 @@ export function BetBreakdownsView() {
 
   const intro = (
     <PageHeader
-      eyebrow="Owner only"
       title="Bet breakdowns"
       purpose="How the model's claimed edges have actually paid in past seasons, by edge size, book and market."
     />
   );
-  if (load.state === "loading") return <div>{intro}<LoadingState label="Loading about 400,000 historical bets (about 4 MB)" /></div>;
-  if (load.state === "error") return <div>{intro}<EmptyState title="Bet breakdowns are not available" detail={load.message} onRetry={() => { setLoad({ state: "loading" }); setAttempt((a) => a + 1); }} /></div>;
+  if (load.state === "loading") return <div>{intro}<BreakdownSkeleton progress={load.progress} /></div>;
+  if (load.state === "error") return <div>{intro}<EmptyState title="Bet breakdowns are not available" detail={load.message} onRetry={() => { setLoad({ state: "loading", progress: NO_PROGRESS }); setAttempt((a) => a + 1); }} /></div>;
   const through = dataThrough(load.data.meta.max_event_date, "Graded bets through");
   const built = dataThrough(load.data.builtAt, "built");
   return <div>{intro}<DataThrough text={[through, built].filter(Boolean).join(" · ") || "The file does not say which event date it runs through."} /><Explorer data={load.data} /></div>;

@@ -217,7 +217,7 @@ test("rendered field/player distributions and data failures retain explicit mean
   assert.match(renderedScoring({ payload: { scoring: fixture }, expectedRun: "different" }), /Scoring run does not match/);
   assert.match(renderedScoring({ payload: { scoring: { schema: "wrong" } } }), /Scoring expectation unavailable/);
   delete fixture.field.quantile_curve;
-  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Every player/);
+  assert.match(renderedScoring({ payload: { scoring: fixture } }), /Individual round scores, all players pooled/);
 });
 
 test("field mixture pools player marginals with equal weight", () => {

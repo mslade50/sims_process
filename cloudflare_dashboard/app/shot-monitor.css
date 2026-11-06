@@ -105,3 +105,39 @@
 .sm-state { font-size: var(--fs-small); }
 .shot-monitor summary { color: var(--accent); font-weight: 650; }
 @media (max-width: 820px) { .sm-glance { grid-template-columns: 1fr; } }
+
+/* Tour matrix: one row per tour (R2-ops). Phone: each row becomes a labelled block. */
+.sm-matrix-wrap { display: grid; gap: var(--sp-2); }
+.sm-matrix-title { margin: 0; font-size: var(--fs-h2); }
+.sm-sub { display: block; color: var(--muted-strong); font-size: var(--fs-small); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.sm-matrix { width: 100%; border-collapse: collapse; font-size: var(--fs-data); }
+.sm-matrix th, .sm-matrix td { padding: var(--sp-3) var(--sp-3); border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.sm-matrix thead th { color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
+.sm-matrix tbody th { font-weight: 650; }
+.sm-matrix tbody th .chip, .sm-matrix tbody th > span { display: inline-flex; margin-top: var(--sp-1); }
+.sm-matrix small { display: block; margin-top: 2px; color: var(--muted-strong); font-size: var(--fs-small); line-height: 1.4; font-weight: 400; }
+.sm-matrix tr { scroll-margin-top: calc(var(--bar-h) + 16px); }
+.sm-matrix tr.sm-attn > th:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.sm-cell { font-weight: 650; }
+.sm-cell-good { color: var(--pos); }
+.sm-cell-warn { color: var(--warn); }
+.sm-cell-bad { color: var(--neg); }
+.sm-cell-neutral { color: var(--muted-strong); }
+details.sm-tour > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--sp-3); font-weight: 650; }
+@media (max-width: 820px) {
+  .sm-matrix thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .sm-matrix, .sm-matrix tbody, .sm-matrix tr { display: block; width: 100%; }
+  .sm-matrix tr { padding: var(--sp-3) 0; border-bottom: 1px solid var(--line-strong); }
+  .sm-matrix th, .sm-matrix td { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--sp-3); padding: var(--sp-1) 0; border: 0; }
+  .sm-matrix td::before, .sm-matrix th[data-label]::before { content: attr(data-label); color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
+  .sm-matrix tbody th { grid-template-columns: 1fr auto; align-items: center; font-size: var(--fs-h3); padding-bottom: var(--sp-2); }
+  .sm-matrix tbody th::before { display: none; }
+}
+@media (min-width: 821px) {
+  .sm-matrix { table-layout: fixed; }
+  .sm-matrix th, .sm-matrix td { overflow-wrap: anywhere; }
+  .sm-matrix th:first-child { width: 15%; }
+  .sm-matrix th:nth-child(2), .sm-matrix th:nth-child(3), .sm-matrix th:nth-child(4) { width: 14%; }
+  .sm-matrix th:nth-child(5) { width: 24%; }
+}
+.sm-matrix td, .sm-matrix td > div, .sm-matrix th { white-space: normal; overflow: visible; text-overflow: clip; max-width: none; overflow-wrap: anywhere; }

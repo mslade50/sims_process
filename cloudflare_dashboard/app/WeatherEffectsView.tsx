@@ -27,7 +27,6 @@ const TEMP = "var(--wx-temp)";
 const RAIN = "var(--wx-rain)";
 const WAVE_SHADES = ["var(--wave-am-fill)", "var(--wave-pm-fill)"];
 
-const tourWord = (tour: string) => ({ pga: "PGA Tour", euro: "DP World Tour" } as Record<string, string>)[tour.toLowerCase()] ?? tour.toUpperCase();
 
 export const weatherKey = (event: IndexEvent) => event.weather_key || `golfprice/weather/${event.event_uid.replace(/:/g, "_")}/latest.json`;
 
@@ -400,7 +399,6 @@ export function WeatherEffectsView() {
 
   const intro = (
     <PageHeader
-      eyebrow={event ? `${event.tour ? tourWord(event.tour) + " · " : ""}${event.name}` : "This week's conditions"}
       title="Weather"
       purpose="How the forecast changes scoring this week: how hard each round plays against a typical day, which tee wave has the edge, and who the weather helps or hurts."
     />

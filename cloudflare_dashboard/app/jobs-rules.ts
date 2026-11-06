@@ -167,19 +167,51 @@ export type JobStatus = {
   updated_at?: string;
 };
 
-/** Rough, honest duration hint per job type, shown on the button before the first real run is on record. Real durations from recent runs replace it. */
+/** Seconds a job ran, from the runner's own timestamps (null until it has started and finished). */
+export function jobSeconds(status: JobStatus | null | undefined): number | null {
+  const start = parseUtc(status?.started_at ?? status?.claimed_at);
+  const end = parseUtc(status?.finished_at);
+  return start === null || end === null || end < start ? null : Math.round((end - start) / 1000);
+}
+
+/** "45 s", "6 min", "1 h 5 min": whole units, for typical durations. */
+export function durationWords(seconds: number): string {
+  if (seconds < 90) return `${Math.max(1, Math.round(seconds))} s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min`;
+}
+
+/** Median run time and sample size of the finished (state done) runs of one type among the records in hand. Null when there are none. */
+export function typicalFromRuns(type: string, jobs: Array<JobRecord & { state: string; status: JobStatus | null }>): { seconds: number; runs: number } | null {
+  const secs = jobs.filter((job) => job.type === type && job.state === "done").map((job) => jobSeconds(job.status)).filter((v): v is number => v !== null).sort((a, b) => a - b);
+  if (!secs.length) return null;
+  const mid = Math.floor(secs.length / 2);
+  return { seconds: secs.length % 2 ? secs[mid] : Math.round((secs[mid - 1] + secs[mid]) / 2), runs: secs.length };
+}
+
+/**
+ * Duration wording for a job button: the median of real recent runs when there are some ("Usually 6 min, last 4 runs"), the single run when
+ * there is one ("Last run took 6 min"), else an explicit estimate label that says no run is on record.
+ */
+export function takeText(type: string, jobs: Array<JobRecord & { state: string; status: JobStatus | null }>): string {
+  const real = typicalFromRuns(type, jobs);
+  if (real) return real.runs === 1 ? `Last run took ${durationWords(real.seconds)}` : `Usually ${durationWords(real.seconds)} (last ${real.runs} runs)`;
+  return typicalTake(type);
+}
+
+/** Fallback when no recent run of this type is on record: an estimate, labelled as one. */
 const QUICK_JOBS = ["daily_health", "publish", "xtour_publish", "odds_reprice", "watch"];
 export function typicalTake(type: string): string {
-  if (type === "odds_reprice") return "Seconds";
-  if (QUICK_JOBS.includes(type)) return "Usually under 2 min";
-  if (type === "xtour") return "A few minutes";
-  return "Minutes (a full pricing run)";
+  if (type === "odds_reprice") return "No recent run; estimate: seconds";
+  if (QUICK_JOBS.includes(type)) return "No recent run; estimate: about 2 min or less";
+  if (type === "xtour") return "No recent run; estimate: a few minutes";
+  return "No recent run; estimate: about 10 min or more";
 }
 
 export const specFor = (type: unknown): JobSpec | undefined => JOB_TYPES.find((spec) => spec.type === type);
 
 /** Plain words for a job state. */
-const STATE_LABELS: Record<string, string> = { queued: "Waiting", claimed: "Starting", running: "Running", done: "Done", failed: "Failed", cancelled: "Canceled", expired: "Expired" };
+const STATE_LABELS: Record<string, string> = { queued: "Queued", claimed: "Starting", running: "Running", done: "Done", failed: "Failed", cancelled: "Canceled", expired: "Expired" };
 export const stateLabel = (state: string): string => STATE_LABELS[state] ?? state;
 
 /** Who asked for a job: the automatic schedule, or the person's email. */
@@ -269,6 +301,18 @@ export function waitingFor(job: JobRecord, state: string, beats: MachineBeat[] |
   if (m.status === "offline") return `Waiting for ${m.label}, which is offline`;
   if (m.status === "running") return `Waiting for ${m.label} to finish its current job`;
   return `Waiting for ${m.label} to pick it up`;
+}
+
+/**
+ * Exact words for a job's state. A queued job says what it is waiting on: a named machine (waitingFor), or "a runner" when any runner can take it,
+ * with the honest note when no runner has reported in. Other states use the plain label.
+ */
+export function stateDetail(job: JobRecord, state: string, beats: MachineBeat[] | undefined, now: number): string {
+  if (state !== "queued") return stateLabel(state);
+  const named = waitingFor(job, state, beats, now);
+  if (named) return `Queued. ${named}`;
+  const anyUp = MACHINES.some((m) => machineStatus(m, beats, now).status !== "offline");
+  return anyUp ? "Queued, waiting for a runner" : "Queued, waiting for a runner (none is online)";
 }
 
 /** One job of a type at a time: a new request is refused while an earlier one of the same type is queued, claimed or running and under 6 h old. */

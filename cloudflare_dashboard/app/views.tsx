@@ -20,7 +20,7 @@ import {
 } from "recharts";
 import { PageHeader, Section } from "./ui";
 import "./performance.css";
-import { DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
+import { ArchivedState, DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
 import { GolfpriceScorecardSection } from "./ScorecardSection";
 import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, eventDisplayName, palette, safeMean, STYLE_DEFINITIONS, styleName, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
@@ -182,7 +182,7 @@ export function DistributionsView() {
   const activeMode = mode === "live" && !liveAvailable ? "pre" : mode;
   return (
     <>
-      <PageIntro eyebrow="Finish model" title="Finish distributions" description="Compare full finish-position curves instead of relying on a single top-10 or win number." controls={<SegmentedControl label="Distribution mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]} />} />
+      <PageIntro title="Finish distributions" description="Compare full finish-position curves instead of relying on a single top-10 or win number." controls={<SegmentedControl label="Distribution mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]} />} />
       <DistributionExplorer rows={data[activeMode]} title={activeMode === "live" ? "Live finish curves" : "Pre-event finish curves"} subtitle="Dead-heat adjusted probability by finishing rank" />
     </>
   );
@@ -213,7 +213,7 @@ export function SgDistributionsView() {
 
   return (
     <>
-      <PageIntro eyebrow="Skill inputs" title="Strokes-gained distributions" description="Inspect the category profile, variance, skew, and sample depth feeding the tournament model." controls={<SegmentedControl label="SG distribution mode" value={mode} onChange={setMode} options={[{ value: "adjusted", label: "Course adjusted" }, { value: "raw", label: "Raw EMA" }]} />} />
+      <PageIntro title="Strokes-gained distributions" description="Inspect the category profile, variance, skew, and sample depth feeding the tournament model." controls={<SegmentedControl label="SG distribution mode" value={mode} onChange={setMode} options={[{ value: "adjusted", label: "Course adjusted" }, { value: "raw", label: "Raw EMA" }]} />} />
       <Panel title="Category profile" eyebrow={mode === "adjusted" ? "Course-adjusted means" : "Raw weighted means"}>
         <PlayerPicker options={options} value={activePlayers} onChange={setPlayers} max={5} />
         <div className="chart-medium">
@@ -287,7 +287,7 @@ export function RoundScoresView() {
 
   return (
     <>
-      <PageIntro eyebrow="Round model" title="Round score distributions" description="Compare the full simulated score range, expected score, category means, and head-to-head win probability." controls={<SelectControl label="Round" value={activeRound} onChange={setRound} options={rounds.map((value) => ({ value, label: `Round ${value}` }))} />} />
+      <PageIntro title="Round score distributions" description="Compare the full simulated score range, expected score, category means, and head-to-head win probability." controls={<SelectControl label="Round" value={activeRound} onChange={setRound} options={rounds.map((value) => ({ value, label: `Round ${value}` }))} />} />
       <Panel title={`Round ${activeRound} scoring curves`} eyebrow="Probability by integer score">
         <PlayerPicker options={options} value={activePlayers} onChange={setPlayers} max={4} />
         <div className="chart-large"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartRows} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="score" stroke="var(--muted)"/><YAxis stroke="var(--muted)" tickFormatter={(value) => `${value}%`}/><Tooltip content={<ChartTooltip />}/><Legend formatter={(value) => titleCase(value)}/>{activePlayers.map((player, index) => <Area key={player} type="monotone" dataKey={player} stroke={palette[index % palette.length]} fill={palette[index % palette.length]} fillOpacity={0.16} strokeWidth={2}/>)}</AreaChart></ResponsiveContainer></div>
@@ -297,6 +297,11 @@ export function RoundScoresView() {
     </>
   );
 }
+
+const ARCHIVE_REPLACEMENTS = [
+  { href: "/performance", label: "Scorecard and P&L", detail: "How the current golfprice model scores against closing prices, and how its bets have paid." },
+  { href: "/bet-breakdowns", label: "Bet breakdowns", detail: "Owner only. Returns by market, book and edge size for the current model." },
+];
 
 type HistoryManifest = { events: Array<{ event_id: number; event_name: string; key: string; modes: string[] }> };
 type HistoryRows = { rows: DataRow[] };
@@ -312,10 +317,11 @@ export function HistoryView() {
   const activeMode = selectedEvent?.modes.includes(mode) ? mode : (selectedEvent?.modes[0] as "pre" | "live" | undefined) ?? "pre";
   const history = useDashboardData<HistoryRows>(activeEventKey ? `history/${activeEventKey}-${activeMode}.json` : "history.json");
   if (manifest.loading) return <LoadingState label="Loading historical event index" />;
-  if (manifest.error || !manifest.data) return <ErrorState message={manifest.error ?? "Historical data is unavailable."} />;
+  if (manifest.errorKind === "outage") return <><PageHeader title="History" purpose="Past tournaments from the archived pipeline." /><ErrorState message={manifest.error ?? "The data service did not respond."} onRetry={manifest.refetch} /></>;
+  if (manifest.error || !manifest.data) return <><PageHeader title="History" purpose="Past tournaments from the archived pipeline." /><ArchivedState title="This archive is closed" what="Finish-position odds from the legacy simulation pipeline for past tournaments, before the event and during play." why="The legacy pipeline was retired on 2026-10-30 and its history was not carried into golfprice, so there is nothing to load. This is expected, not an error." replacements={ARCHIVE_REPLACEMENTS} /></>;
   return (
     <>
-      <LegacyNotice /><PageIntro eyebrow="Model archive" title="Historical distributions" description="Reopen the finish-position odds the archived pipeline produced for past tournaments, before the event or during play." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: eventDisplayName(event.event_name) }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
+      <LegacyNotice /><PageIntro title="Historical distributions" description="Reopen the finish-position odds the archived pipeline produced for past tournaments, before the event or during play." controls={<div className="control-row"><SelectControl label="Event" value={activeEventKey} onChange={setEventKey} options={events.map((event) => ({ value: event.key, label: eventDisplayName(event.event_name) }))}/><SegmentedControl label="Historical mode" value={activeMode} onChange={setMode} options={[{ value: "pre", label: "Pre-event" }, { value: "live", label: "Live" }]}/></div>} />
       {history.loading && <LoadingState label="Loading archived distribution" />}
       {history.error && <ErrorState message={history.error} />}
       {history.data?.rows && <DistributionExplorer rows={history.data.rows} title={eventDisplayName(selectedEvent?.event_name)} subtitle={`${activeMode === "live" ? "In-play" : "Pre-event"} finish probabilities from the archive`} />}
@@ -652,7 +658,7 @@ export function PerformanceView() {
   const [showLegacy, setShowLegacy] = useState(false);
   return (
     <>
-      <PageHeader eyebrow="Review" title="Scorecard and P&L" purpose="How the current model is doing against the market's closing prices, in log-loss (lower is better) and betting units." />
+      <PageHeader title="Scorecard and P&L" purpose="How the current model is doing against the market's closing prices, in log-loss (lower is better) and betting units." />
       <GolfpriceScorecardSection />
       <Section id="older" title="Older bet results" purpose="From the retired simulation pipeline; kept for reference, not the current model's bets." actions={<button type="button" className="icon-button" aria-expanded={showLegacy} onClick={() => setShowLegacy((value) => !value)}>{showLegacy ? "Hide older results" : "Show older results"}</button>}>
         <LegacyNotice>These bet results come from the retired simulation pipeline. They are kept for reference and do not include the current model&apos;s bets.</LegacyNotice>
@@ -665,11 +671,12 @@ export function PerformanceView() {
 type DiagnosticPayload = { sg: DataRow[]; level_bias?: DataRow[]; market_regression: DataRow[] };
 
 export function DiagnosticsView() {
-  const { data, loading, error } = useDashboardData<DiagnosticPayload>("diagnostics.json");
+  const { data, loading, error, errorKind, refetch } = useDashboardData<DiagnosticPayload>("diagnostics.json");
   const [event, setEvent] = useState("all");
   const [player, setPlayer] = useState("");
   if (loading) return <LoadingState label="Loading model diagnostics" />;
-  if (error || !data) return <ErrorState message={error ?? "Diagnostics are unavailable."} />;
+  if (errorKind === "outage") return <><PageHeader title="Diagnostics" purpose="Skill accuracy checks from the archived pipeline." /><ErrorState message={error ?? "The data service did not respond."} onRetry={refetch} /></>;
+  if (error || !data) return <><PageHeader title="Diagnostics" purpose="Skill accuracy checks from the archived pipeline." /><ArchivedState title="This archive is closed" what="Checks of how far the legacy pipeline's skill estimates were off in rounds 1 and 2, by shot type and player type." why="The legacy pipeline was retired on 2026-10-30, so these checks are no longer produced. This is expected, not an error." replacements={ARCHIVE_REPLACEMENTS} /></>;
   const events = [...new Map(data.sg.map((row) => [String(row.event_id), String(row.event_name)])).entries()].sort((a, b) => numberValue(b[0]) - numberValue(a[0]));
   const rows = data.sg.filter((row) => event === "all" || String(row.event_id) === event);
   const levelRows = (data.level_bias?.length ? data.level_bias : data.sg).filter((row) => event === "all" || String(row.event_id) === event);
@@ -705,7 +712,7 @@ export function DiagnosticsView() {
 
   return (
     <>
-      <LegacyNotice /><PageIntro eyebrow="Model QA" title="Diagnostics" description="How well the archived pipeline's skill predictions matched what happened in rounds 1 and 2, overall and by type of shot." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: titleCase(label) }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
+      <LegacyNotice /><PageIntro title="Diagnostics" description="How well the archived pipeline's skill predictions matched what happened in rounds 1 and 2, overall and by type of shot." controls={<div className="control-row"><SelectControl label="Event" value={event} onChange={(value) => { setEvent(value); setPlayer(""); }} options={[{ value: "all", label: "All adjusted events" }, ...events.map(([value, label]) => ({ value, label: titleCase(label) }))]}/><SelectControl label="Player detail" value={player} onChange={setPlayer} options={[{ value: "", label: "All players" }, ...players.map((value) => ({ value, label: titleCase(value) }))]}/></div>} />
       <div className="kpi-grid">{bias.map((row) => <Kpi key={row.category} label={`${row.category}: how far off`} hint={`How far our strokes-gained estimate was off, per round, ${row.category === "Total" ? "overall" : `for ${row.category.toLowerCase()}`} (0 is perfect). Above zero means players did better than we expected; below zero, worse.`} value={`${row.miss >= 0 ? "+" : ""}${row.miss.toFixed(3)}`} detail={`${row.sample.toLocaleString()} rounds`} tone={Math.abs(row.miss) < 0.05 ? "positive" : Math.abs(row.miss) > 0.15 ? "negative" : "neutral"}/>)}</div>
       <div className="two-column">
         <Panel title="How far off our estimates were" eyebrow="Rounds 1 and 2. Actual minus predicted strokes gained per round, whole field (0 is perfect)"><div className="chart-medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={bias} margin={chartMargin}><CartesianGrid stroke="var(--line)" vertical={false}/><XAxis dataKey="category" stroke="var(--muted)"/><YAxis stroke="var(--muted)"/><Tooltip content={<ChartTooltip/>}/><ReferenceLine y={0} stroke="var(--line-strong)"/><Bar dataKey="miss" radius={[6, 6, 0, 0]}>{bias.map((row) => <Cell key={row.category} fill={row.miss >= 0 ? "var(--positive)" : "var(--negative)"}/>)}</Bar></BarChart></ResponsiveContainer></div></Panel>

@@ -7,7 +7,7 @@ import { useDashboardData } from "./data";
 import { EmptyState, LoadingState, SegmentedControl } from "./components";
 import { OnThisPage, PageHeader, Section } from "./ui";
 import { useEventParam } from "./event-param";
-import { american, MARKETS, MARKET_LABEL, nameMatches, orderEvents, parseExplain, pct, tourName, type ExPlayer } from "./explain-rules";
+import { american, MARKETS, MARKET_LABEL, nameMatches, orderEvents, parseExplain, pct, type ExPlayer } from "./explain-rules";
 import { FINISH_CHART_CAPTION, MISSED_CUT_LABEL, checkpoints, positionRows, cutReference, marker, markerLabel, matchup, runLabel, type DistributionDoc, type DistributionEvent } from "./distributions-rules";
 import { etTime } from "./lib";
 import { playerDisplayName } from "./player-name";
@@ -46,7 +46,7 @@ function PositionChartLabeled({ series, hasCut, cumulative, height, ariaLabel }:
           const idx = main.indexOf(s);
           const ai = idx >= 0 ? anchor(s) : -1;
           return <Line key={s.key} dataKey={s.key} name={s.name} type={cumulative ? "monotone" : "stepAfter"} stroke={s.color} strokeWidth={idx === 0 ? 2.5 : 2} strokeDasharray={s.style === "dashed" ? "2 3" : DASHES[Math.max(COLORS.indexOf(s.color), 0) % DASHES.length] || undefined} strokeOpacity={s.style === "dashed" ? 0.7 : 1} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} connectNulls={false}
-            label={idx >= 0 ? ((p: { x?: number | string; y?: number | string; index?: number }) => p.index === ai && typeof p.x === "number" && typeof p.y === "number" ? <text key={s.key} x={p.x + (ai > n * 0.6 ? -6 : 6)} y={p.y - 8 - (cumulative ? idx * 0 : 0)} textAnchor={ai > n * 0.6 ? "end" : "start"} fontSize={12} fontWeight={700} fill={s.color} stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">{lastName(s.name)}</text> : <g key={`${s.key}${p.index}`} />) : undefined} />;
+            label={idx >= 0 ? ((p: { x?: number | string; y?: number | string; index?: number }) => p.index === ai && typeof p.x === "number" && typeof p.y === "number" ? <text key={s.key} x={p.x + (ai > n * 0.6 ? -6 : 6)} y={p.y - 8 - idx * 17} textAnchor={ai > n * 0.6 ? "end" : "start"} fontSize={12} fontWeight={700} fill={s.color} stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">{lastName(s.name)}</text> : <g key={`${s.key}${p.index}`} />) : undefined} />;
         })}
       </ComposedChart>
     </ResponsiveContainer>
@@ -67,7 +67,7 @@ export function DistributionView() {
   if (index.loading) return <LoadingState label="Loading simulation checkpoints" />;
   if (index.error || !event) return <EmptyState title="No validated simulations available" detail={index.error ?? "Run and publish an event to explore its distributions."} nextCheck="Checked after each published simulation" />;
   return <>
-    <PageHeader eyebrow={`${tourName(event.tour)} · ${event.name}`} title="Finish distributions" purpose="Where each player is likely to finish, as the model sees it: pick up to four players and read their finish curves, prices and head-to-head odds on one set of axes." />
+    <PageHeader title="Finish distributions" purpose="Where each player is likely to finish, as the model sees it. Up to four players on one set of axes." />
     <Explorer key={event.event_uid} event={event} />
   </>;
 }
@@ -80,10 +80,11 @@ function Explorer({ event }: { event: DistributionEvent }) {
   const [ids, setIds] = useState<number[]>([]);
   if (!runKey) return <EmptyState title="No validated checkpoint published" detail="The next successful simulation will appear here." />;
   return <>
+    <details className="dist-setup"><summary>Simulation: {(() => { const r = runs.find((x) => x.key === runKey); return r ? runLabel(r) : "Latest simulation"; })()}{compare ? " · comparing with another run" : ""}<span> Change</span></summary>
     <div className="dist-controls" role="group" aria-label="Simulation to show">
       <label className="dist-select"><span>Simulation</span><select title="Pick which run to look at: before the event, or after a given round." aria-label="Simulation checkpoint" value={runKey} onChange={(e) => setRunKey(e.target.value)}>{runs.length ? runs.map((r) => <option key={r.key} value={r.key}>{runLabel(r)}{r.key === latest?.key ? " · Latest" : ""}</option>) : <option value={runKey}>Latest simulation</option>}</select></label>
       <label className="dist-select"><span>Compare with</span><select title="Show another run as faint dotted lines over the current one." aria-label="Compare shapes with" value={compare} onChange={(e) => setCompare(e.target.value)}><option value="">No comparison</option>{runs.filter((r) => r.key !== runKey).map((r) => <option key={r.key} value={r.key}>{runLabel(r)}</option>)}</select></label>
-    </div>
+    </div></details>
     <Snapshot key={`${runKey}:${compare}`} runKey={runKey} compareKey={compare === runKey ? "" : compare} compareLabel={(() => { const r = runs.find((x) => x.key === compare); return r ? runLabel(r) : ""; })()} onStopCompare={() => setCompare("")} ids={ids} setIds={setIds} latest={runKey === latest?.key} />
   </>;
 }
@@ -94,12 +95,15 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
   const doc = useMemo(() => parseExplain(current.data) as DistributionDoc | null, [current.data]);
   const then = useMemo(() => compareKey ? parseExplain(previous.data) as DistributionDoc | null : null, [previous.data, compareKey]);
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState("probability");
+  const [mode, setMode] = useState("cumulative");
   const [finish, setFinish] = useState(10);
   if (current.loading) return <LoadingState label="Loading simulation" />;
   if (current.error || !doc) return <EmptyState title="This simulation is unavailable" detail="It could not be loaded. Try another simulation from the list above." />;
   const ranked = [...doc.players].filter((p) => !p.withdrawn).sort((a, b) => (b.probs.win.model ?? 0) - (a.probs.win.model ?? 0));
-  const active = ids.length ? ids : ranked.slice(0, 3).map((p) => p.id);
+  // Default comparison: the favourite, the biggest model-vs-book win gap among the top 25, and the runner-up.
+  const gapPick = ranked.slice(1, 25).filter((p) => p.probs.win.market != null && p.probs.win.model != null).sort((x, y) => Math.abs((y.probs.win.model ?? 0) - (y.probs.win.market ?? 0)) - Math.abs((x.probs.win.model ?? 0) - (x.probs.win.market ?? 0)))[0];
+  const defaults = [ranked[0], gapPick, ranked[1]].filter((p, i, arr): p is ExPlayer => !!p && arr.indexOf(p) === i).concat(ranked.slice(0, 3)).filter((p, i, arr) => arr.indexOf(p) === i).slice(0, 3);
+  const active = ids.length ? ids : defaults.map((p) => p.id);
   const players = active.map((id) => doc.players.find((p) => p.id === id)).filter((p): p is ExPlayer => !!p);
   const prior = then ? active.map((id) => then.players.find((p) => p.id === id)).filter((p): p is ExPlayer => !!p) : [];
   const hasCut = !!doc.event.cut_round || !!doc.event.cut_top_n;
@@ -113,24 +117,19 @@ function Snapshot({ runKey, compareKey, compareLabel, onStopCompare, ids, setIds
   const changePlayer = (id: number) => { setIds([...active.filter((p) => p !== id), id].slice(-4)); setQuery(""); };
   const remove = (id: number) => { if (active.length > 1) setIds(active.filter((p) => p !== id)); };
   const drawCount = doc.finish?.n_draws;
-  const nav = [{ id: "compare", label: "Compare" }, { id: "finish", label: "Finish curves" }, { id: "prices", label: "Prices" }, { id: "h2h", label: "Head to head" }, { id: "shapes", label: "Why shapes differ" }];
+  const nav = [{ id: "compare", label: "Compare" }, { id: "h2h", label: "Head to head" }, { id: "shapes", label: "Why shapes differ" }];
   const jump = () => { const el = document.getElementById("compare"); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: "smooth" }); };
   return <div className="dist-explorer">
     <div className="dist-context"><span className="dist-status">{latest ? "Latest simulation" : "Earlier simulation"}</span><span>{doc.kind === "week" ? "Before the event" : `After round ${doc.after_round}`} · {etTime(doc.as_of, "time unknown")}</span>{drawCount ? <span title="How many times the tournament was simulated to get these probabilities.">{drawCount.toLocaleString()} simulated tournaments</span> : null}</div>
     <OnThisPage sections={nav} />
-    <Section id="compare" title="Compare players" purpose="Up to four players, on the same axes everywhere below. Each keeps its colour and line style.">
+    <Section id="compare" title="Compare players" purpose="Names sit on the lines; each player also has a line style, so colour is never the only signal.">
       <div className="dist-pickers"><div className="dist-player-chips">{players.map((p, i) => <span key={p.id} className="dist-chip" style={{ borderColor: COLORS[i] }}><i style={{ background: COLORS[i] }} />{name(p)}<button type="button" aria-label={`Remove ${name(p)}`} disabled={active.length <= 1} onClick={() => remove(p.id)}><X size={14} /></button></span>)}</div><div className="dist-search"><label><Search size={16} /><input aria-label="Find a player to overlay" placeholder={active.length >= 4 ? "Search to replace the first player…" : "Add a player…"} value={query} onChange={(e) => setQuery(e.target.value)} /></label>{query && <div className="dist-results" role="group" aria-label="Matching players">{matches.map((p) => <button key={p.id} type="button" onClick={() => changePlayer(p.id)}>{name(p)}<span>{pct(p.probs.win.model)} win</span></button>)}{!matches.length && <p>No other players match.</p>}</div>}</div></div>
-      <div className="dist-player-cards">{players.map((p, i) => { const old = prior.find((q) => q.id === p.id); return <article key={p.id} style={{ borderTopColor: COLORS[i] }}><span>{name(p)}</span><strong>{pct(p.probs.win.model)}<small> win</small></strong><div><b>{american(p.probs.win.model)}</b><span title="The finish position that half of the simulations beat and half did not. It is not the same as the average finish.">{p.finish ? `Median finish ${p.finish.median}` : "No finish chart"}</span></div>{old && <small className="dist-change">{delta(p.probs.win.model, old.probs.win.model)} win vs comparison</small>}</article>; })}</div>
-    </Section>
-    <Section id="finish" title="Where each player is likely to finish" purpose="Chance of each finishing position, from the same simulated tournaments for every player. Names sit on the lines.">
-      <div className="dist-chart-tools"><SegmentedControl label="Chart view" value={mode} onChange={setMode} options={[{ value: "probability", label: "Each position" }, { value: "cumulative", label: "This or better" }]} /><label className="dist-marker" title="Choose N to see each player's chance and fair odds of finishing in the top N, listed under the chart.">Odds for top<input aria-label="Finish marker" type="number" min={1} max={doc.players.length} value={finish} onChange={(e) => setFinish(Math.max(1, Math.min(doc.players.length, Number(e.target.value) || 1)))} /></label></div>
+      <div className="dist-chart-tools"><span className="dist-chart-title">Chance of finishing {cumulative ? "this position or better" : "in each position"}</span><SegmentedControl label="Chart view" value={mode} onChange={setMode} options={[{ value: "probability", label: "Each position" }, { value: "cumulative", label: "This or better" }]} /><label className="dist-marker" title="Choose N to see each player's chance and fair odds of finishing in the top N, listed under the chart.">Odds for top<input aria-label="Finish marker" type="number" min={1} max={doc.players.length} value={finish} onChange={(e) => setFinish(Math.max(1, Math.min(doc.players.length, Number(e.target.value) || 1)))} /></label></div>
       {!rows.length ? <EmptyState title="Finish chart unavailable" detail="The finish chart is not available for this simulation. The prices below are still valid." /> : <PositionChartLabeled series={chartSeries} hasCut={hasCut} cumulative={cumulative} height={320} ariaLabel={`${cumulative ? "Chance of finishing at each position or better" : "Chance of finishing at each position"} for ${players.map(name).join(", ")}`} />}
       <ul className="dist-legend" aria-label="Chart key">{players.map((p, i) => <li key={p.id}><svg width="26" height="8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4" stroke={COLORS[i]} strokeWidth="2.5" strokeDasharray={DASHES[i % DASHES.length] || undefined} /></svg><span><b>{name(p)}</b> · {markerLabel(finish, doc.event.cut_top_n)} {pct(marker(p, finish, doc.event.cut_top_n))} <em>{american(marker(p, finish, doc.event.cut_top_n))}</em></span></li>)}{doc.event.cut_top_n && doc.event.cut_top_n !== finish ? players.map((p, i) => { const c = cutReference(p, doc.event.cut_top_n); return c ? <li key={`cut${p.id}`} data-testid="dist-cut-ref"><i style={{ background: COLORS[i] }} /><span>{name(p)} · {c.label} {pct(c.prob)} <em>{american(c.prob)}</em></span></li> : null; }) : null}{then && <li><Layers3 size={14} /><span>Faint dotted lines: the simulation you are comparing with</span></li>}</ul>
       <p className="ex-muted">{FINISH_CHART_CAPTION}{doc.event.cut_top_n ? " Make cut is the model's priced chance of playing the weekend." : ""}</p>
       {compareKey && previous.loading && <p className="ex-muted">Loading the comparison simulation…</p>}{compareKey && previous.error && <p role="alert" className="ex-muted">{`The comparison run${compareLabel ? ` (${compareLabel})` : ""} could not be loaded, so only the current run is shown. Choose another run in Compare with, or `}<button type="button" className="dist-linkbtn" onClick={() => onStopCompare()}>stop comparing</button>.</p>}
-    </Section>
-    <Section id="prices" title="Finish prices" purpose="Model probability and fair American odds. Model only, with no sportsbook odds blended in.">
-      <div className="dist-table-scroll"><table className="ex-table dist-prices"><thead><tr><th scope="col">Player</th>{MARKETS.filter((m) => m !== "make_cut" || doc.event.cut_round).map((m) => <th scope="col" key={m} title={MARKET_HELP[m]}>{MARKET_LABEL[m]}</th>)}</tr></thead><tbody>{players.map((p, i) => <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: COLORS[i] }} />{name(p)}</th>{MARKETS.filter((m) => m !== "make_cut" || doc.event.cut_round).map((m) => <td key={m}><strong>{pct(p.probs[m].model, 2)}</strong><small>{american(p.probs[m].model)}</small>{then && <em>{delta(p.probs[m].model, prior.find((q) => q.id === p.id)?.probs[m].model)}</em>}</td>)}</tr>)}</tbody></table></div>
+      <p className="dist-table-title">Probability and fair odds, same simulations as the chart (model only, no sportsbook odds blended in)</p><div className="dist-table-scroll"><table className="ex-table dist-prices"><thead><tr><th scope="col">Player</th>{MARKETS.filter((m) => m !== "make_cut" || doc.event.cut_round).map((m) => <th scope="col" key={m} title={MARKET_HELP[m]}>{MARKET_LABEL[m]}</th>)}<th scope="col" title="The finish position that half of the simulations beat and half did not. It is not the same as the average finish.">Median finish</th></tr></thead><tbody>{players.map((p, i) => <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: COLORS[i] }} />{name(p)}</th>{MARKETS.filter((m) => m !== "make_cut" || doc.event.cut_round).map((m) => <td key={m}><strong>{pct(p.probs[m].model, 2)}</strong><small>{american(p.probs[m].model)}</small>{then && <em>{delta(p.probs[m].model, prior.find((q) => q.id === p.id)?.probs[m].model)}</em>}</td>)}<td><strong>{p.finish ? p.finish.median : "n/a"}</strong></td></tr>)}</tbody></table></div>
       {then && <p className="ex-muted">Small italic figures are the change in percentage points against the run you are comparing with.</p>}
     </Section>
     <Section id="h2h" title="Head to head" purpose="Chance the row player finishes ahead of the column player.">

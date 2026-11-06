@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { switchBarEvent, useEventParam } from "./event-param";
+import { useEventParam } from "./event-param";
 import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, humanValue } from "./components";
 import { Chip, PageHeader, SegmentedControl, Stat } from "./ui";
+import { ChangeTray, type TrayChange, type TrayStage } from "./ChangeTray";
 import "./inputs.css";
 import { useIsOwner } from "./viewer";
 import { useDashboardData } from "./data";
@@ -445,7 +446,7 @@ function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (d
 
 const THIN_ROUNDS = 50;
 
-function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds }: { player: Obj; choices: PlayerChoice[]; onPick: (dgId: number) => void; onAdjust?: (dgId: number) => void; fmtTee: (local: unknown) => Tee; playedRounds: number }) {
+function PlayerDetail({ player, onAdjust, fmtTee, playedRounds }: { player: Obj; onAdjust?: (dgId: number) => void; fmtTee: (local: unknown) => Tee; playedRounds: number }) {
   const ch = obj(player.challenger);
   const bd = obj(ch.breakdown);
   const overridden = playerHasOverride(player);
@@ -490,7 +491,6 @@ function PlayerDetail({ player, choices, onPick, onAdjust, fmtTee, playedRounds 
       title={String(player.name ?? "")}
       actions={
         <>
-          <PlayerSearch players={choices} onPick={onPick} />
           {onAdjust && <button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>}
         </>
       }
@@ -673,7 +673,7 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
         {showUntouched && <p className="inputs-muted">The &quot;before your override&quot; columns stay empty for players you have not adjusted.</p>}
       </Panel>
       <div ref={detailRef} className="in-detail-anchor" />
-      {current && <PlayerDetail player={current} choices={choices} onPick={pickPlayer} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
+      {current && <PlayerDetail player={current} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
     </div>
   );
 }
@@ -748,15 +748,15 @@ function CourseTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
   const roundCols = ["round", "par", "yardage", "scoring_avg", "scoring_avg_untouched", "birdies_per_round", "bogeys_per_round"];
   return (
     <div className="stack-lg">
+      <p className="in-answer">
+        {courseName || "This course"} plays{first && num(first.scoring_average_vs_par) !== null ? <> <b className="num">{signed(first.scoring_average_vs_par, 2)}</b> strokes vs par per round for a field-average player</> : null}
+        {sdMult ? <>, with a score spread <b className="num">{fx(sdMult.median, 2)}x</b> a typical course</> : null}. Hole difficulty comes from {sourceName.toLowerCase()}{!estimated && Number.isFinite(layoutYear) ? ` (${layoutYear} layout)` : ""}.
+      </p>
       <div className="kpi-grid">
-        <Kpi label="Course" value={courseName || "—"} detail={`par ${String((arr(event.par_per_round) as unknown as number[])[0] ?? "—")}`} tone="accent" />
-        <Tip text="Where the hole-by-hole scoring numbers come from. Courses with no current data borrow last year's edition, or are estimated from par and length."><Kpi label="Hole difficulty from" value={sourceName} detail={!estimated && Number.isFinite(layoutYear) ? `${layoutYear} layout` : undefined} /></Tip>
-        {first && num(first.scoring_average_vs_par) !== null && <Tip text={GLOSSARY.scoring_avg}><Kpi label="Scoring average vs par" value={signed(first.scoring_average_vs_par, 2)} detail="round 1, field-average player (other rounds in the table below)" /></Tip>}
-        {sdMult && (
-          <Tip text={GLOSSARY.course_sd_mult}>
-            <Kpi label="Course spread factor" value={fx(sdMult.median, 3)} detail={Math.abs(sdMult.max - sdMult.min) < 0.0005 ? "1.00 is a typical course; the same for every player" : `1.00 is a typical course; field range ${fx(sdMult.min, 3)} to ${fx(sdMult.max, 3)}`} />
-          </Tip>
-        )}
+        <Stat label="Par" value={String((arr(event.par_per_round) as unknown as number[])[0] ?? "-")} unit="per round" note={courseName || undefined} />
+        {first && num(first.scoring_average_vs_par) !== null && <Stat label="Scoring average" value={signed(first.scoring_average_vs_par, 2)} unit="strokes vs par" note="Round 1, field-average player" hint={GLOSSARY.scoring_avg} />}
+        {sdMult && <Stat label="Spread factor" value={fx(sdMult.median, 3)} unit="x typical" note={Math.abs(sdMult.max - sdMult.min) < 0.0005 ? "1.00 is typical; same for every player" : `Field range ${fx(sdMult.min, 3)} to ${fx(sdMult.max, 3)}`} hint={GLOSSARY.course_sd_mult} />}
+        <Stat label="Hole data" value={estimated ? "Estimated" : sourceName} note={estimated ? "From par and length" : Number.isFinite(layoutYear) ? `${layoutYear} layout` : undefined} hint="Where the hole-by-hole scoring numbers come from. Courses with no current data borrow last year's edition, or are estimated from par and length." />
       </div>
       <Panel eyebrow="What the simulation played" title="Hole by hole">
         <p className="inputs-note">Each hole as the simulation plays it, for a reference player of zero skill. A player&apos;s skill then moves his chances of birdies and bogeys up or down.{sentence ? ` ${sentence}` : ""}</p>
@@ -768,8 +768,8 @@ function CourseTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 10 }} />
-                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Expected score vs par (red = hard, green = easy)", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+                <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Expected score vs par (red = hard, green = easy)", angle: -90, fill: "var(--muted)", fontSize: 12, position: "insideLeft" }} />
                 <Tooltip content={<ChartTip />} />
                 <ReferenceLine y={0} stroke="var(--line-strong)" />
                 <Bar dataKey="expected" name="Expected score vs par" radius={3} isAnimationActive={false}>
@@ -862,13 +862,22 @@ function VarianceTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
   const wkRho = num(wl.wk_rho);
   const noise = num(eng.seed_spread_max_abs_p_win);
   const blowUp = num(dl.day_pb);
+  const sdValues = points.map((p) => p.sd).filter((v) => v > 0);
+  const sdStats = sdValues.length ? { mean: sdValues.reduce((t, v) => t + v, 0) / sdValues.length, min: Math.min(...sdValues), max: Math.max(...sdValues) } : null;
   const career = num(dl.day_ph);
   return (
     <div className="stack-lg">
+      {sdStats && (
+        <p className="in-answer">
+          The average player&apos;s rounds spread <b className="num">{fx(sdStats.mean, 2)}</b> strokes (std dev), from <b className="num">{fx(sdStats.min, 2)}</b> to <b className="num">{fx(sdStats.max, 2)}</b> across the field.
+          {blowUp !== null ? <> Blow-up rounds hit <b className="num">{pct(blowUp, 1)}</b> of rounds.</> : null}
+        </p>
+      )}
       <div className="kpi-grid">
-        <Tip text={GLOSSARY.n_sims}><Kpi label="Simulated tournaments" value={Number(eng.n_sims ?? 0).toLocaleString()} tone="accent" /></Tip>
-        {num(wl.tau) !== null && <Tip text={GLOSSARY.tau}><Kpi label="Form drift over the week" value={`${fx(wl.tau, 1)} strokes`} detail="per round, up or down: how far a player's form can wander during a tournament" /></Tip>}
-        {noise !== null && <Tip text={GLOSSARY.seed_spread}><Kpi label="Win-odds precision" value={`±${(noise * 100).toFixed(1)} pts`} detail="win odds are accurate to about this many percentage points" /></Tip>}
+        {sdStats && <Stat label="Average std dev" value={fx(sdStats.mean, 2)} unit="strokes" note={`Range ${fx(sdStats.min, 2)} to ${fx(sdStats.max, 2)}`} hint="The average of the players' round-to-round spread, including any override." />}
+        <Stat label="Simulated tournaments" value={Number(eng.n_sims ?? 0).toLocaleString()} unit="runs" tone="accent" hint={GLOSSARY.n_sims} />
+        {num(wl.tau) !== null && <Stat label="Form drift" value={fx(wl.tau, 1)} unit="strokes/round" note="How far a player's form can wander in a week" hint={GLOSSARY.tau} />}
+        {noise !== null && <Stat label="Win-odds precision" value={`±${(noise * 100).toFixed(1)}`} unit="pts" note="Simulation noise on win odds" hint={GLOSSARY.seed_spread} />}
       </div>
       <div className="two-column">
         <Panel eyebrow="Std dev" title="Rating against std dev">
@@ -877,8 +886,8 @@ function VarianceTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 10, right: 16, bottom: 18, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" />
-                <XAxis type="number" dataKey="mu" name="Rating" tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Rating (strokes per round vs field)", fill: "var(--muted)", fontSize: 10, position: "insideBottom", offset: -8 }} />
-                <YAxis type="number" dataKey="sd" name="Std dev" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 10 }} label={{ value: "Std dev", angle: -90, fill: "var(--muted)", fontSize: 10, position: "insideLeft" }} />
+                <XAxis type="number" dataKey="mu" name="Rating" tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Rating (strokes per round vs field)", fill: "var(--muted)", fontSize: 12, position: "insideBottom", offset: -8 }} />
+                <YAxis type="number" dataKey="sd" name="Std dev" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Std dev", angle: -90, fill: "var(--muted)", fontSize: 12, position: "insideLeft" }} />
                 <ZAxis range={[26, 26]} />
                 <Tooltip content={<ChartTip />} />
                 <Scatter data={points} fill={palette[0]} name="Player" isAnimationActive={false} />
@@ -988,21 +997,17 @@ function WeatherTab({ doc, runAsOf, extra }: { doc: Obj; runAsOf: string; extra?
   const published = coverage.filter((item) => item.value > 0);
   return (
     <div className="stack-lg">
-      <div className="inputs-banner warn">
-        <strong>{w.applied_in_prices ? "Weather is in the prices" : "Weather is NOT in the prices"}</strong>
-        <span>
-          {w.applied_in_prices
-            ? "Each player gets a small adjustment per round from his wave (early or late tee time) and the forecast wind. Realized weather is never used."
-            : "Tee times, waves and the forecast are shown for review only."}
-          {reason ? ` ${reason}.` : ""}
-        </span>
-      </div>
+      <p className="in-answer">
+        <b>{w.applied_in_prices ? "Weather is in the prices." : "Weather is not in the prices."}</b>{" "}
+        {w.applied_in_prices
+          ? "Each player gets a small adjustment per round from his wave (early or late tee time) and the forecast wind. Realized weather is never used."
+          : "Tee times, waves and the forecast are shown for review only."}
+        {reason ? ` ${reason}.` : ""}
+      </p>
       <div className="kpi-grid">
-        {issued ? <Kpi label="Forecast issued" value={etTime(issued)} detail={Number.isFinite(hoursBefore) && hoursBefore >= 0 ? `${ageText(hoursBefore)} before this model run` : undefined} tone="accent" /> : null}
+        {issued ? <Stat label="Forecast issued" value={etTime(issued)} note={Number.isFinite(hoursBefore) && hoursBefore >= 0 ? `${ageText(hoursBefore)} before this model run` : undefined} tone="accent" /> : null}
         {published.map((item) => (
-          <Tip key={item.round} text="Share of the field with a published tee time for this round. Without tee times only the shared (not wave-specific) weather effect can be applied.">
-            <Kpi label={`Tee times, round ${item.round}`} value={pct(item.value, 0)} detail="of players have a published time" />
-          </Tip>
+          <Stat key={item.round} label={`Tee times, R${item.round}`} value={pct(item.value, 0)} unit="of field" note="Have a published tee time" hint="Share of the field with a published tee time for this round. Without tee times only the shared (not wave-specific) weather effect can be applied." />
         ))}
       </div>
       {data.length > 0 && (
@@ -1011,8 +1016,8 @@ function WeatherTab({ doc, runAsOf, extra }: { doc: Obj; runAsOf: string; extra?
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 10 }} />
-                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} allowDecimals={false} />
+                <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} allowDecimals={false} />
                 <Tooltip content={<ChartTip />} />
                 <Bar dataKey="wind" name="Average wind (mph)" fill={palette[2]} radius={3} isAnimationActive={false} />
               </BarChart>
@@ -1080,17 +1085,16 @@ function OddsTab({ doc, runAsOf }: { doc: Obj; runAsOf: string }) {
   }));
   const pulled = oddsPulledAt(doc);
   return (
-    <div className="stack-lg">
+    <div className="stack-lg in-odds">
+      <p className="in-answer">
+        <b className="num">{books.length}</b> {books.length === 1 ? "book was" : "books were"} quoted; the newest prices were pulled <b>{etTime(pulled)}</b>{runAsOf ? `, and the model run was built ${etTime(runAsOf)}` : ""}.{" "}
+        {stale ? <><b className="num">{stale}</b> had prices older than 6 hours when the run was built.</> : "Every book was under 6 hours old when the run was built."} Odds do not change the simulation; they come in at the end, when the model&apos;s prices are blended with the market.
+      </p>
       <div className="kpi-grid">
-        <Tip text="The most recent time any book's prices were pulled. A live run can reuse earlier odds."><Kpi label="Odds last pulled" value={etTime(pulled)} detail={runAsOf ? `model run built ${etTime(runAsOf)}` : undefined} tone="accent" /></Tip>
-        <Tip text={GLOSSARY.odds_age}><Kpi label="Books" value={String(books.length)} detail={stale ? `${stale} with prices older than 6 hours` : "all prices under 6 hours old when the run was built"} tone={stale ? "negative" : "positive"} /></Tip>
-        {excluded.length > 0 && (
-          <Tip text="Prices from these sources are shown for reference and never treated as a sportsbook price.">
-            <Kpi label="Reference only" value={excluded.map(bookName).join(", ")} detail="shown for reference, not treated as a sportsbook price" />
-          </Tip>
-        )}
+        <Stat label="Odds last pulled" value={etTime(pulled)} tone="accent" note={runAsOf ? `Run built ${etTime(runAsOf)}` : undefined} hint="The most recent time any book's prices were pulled. A live run can reuse earlier odds." />
+        <Stat label="Books" value={String(books.length)} unit="quoting" tone={stale ? "negative" : "positive"} note={stale ? `${stale} older than 6 h` : "All under 6 h old"} hint={GLOSSARY.odds_age} />
+        {excluded.length > 0 && <Stat label="Reference only" value={String(excluded.length)} unit={excluded.length === 1 ? "source" : "sources"} note={excluded.map(bookName).join(", ")} hint="Prices from these sources are shown for reference and never treated as a sportsbook price." />}
       </div>
-      <p className="inputs-note">Odds do not change the simulation. They only come in at the end, when the model&apos;s prices are blended with the market.</p>
       <Panel eyebrow="Freshness" title="Each book's prices">
         <DataTable
           rows={dropEmptyColumns(bookRows)}
@@ -1102,7 +1106,7 @@ function OddsTab({ doc, runAsOf }: { doc: Obj; runAsOf: string }) {
           headerTitles={{ age: GLOSSARY.odds_age, latest_fetch: GLOSSARY.fetched, latest_book_update: GLOSSARY.book_update }}
         />
       </Panel>
-      <div className="two-column">
+      <div className="stack-lg">
         {feedRows.length > 0 && (
           <Panel eyebrow="Data pulls" title="Where each input came from">
             <DataTable rows={dropEmptyColumns(feedRows)} label="Odds feeds" pageSize={12} verbatim preferredColumns={["feed", "pulled", "source_updated"]} headerLabels={{ feed: "Input", pulled: "Pulled (ET)", source_updated: "Source last updated (ET)" }} />
@@ -1379,7 +1383,7 @@ function describeValue(record: OverrideRecord): string {
   return String(record.value);
 }
 
-function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; eventUid: string; presetPlayer: number | null; onPresetUsed: () => void }) {
+function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed, appliedIds }: { doc: Obj; eventUid: string; presetPlayer: number | null; onPresetUsed: () => void; appliedIds: string[] }) {
   const players = arr(doc.players);
   const eventObj = obj(doc.event);
   const specs: FieldSpec[] = ALLOWED; // compiled-in bounds are the enforced ones (worker)
@@ -1399,6 +1403,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<{ record: OverrideRecord; mode: "expire" | "remove" } | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string; problems?: string[] } | null>(null);
+  const [justSaved, setJustSaved] = useState<{ id: string; at: string } | null>(null);
 
   const reload = useCallback(async () => {
     const [active, hist] = await Promise.all([apiJson<ActiveResponse>("/api/overrides"), apiJson<{ entries: HistoryEntry[] }>("/api/overrides/history")]);
@@ -1479,6 +1484,26 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
     return null;
   })();
 
+  const targetName = scope === "player" ? (target ? playerName.get(target) ?? `Player ${target}` : "No player chosen") : scope === "course" ? "Course" : "Cut rule";
+  const trayChanges: TrayChange[] = (() => {
+    if (!spec) return [];
+    if (spec.kind === "bool") return target ? [{ key: "withdraw", what: `${targetName}: ${fieldLabel(field)}`, from: "In the field", to: "Withdrawn" }] : [];
+    if (spec.kind === "cut_rule") return Object.keys(cut).filter((k) => cut[k]?.trim()).map((k) => ({ key: k, what: `Cut rule: ${titleCase(k)}`, from: String(effectiveCut[k] ?? "n/a"), to: cut[k] }));
+    if (value.trim() === "" || !Number.isFinite(Number(value))) return [];
+    const v = Number(value);
+    const ch = obj(player?.challenger);
+    if (field === "skill_delta" && player) return [{ key: field, what: `${targetName}: rating`, from: signed(ch.mu), to: signed((num(ch.mu) ?? 0) + v), unit: "strokes/round" }];
+    if (field === "sd_mult" && player) return [{ key: field, what: `${targetName}: std dev`, from: fx(ch.sd, 2), to: fx((num(ch.sd) ?? 0) * v, 2), unit: "strokes" }];
+    return [{ key: field, what: `${targetName}: ${fieldLabel(field)}`, from: "Model value", to: field === "scoring_avg_delta" ? signed(v) : fx(v, 2), unit: field === "scoring_avg_delta" ? "strokes/round" : undefined }];
+  })();
+  const draftHasInput = value.trim() !== "" || Object.values(cut).some((v) => v.trim() !== "") || (spec?.kind === "bool" && !!target);
+  const savedApplied = justSaved ? appliedIds.includes(justSaved.id) : false;
+  const trayStages: TrayStage[] = [
+    { label: "Edited here", tone: draftHasInput ? "warning" : "neutral", value: draftHasInput ? "Unsaved" : "None", detail: draftHasInput ? "Not kept until you save." : "Fill the form to start a change." },
+    { label: "Saved", tone: justSaved ? "accent" : "neutral", value: justSaved ? "Saved" : "Not saved", detail: justSaved ? `Kept ${etTime(justSaved.at)}. Saving does not change prices.` : `${(records ?? []).filter((r) => !isExpired(r, nowMs)).length} active override${(records ?? []).filter((r) => !isExpired(r, nowMs)).length === 1 ? "" : "s"} are already saved.` },
+    { label: "Applied to prices", tone: savedApplied ? "positive" : "neutral", value: savedApplied ? "In the run shown" : "Not applied", detail: savedApplied ? "The run you are viewing was priced with it." : justSaved ? "Applies on the next run built after the save." : "Nothing pending." },
+  ];
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setMessage(null);
@@ -1491,7 +1516,8 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
     const result = await apiJson<{ record: OverrideRecord; records: OverrideRecord[] }>("/api/overrides", { method: "POST", body: JSON.stringify(body) });
     setBusy(false);
     if (result.ok) {
-      setMessage({ tone: "ok", text: `Saved. The model applies it on its next run (prices built after ${etTime(result.body.record.created_at)}); the original model number is still stored.` });
+      setJustSaved({ id: result.body.record.id, at: result.body.record.created_at });
+      setMessage({ tone: "ok", text: `Saved. This is not applied yet: prices change only on the next run built after ${etTime(result.body.record.created_at)}. The original model number is still stored.` });
       setValue("");
       setCut({});
       setReason("");
@@ -1569,26 +1595,17 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed }: { doc: Obj; ev
           {problems.length > 0 && (reason.trim() || value.trim() || Object.keys(cut).length > 0) && (
             <ul className="problem-list">{problems.filter((p) => !p.startsWith("missing") || reason.trim()).map((p) => <li key={p}>{p}</li>)}</ul>
           )}
-          <div className="in-tray" aria-label="Review before saving">
-            <b>Review before saving</b>
-            <dl>
-              <div><dt>Applies to</dt><dd>{eventKey === "all" ? "All events" : String(eventObj.name ?? "This event")}{scope === "player" ? ` · ${target ? playerName.get(target) ?? `Player ${target}` : "no player chosen yet"}` : scope === "course" ? " · the course" : " · the cut rule"}</dd></div>
-              <div><dt>Change</dt><dd>{fieldLabel(field)}: {spec?.kind === "number" ? (value.trim() ? value : "no value yet") : spec?.kind === "bool" ? "withdraw" : Object.keys(cut).filter((k) => cut[k]?.trim()).map((k) => `${k} ${cut[k]}`).join(", ") || "no value yet"}</dd></div>
-              <div><dt>Effect</dt><dd>{impact ?? "Applied on the next run. The original model number is kept."}</dd></div>
-              <div><dt>Expires</dt><dd>{expiresMs === null ? "no date" : etTime(isoSeconds(expiresMs))}</dd></div>
-            </dl>
-            <span className="inputs-muted">Saving does not change prices by itself. Remove or expire it any time from the list below.</span>
-          </div>
-          <div className="form-actions">
+          <ChangeTray
+            title="Your change"
+            changes={trayChanges}
+            stages={trayStages}
+            eligibility={{ ok: false, label: "Applies on the next run", text: "Saving never reprices. An override is applied by the next pricing run; start one from the Run page. Remove or expire it any time from the list below." }}
+            announce={message ? { tone: message.tone, text: [message.text, ...(message.problems ?? [])].join(" "), ...(message.tone === "ok" && justSaved ? { link: { href: "/run", label: "Start a run" } } : {}) } : null}
+            nothing="Choose what to change and enter a value to see original and edited side by side."
+          >
             <button type="submit" className="inputs-button primary" disabled={busy || problems.length > 0}>{busy ? "Saving…" : "Save override"}</button>
             <span className="inputs-muted">Times are shown in Eastern.</span>
-          </div>
-          {message && (
-            <div className={`inputs-banner ${message.tone === "error" ? "warn" : ""}`} role="status">
-              <strong>{message.text}</strong>
-              {message.problems && <ul className="problem-list">{message.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
-            </div>
-          )}
+          </ChangeTray>
         </form>
       </Panel>
       <Panel eyebrow="Overrides" title="Current overrides" actions={<button type="button" className="inputs-button subtle" onClick={() => void reload()}>Refresh</button>}>
@@ -1657,8 +1674,7 @@ export function InputsView() {
   const { data: index, loading, error } = useDashboardData<PublishIndex>("golfprice/index.json");
   // Start on the event chosen in the top bar (?e=...), else the newest one.
   const barEvent = useEventParam();
-  const [pickedUid, setEventUid] = useState<string>("");
-  const eventUid = pickedUid || barEvent;
+  const eventUid = barEvent; // the event is chosen in the top bar only; this page has no second picker
   const [runKey, setRunKey] = useState<string>("");
   const [tab, setTab] = useState<Tab>(() => {
     // Deep link: /inputs?tab=course|variance|weather|odds|config|features|adjust
@@ -1677,7 +1693,7 @@ export function InputsView() {
   const clearPreset = useCallback(() => setPresetPlayer(null), []);
 
   if (loading) return <LoadingState label="Loading published model inputs" />;
-  if (error || !event) return <div><PageIntro eyebrow="Model" title="Model inputs" description="Every input that shapes the simulations: player skill, course fit, variance, weather, odds and config." /><ErrorState message={error ?? "No model run has been published yet. It will appear here after the next publish."} /></div>;
+  if (error || !event) return <div><PageIntro title="Model inputs" description="Every input that shapes the simulations: player skill, course fit, variance, weather, odds and config." /><ErrorState message={error ?? "No model run has been published yet. It will appear here after the next publish."} /></div>;
 
   const asOf = etTime(run?.as_of, "");
   const pulled = doc ? etTime(oddsPulledAt(doc), "") : "";
@@ -1689,13 +1705,11 @@ export function InputsView() {
   return (
     <div>
       <PageHeader
-        eyebrow="Model"
         title="Model inputs"
         purpose={`What went into the simulation, and what each input does to a price. Pick a golfer to see their rating, spread and adjustments${owner ? "; use Adjust for one-off overrides" : ""}.`}
       />
       <div className="in-context">
         <div className="in-toolbar">
-          <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); switchBarEvent(v); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
           <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
         </div>
         <div className="in-chips" aria-label="Run summary">
@@ -1720,7 +1734,7 @@ export function InputsView() {
       {doc && activeTab === "odds" && <OddsTab doc={doc} runAsOf={runAsOf} />}
       {doc && activeTab === "config" && <ConfigTab doc={doc} extra={runTech} />}
       {activeTab === "features" && <FeaturesTab />}
-      {doc && activeTab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} />}
+      {doc && activeTab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} appliedIds={run?.overrides_applied ?? []} />}
       {run && !OWN_TECHNICAL.includes(activeTab) && (
         <div style={{ marginTop: 24 }}>
           <Technical>{runTech}</Technical>

@@ -23,11 +23,12 @@ const DEPS: WeeklyDeps = { LABELS, gapSentence: GAP_METHOD_SENTENCE, plainName, 
 export function WeeklyPlayersView() {
   const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const barEvent=useEventParam();const event=selectWeeklyEvent(events,params.get("e") || barEvent || null,params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
   if(load.loading || (params.get("player") && !params.get("e") && !barEvent && fields.loading)) return <LoadingState label="Loading events"/>;
-  return <div className="pp-page"><PageHeader eyebrow="Week" title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
+  return <div className="pp-page"><PageHeader title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
 }
 function WeeklyBody({event,playerId}:{event:WeeklyEvent;playerId:string|null}) {
   const choices=dedupeRuns(checkpoints(event)); const [run,setRun]=useState(""); const checkpoint=choices.find(r=>r.run===run); const key=checkpoint?.key ?? explainKeyFor(event); const expected=matchingInputRun(event,checkpoint);
-  return <>{choices.length>1 && <label className="fb-runbar">Model run<select value={run} onChange={e=>setRun(e.target.value)}><option value="">Latest model run</option>{choices.map(r=><option key={`${r.kind}_${r.run}`} value={r.run}>{humanCheckpoint(r.as_of,r.kind)}</option>)}</select></label>}<WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId}/><SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/></>;
+  const picker=choices.length>1 ? <details className="fb-runpick"><summary>Change model run</summary><label>Model run<select value={run} onChange={e=>setRun(e.target.value)}><option value="">Latest model run</option>{choices.map(r=><option key={`${r.kind}_${r.run}`} value={r.run}>{humanCheckpoint(r.as_of,r.kind)}</option>)}</select></label></details> : null;
+  return <><WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId} picker={picker}/><SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/></>;
 }
 /** Two runs of one kind within ten minutes are a rerun of the same moment: keep the later one. */
 function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
@@ -35,8 +36,8 @@ function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
   const sorted=[...runs].sort((a,b)=>(t(a)||0)-(t(b)||0));
   return sorted.filter((r,i)=>{const n=sorted[i+1];return !(n && n.kind===r.kind && Number.isFinite(t(r)) && Number.isFinite(t(n)) && t(n)-t(r)<600000);}).sort((a,b)=>(t(b)||0)-(t(a)||0));
 }
-function WeeklyExplain({event,dataKey,inputsKey,expected,playerId}:{event:WeeklyEvent;dataKey:string;inputsKey:string|null;expected:SavedCheckpoint|null;playerId:string|null}) {
-  const load=useDashboardData<unknown>(dataKey);const doc=useMemo(()=>parseExplain(load.data),[load.data]);
+function WeeklyExplain({event,dataKey,inputsKey,expected,playerId,picker=null}:{event:WeeklyEvent;dataKey:string;inputsKey:string|null;expected:SavedCheckpoint|null;playerId:string|null;picker?:React.ReactNode}) {
+  const [query,setQuery]=useState("");const load=useDashboardData<unknown>(dataKey);const doc=useMemo(()=>parseExplain(load.data),[load.data]);
   // Only this field's ratings are fetched (a few tens of KB), not the 16 MB catalog; the catalog is the fallback if that endpoint errors.
   const fieldIds=useMemo(()=>doc ? doc.players.map(p=>p.id) : null,[doc]);const {catalog}=usePlayerBenchmarks(fieldIds);const inputsLoad=useDashboardData<unknown>(inputsKey ?? "golfprice/none.json");const inputs=useMemo(()=>inputsKey && matchesInputCheckpoint(inputsLoad.data,expected) ? parseInputs(inputsLoad.data) : null,[inputsKey,inputsLoad.data,expected]);
   if(load.loading) return <LoadingState label="Loading the model run"/>;
@@ -45,14 +46,14 @@ function WeeklyExplain({event,dataKey,inputsKey,expected,playerId}:{event:Weekly
   const historicalCoverage=doc.players.filter(p=>checkpointBenchmarkValue(catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark,catalog?.pga_benchmark_reference,doc.as_of)!==null).length;
   const players=doc.players.filter(p=>!playerId || String(p.id)===playerId);
   const stage=doc.kind==="live" ? `In play, after round ${doc.after_round}` : "Pre-tournament";
-  return <><p className="fb-runbar" role="status"><Chip tone={doc.kind==="live" ? "accent" : "neutral"}>{stage}</Chip><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players in {doc.event.name}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}</p>
-    <WeeklyFieldBoard doc={doc} playerId={playerId}/>
-    <details className="fb-more"><summary>All columns, column picker and CSV download</summary><div className="fb-more-body"><WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players}/>{!players.length && <p>No players match this selection in the saved event.</p>}</div></details>
+  return <><p className="fb-runbar" role="status"><Chip tone={doc.kind==="live" ? "accent" : "neutral"}>{stage}</Chip><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players in {doc.event.name}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}{picker}</p>
+    <WeeklyFieldBoard doc={doc} playerId={playerId} query={query} setQuery={setQuery}/>
+    <details className="fb-more"><summary>All columns, column picker and CSV download</summary><div className="fb-more-body"><WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players} query={query}/>{!players.length && <p>No players match this selection in the saved event.</p>}</div></details>
     {(!!playerId || historicalCoverage>=5) && <details className="fb-more"><summary>Recent form against the PGA average (not a price forecast)</summary><div className="fb-more-body"><p className="pp-muted">Form ratings as of {shortProfileDate(catalog?.as_of)}. Model run: {humanCheckpoint(doc.as_of,doc.kind)}. Rounds played after the model run are left out. {historicalCoverage} of {doc.players.length} players have enough rounds for a rating.</p>{playerId && players.map(p=>{const rating=catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark;return <BenchmarkCard key={p.id} rating={rating} reference={catalog?.pga_benchmark_reference} fieldLabel={doc.event.name} checkpoint={doc.as_of} savedDoc={doc} playerId={p.id}/>;})}<BenchmarkMethod reference={catalog?.pga_benchmark_reference}/></div></details>}</>;
 }
 
 type Catalog=ReturnType<typeof usePlayerBenchmarks>["catalog"];
-function WeeklyTable({doc,inputs,inputsPending,catalog,players}:{doc:ExplainDoc;inputs:WeeklyInputs;inputsPending:boolean;catalog:Catalog;players:ExPlayer[]}) {
+function WeeklyTable({doc,inputs,inputsPending,catalog,players,query}:{doc:ExplainDoc;inputs:WeeklyInputs;inputsPending:boolean;catalog:Catalog;players:ExPlayer[];query:string}) {
   const built=useMemo(()=>buildTable({doc,inputs,catalog,players,deps:DEPS}),[doc,inputs,catalog,players]);
   const [open,setOpen]=useState<number|null>(null);
   const method=fieldMethod(inputs,doc.kind);const picked=built.rows.find(r=>(r.__row as {id:number}).id===open) ?? null;
@@ -70,7 +71,7 @@ function WeeklyTable({doc,inputs,inputsPending,catalog,players}:{doc:ExplainDoc;
     {inputsPending && <p className="pp-muted" role="status">Loading the model inputs behind the {LABELS.thisWeekPga.short} column.</p>}
     {!inputs && !inputsPending && <p className="pp-muted" role="status">{LABELS.thisWeekPga.short} is blank because the model inputs for this checkpoint were not published.</p>}
     {built.notes.map(n=><p key={n} className="pp-muted" role="note">{n}</p>)}
-    <DataTable rows={built.rows} preferredColumns={built.ordered} label="Weekly players" pageSize={40} onRowClick={row=>setOpen((row.__row as {id:number}).id)} activeRow={picked} defaultColumns={built.defaults} headerTitles={headerTitles} mobileColumns={mobile} verbatim stickyFirst/>
+    <DataTable rows={built.rows} preferredColumns={built.ordered} label="Weekly players" pageSize={40} onRowClick={row=>setOpen((row.__row as {id:number}).id)} activeRow={picked} defaultColumns={built.defaults} headerTitles={headerTitles} mobileColumns={mobile} verbatim stickyFirst searchQuery={query}/>
     {picked && <aside className="wk-expand" aria-label={`Details for ${String(picked[COL.player])}`}><header><strong>{String(picked[COL.player])}</strong><a className="pp-link" href={profileHref((picked.__row as {id:number}).id)}>Profile</a><button type="button" onClick={()=>setOpen(null)}>Close</button></header><dl>{expandEntries(picked,DEPS).map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl></aside>}
     <details className="pp-details"><summary>Column guide</summary>
       {Object.entries(built.titles).filter(([k])=>built.ordered.includes(k) && !k.startsWith("Base skill: ")).map(([k,v])=><p key={k}><b>{k}:</b> {v}</p>)}

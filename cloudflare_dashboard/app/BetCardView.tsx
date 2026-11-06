@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chip, EmptyState, InfoTip, LoadingState, PageHeader, Section, SegmentedControl } from "./components";
 import {
-  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, edgeFill, filterBets, formatET, historyText, minPriceText, nextCheckText, pctText, statusHeadline, timeAgo, totals,
+  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, filterBets, formatET, historyText, minPriceText, nextCheckShort, nextCheckText, pctText, stageText, statusHeadline, timeAgo, totals,
   type Bet, type Card, type CardEvent, type Filters, type Group, type TierFilter,
 } from "./bet-card-rules";
 import "./bet-card.css";
@@ -39,25 +39,28 @@ function BetRow({ bet }: { bet: Bet }) {
             <strong className="bc-name">{betText(bet)}</strong>
             <span className="bc-sub">
               <span>{MARKET_LABEL[bet.market] ?? bet.market}</span>
+              <span className={`bc-tag ${bet.tier === "LEAN IN" ? "lean" : "small"}`}>{bet.tier === "LEAN IN" ? "Lean in" : "Small stake"}</span>
               {bet.isNew && <Chip tone="accent">New</Chip>}
             </span>
           </div>
           <div className="bc-edge" title="Our chance minus the break-even chance at this price">
             <b className="num">+{(bet.edge * 100).toFixed(1)}%</b>
-            <i aria-hidden="true"><em style={{ width: `${edgeFill(bet.edge) * 100}%` }} /></i>
             <small>edge</small>
           </div>
           <dl className="bc-price">
             <div><dt>Price now</dt><dd className="num"><b>{bet.dec.toFixed(2)}</b> <span>({americanOdds(bet.dec)}) {bookLabel(bet.book)}</span></dd></div>
             <div><dt>Take at or above</dt><dd className="num">{min ? <><b>{min.dec}</b> <span>({min.american})</span></> : "n/a"}</dd></div>
-            <div><dt>Stake</dt><dd className="num"><b>{bet.stakeU.toFixed(2)}u</b></dd></div>
+            <div className="bc-stake"><dt>Stake</dt><dd className="num"><b>{bet.stakeU.toFixed(2)}u</b></dd></div>
           </dl>
         </summary>
         <div className="bc-detail">
-          <p className="num">Our chance {pctText(bet.p)}. {historyText(bet)}.</p>
-          {bet.firstSeen && <p>First seen {formatET(bet.firstSeen)}{moved && bet.firstDec !== null ? ` at ${bet.firstDec.toFixed(2)}` : ""}.</p>}
-          {bet.alsoAt && <p>Also at {bet.alsoAt}.</p>}
-          {bet.why && <p>{bet.why}</p>}
+          <dl className="bc-evidence">
+            <div><dt>Our chance</dt><dd className="num">{pctText(bet.p)}</dd></div>
+            <div><dt>History</dt><dd>{historyText(bet)}</dd></div>
+            {bet.firstSeen && <div><dt>First seen</dt><dd className="num">{formatET(bet.firstSeen)}{moved && bet.firstDec !== null ? ` at ${bet.firstDec.toFixed(2)}` : ""}</dd></div>}
+            {bet.alsoAt && <div><dt>Also at</dt><dd className="num">{bet.alsoAt}</dd></div>}
+          </dl>
+          {bet.why && <p className="bc-why">{bet.why}</p>}
         </div>
       </details>
     </li>
@@ -178,6 +181,17 @@ function CardBody({ card }: { card: Card }) {
         </div>
         <span className="bc-quiet">Suggestions only. Nothing is placed automatically.</span>
       </div>
+      {card.events.length > 0 && (
+        <ul className="bc-scope" aria-label="Where each event stands">
+          {card.events.map((e) => (
+            <li key={e.eventUid}>
+              <Chip>{e.tour.toUpperCase()}</Chip>
+              <strong>{e.name}</strong>
+              <span className="bc-stline"><span className="bc-stage">{stageText(e)}</span><span className="bc-nextc">{nextCheckShort(e)}</span></span>
+            </li>
+          ))}
+        </ul>
+      )}
       {all.bets > 0 && <FilterBar filters={filters} setFilters={setFilters} books={books} count={shownCount} />}
       {card.events.length === 0 && <EmptyState title="No events" detail="The card lists no events right now." nextCheck="Next check: within 30 minutes" />}
       {withBets.map((e) => <EventSection key={e.eventUid} event={e} filters={filters} />)}
@@ -204,7 +218,7 @@ export function BetCardView() {
     return () => { live = false; };
   }, [attempt]);
 
-  const intro = <PageHeader eyebrow="Owner only" title="Bet card" purpose="Current suggested bets from the model, each with the lowest price worth taking. Refreshed every 30 minutes before an event and after each round." />;
+  const intro = <PageHeader title="Bet card" purpose="Current suggested bets across every event being priced, each with the lowest price worth taking. Refreshed every 30 minutes before an event and after each round." />;
   if (load.state === "loading") return <div>{intro}<LoadingState label="Loading the bet card" /></div>;
   if (load.state === "error") return <div>{intro}<EmptyState title="The bet card is not available" detail={load.message} onRetry={() => { setLoad({ state: "loading" }); setAttempt((a) => a + 1); }} /></div>;
   return <div>{intro}<CardBody card={load.card} /></div>;

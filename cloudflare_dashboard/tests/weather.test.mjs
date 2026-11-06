@@ -89,7 +89,8 @@ test("the Weather effects page renders its empty state when nothing is published
   const response = await worker.fetch(new Request("https://golf.example/weather-effects", { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("nf", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /s conditions/);
+  // the page names itself (h1) and the shell supplies the group eyebrow; the old per-page "This week's conditions" eyebrow is gone on purpose
+  assert.match(html, /<h1>Weather<\/h1>/);
   assert.doesNotMatch(html, /Application error|Internal Server Error/);
 });
 

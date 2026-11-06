@@ -5,11 +5,11 @@
 .ps-card.ps-headline{border-color:var(--chart-1)}
 .ps-card.ps-typical{opacity:.85}
 .ps-card header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
-.ps-card header em{font-style:normal;font-size:10px;color:var(--muted-strong)}
+.ps-card header em{font-style:normal;font-size:var(--fs-small);color:var(--muted-strong)}
 .ps-card strong{font-size:19px}
 .ps-card p{font-size:12px;line-height:1.6;margin:0}
 .ps-strip{position:relative;height:6px;border-radius:3px;background:var(--line);margin-top:6px}
 .ps-strip i{position:absolute;top:-3px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--chart-1)}
-.ps-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted-strong)}
+.ps-axis{display:flex;justify-content:space-between;font-size:var(--fs-small);color:var(--muted-strong)}
 @media (max-width:900px){.ps-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.ps-grid{grid-template-columns:1fr}}

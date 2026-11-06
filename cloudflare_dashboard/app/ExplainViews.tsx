@@ -10,7 +10,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useEventParam } from "./event-param";
 import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { EmptyState, Kpi, LoadingState, SegmentedControl } from "./components";
-import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
+import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
 import type { FinishSeries } from "./ExplainCharts";
 import {
   EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
@@ -66,7 +66,7 @@ function writeParams(next: Params) {
 /* ------------------------------------------------------------------ shell: event picker, loading, empty states */
 type Shell = { doc: ExplainDoc; event: IndexEvent; latest: boolean; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
 
-function ExplainShell({ eyebrow, title, description, preEventFirst = false, defaultView = "pre", children }: { eyebrow: string; title: string; description: string; preEventFirst?: boolean; defaultView?: View; children: (s: Shell) => React.ReactNode }) {
+function ExplainShell({ title, description, preEventFirst = false, defaultView = "pre", children }: { title: string; description: string; preEventFirst?: boolean; defaultView?: View; children: (s: Shell) => React.ReactNode }) {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
@@ -82,7 +82,7 @@ function ExplainShell({ eyebrow, title, description, preEventFirst = false, defa
   };
   return (
     <>
-      <PageHeader eyebrow={eyebrow} title={title} purpose={description} />
+      <PageHeader title={title} purpose={description} />
       <ExplainBody key={current.event_uid} event={current} params={params} update={update} preEventFirst={preEventFirst} defaultView={defaultView}>{children}</ExplainBody>
     </>
   );
@@ -97,11 +97,9 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
   const { data, loading, error } = useDashboardData<unknown>(key);
   const doc = useMemo(() => parseExplain(data), [data]);
   const toggle = offerToggle && (
-    <div className="ex-viewbar">
-      <span className="ex-viewbar-label">Pricing run</span>
-      <SegmentedControl label="Which pricing to explain" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
-        options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live (after round ${choices.liveRound})` : "Live" }]} />
-      <span className="ex-muted">{view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}</span>
+    <div className="ex-viewbar" title={view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}>
+      <SegmentedControl label="Pricing run" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
+        options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live, after R${choices.liveRound}` : "Live" }]} />
     </div>
   );
   if (loading) return <>{toggle}<LoadingState label="Loading the pricing explanation" /></>;
@@ -134,6 +132,49 @@ function RunNotes({ doc }: { doc: ExplainDoc }) {
   );
 }
 
+/** True on phone widths (client only; false on first render so server and client markup match). */
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const q = window.matchMedia("(max-width: 820px)");
+    const sync = () => setPhone(q.matches);
+    sync();
+    q.addEventListener("change", sync);
+    return () => q.removeEventListener("change", sync);
+  }, []);
+  return phone;
+}
+
+/** A section body that is collapsed on phones (everything stays one tap away) and open on desktop. */
+function Fold({ summary, children }: { summary: string; children: React.ReactNode }) {
+  const phone = usePhone();
+  const [touched, setTouched] = useState<boolean | null>(null);
+  const open = touched ?? !phone;
+  return (
+    <details className="ex-fold" open={open} onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; if (o !== open) setTouched(o); }}>
+      <summary>{summary}</summary>
+      {open && children}
+    </details>
+  );
+}
+
+/** "Show all N" for a long list: the first `limit` items, the rest on demand. */
+function useLimit<T>(items: T[], limit: number, reset: unknown = null): { shown: T[]; more: React.ReactNode } {
+  const [all, setAll] = useState<{ on: boolean; key: unknown }>({ on: false, key: reset });
+  const on = all.on && all.key === reset;
+  const shown = on ? items : items.slice(0, limit);
+  const more = items.length > limit ? (
+    <button type="button" className="ex-showall" aria-expanded={on} onClick={() => setAll({ on: !on, key: reset })}>{on ? `Show the first ${limit}` : `Show all ${items.length}`}</button>
+  ) : null;
+  return { shown, more };
+}
+
+/** One line under a bar list that gives the zero line, the unit and what a full bar means. */
+function ScaleNote({ scale, unit, what }: { scale: number; unit: string; what: string }) {
+  const end = scale.toFixed(scale < 10 ? 1 : 0);
+  return <p className="ex-scale">Bars show {what} in {unit}. Centre line is 0 (no difference); each end is ±{end} {unit}.</p>;
+}
+
 /** A flat titled block inside a Section (the design system flattens cards). */
 function Panel({ title, eyebrow, actions, children }: { title: string; eyebrow?: string; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -149,9 +190,10 @@ function Panel({ title, eyebrow, actions, children }: { title: string; eyebrow?:
 
 type PriceRowData = { id: number; name: string; tags?: string[]; lead?: string; nums: Array<{ k: string; v: React.ReactNode; cls?: string; help?: string; minor?: boolean }>; rail?: { model: number; book: number } | null; relNote?: string; why?: string | null };
 /** Shared price list: player, numbers, model-vs-book gap on a zero-centred rail, one-line reason. Whole row opens the player. Compact two-line rows on phone. */
-function PriceList({ rows, heads, range, label, onOpen }: { rows: PriceRowData[]; heads: [string, string, string, string]; range: number; label: string; onOpen: (id: number) => void }) {
-  const hasRail = rows.some((r) => r.rail);
-  const hasWhy = rows.some((r) => r.why);
+function PriceList({ rows: allRows, heads, range, label, onOpen, limit = 12 }: { rows: PriceRowData[]; heads: [string, string, string, string]; range: number; label: string; onOpen: (id: number) => void; limit?: number }) {
+  const { shown: rows, more } = useLimit(allRows, limit);
+  const hasRail = allRows.some((r) => r.rail);
+  const hasWhy = allRows.some((r) => r.why);
   return (
     <div className={`pl${hasRail ? "" : " pl-norail"}${hasWhy ? "" : " pl-nowhy"}`}>
       <div className="pl-head" aria-hidden="true"><span>{heads[0]}</span><span>{heads[1]}</span>{hasRail && <span>{heads[2]}</span>}{hasWhy && <span>{heads[3]}</span>}</div>
@@ -167,6 +209,7 @@ function PriceList({ rows, heads, range, label, onOpen }: { rows: PriceRowData[]
           {hasWhy && <span className="pl-why">{r.why ?? ""}</span>}
         </li>
       ))}</ul>
+      {more}
     </div>
   );
 }
@@ -177,7 +220,7 @@ const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span clas
 /* ------------------------------------------------------------------ This week */
 export function ThisWeekView() {
   return (
-    <ExplainShell eyebrow="Event" title="This week" preEventFirst defaultView="live" description="The favorite, what moved, and where we differ from the sportsbook.">
+    <ExplainShell title="This week" preEventFirst defaultView="live" description="Favorite, biggest moves, gaps to the book.">
       {(s) => <ThisWeek {...s} />}
     </ExplainShell>
   );
@@ -218,12 +261,14 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
       relNote: b.tone === "neutral" ? "in line" : `${b.text} vs book`,
     };
   });
-  const nav = [{ id: "changed", label: "What changed" }, { id: "board", label: live ? "Leaderboard" : "Model vs book" }, { id: "chances", label: "Chances" }, { id: "course", label: "Course" }, { id: "weather", label: "Weather" }, { id: "shapes", label: "Shapes" }];
+  const phone = usePhone();
+  const [hasChanged, setHasChanged] = useState(false);
+  const nav = [...(hasChanged ? [{ id: "changed", label: "What changed" }] : []), { id: "board", label: live ? "Leaderboard" : "Model vs book" }, { id: "chances", label: "Chances" }, { id: "course", label: "Course" }, { id: "weather", label: "Weather" }, { id: "shapes", label: "Shapes" }];
   return (
     <>
       <KeyFacts doc={doc} ids={contenderIds} openPlayer={openPlayer} />
       <OnThisPage sections={nav} />
-      <WhatChangedStrip doc={doc} event={event} latest={latest} openPlayer={openPlayer} />
+      <WhatChangedStrip doc={doc} event={event} latest={latest} openPlayer={openPlayer} onPresent={setHasChanged} />
 
       <div className="ex-lede-block">
         <p className="ex-lede">{eventLede(doc)}</p>
@@ -255,34 +300,40 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
 
       <Section id="chances" title={live ? "Best chances" : "Shortest prices"} purpose={live ? "Ten best chances for the selected bet type." : "Ten shortest-priced players; the rail is zero-centred on the sportsbook (right of the line = we are higher)."}
         actions={<SegmentedControl label="Bet type" value={shownMarket} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
-        <PriceList rows={chanceRows} range={RAIL_RANGE[shownMarket]} label={`Ten ${live ? "best" : "shortest"} ${MARKET_LABEL[shownMarket]} chances`} onOpen={openPlayer}
+        <PriceList rows={chanceRows} limit={phone ? 5 : 10} range={RAIL_RANGE[shownMarket]} label={`Ten ${live ? "best" : "shortest"} ${MARKET_LABEL[shownMarket]} chances`} onOpen={openPlayer}
           heads={["Player", "Chances", "Model vs book (points)", "Main reasons"]} />
       </Section>
 
       <Section id="course" title="Course" purpose={`${cc.course ?? "Course card"}: strokes versus par for the average player in this field, by hole.`}>
-        <Lazy height={230}><HoleStrip holes={cc.holes} /></Lazy>
         <ul className="ex-bullets">{bullets.slice(0, 2).map((b) => <li key={b}>{b}</li>)}</ul>
+        <Fold summary="Hole-by-hole scoring and course geometry">
+        <Lazy height={230}><HoleStrip holes={cc.holes} /></Lazy>
         {bullets.length > 2 && <details className="ex-details"><summary>{bullets.length - 2} more notes on what drives scoring</summary><ul className="ex-bullets">{bullets.slice(2).map((b) => <li key={b}>{b}</li>)}</ul></details>}
         {cc.hole_source && <p className="ex-muted">{plainHoleSource(cc.hole_source)} Values are for the average player in this field.</p>}
         <Lazy height={120}><CourseGeometry eventUid={event.event_uid} eventName={doc.event.name ?? event.name} /></Lazy>
+        </Fold>
       </Section>
 
       <Section id="weather" title="Weather" purpose="Forecast effect on scoring, in strokes a round: minus is easier, plus is harder."
         actions={<Link prefetch={false} className="ex-link" href={`/weather-effects?e=${encodeURIComponent(event.event_uid)}`}>Weather page <ChevronRight size={14} /></Link>}>
         <Lazy height={64}><WeatherLinkCard event={event} /></Lazy>
+        <Fold summary="Forecast detail and effect by round">
         <WeatherSnapshot doc={doc} />
         <WeatherEffects doc={doc} />
         <Lazy height={160}><WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} /></Lazy>
+        </Fold>
       </Section>
 
       <Section id="shapes" title="Shapes and detailed gaps" purpose={live ? "How players with the same win chance finish differently." : "Same win chance, different finishes, and bet-by-bet gaps against the book and Data Golf."}>
         <Suspense fallback={null}><ShapeSpotlightCard doc={doc} openPlayer={openPlayer} onSeeMore={() => window.location.assign("/distributions")} /></Suspense>
+        <Fold summary={live ? "More on shapes" : "Gaps to Data Golf and every contender, bet by bet"}>
         {!live && hasDg(doc) && <DgGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />}
         {live ? (
           <p className="ex-muted ex-notice">While play is under way we do not compare our prices with the sportsbook: its prices are not live, so a gap would not mean anything. See Why priced for the comparison made before the event.</p>
         ) : (
           <DifferPanel doc={doc} rows={differ.rows} differ={differ.differ} openPlayer={openPlayer} />
         )}
+        </Fold>
       </Section>
     </>
   );
@@ -301,24 +352,21 @@ function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         <div className="ex-fact">
           <span className="ex-fact-label"><Term k="ex_our_chance">{live ? "Best chance to win" : "Favorite to win"}</Term></span>
           <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(f.id)}>{f.name}</button></strong>
-          <span className="ex-fact-sub">{pct(f.model)} ours{f.market !== null ? <> · {pct(f.market)} <Term k="ex_market_chance">sportsbook</Term></> : null}</span>
-          <ProbPair model={f.model} market={f.market} scale={Math.max(f.model ?? 0, f.market ?? 0, 0.0001) * 1.15} />
+          <span className="ex-fact-sub"><b className="num">{pct(f.model)}</b> ours{f.market !== null ? <> vs <b className="num">{pct(f.market)}</b> book</> : <> · book not live</>}</span>
         </div>
       )}
       {s?.kind === "gap" && (
         <div className="ex-fact">
           <span className="ex-fact-label">Biggest <Term k="ex_gap">gap to the sportsbook</Term></span>
           <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.rel > 0 ? "pos" : "neg"}>{s.rel > 0 ? "▲" : "▼"} {relText(s.rel)}</em></strong>
-          <span className="ex-fact-sub">Win chance {pct(s.model)} ours vs {pct(s.market)} sportsbook</span>
-          <DeltaBar value={s.rel} scale={Math.max(0.25, Math.abs(s.rel))} label={`We are ${s.rel > 0 ? "higher" : "lower"} than the sportsbook by ${relText(s.rel)}`} />
+          <span className="ex-fact-sub">Win chance <b className="num">{pct(s.model)}</b> ours vs <b className="num">{pct(s.market)}</b> book</span>
         </div>
       )}
       {s?.kind === "move" && (
         <div className="ex-fact">
           <span className="ex-fact-label">Biggest mover since the last run</span>
-          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.delta > 0 ? "pos" : "neg"}>{s.delta > 0 ? "▲" : "▼"} {ptsText(s.delta)}</em></strong>
-          <span className="ex-fact-sub">Win chance {pct(s.before)} → {pct(s.after)}</span>
-          <DeltaBar value={s.delta} scale={Math.max(1, Math.abs(s.delta))} label="Change in win chance" />
+          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em data-flash className={s.delta > 0 ? "pos" : "neg"}>{s.delta > 0 ? "▲" : "▼"} {ptsText(s.delta)}</em></strong>
+          <span className="ex-fact-sub">Win chance <b className="num">{pct(s.before)}</b> → <b className="num">{pct(s.after)}</b></span>
         </div>
       )}
       {!s && !live && f && (
@@ -332,7 +380,7 @@ function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         <div className="ex-fact">
           <span className="ex-fact-label"><Term k="ex_winning_score">Winning score</Term></span>
           <strong className="ex-fact-value">{toPar(sc.median, Number.isInteger(sc.median) ? 0 : 1)} <em>median</em></strong>
-          <span className="ex-fact-sub">Most likely {toPar(sc.mode)} ({Math.round(sc.modeShare * 100)}% of sims) · 8 in 10 between {toPar(sc.p10)} and {toPar(sc.p90)}</span>
+          <span className="ex-fact-sub">Most likely {toPar(sc.mode)} ({Math.round(sc.modeShare * 100)}% of sims) · 8 in 10: {toPar(sc.p10)} to {toPar(sc.p90)}</span>
           <RangeBar p10={sc.p10} p90={sc.p90} mode={sc.mode} median={sc.median} />
         </div>
       )}
@@ -391,7 +439,7 @@ function BookMoves({ moves, openPlayer }: { moves: BookMove[]; openPlayer: (id: 
   );
 }
 
-function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc; event: IndexEvent; latest: boolean; openPlayer: (id: number) => void }) {
+function WhatChangedStrip({ doc, event, latest, openPlayer, onPresent }: { doc: ExplainDoc; event: IndexEvent; latest: boolean; openPlayer: (id: number) => void; onPresent?: (present: boolean) => void }) {
   const seen = useLastSeen(event.event_uid, `${doc.kind}_${doc.run}`, latest);
   const prevRef = useMemo(() => previousRunRef(event, doc), [event, doc]);
   const visitRef = useMemo(() => lastSeenRunRef(event, doc, seen), [event, doc, seen]);
@@ -408,12 +456,18 @@ function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc;
   const loading = changesName ? served.loading || (needFallback && !!ref && source.data === null && !source.error) : source.loading;
   const change = useMemo(() => (loading ? null : fromServer ?? whatChanged(doc, prevDoc)), [doc, prevDoc, loading, fromServer]);
   const [mk, setMk] = useState<Market>("win");
+  const phone = usePhone();
+  const [allMovers, setAllMovers] = useState(false);
+  const present = (!!ref || !!doc.since_last) && (loading || !!change);
+  useEffect(() => { onPresent?.(present); }, [present, onPresent]);
   if (!ref && !doc.since_last) return null;
   if (loading) return <section id="changed" className="ex-changed is-loading" aria-label="What changed" aria-busy="true"><h2>What changed</h2><span className="ex-muted">Comparing with the earlier run…</span></section>;
   if (!change) return null;
   const mkts = (Object.keys(change.movers) as Market[]).filter((m) => change.movers[m]?.length);
   const shownMk: Market = mkts.includes(mk) ? mk : mkts[0] ?? "win";
-  const rows = (change.movers[shownMk] ?? []).slice(0, 5);
+  const moverAll = (change.movers[shownMk] ?? []).slice(0, 5);
+  const moverLimit = phone && !allMovers ? 3 : 5;
+  const rows = moverAll.slice(0, moverLimit);
   const scale = Math.max(0.5, ...rows.map((r) => Math.abs(r.delta)));
   const baseKind = change.baseline.after_round ? `the run after round ${change.baseline.after_round}` : "the previous run";
   const fromWhat = against === "visit" && visitRef ? "your last visit" : baseKind;
@@ -436,18 +490,20 @@ function WhatChangedStrip({ doc, event, latest, openPlayer }: { doc: ExplainDoc;
       {rows.length > 0 && (
         <>
           {mkts.length > 1 && <SegmentedControl label="Bet type" value={shownMk} onChange={setMk} options={mkts.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}
+          <ScaleNote scale={scale} unit="points" what="the change in win chance since then" />
           <ul className="ex-movers-list" aria-label={`Biggest ${MARKET_LABEL[shownMk]} price moves`}>{rows.map((m) => (
             <li key={m.id}>
               <button type="button" onClick={() => openPlayer(m.id)}>
                 <span className="ex-mv-name">{m.name}</span>
                 <DeltaBar value={m.delta} scale={scale} label={`${m.name} ${ptsText(m.delta)}`} />
                 <span className="ex-mv-nums">{pct(m.before)} → {pct(m.after)}</span>
-                <b className={m.delta > 0 ? "pos" : "neg"}>{m.delta > 0 ? "▲" : "▼"} {ptsText(m.delta)}</b>
+                <b data-flash className={m.delta > 0 ? "pos" : "neg"}>{m.delta > 0 ? "▲" : "▼"} {ptsText(m.delta)}</b>
                 {m.marketDelta !== null && Math.abs(m.marketDelta) >= 0.05 && <small className="ex-mv-market">sportsbook {ptsText(m.marketDelta)}</small>}
                 {m.causes.length > 0 && <span className="ex-mv-causes" aria-label="Main causes">{m.causes.map((c) => <CauseChip key={c.key} cause={c} />)}</span>}
               </button>
             </li>
           ))}</ul>
+          {phone && moverAll.length > 3 && <button type="button" className="ex-showall" aria-expanded={allMovers} onClick={() => setAllMovers((v) => !v)}>{allMovers ? "Show the top 3" : `Show all ${moverAll.length} moves`}</button>}
         </>
       )}
       {change.bookMoves.length > 0 && <BookMoves moves={change.bookMoves} openPlayer={openPlayer} />}
@@ -499,6 +555,7 @@ function GapGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; o
   );
   return (
     <Panel title="Where we differ most" eyebrow="Win chance, ours vs the sportsbook">
+      <ScaleNote scale={g.scale * 100} unit="percent" what="how far our win chance is above or below the book's, as a share of the book's chance," />
       <div className="ex-gap-grid">
         {list(g.higher, "We are higher")}
         {list(g.lower, "We are lower")}
@@ -562,6 +619,7 @@ function DgGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         <span className="ex-muted">{g.pool} players compared</span>
         {filtered && <button type="button" className="ex-linkbtn" onClick={() => setFilter(DG_FILTER_DEFAULT)}>Clear</button>}
       </div>
+      <ScaleNote scale={g.scale} unit={skill ? "strokes a round" : "points"} what={`our ${what} minus Data Golf's`} />
       <div className="ex-gap-grid">
         {list(g.higher, "We are higher")}
         {list(g.lower, "We are lower")}
@@ -746,6 +804,7 @@ function WeatherEffects({ doc }: { doc: ExplainDoc }) {
 }
 
 function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: number) => void }) {
+  const phone = usePhone();
   const lb = leaderboard(doc, 12);
   const withB8 = doc.players.filter((p) => Math.abs(p.live?.d_b8_since_last ?? 0) >= 0.02).length;
   const withCon = doc.players.filter((p) => Math.abs(p.live?.d_contention_since_last ?? 0) >= 0.02).length;
@@ -770,7 +829,7 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
   return (
     <div className="ex-sub">
       <p className="ex-muted">After round {doc.after_round}{prev ? `; changes compared with ${prev}` : ""}. {withB8 > 0 ? `Form this week changed the prices of ${withB8} players` : "No player price moved much on form this week"}{withCon > 0 ? `, and the title race changed ${withCon}` : ""}.</p>
-      <PriceList rows={rows} range={6} label="Leaderboard" onOpen={openPlayer} heads={["Pos / player", "Score and chances", "", ""]} />
+      <PriceList rows={rows} limit={phone ? 8 : 12} range={6} label="Leaderboard" onOpen={openPlayer} heads={["Pos / player", "Score and chances", "", ""]} />
     </div>
   );
 }
@@ -778,7 +837,7 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
 /* ------------------------------------------------------------------ Why priced */
 export function WhyPricedView() {
   return (
-    <ExplainShell eyebrow="Pricing" title="Why priced" preEventFirst description="Every player's model price against the market, sortable and filterable by player type, with the strokes that explain it.">
+    <ExplainShell title="Why priced" preEventFirst description="Every player's price against the market, with the reasons.">
       {(s) => <WhyPriced {...s} />}
     </ExplainShell>
   );
@@ -810,6 +869,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   const [top, setTop] = useState<"all" | "60" | "25">("25");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "edge_sg", dir: "desc" });
   const live = doc.kind === "live";
+  const activeFilters = (only !== "all" ? 1 : 0) + (top !== "25" ? 1 : 0) + (sort.key !== "edge_sg" || sort.dir !== "desc" ? 1 : 0) + tags.length;
   const markets = useMemo(() => availableMarkets(doc), [doc]);
   const tagOptions = useMemo(() => availableTags(doc.players), [doc.players]);
   // Before the event the strokes gap and the reason come from the bet-by-bet shape comparison (skill the sportsbook's prices imply vs ours); players it cannot be computed for show no gap.
@@ -838,18 +898,20 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   return (
     <>
       <OnThisPage sections={[{ id: "players", label: "Players" }, { id: "legend", label: "What reasons mean" }, { id: "tech", label: "Technical" }]} />
-      <Section id="players" title={`${rows.length} players, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the full driver breakdown.${hasMarket ? " The rail is zero-centred on the sportsbook: right of the line = our chance is higher (points of probability)." : ""}`}
+      <Section id="players" title={`${rows.length} players, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the driver breakdown.${hasMarket ? " Bars to the right of the zero tick: we are higher than the book." : ""}`}
         actions={<SegmentedControl label="Bet type" value={market} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
-        <p className="ex-muted ex-marketnote">The strokes gap and its reasons are the same for every bet type; only the probability gap changes.{live ? " Sportsbook prices are not shown during play because they are not live." : ""}</p>
         <div className="ex-filters">
           <label className="search-box"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search player" aria-label="Search player" /></label>
-          <SegmentedControl label="Show players we rate" value={only} onChange={setOnly} options={[{ value: "all", label: "All" }, { value: "above", label: "We are higher" }, { value: "below", label: "We are lower" }]} />
-          <SegmentedControl label="Show" value={top} onChange={setTop} options={[{ value: "25", label: "Top 25" }, { value: "60", label: "Top 60" }, { value: "all", label: "Whole field" }]} />
-          <label className="ex-sort">Sort by <select value={sort.key} title={SORT_HELP[sort.key]} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: e.target.value === "name" ? "asc" : "desc" })}>{SORT_LABEL.map((o) => <option key={o.key} value={o.key} title={SORT_HELP[o.key]}>{o.label}</option>)}</select>
-            <button type="button" className="ex-sortdir" onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))} title="Reverse the order" aria-label={sort.dir === "asc" ? "Sorted low to high, tap to reverse" : "Sorted high to low, tap to reverse"}>{sort.dir === "asc" ? <ArrowUp size={14} /> : <ArrowDown size={14} />}{sort.dir === "asc" ? "low to high" : "high to low"}</button></label>
         </div>
-        <details className="ex-details ex-typefilter" open={tags.length > 0 ? true : undefined}>
-          <summary>Filter by player type{tags.length > 0 ? ` (${tags.length} selected)` : ""}</summary>
+        <details className="ex-details ex-typefilter ex-filterbox" open={undefined}>
+          <summary>Filters{activeFilters > 0 ? ` (${activeFilters})` : ""}</summary>
+          <div className="ex-filters">
+            <SegmentedControl label="Show players we rate" value={only} onChange={setOnly} options={[{ value: "all", label: "All" }, { value: "above", label: "We are higher" }, { value: "below", label: "We are lower" }]} />
+            <SegmentedControl label="Show" value={top} onChange={setTop} options={[{ value: "25", label: "Top 25" }, { value: "60", label: "Top 60" }, { value: "all", label: "Whole field" }]} />
+            <label className="ex-sort">Sort by <select value={sort.key} title={SORT_HELP[sort.key]} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: e.target.value === "name" ? "asc" : "desc" })}>{SORT_LABEL.map((o) => <option key={o.key} value={o.key} title={SORT_HELP[o.key]}>{o.label}</option>)}</select>
+              <button type="button" className="ex-sortdir" onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))} title="Reverse the order" aria-label={sort.dir === "asc" ? "Sorted low to high, tap to reverse" : "Sorted high to low, tap to reverse"}>{sort.dir === "asc" ? <ArrowUp size={14} /> : <ArrowDown size={14} />}{sort.dir === "asc" ? "low to high" : "high to low"}</button></label>
+          </div>
+          <p className="ex-muted">Player type{tags.length > 0 ? ` (${tags.length} selected)` : ""}:</p>
           <div className="ex-chipgroups" role="group" aria-label="Filter by player type">
             {TAG_GROUPS.map((g) => {
               const opts = g.tags.filter((t) => tagOptions.includes(t));
@@ -860,12 +922,13 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
                 </div>
               );
             })}
-            {tags.length > 0 && <button type="button" className="ex-clear" onClick={() => setTags([])}><X size={12} /> clear filters</button>}
+            {tags.length > 0 && <button type="button" className="ex-clear" onClick={() => setTags([])}><X size={12} /> clear player types</button>}
           </div>
         </details>
         {rows.length > 0 && <PriceList rows={plRows} range={RAIL_RANGE[market]} label="Player prices" onOpen={openPlayer} heads={["Player", "Numbers", "Model vs book (points)", "Why"]} />}
         {rows.length === 0 && <EmptyState title="No players match" detail="Clear a filter or the search." />}
         {!hasMarket && !live && rows.length > 0 && <p className="ex-muted">No sportsbook prices are posted for {MARKET_LABEL[market].toLowerCase()}, so only our own numbers are shown.</p>}
+        <p className="ex-muted ex-marketnote">The strokes gap and its reasons are the same for every bet type; only the probability gap changes.{live ? " Sportsbook prices are not shown during play because they are not live." : ""}</p>
       </Section>
       <Section id="legend" title="What the reasons mean" purpose="The model components behind each price.">
         <details className="ex-glossary-wrap"><summary>Open the glossary</summary><LegendGroups legend={doc.components_legend} /></details>

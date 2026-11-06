@@ -17,10 +17,9 @@ const pc = (v: number | null, d = 1) => (v === null ? "n/a" : `${v.toFixed(d)}%`
 const sg = (v: number | null) => (v === null ? "n/a" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(1)}`);
 
 /** Whole-field comparison: one compact row per golfer (skill, our chance vs the book on a zero-centred rail, one-line driver); tap a row for the evidence. */
-export function WeeklyFieldBoard({ doc, playerId }: { doc: ExplainDoc; playerId?: string | null }) {
+export function WeeklyFieldBoard({ doc, playerId, query, setQuery }: { doc: ExplainDoc; playerId?: string | null; query: string; setQuery: (q: string) => void }) {
   const [market, setMarket] = useState<Market>("win");
   const [sort, setSort] = useState<BoardSort>("model");
-  const [query, setQuery] = useState("");
   const first = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches ? 10 : STEP;
   const [shown, setShown] = useState(first);
   const [open, setOpen] = useState<number | null>(null);

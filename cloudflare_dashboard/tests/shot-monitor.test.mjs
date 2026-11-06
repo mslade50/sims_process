@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { attentionItems, collectorStatus, decodeSnapshot, freshness, initialSources, publicationStatus, sourceFreshness } from "../app/shot-monitor-rules.ts";
 import { tourSummary, checkedAge } from "../app/shot-monitor-summary.ts";
+import { tourMatrix } from "../app/shot-monitor-matrix.ts";
 import { createShotMonitor } from "../app/shot-monitor-client.ts";
 import { navigationFor, ownerOnlyPath, resolveRoute } from "../app/shell-rules.ts";
 import { renderView } from "./helpers/render-harness.mjs";
@@ -281,7 +282,7 @@ test("all technical evidence is inside default-closed tour or monitor disclosure
   const data = sources();
   data[0].data.collectors[0].reason = "TECHNICAL_LOG_MARKER";
   const html = render(data);
-  assert.equal((html.match(/class="sm-details"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="sm-tour sm-details"/g) ?? []).length, 3);
   assert.match(html, /Monitor diagnostics/);
   assert.doesNotMatch(html, /<details[^>]*\sopen(?:=|\s|>)/);
   // Remove closed native disclosures to inspect only the initial visible surface.
@@ -289,7 +290,9 @@ test("all technical evidence is inside default-closed tour or monitor disclosure
   while (/<details\b/.test(visible)) visible = visible.replace(/<details\b[^>]*>(?:(?!<details\b)[\s\S])*?<\/details>/g, "");
   assert.doesNotMatch(visible, /TECHNICAL_LOG_MARKER|SHA-256|Captured shots|Generation|schema|snapshot/i);
   assert.equal((visible.match(/class="sm-golf"/g) ?? []).length, 0, "decorative golf-hole art was removed (design review)");
-  assert.equal((visible.match(/aria-label="Pipeline stages"/g) ?? []).length, 3);
+  assert.equal((visible.match(/<tr [^>]*id="sm-(pga|dpwt|kft)"/g) ?? []).length, 3, "one compact matrix row per tour replaces the per-tour cards and stage rails");
+  assert.equal((visible.match(/aria-label="Pipeline stages"/g) ?? []).length, 0);
+  assert.match(visible, /Known \/ unknown/);
 });
 
 
@@ -302,4 +305,20 @@ test("error reasons never manufacture a collecting claim from free-text negation
     assert.equal(result.stages[0].state, "Needs check");
     assert.equal(result.next, "Check the collection problem before publishing.");
   }
+});
+
+test("tour matrix: one row per tour with collect/check/publish times, known vs unknown, and one next action", () => {
+  const data = sources();
+  data[0].data.collectors = [collector({ last_success_at: iso(-60_000) })];
+  data[1].data.publications = [publication({ published_at: iso(-3_600_000), validation: { state: "passed", manifest_sha256: hash, summary: "ok", checked_at: iso(-120_000) } })];
+  const row = tourMatrix("pga", data, now);
+  assert.equal(row.known, true);
+  assert.equal(row.collect.at, iso(-60_000));
+  assert.equal(row.check.at, iso(-120_000));
+  assert.equal(row.publish.at, iso(-3_600_000));
+  assert.equal(typeof row.next, "string");
+  const unknown = tourMatrix("pga", initialSources(), now);
+  assert.equal(unknown.known, false);
+  assert.match(unknown.reason, /^Unknown:/);
+  assert.equal(unknown.collect.at, null);
 });

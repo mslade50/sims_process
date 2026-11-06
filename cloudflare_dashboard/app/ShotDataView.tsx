@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createShotMonitor, initialMonitorState, type MonitorState } from "./shot-monitor-client";
 import { collectorStatus, publicationStatus, sourceFreshness, SOURCES, TOURS, TOUR_LABELS, timestamp, type Collector, type Metric, type Publication, type Source } from "./shot-monitor-rules";
-import { Chip } from "./ui";
 import "./shot-monitor.css";
-import { checkedAge, tourSummary, type Stage } from "./shot-monitor-summary";
+import { checkedAge, tourSummary } from "./shot-monitor-summary";
+import { tourMatrix } from "./shot-monitor-matrix";
 
 function Time({ at }: { at?: string | null }) {
   if (!at) return <span>Not reported</span>;
@@ -53,21 +53,13 @@ function PublicationRow({ row, source, now }: { row: Publication; source: Source
   </article>;
 }
 
-function StageIcon({ stage }: { stage: string }) {
-  return <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {stage === "Collect" ? <><path d="M8 31h24M11 27l15-15 5 5-15 15M25 13l4-4 5 5-4 4"/><circle cx="10" cy="18" r="3"/><path d="M9 9c8-4 14-3 19 0" strokeDasharray="2 4"/></> : stage === "Check" ? <><path d="M13 7H8v26h24V7h-5M15 5h10v6H15z"/><path d="m13 22 5 5 10-12"/></> : <><ellipse cx="20" cy="10" rx="13" ry="5"/><path d="M7 10v18c0 7 26 7 26 0V10M7 19c0 7 26 7 26 0"/><path d="m16 27 3 3 6-6"/></>}
-  </svg>;
-}
-function StageRail({ stages }: { stages: Stage[] }) {
-  return <ol className="sm-rail" aria-label="Pipeline stages">{stages.map(stage => <li key={stage.label} className={`sm-rail-${stage.tone}`}><StageIcon stage={stage.label}/><strong>{stage.label}</strong><span>{stage.state}</span></li>)}</ol>;
-}
-
 /** Pure rendering boundary, also used by fixture tests. No fixture or packaged data in the live view. */
 export function ShotDataContent({ sources, refreshing, now, onRefresh }: MonitorState & { now: number; onRefresh?: () => void }) {
   const collectors = sources.find(s => s.file === "collectors-desktop.json") ?? { file: "collectors-desktop.json" as const, status: "missing" as const };
   const publications = sources.find(s => s.file === "publications.json") ?? { file: "publications.json" as const, status: "missing" as const };
   const datasets = publications.data?.publications ?? [];
   const summaries = TOURS.map(tour => tourSummary(tour, sources, now));
+  const matrix = TOURS.map(tour => tourMatrix(tour, sources, now));
   const attention = summaries.filter(s => s.attention);
   const loading = sources.length > 0 && sources.every(s => s.status === "loading");
   return <div className="shot-monitor">
@@ -76,14 +68,21 @@ export function ShotDataContent({ sources, refreshing, now, onRefresh }: Monitor
       <p className="sm-start">{loading ? "Waiting for the latest update." : attention.length ? `Start with ${TOUR_LABELS[attention[0].tour]}. ${attention[0].next}` : "No action needed. Paused collection stays paused."}</p></div>
       <div className="sm-check"><span>{checkedAge(sources, now)}</span>{onRefresh && <button className="sm-refresh" type="button" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Checking…" : "Refresh"}</button>}</div>
     </header>
-    <ul className="sm-glance" aria-label="Health by tour">{summaries.map(summary => <li key={summary.tour}><a href={`#sm-${summary.tour}`}><strong>{TOUR_LABELS[summary.tour]}</strong><Chip tone={summary.attention ? "warning" : summary.badge === "Checks clear" ? "positive" : "neutral"}>{summary.badge}</Chip><span>{summary.next ?? "No action needed."}</span></a></li>)}</ul>
-    <div className="sm-board">{summaries.map(summary => <section className="sm-tour" key={summary.tour} aria-labelledby={`sm-${summary.tour}`}>
-      <div className="sm-row-heading"><h2 id={`sm-${summary.tour}`}>{TOUR_LABELS[summary.tour]}</h2><Chip tone={summary.attention ? "warning" : summary.badge === "Checks clear" ? "positive" : "neutral"}>{summary.badge}</Chip></div>
-      <p className="sm-headline">{summary.headline}</p>
-      {summary.next && <p className="sm-next"><strong>What to do</strong>{summary.next}</p>}
-      <StageRail stages={summary.stages}/>
-      <p className="sm-available"><strong>Data available</strong>{summary.available}</p>
-      <details className="sm-details"><summary>View details<span className="sm-sr-only"> for {TOUR_LABELS[summary.tour]}</span></summary>
+    <section className="sm-matrix-wrap" aria-labelledby="sm-matrix-title">
+      <h2 id="sm-matrix-title" className="sm-matrix-title">Tour status</h2>
+      <p className="sm-muted">Collect is the machine (is a collector running). Check and Publish are verification evidence (did published output validate). Times are New York time.</p>
+      <table className="sm-matrix">
+        <thead><tr><th scope="col">Tour</th><th scope="col">Collect <span className="sm-sub">machine</span></th><th scope="col">Check <span className="sm-sub">evidence</span></th><th scope="col">Publish <span className="sm-sub">evidence</span></th><th scope="col">Known / unknown</th><th scope="col">Next action</th></tr></thead>
+        <tbody>{matrix.map(row => <tr key={row.tour} id={`sm-${row.tour}`} className={row.attention ? "sm-attn" : undefined}>
+          <th scope="row" data-label="Tour">{TOUR_LABELS[row.tour]}<small>{row.badge}</small></th>
+          {([["Collect", row.collect], ["Check", row.check], ["Publish", row.publish]] as const).map(([label, cell]) => <td key={label} data-label={label}><div><span className={`sm-cell sm-cell-${cell.tone}`}>{cell.state}</span><small><Time at={cell.at}/></small></div></td>)}
+          <td data-label="Known / unknown"><div>{row.reason}<small>{row.available}</small></div></td>
+          <td data-label="Next action"><div>{row.next}</div></td>
+        </tr>)}</tbody>
+      </table>
+    </section>
+    <div className="sm-board">{summaries.map(summary => <details className="sm-tour sm-details" key={summary.tour} aria-labelledby={`sm-d-${summary.tour}`}>
+      <summary id={`sm-d-${summary.tour}`}>{TOUR_LABELS[summary.tour]} details<span className="sm-sub">collectors and published datasets</span></summary>
         <div className="sm-tour-grid">
           <div className="sm-stage"><h3>Captured and cleaned</h3><p className="sm-muted">Captured data does not imply cleaned or published data.</p>
             {(collectors.data?.collectors ?? []).filter(r => r.tour === summary.tour).map(row => <CollectorRow key={row.id} row={row} source={collectors} now={now}/>)}
@@ -94,8 +93,7 @@ export function ShotDataContent({ sources, refreshing, now, onRefresh }: Monitor
             {!datasets.some(r => r.tour === summary.tour) && <p className="sm-empty">No publication reported. Dataset readiness unknown.</p>}
           </div>
         </div>
-      </details>
-    </section>)}</div>
+    </details>)}</div>
     <details className="sm-sources"><summary>Monitor diagnostics</summary>
       {sources.map((source) => <div className="sm-source" key={source.file}>
         <div className="sm-row-heading"><h3>{SOURCES.find((s) => s.file === source.file)!.label}</h3><span className="sm-state">{source.status === "loading" ? "Loading" : !source.data ? source.status : sourceFreshness(source, now) === "fresh" ? "Fresh snapshot" : sourceFreshness(source, now) === "stale" ? "STALE" : "Invalid check time"}</span></div>

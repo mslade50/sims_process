@@ -23,3 +23,5 @@
 .pe-table thead th button{min-height:44px;padding:0 var(--sp-2)}
 .pe-table .pd-expand{min-height:44px}
 .pd-pagination button{min-height:44px;min-width:88px}
+
+.pe-list{list-style:none;margin:var(--sp-3) 0 0;padding:0;border-top:1px solid var(--line)}.pe-list>li{border-bottom:1px solid var(--line)}.pe-item{display:grid;gap:var(--sp-1);width:100%;min-height:44px;padding:var(--sp-3) 0;border:0;background:transparent;color:var(--foreground);font:inherit;text-align:left;cursor:pointer}.pe-item b{font-weight:600}.pe-item small{color:var(--muted-strong);font-size:var(--fs-small)}.pe-chips{display:flex;flex-wrap:wrap;gap:var(--sp-1)}.pe-chips span{padding:2px var(--sp-2);border-radius:var(--radius-control);border:1px solid var(--line);font-size:var(--fs-small);font-variant-numeric:tabular-nums}.pe-chips em{font-style:normal;color:var(--muted-strong);margin-right:var(--sp-1)}.pe-list .pd-scroll{margin:0 0 var(--sp-3)}

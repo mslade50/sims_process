@@ -71,6 +71,21 @@
 }
 @media (pointer: coarse) {
   /* Padding + equal negative margin: 44px+ hit area, text layout unchanged; underline moves to text-decoration. */
-  .dist-explorer .shp-root .ex-term-btn { display: inline-block; min-height: 0; padding: 14px 8px; margin: -14px -8px; border-bottom: 0; text-decoration: underline dotted; text-underline-offset: 3px; vertical-align: baseline; }
+  .dist-explorer .shp-root .ex-term-btn { display: inline-block; min-height: 0; padding: 14px 8px; margin: -14px -8px; border-bottom: 0; vertical-align: baseline; }
+  .dist-explorer .shp-root .ex-term-btn .ex-term-text { border-bottom: 0; text-decoration: underline dotted; text-underline-offset: 3px; }
 }
 @media (pointer: coarse) { .dist-chip { padding-right: 0; } .dist-chip button { min-width: 44px; min-height: 44px; } }
+
+/* R2: compact setup, picker above the chart, comparison first. */
+.dist-setup{margin:0 0 var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--surface)}
+.dist-setup>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;padding:0 12px;font-size:var(--fs-small);font-weight:650;color:var(--muted-strong)}
+.dist-setup>summary span{color:var(--accent-ink);font-weight:700}
+.dist-setup .dist-controls{padding:0 12px 12px;margin:0}
+.dist-context{margin-bottom:var(--sp-3)}
+.dist-explorer>.ds-section#compare{margin-top:var(--sp-4)}
+.dist-pickers{margin-bottom:var(--sp-3)}
+.dist-chart-title{font-size:var(--fs-h3);font-weight:700;color:var(--foreground)}
+.dist-table-title{margin:var(--sp-4) 0 var(--sp-2);font-size:var(--fs-small);color:var(--muted-strong)}
+@media(max-width:650px){.dist-prices td{min-width:78px}.dist-chart-tools{gap:var(--sp-2)}}
+.dist-setup>summary span{color:var(--foreground);font-weight:700;text-decoration:underline}
+@media(max-width:650px){.dist-prices td{min-width:0;padding-inline:6px}.dist-prices th{padding-inline:6px}.dist-prices th:first-child{min-width:96px}}

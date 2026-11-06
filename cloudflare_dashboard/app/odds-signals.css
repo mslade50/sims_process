@@ -1,0 +1,17 @@
+/* Odds signals table on a phone: one compact row per signal instead of a 7-column scroll. Column order: type, market, player, book, odds, model chance, expected profit. */
+@media (max-width: 640px) {
+  .os-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .os-table, .os-table tbody { display: block; width: 100%; }
+  .os-table tr { display: grid; grid-template-columns: 1fr auto auto; gap: 2px var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
+  .os-table td { display: block; padding: 0; border: 0; text-align: left; font-size: var(--fs-small); }
+  .os-table td:nth-child(3) { grid-column: 1; grid-row: 1; font-size: var(--fs-data); font-weight: 650; }
+  .os-table td:nth-child(2) { grid-column: 1; grid-row: 2; color: var(--muted-strong); }
+  .os-table td:nth-child(4) { grid-column: 1; grid-row: 3; color: var(--muted-strong); }
+  .os-table td:nth-child(1) { grid-column: 2 / 4; grid-row: 1; text-align: right; color: var(--muted-strong); }
+  .os-table td:nth-child(5) { grid-column: 2; grid-row: 2 / 4; text-align: right; }
+  .os-table td:nth-child(6) { grid-column: 3; grid-row: 2; text-align: right; }
+  .os-table td:nth-child(7) { grid-column: 3; grid-row: 3; text-align: right; font-weight: 650; }
+  .os-table td:nth-child(5)::after { content: " dec"; color: var(--muted); }
+  .os-table td:nth-child(6)::before { content: "model "; color: var(--muted); }
+  .os-table td:nth-child(7)::before { content: "EV "; color: var(--muted); }
+}

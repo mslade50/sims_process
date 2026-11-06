@@ -204,6 +204,8 @@ export type ShellEvent = {
   /** "Pre-event", "Live, after R2" or "Final": what the newest saved run is about. */
   stage: string; stageTone: "neutral" | "accent" | "positive";
   asOf: string | null;
+  /** Event stage now, which round the prices reflect, and whether they are usable (see eventStatus). */
+  status: EventStatus;
 };
 const TOUR_LABELS: Record<string, string> = { pga: "PGA Tour", euro: "DP World Tour", dpwt: "DP World Tour", korn: "Korn Ferry" };
 export function tourLabelOf(tour: string | undefined | null): string {
@@ -225,10 +227,73 @@ export function stageOf(e: StageEvent, now: number): { stage: string; tone: "neu
   if (last?.kind === "live") return { stage: typeof last.after_round === "number" && last.after_round > 0 ? `Live, after R${last.after_round}` : "Live", tone: "accent" };
   return { stage: last ? "Pre-event" : "No run yet", tone: "neutral" };
 }
+/**
+ * Freshness is usability, not age alone. Three separate facts, one vocabulary everywhere in the shell:
+ *   stageNow     where the event is ("Pre-tournament", "R2 in play", "R2 complete", "Final"), from the calendar and tour hours;
+ *   pricesLabel  which round the published prices reflect ("Pre-tournament prices", "Prices after R1");
+ *   state        "ok" (usable), "behind" (prices lag the event stage), "none" (no run yet) or "final".
+ * Age is shown beside these but never decides the colour on its own. A published run that is old in the middle of a round it cannot
+ * contain is "behind"; the same age overnight before play is fine. Hours are US Eastern: US tours play 07:00-20:00, DP World Tour 01:00-16:00.
+ */
+export type EventStatus = { stageNow: string; pricesLabel: string; pricedRound: number | null; inPlay: boolean; state: "ok" | "behind" | "none" | "final"; consequence: string; next: string };
+const DAY_MS = 86_400_000;
+const IN_PLAY_STALE_MS = 3 * 3_600_000;
+function easternParts(ms: number): { date: string; hour: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(ms);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, hour: Number(get("hour")) };
+}
+const NEXT_UPDATE = "Prices change when the model publishes its next run. This bar checks for new runs by itself.";
+export function eventStatus(e: StageEvent & { date_start?: string; tour?: string }, now: number): EventStatus {
+  const runs = [...(e.runs ?? [])].filter((r) => r.as_of).sort((a, b) => String(a.as_of).localeCompare(String(b.as_of)));
+  const last = runs.at(-1);
+  const lastMs = last?.as_of ? Date.parse(last.as_of) : NaN;
+  const ageMs = Number.isFinite(lastMs) ? now - lastMs : null;
+  const pricedRound = last?.kind === "live" && typeof last.after_round === "number" && last.after_round > 0 ? last.after_round : 0;
+  const pricesLabel = !last ? "No prices yet" : pricedRound > 0 ? `Prices after R${pricedRound}` : "Pre-tournament prices";
+  const end = e.date_end ? Date.parse(`${e.date_end}T23:59:59Z`) : NaN;
+  if (Number.isFinite(end) && now > end + DAY_MS) {
+    return { stageNow: "Final", pricesLabel, pricedRound, inPlay: false, state: "final", consequence: "The event is over. These are the last prices published for it.", next: "No further updates for this event." };
+  }
+  const { date, hour } = easternParts(now);
+  const start = e.date_start ? Date.parse(`${e.date_start}T00:00:00Z`) : NaN;
+  const day = Number.isFinite(start) ? Math.round((Date.parse(`${date}T00:00:00Z`) - start) / DAY_MS) : NaN;
+  const euro = (e.tour ?? "").toLowerCase() === "euro" || (e.tour ?? "").toLowerCase() === "dpwt";
+  const [open, close] = euro ? [1, 16] : [7, 20];
+  let stageNow = "Pre-tournament";
+  let completed = 0;
+  let inPlay = false;
+  if (Number.isFinite(day) && day >= 0) {
+    if (day > 3) { stageNow = "R4 complete"; completed = 4; }
+    else if (hour >= close) { stageNow = `R${day + 1} complete`; completed = day + 1; }
+    else if (hour >= open) { stageNow = `R${day + 1} in play`; completed = day; inPlay = true; }
+    else { stageNow = day === 0 ? "Pre-tournament" : `R${day} complete`; completed = day; }
+  }
+  if (!last) return { stageNow, pricesLabel, pricedRound: null, inPlay, state: "none", consequence: "No model run has been published for this event yet, so there are no prices to read.", next: "The first run appears here once the model has priced the field." };
+  if (pricedRound < completed) {
+    const missing = pricedRound === 0 ? "Prices are still pre-tournament and do not include any round scores." : `Prices start from the end of R${pricedRound} and do not include R${completed} scores.`;
+    return { stageNow, pricesLabel, pricedRound, inPlay, state: "behind", consequence: `${missing} Treat edges against live books with care until the next run.`, next: NEXT_UPDATE };
+  }
+  if (inPlay && day >= 1 && ageMs !== null && ageMs > IN_PLAY_STALE_MS) {
+    return { stageNow, pricesLabel, pricedRound, inPlay, state: "behind", consequence: `R${day + 1} is in play and these prices were set before today's scores. Edges against live books may be out of date.`, next: NEXT_UPDATE };
+  }
+  const reading = inPlay ? `${stageNow.replace(" in play", "")} is in play; prices start from ${pricedRound > 0 ? `the end of R${pricedRound}` : "before the event"}.` : completed > 0 ? `Prices include every completed round (${pricedRound > 0 ? `through R${pricedRound}` : "none yet"}).` : "Prices are the current pre-tournament numbers.";
+  return { stageNow, pricesLabel, pricedRound, inPlay, state: "ok", consequence: reading, next: NEXT_UPDATE };
+}
+
+/** The nav group (Week, Model, Operate, Review, Archive) that owns a view key: the one eyebrow rule for page headers. */
+export function groupOf(viewKey: string): string | null {
+  for (const group of NAVIGATION) {
+    if (group.items.some((item) => item.key === viewKey || item.toggle?.some((t) => t.key === viewKey))) return group.label;
+  }
+  return null;
+}
+
 function toShellEvent(e: IndexEventLite, now: number): ShellEvent & { hasExplain: boolean } {
   const stamps = (e.runs ?? []).map((r) => r.as_of).filter((v): v is string => !!v).sort();
-  const { stage, tone } = stageOf(e, now);
-  return { uid: e.event_uid as string, name: e.name ?? (e.event_uid as string), course: e.course ?? "", tour: (e.tour ?? "").toLowerCase(), tourLabel: tourLabelOf(e.tour), stage, stageTone: tone, asOf: stamps.at(-1) ?? null, hasExplain: !!e.explain_key };
+  const status = eventStatus(e, now);
+  const stage = status.state === "final" ? "Final" : status.pricesLabel;
+  return { uid: e.event_uid as string, name: e.name ?? (e.event_uid as string), course: e.course ?? "", tour: (e.tour ?? "").toLowerCase(), tourLabel: tourLabelOf(e.tour), stage, stageTone: status.inPlay ? "accent" : "neutral", asOf: stamps.at(-1) ?? null, status, hasExplain: !!e.explain_key };
 }
 /** The events of the newest week (same rule as the header always used), with tour, stage and freshness input. Default selection first. */
 export function shellEvents(index: { events?: IndexEventLite[] } | null | undefined, now: number): ShellEvent[] {

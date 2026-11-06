@@ -6,7 +6,7 @@ import { EmptyState, PageIntro } from "./components";
 export function ResearchView() {
   return (
     <div>
-      <PageIntro eyebrow="Retired" title="Betting backtests" description="This page has been retired." />
+      <PageIntro title="Betting backtests" description="This page has been retired." />
       <EmptyState title="Betting backtests are no longer on this site" detail="Model experiments live in the research folder; the weekly scorecard and bet results are under Scorecard and P&L." />
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Native navigation avoids the deployed vinext client-router failure. */}
       <p><a className="ex-link" href="/performance">Open Scorecard and P&amp;L</a></p>

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { switchBarEvent, useEventParam } from "./event-param";
+import { useEventParam } from "./event-param";
 import { EmptyState, LoadingState, Panel, SegmentedControl } from "./components";
-import { Chip, PageHeader, Section as UiSection, Stat } from "./ui";
+import { PageHeader, Section as UiSection } from "./ui";
+import { ChangeTray, type TrayChange, type TrayStage } from "./ChangeTray";
+import { isTerminal, stateLabel } from "./jobs-rules";
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
 import { weatherKey } from "./WeatherEffectsView";
@@ -15,10 +17,12 @@ import "./weather-edits.css";
 type IndexEvent = { event_uid: string; name: string; tour?: string; date_start?: string; weather_key?: string | null; weather_brief_key?: string | null; distribution_runs?: RunLike[] | null };
 type Drafts = Record<string, Partial<Record<WeatherField, string>>>;
 type Loaded = { state: "loading" } | { state: "error"; message: string } | { state: "ready" };
+type Applied = { id: string; state: string } | null;
 type Notice = { tone: "ok" | "error"; text: string; link?: { href: string; label: string } } | null;
 
-const tourWord = (tour: string) => ({ pga: "PGA Tour", euro: "DP World Tour" } as Record<string, string>)[tour.toLowerCase()] ?? tour.toUpperCase();
 /** Column order on the page: wind, gusts, direction, temperature, rain. */
+const UNITS: Record<WeatherField, string> = { wind: "mph", gust: "mph", dir: "°", temp: "°F", rain: "mm" };
+const NAMES: Record<WeatherField, string> = { wind: "Wind", gust: "Gusts", dir: "Direction", temp: "Temp", rain: "Rain" };
 const COLUMNS: Array<{ field: WeatherField; head: string; hint: string }> = [
   { field: "wind", head: "Wind mph", hint: "Average wind speed for the hour (0 to 60 mph)" },
   { field: "gust", head: "Gusts mph", hint: "Gust speed for the hour (0 to 90 mph). Cannot be lower than the wind." },
@@ -125,6 +129,7 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
   const [busy, setBusy] = useState<"save" | "clear" | "reprice" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [applied, setApplied] = useState<Applied>(null);
 
   const rounds = useMemo(() => [...new Set(doc.forecast.hourly.map((h) => h.round))].filter((r) => !live || r > completed).sort((a, b) => a - b), [doc, live, completed]);
   const round = roundPick !== null && rounds.includes(roundPick) ? roundPick : rounds[0];
@@ -158,6 +163,7 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
       const sec = live ? next.live : next.pre;
       setDrafts(draftsFromSaved(sec));
       setNote(sec?.note ?? "");
+      setApplied(null);
       const n = sec?.hours.length ?? 0;
       const tail = preDead ? " The event has started, so pre-tournament edits have no effect on prices now." : n ? " Prices have not changed yet: press Reprice with these edits." : " Prices have not changed yet: press Reprice to price on the plain forecast.";
       setNotice({ tone: "ok", text: (n ? `Saved ${n} edited ${n === 1 ? "hour" : "hours"}.` : "All edits cleared.") + tail });
@@ -174,30 +180,63 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
     setNotice(null);
     const result = await api<{ job?: { id: string } }>("/api/jobs", { method: "POST", body: JSON.stringify({ type: choice.type, params: choice.params }) });
     setBusy(null);
-    if (result.ok && result.body.job) setNotice({ tone: "ok", text: `Reprice queued (job ${result.body.job.id}). It takes about 12 minutes; prices change only when it finishes.`, link: { href: "/run", label: "Watch it on the Run page" } });
+    if (result.ok && result.body.job) {
+      setApplied({ id: result.body.job.id, state: "queued" });
+      setNotice({ tone: "ok", text: `Reprice queued (job ${result.body.job.id}). Prices change only when it finishes; this page tracks it.`, link: { href: "/run", label: "Watch it on the Run page" } });
+    }
     else setNotice({ tone: "error", text: [result.body.error ?? "The reprice could not be queued.", ...(result.body.problems ?? [])].join(" ") });
   };
+
+  // Track the queued reprice so "applied" is a fact about a finished run, never a guess.
+  useEffect(() => {
+    if (!applied || isTerminal(applied.state)) return;
+    const jobId = applied.id;
+    const timer = window.setInterval(async () => {
+      const result = await api<{ jobs?: Array<{ id: string; state: string }> }>("/api/jobs");
+      const found = result.body.jobs?.find((j) => j.id === jobId);
+      if (!found) return;
+      setApplied((current) => (current && current.id === jobId && current.state !== found.state ? { id: jobId, state: found.state } : current));
+      if (found.state === "done") setNotice({ tone: "ok", text: "Reprice finished. Prices now use your saved edits." });
+      else if (found.state === "failed" || found.state === "expired" || found.state === "cancelled") setNotice({ tone: "error", text: `The reprice ${stateLabel(found.state).toLowerCase()}. Prices did not change; your edits are still saved.`, link: { href: "/run", label: "See why on the Run page" } });
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [applied]);
 
   const sec = live ? saved.doc?.live : saved.doc?.pre;
   const stamp = sec && sec.hours.length ? `Last saved ${etTime(sec.updated_at)}${sec.updated_by ? ` by ${sec.updated_by}` : ""}.` : "Nothing has been saved for this kind of edit yet.";
   const hasEdit = (r: number) => checked.hours.some((h) => doc.forecast.hourly.some((p) => p.round === r && timeOf(p) === h.time_local));
   const off = !ready || busy !== null || locked;
+  const changes: TrayChange[] = [];
+  for (const h of checked.hours) {
+    const p = doc.forecast.hourly.find((x) => timeOf(x) === h.time_local);
+    if (!p) continue;
+    for (const f of FIELDS) {
+      const to = h[f];
+      if (typeof to !== "number") continue;
+      const from = forecastValue(p, f);
+      if (from !== null && Math.abs(from - to) < 0.05) continue;
+      changes.push({ key: `${h.time_local}-${f}`, what: `R${p.round} ${hhmm(p.hour)} ${NAMES[f]}`, from: from === null ? "n/a" : show(f, from), to: show(f, to), unit: f === "dir" ? undefined : UNITS[f] });
+    }
+  }
 
   if (locked) {
     return <Panel eyebrow="During the event" title="In-event edits"><EmptyState title="In-event edits open after round 1 is complete" detail="Before then, use Before the event. Once a round finishes, you can edit the hours still to play and reprice the in-play prices." /></Panel>;
   }
-  const stateChip = dirty ? <Chip tone="warning">Unsaved changes</Chip> : savedCount > 0 ? <Chip tone="accent">Saved, prices not changed yet</Chip> : <Chip tone="neutral">No edits</Chip>;
-  const step = !editedCount && !savedCount ? 2 : dirty ? 3 : choice && savedCount ? 4 : 3;
-  const steps: Array<[string, string]> = [["Pick round", `${live ? "In-event" : "Pre-event"}${round ? `, R${round}` : ""}`], ["Edit hours", editedCount ? `${editedCount} hour${editedCount === 1 ? "" : "s"} edited` : "Type over the forecast"], ["Save", dirty ? "Unsaved changes" : savedCount ? "Saved" : "Nothing to save"], ["Reprice", choice ? "Applies edits to prices" : "Not available"]];
+  const appliedStage: TrayStage = !applied
+    ? { label: "Applied to prices", tone: "neutral", value: "Not applied", detail: "Prices change only after a reprice finishes (about 12 minutes). Saving alone changes nothing." }
+    : applied.state === "done" ? { label: "Applied to prices", tone: "positive", value: "Applied", detail: "The reprice finished. Prices use your saved edits." }
+    : applied.state === "failed" || applied.state === "expired" || applied.state === "cancelled" ? { label: "Applied to prices", tone: "negative", value: `Reprice ${stateLabel(applied.state).toLowerCase()}`, detail: "Prices did not change. Your edits are still saved." }
+    : { label: "Applied to prices", tone: "warning", value: applied.state === "queued" ? "Queued, waiting for a runner" : "Repricing", detail: `Job ${applied.id}. Prices change when it finishes.` };
+  const stages: TrayStage[] = [
+    { label: "Edited here", tone: dirty ? "warning" : "neutral", value: dirty ? "Unsaved" : editedCount ? "Matches saved" : "None", detail: `${editedCount} ${editedCount === 1 ? "hour" : "hours"} on this page${checked.problems.length ? ", with problems to fix" : ""}.` },
+    { label: "Saved", tone: savedCount ? "accent" : "neutral", value: savedCount ? `${savedCount} ${savedCount === 1 ? "hour" : "hours"}` : "None", detail: `${stamp} Saving does not change prices.` },
+    appliedStage,
+  ];
+  const eligibility = !choice ? { ok: false, text: "Pre-tournament edits no longer affect prices once the event has started." }
+    : dirty ? { ok: false, text: "Save your changes first, so the reprice uses what you see." }
+    : { ok: true, text: `Runs as ${choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"}: ${choice.reason}` };
   return (
     <>
-      <ol className="wx-steps" aria-label="Steps">
-        {steps.map(([title, detail], i) => {
-          const n = i + 1;
-          const state = n < step || n === 1 ? "done" : n === step ? "current" : "todo";
-          return <li key={title} className={`wx-step wx-${state}`} aria-current={state === "current" ? "step" : undefined}><span className="wx-step-n" aria-hidden="true">{state === "done" ? "✓" : n}</span><span><strong>{title}</strong><small>{detail}</small></span></li>;
-        })}
-      </ol>
       {live ? (
         <p className="inputs-note accent">These edits apply to in-play prices after round {completed} (tonight and during round {completed + 1}) and are cleared automatically once round {completed + 1} is complete.</p>
       ) : (
@@ -205,11 +244,6 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
       )}
       {live && status.expiredFrom !== null && <div className="inputs-banner" role="status"><strong>Your in-event edits from after round {status.expiredFrom} have expired.</strong>They no longer affect prices. The boxes below start empty.</div>}
       {preDead && <div className="inputs-banner warn" role="status"><strong>The event has started.</strong>Pre-tournament edits no longer affect any prices. You can still save or clear them, but Reprice is turned off here. Use During the event for in-play weather.</div>}
-      <div className="kpi-grid">
-        <Stat label="Saved edits" value={String(savedCount)} unit={savedCount === 1 ? "hour" : "hours"} tone={savedCount ? "accent" : "neutral"} note={stamp} hint="Hours with at least one number of yours, as last saved." />
-        <Stat label="On this page" value={String(editedCount)} unit={editedCount === 1 ? "hour" : "hours"} tone={dirty ? "negative" : "neutral"} note={dirty ? "Unsaved changes" : "Matches what is saved"} hint="Hours with at least one number on this page right now." />
-        <Stat label="Reprice runs as" value={!choice ? "Not available" : choice.type === "after_round" ? "After a round" : choice.type === "wednesday" ? "Wednesday reprice" : "Tuesday refresh"} note={choice ? choice.reason : "Pre-tournament edits no longer apply."} hint="Chosen from the kind of edit, the event start date and how many tee times are known." />
-      </div>
       {orphaned > 0 && <p className="inputs-note accent">{orphaned} saved {orphaned === 1 ? "edit is" : "edits are"} for hours that are not in the current forecast. They are kept and saved with the rest.</p>}
 
       <UiSection id="wx-hours" title={round ? `Round ${round} hours` : "Hours"} purpose="Type your number over any hour. Blank keeps the forecast; an edited hour is highlighted and shows how far it moves from the forecast." actions={<>
@@ -262,16 +296,7 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
         <p className="inputs-muted">Allowed values: wind {BOUNDS.wind.lo} to {BOUNDS.wind.hi} mph, gusts {BOUNDS.gust.lo} to {BOUNDS.gust.hi} mph (not below the wind), temperature {BOUNDS.temp.lo} to {BOUNDS.temp.hi} °F, rain {BOUNDS.rain.lo} to {BOUNDS.rain.hi} mm per hour, direction {BOUNDS.dir.lo} to {BOUNDS.dir.hi}°.</p>
       </UiSection>
 
-      <div className="wx-tray" role="group" aria-label="Save and reprice actions">
-        <div className="wx-tray-state">{stateChip}<span>{dirty && ready ? "Save before repricing." : `${editedCount} edited ${editedCount === 1 ? "hour" : "hours"}`}</span></div>
-        <div className="wx-actions">
-          <button type="button" className="inputs-button primary" onClick={save} disabled={off || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
-          <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={off || dirty || !choice} title={!choice ? "Pre-tournament edits no longer affect prices" : dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
-          <button type="button" className="inputs-button danger" onClick={() => setConfirmClear(true)} disabled={off || confirmClear || (savedCount === 0 && editedCount === 0)} title={live ? "Remove the in-event edits for this event" : "Remove the pre-tournament edits for this event"}>{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
-        </div>
-      </div>
-
-      <UiSection id="wx-save" title="Save and reprice" purpose="Saving keeps your numbers. Prices change only after you reprice and it finishes.">
+      <UiSection id="wx-save" title="Note and confirm" purpose="An optional note is stored with the saved edits.">
         <label className="wx-note-field">
           <span>Note for the record (optional)</span>
           <textarea value={note} maxLength={MAX_NOTE} rows={2} disabled={off} onChange={(e) => { setNotice(null); setNote(e.target.value); }} placeholder="For example: local radar shows the front arriving two hours early" />
@@ -284,14 +309,13 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
             <span className="wx-actions"><button type="button" className="inputs-button danger" onClick={clearAll}>Yes, clear them</button><button type="button" className="inputs-button" onClick={() => setConfirmClear(false)}>Keep them</button></span>
           </div>
         )}
-        {notice && (
-          <div className={`inputs-banner ${notice.tone === "error" ? "warn" : "ok"}`} role="status">
-            <strong>{notice.tone === "error" ? "That did not work" : "Done"}</strong>{notice.text}
-            {notice.link && <a className="ex-link" href={notice.link.href}>{notice.link.label}</a>}
-          </div>
-        )}
       </UiSection>
 
+      <ChangeTray changes={changes} stages={stages} eligibility={eligibility} announce={notice} nothing="No hour differs from the forecast yet. Type over any hour above.">
+        <button type="button" className="inputs-button primary" onClick={save} disabled={off || !dirty || checked.problems.length > 0} title="Save your numbers. This does not change prices.">{busy === "save" ? "Saving…" : "Save edits"}</button>
+        <button type="button" className="inputs-button" onClick={() => void reprice()} disabled={off || dirty || !choice} title={!choice ? "Pre-tournament edits no longer affect prices" : dirty ? "Save your changes first, so the reprice uses what you see" : "Queues a pricing run that re-runs even if nothing else changed"}>{busy === "reprice" ? "Queuing…" : "Reprice with these edits"}</button>
+        <button type="button" className="inputs-button danger" onClick={() => setConfirmClear(true)} disabled={off || confirmClear || (savedCount === 0 && editedCount === 0)} title={live ? "Remove the in-event edits for this event" : "Remove the pre-tournament edits for this event"}>{busy === "clear" ? "Clearing…" : "Clear all edits"}</button>
+      </ChangeTray>
     </>
   );
 }
@@ -300,25 +324,15 @@ export function WeatherEditsView() {
   const { data: index, loading } = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => (index?.events ?? []).filter((e) => e.weather_key || e.weather_brief_key), [index]);
   const barEvent = useEventParam();
-  const [picked, setPick] = useState("");
-  const pick = picked || barEvent;
+  const pick = barEvent; // chosen in the top bar only
   const event = events.find((e) => e.event_uid === pick) ?? events[0];
   const { data, loading: docLoading, error } = useDashboardData<unknown>(event ? weatherKey(event) : null);
   const doc = useMemo(() => parseWeather(data), [data]);
 
   const intro = (
     <PageHeader
-      eyebrow="Your call on the weather"
       title="Weather edits"
       purpose="Replace the forecast for chosen hours with your own numbers, save, then reprice. Use it when you know something the forecast does not."
-      actions={events.length > 0 ? (
-        <label className="select-control">
-          <span>Event</span>
-          <select value={event?.event_uid ?? ""} onChange={(e) => { setPick(e.target.value); switchBarEvent(e.target.value); }}>
-            {events.map((e) => <option key={e.event_uid} value={e.event_uid}>{e.name}{e.tour ? ` (${tourWord(e.tour)})` : ""}</option>)}
-          </select>
-        </label>
-      ) : undefined}
     />
   );
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { JOB_ID_RE, JOB_TYPES, MACHINES, MAX_QUEUE, machineStatus, waitingFor, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue, listWindow } from "../app/jobs-rules.ts";
+import { stateDetail, takeText, typicalTake, JOB_ID_RE, JOB_TYPES, MACHINES, MAX_QUEUE, machineStatus, waitingFor, buildJob, cancelProblem, checkRequest, effectiveState, makeJobId, rateLimitProblem, trimQueue, listWindow } from "../app/jobs-rules.ts";
 
 const NOW = Date.parse("2026-10-05T14:00:00Z");
 
@@ -58,14 +58,14 @@ test("job creation needs a verified identity; the server sets id, requester and 
 
 test("rate limit: one non-terminal job per type, unless older than 6 h", () => {
   const none = {};
-  assert.match(rateLimitProblem("tuesday", [job()], none, NOW), /already waiting/);
+  assert.match(rateLimitProblem("tuesday", [job()], none, NOW), /already queued/);
   assert.equal(rateLimitProblem("wednesday", [job()], none, NOW), null, "other types are unaffected");
   assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "running" } }, NOW), /already running/);
   assert.match(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state: "claimed" } }, NOW), /already starting/);
   for (const state of ["done", "failed", "expired", "cancelled"]) assert.equal(rateLimitProblem("tuesday", [job()], { [job().id]: { id: "x", state } }, NOW), null, state);
   assert.equal(rateLimitProblem("tuesday", [job({ cancelled_at: "2026-10-05T13:30:00Z" })], none, NOW), null, "canceled in the queue is terminal");
   assert.equal(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T07:59:00Z" })], none, NOW), null, "older than 6 h no longer blocks");
-  assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already waiting/);
+  assert.match(rateLimitProblem("tuesday", [job({ requested_at: "2026-10-05T08:01:00Z" })], none, NOW), /already queued/);
   assert.equal(rateLimitProblem("tuesday", [], none, NOW), null);
 });
 
@@ -415,4 +415,18 @@ test("role evidence distinguishes configured, built-in, unknown and fresh report
   }
   assert.equal(machineRoleEvidence(small,null,null,[{...beats[0],machine:big}],NOW).reported_role,null);
   assert.equal(machineRoleEvidence(small,null,null,[{...beats[0],role:"unexpected"}],NOW).reported_role,null);
+});
+
+test("queued jobs say exactly what they wait on; typical durations come from real runs or are labelled estimates", () => {
+  const small = "desktop-2ki41v6";
+  const up = [{ machine: small, at: new Date(NOW).toISOString(), state: "idle" }];
+  assert.equal(stateDetail(job(), "queued", up, NOW), "Queued, waiting for a runner");
+  assert.match(stateDetail(job(), "queued", [], NOW), /waiting for a runner \(none is online\)/);
+  assert.match(stateDetail(job({ target_machine: "mckinley_home" }), "queued", up, NOW), /^Queued\. Waiting for Desktop \(big\)/);
+  assert.equal(stateDetail(job(), "running", up, NOW), "Running");
+  const done = (secs) => ({ ...job({ type: "tuesday" }), state: "done", status: { id: "x", state: "done", started_at: "2026-10-05T10:00:00Z", finished_at: new Date(Date.parse("2026-10-05T10:00:00Z") + secs * 1000).toISOString().replace(/\.\d{3}Z$/, "Z") } });
+  assert.match(takeText("tuesday", []), /No recent run; estimate/);
+  assert.equal(takeText("tuesday", [done(360)]), "Last run took 6 min");
+  assert.equal(takeText("tuesday", [done(300), done(420), done(900)]), "Usually 7 min (last 3 runs)");
+  assert.equal(takeText("wednesday", [done(300)]), typicalTake("wednesday"));
 });

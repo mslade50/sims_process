@@ -3,6 +3,7 @@
  * Suggestions only; nothing is placed automatically. Everything here is pure (no DOM) so tests import it directly.
  */
 import { bookLabel, displayName } from "./bet-breakdowns-rules.ts";
+import { eventStatus } from "./shell-rules.ts";
 
 export { bookLabel, displayName };
 export const BET_CARD_KEY = "bet_card.json";
@@ -172,3 +173,29 @@ export function nextCheckText(e: Pick<CardEvent, "status" | "note" | "moment">):
 export const edgeFill = (edge: number): number => Math.max(0.04, Math.min(1, edge / 0.15));
 
 export const activeFilterCount = (f: Filters): number => Number(f.tier !== "all") + Number(f.group !== "all") + Number(f.book !== "all");
+
+/**
+ * Where an event stands, in the same words as the context bar: the bar's own eventStatus (calendar + tour hours) supplies the stage
+ * ("R1 complete", "R2 in play") and which round the prices reflect ("Prices after R1"). Without a start date the card's own text is used.
+ */
+export function stageText(e: Pick<CardEvent, "status" | "note" | "moment" | "pricedRound"> & Partial<Pick<CardEvent, "dateStart" | "tour" | "run">>, now: number = Date.now()): string {
+  const after = /after round (\d)/i.exec(e.moment);
+  const priced = after ? Number(after[1]) : 0;
+  if (e.dateStart && Number.isFinite(Date.parse(`${e.dateStart}T00:00:00Z`))) {
+    const end = new Date(Date.parse(`${e.dateStart}T00:00:00Z`) + 3 * 86_400_000).toISOString().slice(0, 10);
+    const s = eventStatus({ date_start: e.dateStart, date_end: end, tour: e.tour, runs: e.run || e.moment || e.status === "priced" ? [{ as_of: e.run ?? new Date(now).toISOString(), kind: priced > 0 ? "live" : "week", after_round: priced > 0 ? priced : null }] : [] }, now);
+    return `${s.stageNow} · ${s.pricesLabel}`;
+  }
+  const play = /round (\d) in play/i.exec(e.note ?? "") ?? /round (\d) in play/i.exec(e.moment);
+  if (play) return `R${play[1]} in play`;
+  if (after) return `Prices after R${after[1]}${e.pricedRound ? ` · pricing R${e.pricedRound}` : ""}`;
+  if (/pre-?event/i.test(e.moment)) return "Pre-tournament prices";
+  return e.moment || (e.status ? e.status.charAt(0).toUpperCase() + e.status.slice(1) : "No status");
+}
+
+/** One short next-check phrase for the scope strip. */
+export function nextCheckShort(e: Pick<CardEvent, "status" | "note" | "moment">): string {
+  if (/in play/i.test(`${e.note ?? ""} ${e.moment}`)) return "next prices after the round";
+  if (/off week|not started|no event/i.test(e.note ?? "")) return "next check when the next event is priced";
+  return "next check within 30 minutes";
+}

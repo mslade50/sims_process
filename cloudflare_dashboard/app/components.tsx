@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { DataRow, etTime, formatCell, numberValue, titleCase } from "./lib";
-import { AnimatedNumber, Delta, EmptyState, SkeletonPage, Sparkline } from "./ui";
+import { AnimatedNumber, Delta, EmptyState, Eyebrow, SkeletonPage, Sparkline } from "./ui";
 
 export { AnimatedNumber, Chip, Delta, EmptyState, GapRail, InfoTip, LivePulse, OnThisPage, PageHeader, ScrollTable, Section, SegmentedControl, Stat } from "./ui";
 
@@ -89,7 +89,7 @@ export function PageIntro({
   actions,
 }: {
   actions?: React.ReactNode;
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   controls?: React.ReactNode;
@@ -97,7 +97,7 @@ export function PageIntro({
   return (
     <div className="page-intro">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
+        <Eyebrow fallback={eyebrow} />
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -115,8 +115,29 @@ export function LoadingState({ label = "Loading dashboard data" }: { label?: str
   return <SkeletonPage label={label} />;
 }
 
-export function ErrorState({ message }: { message: string }) {
-  return <EmptyState title="This view is temporarily unavailable" detail={message} />;
+/** A real failure (the data service did not answer). Offers Retry; an intentionally absent archive uses ArchivedState instead. */
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return <EmptyState title="This view is temporarily unavailable" detail={message} onRetry={onRetry} />;
+}
+
+/**
+ * An archive that was retired on purpose: what it was, why it is absent and where the current answer lives.
+ * Never shows Retry or error wording; reserve ErrorState for outages.
+ */
+export function ArchivedState({ title, what, why, replacements }: { title: string; what: string; why: string; replacements: Array<{ href: string; label: string; detail: string }> }) {
+  return (
+    <section className="archived-state" aria-labelledby="archived-state-h">
+      <h2 id="archived-state-h">{title}</h2>
+      <dl>
+        <div><dt>What this was</dt><dd>{what}</dd></div>
+        <div><dt>Why it is not here</dt><dd>{why}</dd></div>
+      </dl>
+      <h3>Use these instead</h3>
+      <ul>
+        {replacements.map((r) => <li key={r.href}><a className="ex-link" href={r.href}>{r.label}</a><span>{r.detail}</span></li>)}
+      </ul>
+    </section>
+  );
 }
 
 export function PlayerPicker({
@@ -261,6 +282,7 @@ export function DataTable({
   stickyFirst = false,
   renderCell,
   mobileColumns,
+  searchQuery,
 }: {
   rows: DataRow[];
   preferredColumns?: string[];
@@ -283,6 +305,8 @@ export function DataTable({
   renderCell?: (column: string, value: unknown, row: DataRow) => ReactNode | undefined;
   /** Columns still shown at phone width (600px and under); the others are hidden by CSS. Omit to show all. */
   mobileColumns?: string[];
+  /** A search box elsewhere on the page drives this table: filter by it and hide the table's own search box. */
+  searchQuery?: string;
 }) {
   const allColumns = useMemo(() => {
     // A column that is empty (or only a placeholder) for every row says nothing, so it is not offered at all.
@@ -291,7 +315,8 @@ export function DataTable({
     );
     return [...preferredColumns.filter((column) => found.includes(column)), ...found.filter((column) => !preferredColumns.includes(column))];
   }, [preferredColumns, rows]);
-  const [query, setQuery] = useState("");
+  const [ownQuery, setQuery] = useState("");
+  const query = searchQuery ?? ownQuery;
   const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(0);
   const [visible, setVisible] = useState<string[]>(() => {
@@ -366,7 +391,7 @@ export function DataTable({
   return (
     <div className="data-table-wrap">
       <div className="table-toolbar">
-        <label className="search-box">
+        {searchQuery === undefined && <label className="search-box">
           <Search size={15} />
           <input
             value={query}
@@ -376,7 +401,7 @@ export function DataTable({
             }}
             placeholder={`Search ${label.toLowerCase()}…`}
           />
-        </label>
+        </label>}
         <div className="table-tools">
           <span>{filtered.length.toLocaleString()} rows</span>
           <details className="column-menu">

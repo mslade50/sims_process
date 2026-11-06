@@ -143,7 +143,7 @@ export function UnusualList({ a, selectedId, onSelect, limit = 8 }: { a: ShapeAn
   const rows = a.unusual.slice(0, limit);
   return (
     <div>
-      <div className="shp-list-head" aria-hidden="true"><span>Player</span><span>vs typical</span><span>Spread</span></div>
+      <div className="shp-list-head" aria-hidden="true"><span>Player</span><span>vs typical</span><span>Spread, low to high</span></div>
       <ul className="shp-list">
         {rows.map((p) => (
           <li key={p.id}>

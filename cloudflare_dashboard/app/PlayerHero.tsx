@@ -70,6 +70,7 @@ function TrendTeaser({ deep, loading, error, anchor }: { deep: DeepProfile | nul
         {paths.sma20 && <path d={paths.sma20} className="ph-spark-20" fill="none" vectorEffect="non-scaling-stroke" />}
       </svg>
       <p className="ph-muted">Last 20 rounds {signed(latest.sma20)} · last 50 rounds {signed(latest.sma50)}{diff !== null && <> · recent minus longer {signed(diff)}</>}</p>
+      <p className="ph-trend-note">Strokes per round vs the PGA average; flat line at 0 is the average. Last 3 years.</p>
       <a className="ph-link" href="#player-history">Open the full trend chart</a>
     </div>
   );

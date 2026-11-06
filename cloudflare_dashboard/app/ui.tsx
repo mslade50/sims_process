@@ -19,7 +19,8 @@
  *   InfoTip         jargon explainer: dotted term that opens a one-sentence definition (click, Escape closes).
  *   AnimatedNumber  counts up once, tweens with an accent wash on later changes.
  */
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { Lock } from "lucide-react";
 import { etTime } from "./lib";
 import { badgeView, parseTimestamp, tweenText } from "./ui-rules";
 
@@ -184,11 +185,32 @@ export function FreshnessBadge({ at, label = "Last run", scale = "run", title, s
 
 /* ------------------------------------------------------------------ design system v2 primitives */
 
-export function PageHeader({ eyebrow, title, purpose, actions }: { eyebrow?: string; title: string; purpose?: string; actions?: React.ReactNode }) {
+/**
+ * Eyebrow rule (one rule for every page): the eyebrow is the SECTION GROUP the page lives in (Week, Model, Operate, Review, Archive),
+ * supplied by the shell through PageGroupContext, never written per page. Owner-only pages add a small lock chip beside it.
+ * Event names, tours and ad-hoc labels do not belong in the eyebrow (the event is in the bar). The `eyebrow` prop is only a fallback
+ * for a page rendered outside the shell (tests, previews).
+ */
+export type PageGroup = { group: string | null; ownerOnly: boolean };
+export const PageGroupContext = createContext<PageGroup | null>(null);
+
+export function Eyebrow({ fallback }: { fallback?: string }) {
+  const ctx = useContext(PageGroupContext);
+  const text = ctx?.group ?? fallback;
+  if (!text && !ctx?.ownerOnly) return null;
+  return (
+    <span className="eyebrow-row">
+      {text && <span className="eyebrow">{text}</span>}
+      {ctx?.ownerOnly && <span className="owner-chip" title="Only you can see this page"><Lock size={11} aria-hidden="true" />Owner only</span>}
+    </span>
+  );
+}
+
+export function PageHeader({ eyebrow, title, purpose, actions }: { /** Fallback only; the shell's group name wins (see Eyebrow). */ eyebrow?: string; title: string; purpose?: string; actions?: React.ReactNode }) {
   return (
     <div className="page-intro">
       <div>
-        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+        <Eyebrow fallback={eyebrow} />
         <h1>{title}</h1>
         {purpose && <p>{purpose}</p>}
       </div>
@@ -211,24 +233,40 @@ export function Section({ id, title, purpose, actions, children, className = "" 
   );
 }
 
-/** Sticky in-page navigation for long pages. Highlights the section in view; scrolls horizontally on phones. */
+/**
+ * Sticky in-page navigation for long pages; scrolls horizontally on phones. Scroll-position spy: the active item is the last section whose top
+ * has passed the sticky header, the first section while the page is at the top, and the last one at the very bottom. The active item is
+ * kept in view inside the strip.
+ */
 export function OnThisPage({ sections, label = "On this page" }: { sections: Array<{ id: string; label: string }>; label?: string }) {
   const [current, setCurrent] = useState(sections[0]?.id ?? "");
+  const navRef = useRef<HTMLElement>(null);
   const key = sections.map((s) => s.id).join("|");
   useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return;
     const ids = key.split("|");
-    const seen = new Map<string, boolean>();
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting);
-      const first = ids.find((id) => seen.get(id));
-      if (first) setCurrent(first);
-    }, { rootMargin: "-72px 0px -60% 0px" });
-    for (const id of ids) { const el = document.getElementById(id); if (el) observer.observe(el); }
-    return () => observer.disconnect();
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+      let active = ids[0];
+      if (window.scrollY > 8) for (const id of ids) { const el = document.getElementById(id); if (el && el.getBoundingClientRect().top <= 140) active = id; }
+      if (atBottom && window.scrollY > 8) active = ids[ids.length - 1];
+      setCurrent(active);
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => { window.removeEventListener("scroll", onScroll); window.removeEventListener("resize", onScroll); if (frame) cancelAnimationFrame(frame); };
   }, [key]);
+  useEffect(() => {
+    const strip = navRef.current;
+    const link = strip?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!strip || !link || strip.scrollWidth <= strip.clientWidth) return;
+    strip.scrollTo({ left: link.offsetLeft - (strip.clientWidth - link.offsetWidth) / 2, behavior: "auto" });
+  }, [current]);
   return (
-    <nav className="on-this-page" aria-label={label}>
+    <nav className="on-this-page" aria-label={label} ref={navRef}>
       {sections.map((s) => <a key={s.id} href={`#${s.id}`} aria-current={current === s.id ? "true" : undefined}>{s.label}</a>)}
     </nav>
   );

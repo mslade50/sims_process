@@ -29,8 +29,6 @@
 .bc-sub { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); }
 .bc-edge { grid-area: edge; display: grid; justify-items: end; gap: 2px; min-width: 72px; }
 .bc-edge b { color: var(--pos); font-size: 22px; font-weight: 750; letter-spacing: -.02em; line-height: 1; }
-.bc-edge i { display: block; width: 72px; height: 4px; border-radius: 2px; background: var(--rail-track, var(--line)); overflow: hidden; }
-.bc-edge em { display: block; height: 100%; background: var(--pos); }
 .bc-edge small { color: var(--muted); font-size: var(--fs-small); }
 .bc-price { grid-area: price; display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-6); margin: 0; }
 .bc-price div { display: grid; gap: 1px; }
@@ -75,3 +73,31 @@
   .bc-price { gap: var(--sp-1) var(--sp-8); }
 }
 @media (max-width: 820px) { .bc-price { gap: var(--sp-1) var(--sp-4); } .bc-price dd span { white-space: nowrap; } }
+
+/* slip: the price stub sits under the name with a perforated divider */
+.bc-bet { box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 4%, transparent); transition: border-color var(--dur-fast) var(--ease); }
+.bc-bet summary { gap: var(--sp-3) var(--sp-4); }
+.bc-name { font-size: 17px; }
+.bc-tag { padding: 1px 8px; border-radius: 99px; font-size: var(--fs-small); font-weight: 650; background: var(--tint-2); color: var(--muted-strong); }
+.bc-tag.lean { background: color-mix(in srgb, var(--pos) 16%, transparent); color: var(--pos); }
+.bc-price { padding-top: var(--sp-3); border-top: 1px dashed var(--line-strong); width: 100%; }
+.bc-stake { margin-left: auto; text-align: right; }
+.bc-stake dd b { display: inline-block; padding: 2px 10px; border-radius: 99px; background: var(--tint-2); }
+.bc-evidence { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6); margin: 0; }
+.bc-evidence div { display: grid; gap: 1px; }
+.bc-evidence dt { color: var(--muted); font-size: var(--fs-small); }
+.bc-evidence dd { margin: 0; color: var(--foreground); }
+.bc-why { margin: var(--sp-1) 0 0; max-width: 70ch; }
+.bc-detail { border-top: 0; padding-top: var(--sp-1); }
+
+.bc-scope { display: grid; gap: var(--sp-1); margin: 0 0 var(--sp-4); padding: var(--sp-2) var(--sp-3); list-style: none; background: var(--tint-1); border: 1px solid var(--line); border-radius: var(--radius-control); font-size: var(--fs-small); }
+.bc-scope li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); min-height: 28px; }
+.bc-stage { color: var(--foreground); font-weight: 600; }
+.bc-nextc { color: var(--muted-strong); }
+@media (min-width: 821px) { .bc-price { width: auto; padding: 0 0 0 var(--sp-4); border-top: 0; border-left: 1px dashed var(--line-strong); } .bc-stake { margin-left: 0; } }
+.bc-scope li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--sp-2); align-items: center; padding: var(--sp-1) 0; }
+.bc-stline { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0 var(--sp-3); }
+@media (min-width: 821px) { .bc-scope li { grid-template-columns: auto auto 1fr; } .bc-stline { grid-column: auto; } }
+.bc-sub { flex-wrap: wrap; row-gap: 2px; }
+.bc-tag, .bc-sub > span:first-child { white-space: nowrap; }
+@media (max-width: 820px) { .bc-stake { margin-left: 0; text-align: left; } .bc-price { gap: var(--sp-2) var(--sp-5); } }

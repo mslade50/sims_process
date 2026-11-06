@@ -140,3 +140,6 @@
 .run-page .run-target-opt input:checked::before { border-color: var(--accent); background: radial-gradient(var(--accent) 0 40%, var(--surface) 45%); }
 .run-page .run-target-opt input:disabled { cursor: not-allowed; }
 .run-page .run-check input:focus-visible, .run-page .run-target-opt input:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 8px; }
+
+/* active-job machine line */
+.run-active .run-job-line { color: var(--muted); }

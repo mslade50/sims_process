@@ -8,7 +8,7 @@ import { etTime } from "./lib";
 import { DataFreshnessPanel } from "./DataFreshnessPanel";
 import { OddsSignalsPanel } from "./OddsSignalsPanel";
 import { suggestedGroup } from "./shell-rules";
-import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateLabel, typicalTake, waitingFor, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
+import { GROUPS, JOB_TYPES, isTerminal, machineLabel, machineRoleEvidence, machinesWithRoles, machineStatus, paramsSentence, parseUtc, requesterLabel, specFor, stateDetail, stateLabel, takeText, type JobParams, type JobRecord, type JobSpec, type JobStatus, type MachineBeat, type MachineStatus, type Roles } from "./jobs-rules";
 
 type JobRow = JobRecord & { status: JobStatus | null; state: string };
 type Heartbeat = MachineBeat & { version?: string };
@@ -60,6 +60,13 @@ const errorText = (result: { status: number; body: { error?: string } }) => {
 function runningName(id: string | null, jobs: JobRow[] | undefined): string {
   const job = id ? jobs?.find((item) => item.id === id) : undefined;
   return job ? (specFor(job.type)?.label ?? "a job") : "a job";
+}
+
+/** Which machine a job is on: the one that ran or claimed it, else the one it is addressed to, else "no machine yet" (any runner may take it). */
+function jobMachine(job: JobRow): string {
+  if (job.status?.machine) return machineLabel(job.status.machine);
+  if (job.target_machine) return `${machineLabel(job.target_machine)} (requested)`;
+  return "No machine yet";
 }
 
 const STATE_TONE: Record<string, Tone> = { done: "positive", failed: "negative", expired: "neutral", cancelled: "neutral", running: "accent", claimed: "accent", queued: "warning" };
@@ -220,18 +227,14 @@ export function RunView() {
   const autoWaiting = activeAll.length - active.length;
   const lastResult = allJobs.find((job) => isTerminal(job.state) && !isAutoCheck(job) && job.state !== "cancelled");
   const everyOffline = !!data && machines.length > 0 && machines.every((m) => m.status === "offline");
-  /** How long this job type took last time it finished, else a plain estimate. */
-  const tookFor = (type: string) => {
-    const last = allJobs.find((job) => job.type === type && job.state === "done" && job.status?.finished_at && (job.status.started_at ?? job.status.claimed_at));
-    const text = last ? duration(last.status, now) : "";
-    return text ? `Last took ${text}` : typicalTake(type);
-  };
+  /** Typical duration from real recent runs of the type; an explicitly labelled estimate when none is on record. */
+  const tookFor = (type: string) => takeText(type, allJobs);
 
   const sections = [{ id: "now", label: "Right now" }, { id: "start", label: "Start a job" }, { id: "history", label: "Timeline" }, { id: "health", label: "Data health" }];
 
   return (
     <div className="run-page">
-      <PageHeader eyebrow="Operate" title="Run" purpose="Start a pricing job from your phone. The always-on desktop checks the queue every minute, runs the job and posts the result in the timeline." actions={<button type="button" className="inputs-button" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
+      <PageHeader title="Run" purpose="Start a pricing job from your phone. The always-on desktop checks the queue every minute, runs the job and posts the result in the timeline." actions={<button type="button" className="inputs-button" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
       <OnThisPage sections={sections} />
 
       <Section id="now" title="Right now" purpose="What is running, the last result, and whether a machine can take work.">
@@ -255,7 +258,9 @@ export function RunView() {
                 <h3>Running</h3>
                 {active.length === 0 ? <p className="run-quiet">Nothing you started is running or waiting.</p> : (
                   <ul className="run-active">{active.map((job) => (
-                    <li key={job.id}><StateIcon state={job.state} /><span><strong>{specFor(job.type)?.label ?? job.type}</strong><small>{stateLabel(job.state)}{duration(job.status, now) ? `, ${duration(job.status, now)} so far` : `, requested ${ago(job.requested_at, now)}`}</small></span></li>
+                    <li key={job.id}><StateIcon state={job.state} /><span><strong>{specFor(job.type)?.label ?? job.type}</strong>
+                      <small>{stateDetail(job, job.state, data.heartbeats, now)}{duration(job.status, now) ? `, ${duration(job.status, now)} so far` : `, requested ${ago(job.requested_at, now)}`}</small>
+                      <small className="run-job-line">Machine: {jobMachine(job)}</small></span></li>
                   ))}</ul>
                 )}
                 {autoWaiting > 0 && <p className="run-hint">{autoWaiting} automatic check{autoWaiting === 1 ? " is" : "s are"} waiting for a machine. They start by themselves once one is online.</p>}
@@ -338,7 +343,6 @@ export function RunView() {
           {visibleJobs.map((job) => {
             const status = job.status;
             const spec = specFor(job.type);
-            const wait = waitingFor(job, job.state, data?.heartbeats, now);
             return (
               <li key={job.id} className={`run-job state-${job.state}`}>
                 <span className="run-rail" aria-hidden="true"><StateIcon state={job.state} /></span>
@@ -347,17 +351,15 @@ export function RunView() {
                     <strong>{spec?.label ?? job.type}</strong>
                     <StatusChip state={job.state} />
                   </header>
+                  {job.state === "queued" && <p className="run-summary run-waiting">{stateDetail(job, job.state, data?.heartbeats, now)}</p>}
                   <p className="run-when" title={ago(job.requested_at, now)}>
                     {etTime(job.requested_at)} by {requesterLabel(job.requested_by)}{paramsSentence(job.params) ? ` (${paramsSentence(job.params)})` : ""}
                   </p>
-                  {(status?.machine || duration(status, now) || (job.target_machine && !status?.machine)) && (
-                    <div className="run-facts">
-                      {status?.machine && <span>Ran on <b>{machineLabel(status.machine)}</b></span>}
-                      {job.target_machine && !status?.machine && <span>For <b>{machineLabel(job.target_machine)}</b></span>}
-                      {duration(status, now) && <span>{isTerminal(job.state) ? "Took" : "Running for"} <b className="num">{duration(status, now)}</b></span>}
-                    </div>
-                  )}
-                  {wait && <p className="run-summary run-waiting">{wait}</p>}
+                  <div className="run-facts">
+                    <span>Machine <b>{jobMachine(job)}</b></span>
+                    <span>Status <b>{stateLabel(job.state)}</b></span>
+                    {duration(status, now) && <span>{isTerminal(job.state) ? "Took" : "Running for"} <b className="num">{duration(status, now)}</b></span>}
+                  </div>
                   {status?.summary && <p className="run-summary">{status.summary}</p>}
                   {job.state === "queued" && <button type="button" className="inputs-button danger" onClick={() => void cancel(job.id)}>Cancel this request</button>}
                   {(status?.log_tail || (status && status.state !== "claimed")) && (

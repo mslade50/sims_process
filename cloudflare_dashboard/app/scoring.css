@@ -58,3 +58,10 @@
 .score-select select{width:100%;min-width:0;max-width:100%}
 @media(max-width:600px){.score-select{min-width:0;max-width:100%}.score-wx-head .score-select{width:100%}}
 .score-page .section-actions a{display:inline-flex;align-items:center;min-height:44px}
+
+/* R2: compact decision block, population statement. */
+.score-decision-compact{grid-template-columns:1fr;margin-bottom:var(--sp-3)}
+.score-population{margin:var(--sp-2) 0 0;font-size:var(--fs-small);color:var(--muted-strong);line-height:1.5}
+.score-page > .ds-section#outcomes{margin-top:var(--sp-4)}
+@media(max-width:600px){.score-chart{height:260px}.score-decision-compact .score-decision-main{padding:var(--sp-4)}}
+@media(max-width:600px){.score-timeline{display:none}.score-decision-compact .score-kicker{font-size:var(--fs-small)}.score-decision-compact h2{font-size:40px;margin:4px 0}}

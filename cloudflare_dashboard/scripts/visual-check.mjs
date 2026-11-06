@@ -4,6 +4,9 @@
 //
 //   node scripts/visual-check.mjs [--base http://localhost:3111] [--routes this-week,run] [--viewports phone,desktop] [--themes dark,light]
 //                                 [--jobs 3] [--browser <path-to-chrome-or-edge>] [--out <dir>] [--no-shots] [--keep-going] [--extra] [--crops]
+//   --contrast-strict also judges disabled controls (WCAG exempts them; the strict pass does not). scripts/contrast-check.mjs wraps this.
+//   --stress-prefs seeds compact density + a non-default accent in localStorage (hydration-mismatch probe: a lazy localStorage read differs from the server render).
+//   --open <css selector> sets open=true on every matching <details> before measuring (expanded-row captures, e.g. --open "ul details").
 //   --extra adds players?player=10091 and inputs?tab=adjust; --crops writes top-of-page crops (900px desktop / 1000px phone) to <out>/crops
 // Exit code: 0 no "error" issues, 1 at least one error issue, 2 setup failure (server or browser unreachable).
 import { spawn, spawnSync } from "node:child_process";
@@ -28,6 +31,9 @@ function parseArgs(argv) {
     else if (a === "--routes") o.routes = next().split(",").map((s) => s.trim().replace(/^\//, ""));
     else if (a === "--extra") o.extra = true;
     else if (a === "--crops") o.crops = true;
+    else if (a === "--contrast-strict") o.strict = true;
+    else if (a === "--stress-prefs") o.stress = true;
+    else if (a === "--open") o.open = next();
     else if (a === "--viewports") o.viewports = next().split(",");
     else if (a === "--themes") o.themes = next().split(",");
     else if (a === "--jobs") o.jobs = Math.max(1, Number(next()) || 1);
@@ -249,8 +255,8 @@ function collect(opts) {
   };
 }
 
-const INIT_SCRIPT = (key, theme) => `
-try { localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(theme)}); } catch (e) {}
+const INIT_SCRIPT = (key, theme, stress) => `
+try { localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(theme)}); ${stress ? 'localStorage.setItem("golf-dashboard-density", "compact"); localStorage.setItem("golf-dashboard-accent-v3", "gold");' : ""} } catch (e) {}
 window.__vcLongTasks = [];
 try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__vcLongTasks.push(Math.round(e.duration)); }).observe({ type: "longtask", buffered: true }); } catch (e) {}
 `;
@@ -291,13 +297,14 @@ async function runCase(cdp, base, c, opts, shotsDir) {
     await S("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: 1, mobile: v.mobile });
     if (v.touch) await S("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await S("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: c.theme }, { name: "prefers-reduced-motion", value: "reduce" }] });
-    await S("Page.addScriptToEvaluateOnNewDocument", { source: INIT_SCRIPT(opts.themeKey, c.theme) });
+    await S("Page.addScriptToEvaluateOnNewDocument", { source: INIT_SCRIPT(opts.themeKey, c.theme, c.stress) });
     const nav = await S("Page.navigate", { url: `${base}${c.route}` });
     if (nav.errorText) { add("load-failure", `Navigation failed: ${nav.errorText}`); return out; }
     for (let i = 0; i < 300 && !loaded; i++) await sleep(100);
     // settle: network quiet for 800 ms (lazy view chunks and data), fonts ready, then a scroll pass to wake lazy/observed content
     for (let i = 0; i < 300; i++) { if (inflight === 0 && Date.now() - lastNet > 800) break; await sleep(100); }
     await S("Runtime.evaluate", { expression: "document.fonts && document.fonts.ready.then(() => 1)", awaitPromise: true });
+    if (c.open) await S("Runtime.evaluate", { expression: `document.querySelectorAll(${JSON.stringify(c.open)}).forEach((d) => { d.open = true; })` });
     await S("Runtime.evaluate", {
       awaitPromise: true,
       expression: `(async () => { const h = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight); const step = innerHeight * 0.9;
@@ -391,7 +398,7 @@ function analyse(d, c, add, out) {
   const groups = new Map();
   let judged = 0, skipped = 0;
   for (const it of d.items) {
-    if (it.disabled || matchesAny(`${it.sel} ${it.cls}`, CONTRAST_ALLOW) || !it.color || it.color.startsWith("url")) { skipped++; continue; }
+    if ((it.disabled && !c.strict) || matchesAny(`${it.sel} ${it.cls}`, CONTRAST_ALLOW) || !it.color || it.color.startsWith("url")) { skipped++; continue; }
     const r = evaluateContrast({ color: it.color, chain: it.chain, fontPx: it.fontPx, weight: it.weight, opacity: it.opacity }, base);
     if (!r) { skipped++; continue; }
     judged++;
@@ -467,7 +474,7 @@ async function main() {
   const cases = [];
   for (const route of routes) for (const vp of args.viewports) for (const theme of args.themes) {
     if (!VIEWPORTS[vp]) { console.error(`Unknown viewport ${vp}`); process.exit(2); }
-    cases.push({ route, viewport: VIEWPORTS[vp], theme, id: `${routeSlug(route)}__${vp}__${theme}` });
+    cases.push({ route, viewport: VIEWPORTS[vp], theme, open: args.open ?? null, strict: !!args.strict, stress: !!args.stress, id: `${routeSlug(route)}__${vp}__${theme}` });
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const outDir = args.out ?? join(ROOT, "dist-visual", stamp);

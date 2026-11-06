@@ -48,7 +48,9 @@ p { text-wrap: pretty; }
 .kpi::before { display: none; }
 .kpi > span, .stat-label { color: var(--muted); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0; text-transform: none; }
 .kpi strong, .stat-value { color: var(--foreground); font-size: var(--fs-kpi); font-weight: 700; letter-spacing: -.025em; line-height: 1.1; }
-.stat-value small { margin-left: 3px; color: var(--muted); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0; }
+.stat-value { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 5px; row-gap: 0; min-width: 0; }
+.stat-value .anim-num { min-width: 0; overflow-wrap: anywhere; }
+.stat-value small { margin-left: 0; color: var(--muted); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0; white-space: nowrap; }
 .kpi:hover, .stat:hover { transform: none; box-shadow: none; border-color: var(--line); }
 .kpi-positive strong, .stat-pos .stat-value { color: var(--pos); }
 .kpi-negative strong, .stat-neg .stat-value { color: var(--neg); }
@@ -119,7 +121,7 @@ td.negative { color: var(--neg); }
 /* gap rail: model vs market around a shared zero. Bar grows right (model above book, favourable) or left. */
 .gap-rail { display: grid; gap: var(--sp-1); min-width: 0; }
 .gap-rail-track { position: relative; height: 8px; border-radius: 999px; background: var(--rail-track); }
-.gap-rail-track::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--rail-zero); }
+.gap-rail-track::after { content: ""; position: absolute; left: calc(50% - 1px); top: -4px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--muted-strong); }
 .gap-rail-bar { position: absolute; top: 0; bottom: 0; border-radius: 999px; transform-origin: var(--origin, left); animation: grow-x 200ms var(--ease) backwards; }
 .gap-rail-bar.pos { left: 50%; background: var(--rail-pos); }
 .gap-rail-bar.neg { right: 50%; background: var(--rail-neg); --origin: right; }
@@ -147,7 +149,9 @@ td.negative { color: var(--neg); }
 /* phone */
 @media (max-width: 820px) {
   .content-frame { padding: var(--sp-4) var(--sp-4) calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--sp-8)); }
-  .page-intro { gap: var(--sp-3); margin-bottom: var(--sp-4); padding-bottom: var(--sp-3); }
+  .page-intro { gap: var(--sp-3); margin-bottom: var(--sp-4); padding-bottom: var(--sp-3); flex-direction: column; align-items: stretch; }
+  .page-intro > div:first-child { width: 100%; max-width: none; }
+  .page-intro p { margin-top: var(--sp-1); font-size: var(--fs-data); }
   .page-intro h1 { font-size: 24px; }
   .panel { padding: var(--sp-4); }
   .kpi, .stat { padding: var(--sp-3); }
@@ -160,4 +164,9 @@ td.negative { color: var(--neg); }
 }
 @media (prefers-reduced-motion: reduce) {
   [data-flash], .gap-rail-bar { animation: none; }
+}
+
+/* disabled controls: look unavailable through a flat neutral surface and muted text, never through opacity, so their labels keep AA contrast */
+.pagination button:disabled, .pp-pagination button:disabled, .inputs-button:disabled, .inputs-button.primary:disabled, .inputs-button.danger:disabled {
+  opacity: 1; color: var(--muted-strong); background: var(--surface-soft); border-color: var(--line); box-shadow: none; cursor: not-allowed;
 }

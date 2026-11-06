@@ -1,0 +1,32 @@
+/* Change tray (shared by Weather edits and Inputs > Adjust). Tokens only. */
+.ct { display: grid; gap: var(--sp-3); padding: var(--sp-4); background: var(--popover); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); min-width: 0; }
+.ct * { min-width: 0; }
+.ct-title { margin: 0; font-size: var(--fs-h3); }
+.ct-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ct-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); margin: 0; padding: 0; list-style: none; }
+.ct-stage { display: grid; gap: var(--sp-1); padding-top: var(--sp-2); border-top: 2px solid var(--line-strong); }
+.ct-stage-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+.ct-stage-head strong { font-size: var(--fs-data); }
+.ct-stage-n { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--muted-strong); border-radius: 50%; color: var(--muted-strong); font-size: var(--fs-small); font-weight: 700; }
+.ct-stage small { color: var(--muted-strong); font-size: var(--fs-small); line-height: 1.4; overflow-wrap: anywhere; }
+.ct-none { margin: 0; color: var(--muted-strong); font-size: var(--fs-data); }
+.ct-changes table { width: 100%; border-collapse: collapse; font-size: var(--fs-data); }
+.ct-changes th, .ct-changes td { padding: var(--sp-1) var(--sp-2); border-bottom: 1px solid var(--line); text-align: left; font-weight: 500; vertical-align: baseline; }
+.ct-changes thead th { color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
+.ct-changes tbody th { font-weight: 600; }
+.ct-changes .num { text-align: right; }
+.ct-arrow { width: 1%; color: var(--muted); text-align: center !important; }
+.ct-to { font-weight: 650 !important; color: var(--foreground); }
+.ct-unit { color: var(--muted-strong); font-size: var(--fs-small); white-space: nowrap; }
+.ct-more { margin-top: var(--sp-1); font-size: var(--fs-small); }
+.ct-more summary { min-height: 32px; cursor: pointer; color: var(--accent); }
+.ct-elig { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0; color: var(--muted-strong); font-size: var(--fs-small); }
+.ct-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.ct-actions .inputs-button { min-height: 44px; padding: 0 var(--sp-4); }
+.ct-live { min-height: 0; }
+.ct-msg { padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--pos) 40%, transparent); border-left: 3px solid var(--pos); border-radius: var(--radius-control); background: var(--pos-soft); font-size: var(--fs-data); }
+.ct-msg.error { border-color: color-mix(in srgb, var(--warn) 45%, transparent); border-left-color: var(--warn); background: var(--warn-soft); }
+@media (max-width: 640px) {
+  .ct-stages { grid-template-columns: 1fr; gap: var(--sp-2); }
+  .ct-actions .inputs-button { flex: 1 1 auto; }
+}

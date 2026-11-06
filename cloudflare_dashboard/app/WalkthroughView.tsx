@@ -3,12 +3,12 @@
 import Link from "next/link";
 
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { switchBarEvent, useEventParam } from "./event-param";
+import { useEventParam } from "./event-param";
 import { Panel } from "./components";
 import { useDashboardData } from "./data";
 import { explainKeyFor, orderEvents, parseExplain, pct, signed, type ExplainDoc, type ExPlayer, type IndexEvent } from "./explain-rules";
 import { STAGES, STAGE_EVIDENCE_CONTRACT, weekStart } from "./ops-rules";
-import { OnThisPage, PageHeader, Section as UiSection, Stat, useNow } from "./ui";
+import { PageHeader, Section as UiSection, Stat, useNow } from "./ui";
 import { finishBuckets, matchingExplain, safeEvidenceLink, stageSignal, workflowFor, type Signal } from "./walkthrough-rules";
 import "./walkthrough.css";
 
@@ -37,15 +37,12 @@ export function WalkthroughView() {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const barEvent = useEventParam();
-  const [picked, setSelection] = useState("");
-  const selection = picked || barEvent;
+  const selection = barEvent; // the event is chosen in the top bar only
   const event = events.find(e => e.event_uid === selection) ?? events[0];
   return <div className="wt-page">
-    <PageHeader eyebrow="Owner model guide" title="From golf shots to prices" purpose="Follow a golfer's skill estimate into the tournament simulation, then see which weekly outputs have been verified." actions={<Link prefetch={false} href="/ops" className="wt-linkbtn">Open full weekly workflow</Link>} />
-    <div className="wt-event-row"><label>Event<select value={event?.event_uid ?? ""} onChange={e => { setSelection(e.target.value); switchBarEvent(e.target.value); }} disabled={!events.length}><option value="" disabled>{index.loading ? "Loading events…" : "Choose an event"}</option>{events.map(e => <option key={e.event_uid} value={e.event_uid}>{e.name ?? e.event_uid} · {e.date_start}</option>)}</select></label></div>
+    <PageHeader title="From golf shots to prices" purpose={`Follow a golfer's skill estimate into the tournament simulation, then see which weekly outputs have been verified.${event ? ` Showing ${event.name ?? event.event_uid}.` : ""}`} actions={<Link prefetch={false} href="/ops" className="wt-linkbtn">Open full weekly workflow</Link>} />
     {index.error && <p className="wt-notice" role="status">Event data unavailable: {index.error} <button type="button" onClick={index.refetch}>Retry</button></p>}
-    <ol className="wt-flow" aria-label="The pipeline in five steps">{TOPICS.map(([key, label, detail], i) => <li key={key}><a href={`#${key}`}><span className="wt-flow-n">{i + 1}</span><strong>{label}</strong><small>{detail}</small></a></li>)}</ol>
-    <OnThisPage sections={TOPICS.map(([id, label]) => ({ id, label }))} />
+    <nav aria-label="On this page: the pipeline in five steps"><ol className="wt-flow">{TOPICS.map(([key, label, detail], i) => <li key={key}><a href={`#${key}`}><span className="wt-flow-n">{i + 1}</span><strong>{label}</strong><small>{detail}</small></a></li>)}</ol></nav>
     {event ? <EventGuide key={event.event_uid} event={event} indexStale={index.stale || !!index.error} /> : <>
       <UiSection id="week" title="This week’s process" purpose="Weekly completion is unverified until an event is connected."><p className="wt-notice">No current event is connected. The explanation is available below; weekly completion remains unverified.</p></UiSection>
       <GuideSections doc={null} />

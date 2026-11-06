@@ -32,10 +32,10 @@ test("the brief parses; anything else is null so the page falls back to the olde
 });
 
 test("wording never shows a raw sign: helps/hurts, easier/harder, morning/afternoon", () => {
-  assert.equal(fieldWords(-0.78), "easier by 0.78 strokes");
-  assert.equal(fieldWords(0.5), "harder by 0.50 strokes");
+  assert.equal(fieldWords(-0.78), "0.78 strokes easier");
+  assert.equal(fieldWords(0.5), "0.50 strokes harder");
   assert.equal(fieldWords(0.001), "no real change");
-  assert.equal(fieldWords(-1), "easier by 1.00 stroke");
+  assert.equal(fieldWords(-1), "1.00 stroke easier");
   assert.equal(helpWords(-0.12), "helps by 0.12 strokes");
   assert.equal(helpWords(0.12), "hurts by 0.12 strokes");
   assert.equal(helpWords(null), "not available");
@@ -213,7 +213,7 @@ test("with sliders moved, the round strip shows the new numbers with the forecas
   const result = model.evaluate(sliders);
   const strip = renderView("WeatherBriefView.tsx", "RoundStrip", { data: {}, props: { rounds: brief.rounds, live: result.rounds, sliders } });
   assert.match(strip, /\(forecast: /);
-  assert.match(strip, /harder by|easier by/);
+  assert.match(strip, /strokes harder|strokes easier/);
   assert.match(strip, /wind/);
   const players = renderView("WeatherBriefView.tsx", "PlayersPanel", { data: {}, props: { brief, result } });
   assert.match(players, /class="ghost"/);

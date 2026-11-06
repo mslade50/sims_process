@@ -268,13 +268,48 @@ test("context bar: one event identity, stage from the newest run, default event 
   ] };
   const events = shellEvents(index, now);
   assert.deepEqual(events.map((e) => e.uid), ["pga:1", "euro:2"], "only the newest week, explain-key event first");
-  assert.equal(events[0].stage, "Live, after R1");
+  assert.equal(events[0].stage, "Prices after R1");
+  assert.equal(events[0].status.stageNow, "R1 in play", "the calendar, not the newest run, says where the event is");
   assert.equal(events[0].tourLabel, "PGA Tour");
-  assert.equal(events[1].stage, "Pre-event");
+  assert.equal(events[1].stage, "Pre-tournament prices");
   assert.equal(selectedShellEvent(events, "euro:2")?.uid, "euro:2");
   assert.equal(selectedShellEvent(events, "nope")?.uid, "pga:1");
   assert.equal(stageOf({ date_end: "2026-10-04", runs: [] }, now).stage, "Final");
   assert.equal(eventHref("/this-week", "?e=a&player=7&x=1", "b"), "/this-week?e=b&x=1");
   assert.deepEqual(primaryTabKeys(true), ["this-week", "weekly-players", "bet-card", "weather-effects"]);
   assert.ok(!primaryTabKeys(false).includes("bet-card"));
+});
+
+test("freshness is usability: stage now, which round the prices reflect and whether they lag; age alone never colours", async () => {
+  const { eventStatus, groupOf } = await import("../app/shell-rules.ts");
+  const ev = (runs, extra = {}) => ({ tour: "pga", date_start: "2026-10-08", date_end: "2026-10-11", runs, ...extra });
+  const live1 = [{ as_of: "2026-10-08T23:30:00Z", kind: "live", after_round: 1 }];
+  // Friday 13:00 ET (R2 in play), run is 13 h old and reflects R1: stage and price round are separate, and the prices lag in play.
+  const fri = Date.parse("2026-10-09T17:00:00Z");
+  const a = eventStatus(ev(live1), fri);
+  assert.equal(a.stageNow, "R2 in play");
+  assert.equal(a.pricesLabel, "Prices after R1");
+  assert.equal(a.state, "behind");
+  assert.match(a.consequence, /R2 is in play/);
+  // The same 13 h-old run early on Friday (before play) is fine: age alone is not a warning.
+  const early = eventStatus(ev(live1), Date.parse("2026-10-09T09:00:00Z"));
+  assert.equal(early.stageNow, "R1 complete");
+  assert.equal(early.state, "ok");
+  // Prices that miss a finished round lag the stage whatever their age.
+  const lag = eventStatus(ev([{ as_of: "2026-10-08T12:00:00Z", kind: "week" }]), Date.parse("2026-10-09T02:00:00Z"));
+  assert.equal(lag.stageNow, "R1 complete");
+  assert.equal(lag.pricesLabel, "Pre-tournament prices");
+  assert.equal(lag.state, "behind");
+  // Before the event, a day-old run is simply current; no run is "none"; an ended event is "final".
+  assert.equal(eventStatus(ev([{ as_of: "2026-10-06T12:00:00Z", kind: "week" }]), Date.parse("2026-10-07T12:00:00Z")).state, "ok");
+  assert.equal(eventStatus(ev([]), fri).state, "none");
+  assert.equal(eventStatus(ev(live1), Date.parse("2026-10-20T12:00:00Z")).state, "final");
+  // DP World Tour hours differ from US hours.
+  assert.equal(eventStatus(ev(live1, { tour: "euro" }), Date.parse("2026-10-09T08:00:00Z")).stageNow, "R2 in play");
+  // One eyebrow rule: the nav group names the page.
+  assert.equal(groupOf("players"), "Week");
+  assert.equal(groupOf("bet-card"), "Review");
+  assert.equal(groupOf("run"), "Operate");
+  assert.equal(groupOf("history"), "Archive");
+  assert.equal(groupOf("nope"), null);
 });

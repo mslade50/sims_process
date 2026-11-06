@@ -243,8 +243,10 @@
 
 /* defined terms */
 .ex-term { position: relative; display: inline; }
-.ex-term-btn { display: inline; padding: 0; border: 0; border-bottom: 1px dotted var(--muted); background: none; color: inherit; font: inherit; cursor: help; }
-.ex-term-btn:hover, .ex-term-btn[aria-expanded="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.ex-term-btn { display: inline; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: help; }
+.ex-term-text { border-bottom: 1px dotted var(--muted); }
+.ex-term-btn:hover, .ex-term-btn[aria-expanded="true"] { color: var(--accent); }
+.ex-term-btn:hover .ex-term-text, .ex-term-btn[aria-expanded="true"] .ex-term-text { border-bottom-color: var(--accent); }
 .ex-term-pop { position: absolute; z-index: 30; left: 0; top: calc(100% + 6px); width: max-content; max-width: min(300px, 80vw); padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--popover); color: var(--foreground); font-size: 12px; font-weight: 500; line-height: 1.45; letter-spacing: 0; text-transform: none; text-align: left; box-shadow: var(--shadow-lift); white-space: normal; }
 @media (max-width: 640px) { .ex-term { position: static; } .ex-fact, .ex-lede-block, .ex-changed, .panel { position: relative; } .ex-term-pop { left: 12px; right: 12px; width: auto; max-width: none; } }
 
@@ -323,8 +325,8 @@
 .ex-stat-label { color: var(--muted); font-size: 10.5px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .ex-stat-one strong { font-size: 19px; }
 .ex-stat small { margin: 0; }
-.ex-showall { display: block; width: 100%; min-height: 44px; margin: 8px 0 4px; border: 1px dashed var(--line); border-radius: 10px; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
-.ex-showall:hover, .ex-showall:focus-visible { background: var(--tint-1); border-style: solid; }
+.ex-showall { display: block; width: 100%; min-height: 44px; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: var(--radius-control); background: none; color: var(--accent); font: inherit; font-size: var(--fs-data); font-weight: 650; cursor: pointer; }
+.ex-showall:hover, .ex-showall:focus-visible { background: var(--tint-1); }
 /* Event picker: one swipeable row of chips on phones instead of four stacked rows. */
 @media (max-width: 640px) {
   .segmented.ex-events { display: flex; flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -474,3 +476,37 @@
 @media (max-width: 900px) { .pl-why { display: block; overflow: visible; -webkit-line-clamp: unset; } }
 .shl-name { min-width: 44px; justify-content: flex-start; }
 @media (max-width: 900px) { .pl-minor { display: none; } }
+
+/* Round 2 (R2-explain): compact pricing-run switch, phone hero strip, folds, scale notes, compact contender rows */
+.ex-viewbar { margin: 0 0 var(--sp-2); }
+.ex-viewbar .segmented { max-width: 100%; }
+.ex-hero { margin-bottom: var(--sp-3); }
+.ex-fact-sub b { color: var(--foreground); font-weight: 700; }
+.ex-fold { margin-top: var(--sp-2); }
+.ex-fold > summary { display: flex; align-items: center; min-height: 44px; padding: 0 var(--sp-1); color: var(--accent); font-size: var(--fs-data); font-weight: 650; cursor: pointer; border-top: 1px solid var(--line); }
+.ex-fold[open] > summary { color: var(--muted-strong); }
+.ex-scale { margin: 0 0 var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); line-height: 1.4; }
+.ex-filterbox { margin: 0 0 var(--sp-2); }
+.ex-filterbox > summary { display: flex; align-items: center; min-height: 44px; font-weight: 650; }
+.ex-filters .search-box { flex: 1 1 220px; }
+.ex-fact-value em[data-flash] { border-radius: var(--radius-control); }
+@media (min-width: 821px) { .ex-fold > summary { display: none; } .ex-fold { margin-top: 0; }  }
+@media (max-width: 640px) {
+  .ex-hero { display: grid; grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: minmax(236px, 82%); gap: var(--sp-2); overflow-x: auto; scroll-snap-type: x proximity; min-width: 0; max-width: calc(100vw - 2 * var(--sp-4)); contain: inline-size; padding-bottom: 2px; scrollbar-width: none; }
+  .ex-hero::-webkit-scrollbar { display: none; }
+  .ex-fact { scroll-snap-align: start; padding: var(--sp-2) var(--sp-3); gap: 2px; }
+  .ex-fact .ex-range { display: none; }
+  .ex-fact-label { font-size: var(--fs-small); text-transform: none; letter-spacing: 0; font-weight: 650; }
+  .ex-fact-value { font-size: 18px; }
+  .ex-fact-sub { font-size: var(--fs-small); }
+  /* contender rows: a ruled list, not a stack of cards */
+  .ex-cards tr { display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); margin: 0; padding: var(--sp-3) 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
+  .ex-cards th[scope="row"], .ex-cards td.ex-shape-cell, .ex-cards td.ex-why { flex: 1 1 100%; }
+  .ex-cards td[data-label]:not(.ex-shape-cell):not(.ex-why) { flex: 1 1 56px; flex-direction: column; align-items: flex-start; gap: 0; padding: 0; text-align: left; }
+  .ex-cards td[data-label]:not(.ex-shape-cell):not(.ex-why)::before { font-size: var(--fs-small); font-weight: 600; }
+  .ex-cards td .ex-differ-cell { align-items: flex-start; }
+  .ex-cards td.ex-shape-cell::before { display: none; }
+  .ex-differ-sub { display: none; }
+  .ex-gap-col button { min-height: 48px; }
+  p.ex-muted .ex-term-btn { display: inline-flex; align-items: center; min-height: 40px; }
+}

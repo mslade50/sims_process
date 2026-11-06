@@ -4,6 +4,7 @@ import { useState } from "react";
 import { EmptyState, Panel } from "./components";
 import { useDashboardData } from "./data";
 import { etTime } from "./lib";
+import "./odds-signals.css";
 import { ODDS_SIGNALS_KEY, alertText, bookName, firstLast, marketName, oddsStale, parseOddsSignals, pct, statusName } from "./odds-signals-rules";
 
 /** Latest odds-move signals (golfprice odds_reprice moment): EV against the fairs of the last full run, not re-simulated. */
@@ -33,7 +34,7 @@ export function OddsSignalsPanel() {
                 <p className="inputs-muted">No sportsbook price is far enough from the model right now.</p>
               ) : (
                 <div className="table-scroll">
-                  <table aria-label={`Odds signals for ${event.name}`}>
+                  <table className="os-table" aria-label={`Odds signals for ${event.name}`}>
                     <thead>
                       <tr>
                         <th title="A live bet is one we would really place. Paper only means it is tracked but not placed."><span className="th-text">Type</span></th>

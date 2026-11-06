@@ -123,3 +123,21 @@ test("empty-event status wording is honest about the next check", () => {
   assert.equal(edgeFill(0.3), 1);
   assert.equal(activeFilterCount({ tier: "lean", group: "all", book: "x" }), 2);
 });
+
+import { nextCheckShort, stageText } from "../app/bet-card-rules.ts";
+import { eventStatus } from "../app/shell-rules.ts";
+
+test("stage and next-check wording is honest about the round", () => {
+  assert.equal(stageText({ status: "priced", note: null, moment: "after round 1", pricedRound: 2 }), "Prices after R1 · pricing R2");
+  assert.equal(stageText({ status: "nothing to price now", note: "round 2 in play: no next-round prices until the after-round run", moment: "" , pricedRound: null }), "R2 in play");
+  assert.equal(stageText({ status: "priced", note: null, moment: "pre-event", pricedRound: null }), "Pre-tournament prices");
+  // one vocabulary: the Bet card names the stage exactly as the context bar does
+  const ev = { date_start: "2026-11-05", date_end: "2026-11-08", tour: "euro", runs: [{ as_of: "2026-11-05T15:00:00Z", kind: "live", after_round: 1 }] };
+  const now = Date.parse("2026-11-05T22:00:00Z"); // 17:00 ET, DP World Tour day done
+  const bar = eventStatus(ev, now);
+  assert.equal(bar.stageNow, "R1 complete");
+  assert.equal(stageText({ status: "priced", note: "round 2 in play", moment: "after round 1", pricedRound: 2, dateStart: "2026-11-05", tour: "euro", run: "2026-11-05T15:00:00Z" }, now), `${bar.stageNow} · ${bar.pricesLabel}`);
+  assert.equal(stageText({ status: "priced", note: null, moment: "after round 1", pricedRound: 2, dateStart: "2026-11-05", tour: "euro" }, now), "R1 complete · Prices after R1");
+  assert.match(nextCheckShort({ status: "x", note: "round 1 in play", moment: "" }), /after the round/);
+  assert.match(nextCheckShort({ status: "priced", note: null, moment: "after round 1" }), /30 minutes/);
+});

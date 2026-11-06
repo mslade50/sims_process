@@ -72,14 +72,16 @@ test("header badge: a saved copy is never live or fresh, whatever its age", () =
 
 test("rendered header after an R2 outage: saved-copy badge, stale tone and a page warning (live badge otherwise)", () => {
   const asOf = new Date(Date.now() - 10 * 60_000).toISOString();
-  const data = { "manifest.json": { generated_at: asOf }, "golfprice/index.json": { events: [{ name: "Test Open", course: "Test GC", date_start: "2026-10-22", runs: [{ as_of: asOf }] }] } };
+  const nextWeek = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+  const data = { "manifest.json": { generated_at: asOf }, "golfprice/index.json": { events: [{ name: "Test Open", course: "Test GC", event_uid: "pga:t", tour: "pga", date_start: nextWeek, runs: [{ as_of: asOf, kind: "week" }] }] } };
   const live = renderShell({ data });
-  assert.match(live, /freshness-badge fresh-live/);
+  assert.match(live, /class="evstat" data-tone="neutral"/);
+  assert.match(live, /Pre-tournament prices/);
   assert.doesNotMatch(live, /saved-copy-notice|Saved copy/);
   const outage = renderShell({ data, stale: ["golfprice/index.json"], saved: [Date.now() - 3_600_000] });
-  assert.match(outage, /freshness-badge fresh-stale/);
-  assert.match(outage, /Saved copy · Run 10 min ago/);
-  assert.doesNotMatch(outage, /freshness-badge fresh-live/);
+  assert.match(outage, /class="evstat" data-tone="negative"/);
+  assert.match(outage, /Saved copy/);
+  assert.doesNotMatch(outage, /data-tone="neutral"/);
   assert.match(outage, /data-testid="saved-copy-notice"/);
   assert.match(outage, /could not be reached/);
 });

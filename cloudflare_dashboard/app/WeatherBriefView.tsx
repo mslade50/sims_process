@@ -8,13 +8,13 @@
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import { ChevronRight, CloudSun, Search, Wind } from "lucide-react";
-import { Section, OnThisPage } from "./ui";
+import { OnThisPage, Section } from "./ui";
 import { useDashboardData } from "./data";
 import { Badge } from "./ui";
 import { etTime } from "./lib";
 import {
   NEUTRAL_SLIDERS, TOP_SKILL, ageWords, buildWhatIf, componentWords, fieldWords, helpWords, historySeries, isNeutral, isTopSkill, medianProbSlopes, movementWords, orderPlayers, pointsWords,
-  briefKeyFor, parseBrief, scaledProb, searchBrief, slotWords, spreadWords, statusTitle, tone, waveSide, waveWords, windSensitivity,
+  briefKeyFor, parseBrief, shortHeadline, scaledProb, searchBrief, slotWords, spreadWords, statusTitle, tone, waveSide, waveWords, windSensitivity,
   type Brief, type BriefPlayer, type BriefRound, type RoundOut, type Slot, type SortMode, type Sliders, type WhatIfModel, type WhatIfResult,
 } from "./weather-brief-rules";
 import "./weather-brief.css";
@@ -44,9 +44,10 @@ export function HeadlineCard({ brief, version }: { brief: Brief; version: string
           {brief.as_of ? `Updated ${etTime(brief.as_of)}` : ""}{brief.forecast.age_hours !== null ? ` · forecast ${ageWords(brief.forecast.age_hours)}` : ""}{version ? ` · model ${version}` : ""}
         </small>
       </div>
+      {shortHeadline(brief.rounds) && <h2 className="wb-headline-title">{shortHeadline(brief.rounds)}</h2>}
       {brief.headline.length ? (
         // The status line below already says whether tee times are out; a headline sentence opening the same way only repeats it.
-        <ul className="wb-sentences">{brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24)).map((h, i) => <li key={i} className={i === 0 ? "first" : undefined}>{h}</li>)}</ul>
+        <ul className="wb-sentences">{brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24)).map((h, i) => <li key={i}>{h}</li>)}</ul>
       ) : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
       {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}
     </section>
@@ -110,7 +111,7 @@ export function RoundStrip({ rounds, live, sliders }: { rounds: BriefRound[]; li
   const wScale = Math.max(0.15, ...outs.map((o) => Math.abs(o.wave ?? 0)), ...rounds.map((r) => Math.abs(r.wave ?? 0))) * 1.1;
   return (
     <div className="wb-compare">
-      <p className="wb-baseline"><b>Zero is a typical day.</b> Scoring effects are strokes per round against typical conditions for this course: <span className="wb-key good">negative = easier</span>, <span className="wb-key bad">positive = harder</span>. Bars use the same scale in every round so they compare directly.</p>
+      <p className="wb-baseline"><b>Zero is a typical day.</b> Scoring effects are strokes per round against typical conditions for this course: <span className="wb-key good">negative = easier</span>, <span className="wb-key bad">positive = harder</span>. Bars use one scale in every round (full width = {fScale.toFixed(1)} strokes each side of zero), so they compare directly.</p>
       <div className="wb-rounds">
         {rounds.map((r, idx) => {
           const out = outs[idx];
@@ -123,7 +124,7 @@ export function RoundStrip({ rounds, live, sliders }: { rounds: BriefRound[]; li
               <header><b>Round {r.round}</b><small>{dayName(r.date_local)}</small>{r.status === "field_only" && <Badge tone="warning">Tee times not out</Badge>}</header>
               <div className={`wb-effect ${tone(out.field)}`}>
                 <span>Field difficulty (everyone)</span>
-                <strong>Scoring {changed ? <Faint now={fieldWords(out.field)} base={fieldWords(r.field)} render /> : fieldWords(out.field)}</strong>
+                <strong>{changed ? <Faint now={fieldWords(out.field)} base={fieldWords(r.field)} render /> : fieldWords(out.field)}</strong>
                 <CenterBar v={out.field} scale={fScale} tone={tone(out.field)} />
                 <small>Moves scores and the cut line, not who is favoured.</small>
               </div>

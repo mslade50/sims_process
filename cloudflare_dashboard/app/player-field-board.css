@@ -64,3 +64,6 @@
 .fb-more[open]>summary::after{transform:rotate(-135deg)}
 .fb-runbar select{width:auto;max-width:100%}
 .fb-runbar select{flex:0 1 300px}
+
+.fb-runpick{margin:0}.fb-runpick>summary{min-height:44px;display:inline-flex;align-items:center;cursor:pointer;color:var(--accent);font-size:var(--fs-small)}.fb-runpick select{min-height:44px;max-width:100%}
+.fb-runbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2) var(--sp-3);margin:0}

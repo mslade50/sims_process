@@ -19,18 +19,36 @@ Everything a page needs is already global: restyled `.panel`, `.kpi`, tables, `.
 
 ## Shell (do not rebuild per page)
 - Desktop: 216px sidebar (Bet card pinned first for the owner, grouped nav, active = accent tint + left bar), 56px context bar:
-  `page / [PGA  Event name  course v] [stage chip] [freshness] ... search, theme`. The switcher sets `?e=<event_uid>` and reloads.
-  Stage = newest saved run ("Pre-event", "Live, after R2", "Final"). Freshness colour: green fresh, amber aging, red stale.
-- Phone (<= 820px): two-row context (switcher + search + theme / stage + freshness), bottom tab bar (This week, Players, Bet card or Why priced for non-owners, Weather, More). More opens the full grouped nav as a bottom sheet. Content has bottom padding for the bar and safe-area insets.
+  `page / [PGA  Event name  course v] [event status] ... search, theme`. The switcher sets `?e=<event_uid>` and reloads.
+  The sidebar rail runs the full page height (an `.app-shell::before` rail behind the fixed sidebar), so full-page captures never show a blank column.
+- Sub-navigation (Players: Whole field / One golfer): an indented list on a guide line under its parent, accent bar + tint on the active item, parent kept quiet while a child is active. Parent `aria-current="true"`, child `aria-current="page"`. No chips.
+- Phone (<= 820px): two-row context (switcher + search + theme / event status), bottom tab bar (This week, Players, Bet card or Why priced for non-owners, Weather, More). More opens the full grouped nav as a modal bottom sheet. Content has bottom padding for the bar and safe-area insets.
 - Pages must not render their own event pickers that duplicate the bar unless they compare events side by side.
+
+### Freshness is usability (EventStatusBar, `eventStatus()` in shell-rules.ts)
+The bar shows three separate facts in one vocabulary, never a bare green age:
+`R2 in play  |  Prices after R1  |  Run 13 h ago`
+- Event stage now (calendar + tour hours, US Eastern; US 07:00-20:00, DP World 01:00-16:00): "Pre-tournament", "R2 in play", "R2 complete", "Final".
+- Which round the prices reflect: "Pre-tournament prices", "Prices after R1". Same words in the switcher rows, Bet card and Whole field.
+- Age: neutral grey text, never coloured by itself.
+- Tone: neutral by default; amber (warning icon + tinted pill) when prices lag the event (a finished round is missing from the prices, or a round after R1 is in play and the run is over 3 h old); red only when the data is broken (saved copy). No run yet and Final stay neutral.
+- Click or Enter opens a disclosure: event now, prices reflect, last run (ET + age), what it means for the numbers, next update (owner also gets a Run page link). Escape or an outside press closes it and returns focus to the button.
+- Known approximation: the stage comes from the calendar and tour hours, not a leaderboard feed; the Bet card names the same moment from the pricing run, so the two can differ for a few hours between rounds or for Gulf-timezone events.
+
+### Keyboard and dialog contract
+- First Tab stop is "Skip to content" (focus goes to `#main-content`, the content frame). Active nav carries `aria-current`.
+- The phone More sheet and Customize are real modal dialogs (`useDialogFocus` in ShellParts.tsx): role=dialog + aria-modal, focus moves in (close button), Tab and Shift+Tab are trapped, Escape closes, `main`, the tab bar and the skip link are `inert`, focus returns to the opener (More button). On desktop the sidebar is plain navigation, not a dialog.
+- Event switcher: Enter, Space or ArrowDown/Up opens it and focuses the current event; ArrowUp/Down/Home/End move, Space/Enter follow the link, Escape closes and returns focus to the trigger, leaving it with Tab closes it.
+- `prefers-reduced-motion` removes the sheet slide, popover fades and page animations (global rule in globals.css). At 200% zoom (640 CSS px) the bar reflows to the phone layout with no overlap or horizontal scroll.
 
 ## Page layout recipe
 ```tsx
-<PageHeader eyebrow="Week" title="Weather" purpose="How the forecast moves scoring and who it helps." actions={<SegmentedControl .../>} />
+<PageHeader title="Weather" purpose="How the forecast moves scoring and who it helps." actions={<SegmentedControl .../>} />
 <OnThisPage sections={[{ id: "field", label: "Field" }, { id: "rounds", label: "Rounds" }]} />   // only for pages > ~2 screens
 <div className="kpi-grid"><Stat label="Field effect" value="-0.59" unit="strokes" delta={-0.12} inverse note="vs last edition" /></div>
 <Section id="field" title="Field difficulty" purpose="Whole-field strokes per round."> ...table or chart... </Section>
 ```
+Eyebrow rule: the eyebrow is the section group the page lives in (Week, Model, Operate, Review, Archive), supplied by the shell through `PageGroupContext` (from `groupOf(viewKey)`), so pages do not choose it; owner-only pages add a small lock chip ("Owner only"). Never put an event name, tour or ad-hoc label in the eyebrow (the event is in the bar). The `eyebrow` prop on `PageHeader`/`PageIntro` is only a fallback outside the shell; every page that still passes one is overridden at runtime and can drop it.
 Order: answer first (header + 3-4 Stats or the single decisive row), then sections by decreasing importance, methodology last behind a `<details>`.
 Use `Panel` only for a self-contained tool (filters, forms, charts with controls). Sections, rules and compact rows are the default.
 
@@ -42,6 +60,7 @@ Use `Panel` only for a self-contained tool (filters, forms, charts with controls
 - `Chip tone="accent|positive|negative|warning|neutral"`: stage/status/category; text carries the meaning. `Badge` is the older live-dot pill.
 - `SegmentedControl`: aria-pressed buttons; use for 2-6 exclusive options. Raw `.segmented` markup should add `aria-pressed`.
 - `EmptyState title detail nextCheck`: one line each: what is missing, why, when it is checked again ("Next check: Thursday 6:00 ET"). Sentence case, no giant boxes, never blank.
+- `ArchivedState title what why replacements`: an intentionally retired archive (History, Diagnostics): what it was, why it is absent, links to the current replacements. No Retry, no error wording. `ErrorState message onRetry` is only for real outages (data service failed) and offers Retry.
 - `Skeleton`, `SkeletonPage`: exact-height placeholders; no spinners.
 - `InfoTip definition="..."`: dotted jargon term, click opens a one-sentence definition (use for CLV, edge, cut line ...).
 - `AnimatedNumber` / `data-flash`: value-change highlight once.
