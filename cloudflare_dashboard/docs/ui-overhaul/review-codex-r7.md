@@ -1,0 +1,25 @@
+# Codex product-design review — round 7
+Overall **9.5/10 (minimum); Codex target met** at commit `3539c47`. Performance earns closure under the unchanged r4/r6 bar.
+
+| Category | r6 | r7 | Reason |
+|---|---:|---:|---|
+| Information architecture & wayfinding | 9.5 | 9.5 | Event/run scope, All events card and grouped destinations remain coherent. |
+| Clarity of meaning | 9.5 | 9.5 | Leaderboard now identifies the earlier run and its time; signed points and pricing-time forecast age remain explicit. |
+| Visual hierarchy & layout | 9.5 | 9.5 | Weather opens with four-round evidence; Inputs retains selected-player evidence before field summaries. |
+| Typography | 9.5 | 9.5 | Strong tabular values and readable hierarchy; Inputs now consistently displays Rory McIlroy. |
+| Colour, theming & contrast | 9.5 | 9.5 | Inspected themes retain readable semantic colours and non-colour distinctions; live theme toggle works. |
+| Data visualisation | 9.5 | 9.5 | Complete phone histogram, labelled curves, explicit populations and compact Weather comparison retain their quality. |
+| Interaction & feedback | 9.5 | 9.5 | Read-only harness toggles/navigation respond promptly; prior count/reset and modal evidence retained. |
+| Responsiveness & mobile | 9.5 | 9.5 | Weather metadata now spans the phone card; excess tab-to-section gap removed; Adjust controls remain contained. |
+| Accessibility | 9.5 | 9.5 | Existing landmarks, labels, signed evidence and modal/count contracts retained; no new screen-reader certification claimed. |
+| Consistency & design system | 9.5 | 9.5 | First-last Inputs identities close the remaining naming inconsistency; shared surfaces and controls hold. |
+| Performance & perceived speed | 9.4 | 9.5 | Independent seven-route medians: phone LCP 1812–2372 ms, CLS ≤.011, longest load task ≤155 ms; desktop CLS ≤.021. |
+| Craft & delight | 9.5 | 9.5 | The three visible r6 nits close; a distinctive, useful golf desk with no remaining scored design blocker. |
+
+**Every r6 item:** Codex #1 core speed **fixed** (entry priority, merged shell and golfer fields inlining verified in source and fresh timings); #2 optional Inputs names **fixed**. Claude leaderboard ambiguity **fixed** (one paragraph, explicit earlier timestamp; it naturally wraps on phone); Weather squeezed metadata **fixed**; Weather excess gap **fixed**; Inputs names **fixed**; performance **fixed**. R6 carry-forwards: Weather opening **fixed**, Inputs player-first opening **fixed**; points/forecast-age/compact-card/quiet-state fixes remain supported by current captures; singular/live-count/reset and modal contracts retain prior evidence, not a new full interaction certification.
+
+**Top remaining changes, ranked:** No category below 9.5; no required UI changes. Optional next investment: validate these same routes at the deployed Access/Worker boundary before claiming production speed; only pursue further golfer deferral if field evidence warrants it (`PlayerProfilesView.tsx`, golfer detail modules, height-reserving slots). This is measurement follow-through, not a withheld design score.
+
+Evidence: read rubric, r0–r6 Codex reviews, Claude r6, PERF Round 7, raw R7-perf/after.json and R7-cls/perf.json, relevant app/worker/build source. Viewed actual r7-full crops for all 20 routes in phone-dark/desktop-light contact sheets, plus full-resolution Weather phone-light, Inputs phone-dark, This week phone-dark, golfer desktop-light, Scoring phone-light, Adjust desktop-light and Distributions desktop-dark. Sampled states, not every image individually; supplied capture report has 80 cases, zero errors/warnings. Live localhost theme change and leaderboard font/text checked; no horizontal overflow in inspected desktop state.
+Independent requested `node scripts/perf-check.mjs --routes this-week,players?player=10091,round-scores,why-priced,distributions,inputs,weather-effects --viewports phone,desktop --runs 3`: phone LCP/CLS/max-task in route order = **2160/.005/149, 2300/.006/155, 2372/.001/154, 2188/.000/102, 2048/.000/143, 1980/.010/124, 1812/.011/52** (ms); desktop LCP/CLS = **188/.018, 216/.018, 188/.017, 180/.016, 184/.021, 180/.010, 192/.017**. Maximum selected-run interaction task 92 ms, event duration 112 ms. Harness reports the median-LCP run and that run's other metrics, not independent medians or every sample's maximum.
+Reference unchanged: core synthetic LCP consistently near/below 2.5 s, CLS preferably <.05, no conspicuous >200 ms stall; field CWV good thresholds LCP ≤2.5 s, CLS ≤.1, INP ≤200 ms concern p75. Phone 375×812, 4× CPU, 1.6 Mbps/150 ms RTT; desktop 1280×900 unthrottled. Initial sandbox DevTools websocket failed; authorized local-browser retry succeeded. Supplied after.json's This week CLS .112 predates its fix: supplied R7-cls .0049 and fresh .005 close it. No deployed-edge, screen-reader or populated-card retest claimed. Only this project report written; no forms submitted, jobs started, commit, push or deploy; no extra ideas artifact under the one-output constraint.
