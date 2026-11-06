@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { switchBarEvent, useEventParam } from "./event-param";
 import { Panel } from "./components";
 import { useDashboardData } from "./data";
 import { explainKeyFor, orderEvents, parseExplain, pct, signed, type ExplainDoc, type ExPlayer, type IndexEvent } from "./explain-rules";
@@ -35,11 +36,13 @@ function Evidence({ value }: { value: string }) { const href = safeEvidenceLink(
 export function WalkthroughView() {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
-  const [selection, setSelection] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("e") ?? ""));
+  const barEvent = useEventParam();
+  const [picked, setSelection] = useState("");
+  const selection = picked || barEvent;
   const event = events.find(e => e.event_uid === selection) ?? events[0];
   return <div className="wt-page">
     <PageHeader eyebrow="Owner model guide" title="From golf shots to prices" purpose="Follow a golfer's skill estimate into the tournament simulation, then see which weekly outputs have been verified." actions={<Link prefetch={false} href="/ops" className="wt-linkbtn">Open full weekly workflow</Link>} />
-    <div className="wt-event-row"><label>Event<select value={event?.event_uid ?? ""} onChange={e => setSelection(e.target.value)} disabled={!events.length}><option value="" disabled>{index.loading ? "Loading events…" : "Choose an event"}</option>{events.map(e => <option key={e.event_uid} value={e.event_uid}>{e.name ?? e.event_uid} · {e.date_start}</option>)}</select></label></div>
+    <div className="wt-event-row"><label>Event<select value={event?.event_uid ?? ""} onChange={e => { setSelection(e.target.value); switchBarEvent(e.target.value); }} disabled={!events.length}><option value="" disabled>{index.loading ? "Loading events…" : "Choose an event"}</option>{events.map(e => <option key={e.event_uid} value={e.event_uid}>{e.name ?? e.event_uid} · {e.date_start}</option>)}</select></label></div>
     {index.error && <p className="wt-notice" role="status">Event data unavailable: {index.error} <button type="button" onClick={index.refetch}>Retry</button></p>}
     <ol className="wt-flow" aria-label="The pipeline in five steps">{TOPICS.map(([key, label, detail], i) => <li key={key}><a href={`#${key}`}><span className="wt-flow-n">{i + 1}</span><strong>{label}</strong><small>{detail}</small></a></li>)}</ol>
     <OnThisPage sections={TOPICS.map(([id, label]) => ({ id, label }))} />

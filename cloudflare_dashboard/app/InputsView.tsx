@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { switchBarEvent, useEventParam } from "./event-param";
 import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, humanValue } from "./components";
@@ -1655,7 +1656,9 @@ const OWN_TECHNICAL: Tab[] = ["course", "variance", "weather", "config"];
 export function InputsView() {
   const { data: index, loading, error } = useDashboardData<PublishIndex>("golfprice/index.json");
   // Start on the event chosen in the top bar (?e=...), else the newest one.
-  const [eventUid, setEventUid] = useState<string>(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("e") ?? ""));
+  const barEvent = useEventParam();
+  const [pickedUid, setEventUid] = useState<string>("");
+  const eventUid = pickedUid || barEvent;
   const [runKey, setRunKey] = useState<string>("");
   const [tab, setTab] = useState<Tab>(() => {
     // Deep link: /inputs?tab=course|variance|weather|odds|config|features|adjust
@@ -1692,7 +1695,7 @@ export function InputsView() {
       />
       <div className="in-context">
         <div className="in-toolbar">
-          <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
+          <Select label="Event" value={event.event_uid} onChange={(v) => { setEventUid(v); setRunKey(""); switchBarEvent(v); }} options={events.map((e) => ({ value: e.event_uid, label: `${e.name} (${e.tour.toUpperCase()})${e.runs.length ? "" : " - no saved inputs"}` }))} />
           <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
         </div>
         <div className="in-chips" aria-label="Run summary">

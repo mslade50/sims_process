@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { switchBarEvent, useEventParam } from "./event-param";
 import { EmptyState, LoadingState, Panel, SegmentedControl } from "./components";
 import { Chip, PageHeader, Section as UiSection, Stat } from "./ui";
 import { useDashboardData } from "./data";
@@ -298,10 +299,9 @@ function SectionEditor({ event, doc, mode, completed, started, now, saved, setSa
 export function WeatherEditsView() {
   const { data: index, loading } = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => (index?.events ?? []).filter((e) => e.weather_key || e.weather_brief_key), [index]);
-  const [pick, setPick] = useState("");
-  useEffect(() => {
-    queueMicrotask(() => setPick((current) => current || new URLSearchParams(window.location.search).get("e") || ""));
-  }, []);
+  const barEvent = useEventParam();
+  const [picked, setPick] = useState("");
+  const pick = picked || barEvent;
   const event = events.find((e) => e.event_uid === pick) ?? events[0];
   const { data, loading: docLoading, error } = useDashboardData<unknown>(event ? weatherKey(event) : null);
   const doc = useMemo(() => parseWeather(data), [data]);
@@ -314,7 +314,7 @@ export function WeatherEditsView() {
       actions={events.length > 0 ? (
         <label className="select-control">
           <span>Event</span>
-          <select value={event?.event_uid ?? ""} onChange={(e) => setPick(e.target.value)}>
+          <select value={event?.event_uid ?? ""} onChange={(e) => { setPick(e.target.value); switchBarEvent(e.target.value); }}>
             {events.map((e) => <option key={e.event_uid} value={e.event_uid}>{e.name}{e.tour ? ` (${tourWord(e.tour)})` : ""}</option>)}
           </select>
         </label>

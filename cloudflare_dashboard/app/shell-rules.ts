@@ -225,23 +225,46 @@ export function stageOf(e: StageEvent, now: number): { stage: string; tone: "neu
   if (last?.kind === "live") return { stage: typeof last.after_round === "number" && last.after_round > 0 ? `Live, after R${last.after_round}` : "Live", tone: "accent" };
   return { stage: last ? "Pre-event" : "No run yet", tone: "neutral" };
 }
+function toShellEvent(e: IndexEventLite, now: number): ShellEvent & { hasExplain: boolean } {
+  const stamps = (e.runs ?? []).map((r) => r.as_of).filter((v): v is string => !!v).sort();
+  const { stage, tone } = stageOf(e, now);
+  return { uid: e.event_uid as string, name: e.name ?? (e.event_uid as string), course: e.course ?? "", tour: (e.tour ?? "").toLowerCase(), tourLabel: tourLabelOf(e.tour), stage, stageTone: tone, asOf: stamps.at(-1) ?? null, hasExplain: !!e.explain_key };
+}
 /** The events of the newest week (same rule as the header always used), with tour, stage and freshness input. Default selection first. */
 export function shellEvents(index: { events?: IndexEventLite[] } | null | undefined, now: number): ShellEvent[] {
   const dated = (index?.events ?? []).filter((e) => e.date_start && e.event_uid);
   if (!dated.length) return [];
   const newest = dated.map((e) => e.date_start as string).sort().at(-1);
-  const rows = dated.filter((e) => e.date_start === newest).map((e) => {
-    const stamps = (e.runs ?? []).map((r) => r.as_of).filter((v): v is string => !!v).sort();
-    const { stage, tone } = stageOf(e, now);
-    return { uid: e.event_uid as string, name: e.name ?? (e.event_uid as string), course: e.course ?? "", tour: (e.tour ?? "").toLowerCase(), tourLabel: tourLabelOf(e.tour), stage, stageTone: tone, asOf: stamps.at(-1) ?? null, hasExplain: !!e.explain_key };
-  });
+  const rows = dated.filter((e) => e.date_start === newest).map((e) => toShellEvent(e, now));
   // Same order as explain-rules.orderEvents (tour ascending within the week); pages default to the first event with an explanation document, so it leads.
   rows.sort((a, b) => a.tour.localeCompare(b.tour));
   const lead = rows.findIndex((r) => r.hasExplain);
   if (lead > 0) rows.unshift(...rows.splice(lead, 1));
   return rows.map(({ hasExplain: _drop, ...rest }) => { void _drop; return rest; });
 }
-/** The event the pages are showing: ?e= when it names a known event, else the default (first). */
+/** localStorage key that remembers the last event chosen, so moving between pages keeps it. The URL's ?e= always wins. */
+export const EVENT_STORAGE_KEY = "golf-dashboard-event";
+/**
+ * THE single event resolver: the shell bar and every event-scoped page call this and get the same uid.
+ * Order: ?e= when it names an event in the published index, else the remembered event when it is in the newest week, else the default (first of shellEvents).
+ */
+export function resolveEventUid(index: { events?: IndexEventLite[] } | null | undefined, param: string | null | undefined, remembered: string | null | undefined, now: number): string {
+  const known = (index?.events ?? []).filter((e) => e.event_uid);
+  if (param && known.some((e) => e.event_uid === param)) return param;
+  const week = shellEvents(index, now);
+  if (remembered && week.some((e) => e.uid === remembered)) return remembered;
+  return week[0]?.uid ?? "";
+}
+/** The bar's event for a resolved uid; an older event reached by ?e= (outside the newest week) is built from the index so the bar still names it. */
+export function shellEventFor(index: { events?: IndexEventLite[] } | null | undefined, uid: string, now: number): ShellEvent | null {
+  const week = shellEvents(index, now);
+  const hit = week.find((e) => e.uid === uid);
+  if (hit) return hit;
+  const old = (index?.events ?? []).find((e) => e.event_uid === uid);
+  if (old) { const { hasExplain: _drop, ...rest } = toShellEvent(old, now); void _drop; return rest; }
+  return week[0] ?? null;
+}
+/** The event the pages are showing: ?e= when it names a known event, else the default (first). Kept for callers that only have the week list. */
 export function selectedShellEvent(events: ShellEvent[], param: string | null): ShellEvent | null {
   return events.find((e) => e.uid === param) ?? events[0] ?? null;
 }

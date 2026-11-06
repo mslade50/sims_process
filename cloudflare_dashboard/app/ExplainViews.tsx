@@ -7,6 +7,7 @@
  */
 import Link from "next/link";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEventParam } from "./event-param";
 import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { EmptyState, Kpi, LoadingState, SegmentedControl } from "./components";
 import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, ProbPair, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
@@ -69,10 +70,11 @@ function ExplainShell({ eyebrow, title, description, preEventFirst = false, defa
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
+  const barEvent = useEventParam();
   if (index.loading) return <LoadingState label="Loading golfprice events" />;
   if (index.error && index.errorKind === "outage") return <EmptyState title="Can’t reach the model data right now" detail={`${index.error} Nothing has been lost; this page retries on its own, or try again now.`} onRetry={index.refetch} />;
   if (index.error || !events.length) return <EmptyState title="No golfprice events published yet" detail={index.error ?? "Publish a run (python -m golfprice.publish_dashboard) and reload."} />;
-  const current = events.find((e) => e.event_uid === params.e) ?? events.find((e) => e.explain_key) ?? events[0];
+  const current = events.find((e) => e.event_uid === (params.e || barEvent)) ?? events.find((e) => e.explain_key) ?? events[0];
   const update = (patch: Partial<Params>) => {
     const next = { ...params, ...patch };
     setParams(next);

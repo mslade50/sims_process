@@ -26,10 +26,11 @@ import {
   X,
 } from "lucide-react";
 import { HeaderSearch } from "./HeaderSearch";
+import { readRememberedEvent, rememberEvent } from "./event-param";
 import { EventSwitcher, SearchToggle, TabBar, ThemeToggle } from "./ShellParts";
 import { EmptyState, PageIntro } from "./components";
 import { useDashboardData, useSavedCopies } from "./data";
-import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveRoute, selectedShellEvent, shellEvents, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
+import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
 import { Chip, FreshnessBadge, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
@@ -216,11 +217,18 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const isLegacy = LEGACY_VIEWS.includes(activeKey);
   // An invalid ?e= used to fall back to the default event with no word of it (site audit B5). Read after mount so the server render matches.
   const [eventParam, setEventParam] = useState<string | null>(null);
+  const [rememberedEvent, setRememberedEvent] = useState<string | null>(null);
   useEffect(() => {
-    queueMicrotask(() => setEventParam(new URLSearchParams(window.location.search).get("e")));
+    const read = () => { setEventParam(new URLSearchParams(window.location.search).get("e")); setRememberedEvent(readRememberedEvent()); };
+    queueMicrotask(read);
+    window.addEventListener("golf-event-changed", read);
+    return () => window.removeEventListener("golf-event-changed", read);
   }, []);
   const badEvent = unknownEventParam(eventParam, gpIndex?.events);
-  const selectedEvent = selectedShellEvent(events, eventParam);
+  // The same resolver the pages use (useEventParam), so the bar and the page can never name different events.
+  const resolvedUid = resolveEventUid(gpIndex, eventParam, rememberedEvent, now);
+  const selectedEvent = shellEventFor(gpIndex, resolvedUid, now) ?? selectedShellEvent(events, null);
+  useEffect(() => { if (eventParam && !badEvent) rememberEvent(eventParam); }, [eventParam, badEvent]);
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     if (searchOpen) document.querySelector<HTMLInputElement>(".header-search input")?.focus();

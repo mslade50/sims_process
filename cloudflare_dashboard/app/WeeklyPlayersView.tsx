@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useEventParam } from "./event-param";
 import { useParams, BenchmarkCard, BenchmarkMethod, type WeeklyEvent } from "./PlayerProfilesView";
 import { DataTable, LoadingState, Panel } from "./components";
 import { Chip, EmptyState, PageHeader } from "./ui";
@@ -20,8 +21,8 @@ import "./player-field-board.css";
 const DEPS: WeeklyDeps = { LABELS, gapSentence: GAP_METHOD_SENTENCE, plainName, plainPhrase, signedZ, pct, savedFieldSkill, checkpointBenchmarkValue, savedSkill };
 
 export function WeeklyPlayersView() {
-  const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const event=selectWeeklyEvent(events,params.get("e"),params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
-  if(load.loading || (params.get("player") && !params.get("e") && fields.loading)) return <LoadingState label="Loading events"/>;
+  const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const barEvent=useEventParam();const event=selectWeeklyEvent(events,params.get("e") || barEvent || null,params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
+  if(load.loading || (params.get("player") && !params.get("e") && !barEvent && fields.loading)) return <LoadingState label="Loading events"/>;
   return <div className="pp-page"><PageHeader eyebrow="Week" title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
 }
 function WeeklyBody({event,playerId}:{event:WeeklyEvent;playerId:string|null}) {
