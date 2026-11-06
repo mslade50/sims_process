@@ -14,7 +14,7 @@ import { Badge } from "./ui";
 import { etTime } from "./lib";
 import {
   NEUTRAL_SLIDERS, TOP_SKILL, ageWords, buildWhatIf, componentWords, fieldWords, helpWords, historySeries, isNeutral, isTopSkill, medianProbSlopes, movementWords, orderPlayers, pointsWords,
-  briefKeyFor, parseBrief, shortHeadline, scaledProb, searchBrief, slotWords, spreadWords, statusTitle, tone, waveSide, waveWords, windSensitivity,
+  briefKeyFor, FIELD_EFFECT_NOTE, miniRoundEffect, parseBrief, shortHeadline, supportingFact, scaledProb, searchBrief, slotWords, spreadWords, statusTitle, tone, waveSide, waveWords, windSensitivity,
   type Brief, type BriefPlayer, type BriefRound, type RoundOut, type Slot, type SortMode, type Sliders, type WhatIfModel, type WhatIfResult,
 } from "./weather-brief-rules";
 import "./weather-brief.css";
@@ -45,16 +45,24 @@ export function HeadlineCard({ brief, version }: { brief: Brief; version: string
         </small>
       </div>
       {shortHeadline(brief.rounds) && <h2 className="wb-headline-title">{shortHeadline(brief.rounds)}</h2>}
+      {brief.rounds.some((r) => r.field !== null) && (
+        <ol className="wb-mini" aria-label="Field effect by round, strokes per round (negative is easier)">
+          {brief.rounds.map((r) => <li key={r.round} className={tone(r.field)}><span>R{r.round}</span><b>{miniRoundEffect(r.field)}</b></li>)}
+        </ol>
+      )}
       {(() => {
-        // The status line below already says whether tee times are out; a headline sentence opening the same way only repeats it.
+        // The headline sentence repeats the title above; keep one distinct fact, and the sentences go under "More".
+        const fact = supportingFact(brief.rounds);
         const lines = brief.headline.filter((h, i) => i === 0 || !brief.status.plain || h.slice(0, 24) !== brief.status.plain.slice(0, 24));
-        const extra = lines.slice(1);
+        const titled = !!shortHeadline(brief.rounds);
+        const extra = titled ? lines : lines.slice(1);
         return (
           <>
-            {lines.length ? <ul className="wb-sentences">{lines.slice(0, 1).map((h, i) => <li key={i}>{h}</li>)}</ul> : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
+            {titled ? (fact && <p className="wb-fact">{fact}</p>) : lines.length ? <ul className="wb-sentences">{lines.slice(0, 1).map((h, i) => <li key={i}>{h}</li>)}</ul> : <p className="wb-sentences wb-muted">No weather headline yet.</p>}
             {(extra.length > 0 || brief.status.plain || version) && (
               <details className="wb-more-brief">
                 <summary>More on this forecast</summary>
+                <p className="wb-muted">{FIELD_EFFECT_NOTE}</p>
                 {version && <p className="wb-muted">Prices use model {version}.</p>}
                 {extra.length > 0 && <ul className="wb-sentences">{extra.map((h, i) => <li key={i}>{h}</li>)}</ul>}
                 {brief.status.plain && <p className="wb-status">{brief.status.plain}</p>}

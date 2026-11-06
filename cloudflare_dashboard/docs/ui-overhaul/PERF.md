@@ -211,3 +211,26 @@ Not changed / still short
 - Inputs desktop CLS 0.081: the skeleton page (707 px) is replaced by a taller page at about 150 ms; a skeleton matched to the loaded height would fix it.
 - This week longest task (121-172 ms; 161 ms in the final median) is the first full layout of the board; getting reliably under 150 ms still needs a smaller first screen or rendering the board in slices. No change this round.
 - Every phone route is bandwidth-bound at about 2.1-2.8 s; the shell (148 KB gzip) is the floor.
+
+# Round 6 (R6-perf): Inputs/Distributions chart deferral, Inputs player-first, inlined data (2026-11-06)
+
+Raw runs: `dist-visual/R6-perf/` (`first.json` before inlining, `second.json` final). Phone = 375x812, 4x CPU, fast 4G; desktop 1280x900; median of 3.
+
+| Route | Phone LCP | Longest task | Phone CLS | Desktop CLS |
+|---|---|---|---|---|
+| This week | 2624 ms | 175 ms | 0.005 | 0.018 |
+| Why priced | 2560 | 67 | 0.000 | 0.017 |
+| One golfer (10091) | 2736 | 168 | 0.006 | 0.021 |
+| Scoring | 2744 | 146 | 0.001 | 0.021 |
+| Inputs | 2484 (was 2696) | 136 | 0.010 | 0.016 (was 0.081) |
+| Distributions | 2544 (was 2748) | 155 | 0.000 | 0.011 |
+
+What changed
+- Recharts off the critical path on Inputs (`app/InputsCharts.tsx`: waterfall, hole, spread, wind) and Distributions (`app/DistributionChart.tsx`), loaded with `lazy()` through `ChartSlot` inside boxes whose heights CSS already sets.
+- Worker first-screen (`worker/first-screen.ts`) and `earlyFetchScript` now also cover `inputs` (the run the page opens) and `distributions` (newest checkpoint, no weather), so the run document no longer waits for hydration (Inputs LCP -0.2 s, Distributions -0.2 s).
+- Inputs desktop CLS: the loading skeleton reserves a screen and the Technical block is not rendered while the run loads.
+- Inputs phone: the selected (default: top-rated) player's evidence now follows the search; field tiles and the table come below; run selector is one line ("Run: Live after R1 · Change") merged with run details.
+
+Still short
+- Phone LCP is 2.5-2.75 s on every route except Inputs/Why priced: bandwidth-bound shell (framework 55 KB + vinext client 44 KB + app shell; hydration completes at about 2.0-2.2 s). Reaching 2.5 s everywhere needs a smaller shell outside the files owned this round.
+- This week longest task 175 ms (first board layout) and golfer 168 ms stay under 200 ms.

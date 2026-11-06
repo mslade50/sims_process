@@ -368,7 +368,7 @@ export function earlyFetchScript(): string {
   return `(function(){try{if(localStorage.getItem("golf-fonts")==="1")document.documentElement.classList.add("fonts-ready")}catch(x){}try{var E={};window.__earlyFetch=E;var go=function(u,c){var p=fetch(u,{headers:{accept:"application/json"},cache:c,priority:"high",credentials:"same-origin"});p.catch(function(){});E[u]={p:p,c:c};return p};`
     + `var ix=go("/api/golfprice/index.json","no-cache"),P=location.pathname;`
     + `if(P==="/players"){var sp=new URLSearchParams(location.search),pid=sp.get("player");if(pid&&/^(?:[1-9][0-9]*|historical-[a-z0-9]+)$/.test(pid)&&!sp.get("generation"))go("/api/golfprice/player_profiles/golfer/search-index.json?id="+pid,"no-cache")}`
-    + `var W=P==="/why-priced",X=P==="/weather-effects",S=P==="/round-scores";if(P!=="/"&&P!=="/this-week"&&!W&&!X&&!S)return;`
+    + `var W=P==="/why-priced",X=P==="/weather-effects",S=P==="/round-scores",D=P==="/distributions",I=P==="/inputs";if(P!=="/"&&P!=="/this-week"&&!W&&!X&&!S&&!D&&!I)return;`
     + `ix.then(function(r){return r.ok?r.clone().json():null}).then(function(j){var ev=j&&j.events;if(!ev)return;`
     + `var known=ev.filter(function(e){return e.event_uid}),dated=known.filter(function(e){return e.date_start}),q=new URLSearchParams(location.search).get("e"),m=null,uid="";`
     + `try{m=localStorage.getItem("${EVENT_STORAGE_KEY}")}catch(x){}`
@@ -381,9 +381,11 @@ export function earlyFetchScript(): string {
     + `if(X){var wc=function(k){return /(^|\\/)(latest|brief_latest)\\.json(\\?|$)/.test(k)&&!/(^|\\/)(?:[a-z]+-)*[0-9a-f]{20}(\\/|\\.json|$)/.test(k)?"no-cache":"default"};`
     + `if(e.weather_brief_key)go("/api/"+e.weather_brief_key,wc(e.weather_brief_key));var wd=e.weather_key||"golfprice/weather/"+e.event_uid.replace(/:/g,"_")+"/latest.json";go("/api/"+wd,wc(wd));return}`
     // Scoring: the newest checkpoint document and the weather document (mirrors checkpoints() and the weather key in ScoringView).
-    + `if(S){var wc2=function(k){return /(^|\\/)(latest|brief_latest)\\.json(\\?|$)/.test(k)&&!/(^|\\/)(?:[a-z]+-)*[0-9a-f]{20}(\\/|\\.json|$)/.test(k)?"no-cache":"default"};`
+    + `if(S||D){var wc2=function(k){return /(^|\\/)(latest|brief_latest)\\.json(\\?|$)/.test(k)&&!/(^|\\/)(?:[a-z]+-)*[0-9a-f]{20}(\\/|\\.json|$)/.test(k)?"no-cache":"default"};`
     + `var cp=(e.distribution_runs||[]).filter(function(r){return r&&r.validated&&r.key&&(r.kind==="week"||(r.after_round||0)>=1)});cp.sort(function(a,b){return String(a.as_of||"").localeCompare(String(b.as_of||""))||(a.kind==="live"?1:0)-(b.kind==="live"?1:0)});`
-    + `var rk=cp.length?cp[cp.length-1].key:e.explain_key;if(rk)go("/api/"+rk,wc2(rk));var sw=e.weather_key||"golfprice/weather/"+e.event_uid.replace(/:/g,"_")+"/latest.json";go("/api/"+sw,wc2(sw));return}`
+    + `var rk=cp.length?cp[cp.length-1].key:e.explain_key;if(rk)go("/api/"+rk,wc2(rk));if(D)return;var sw=e.weather_key||"golfprice/weather/"+e.event_uid.replace(/:/g,"_")+"/latest.json";go("/api/"+sw,wc2(sw));return}`
+    // Model inputs: the run the page opens (mirrors InputsView: the latest run, else the first).
+    + `if(I){var ir=(e.runs||[]).filter(function(r){return r&&r.key}),ik=ir.filter(function(r){return r.key===e.latest_key})[0]||ir[0];if(ik)go("/api/"+ik.key,"default");return}`
     + `if(!e.explain_key)return;`
     + `var runs=e.distribution_runs||[],live=runs.some(function(r){return r&&r.kind==="live"});`
     + `if(W){var cur=String(e.explain_run||"").indexOf("live_")===0;if(live||cur){var v=new URLSearchParams(location.search).get("v");if(v&&v!=="pre")return;`

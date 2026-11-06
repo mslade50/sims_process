@@ -316,7 +316,9 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
       <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />
     </Section>
   );
-  const nav = [...(hasChanged ? [{ id: "changed", label: "What changed" }] : []), { id: "board", label: live ? "Leaderboard" : "Model vs book" }, { id: "chances", label: "Chances" }, { id: "course", label: "Course" }, { id: "weather", label: "Weather" }, { id: "shapes", label: "Shapes" }];
+  const changedItem = hasChanged ? [{ id: "changed", label: "What changed" }] : [];
+  const boardItem = { id: "board", label: live ? "Leaderboard" : "Model vs book" };
+  const nav = [...(phone ? [boardItem, ...changedItem] : [...changedItem, boardItem]), { id: "chances", label: "Chances" }, { id: "course", label: "Course" }, { id: "weather", label: "Weather" }, { id: "shapes", label: "Shapes" }];
   return (
     <>
       <KeyFacts doc={doc} ids={contenderIds} openPlayer={openPlayer} />
@@ -398,7 +400,7 @@ function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         <div className="ex-fact">
           <span className="ex-fact-label"><Term k="ex_our_chance">{live ? "Best chance to win" : "Favorite to win"}</Term></span>
           <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(f.id)}>{f.name}</button></strong>
-          <span className="ex-fact-sub"><b className="num">{pct(f.model)}</b> ours{f.market !== null ? <> vs <b className="num">{pct(f.market)}</b> book</> : <> · <span title="Sportsbooks have not posted a win price for this player in this run. It appears here after the next run that finds one.">no book price posted yet</span></>}</span>
+          <span className="ex-fact-sub"><b className="num">{pct(f.model)}</b> ours{f.market !== null ? <> vs <b className="num">{pct(f.market)}</b> book</> : <> · <span title="Sportsbooks have not posted a win price for this player in this run. It appears here after the next run that finds one.">no book yet</span></>}</span>
         </div>
       )}
       {s?.kind === "gap" && (

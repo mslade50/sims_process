@@ -1,9 +1,9 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useEventParam } from "./event-param";
 import { Search } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { ChartSlot } from "./ChartSlot";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, humanValue } from "./components";
 import { Chip, OnThisPage, PageHeader, SegmentedControl, Stat } from "./ui";
 import { ChangeTray, type TrayChange, type TrayStage } from "./ChangeTray";
@@ -13,7 +13,7 @@ import { useDashboardData } from "./data";
 import { LABELS } from "./labels";
 import { playerDisplayName } from "./player-name";
 import { matchPlayers, matchText } from "./inputs-search";
-import { DataRow, etTime, numberValue, palette, titleCase } from "./lib";
+import { DataRow, etTime, numberValue, titleCase } from "./lib";
 import { DataThrough } from "./DataThrough";
 import { dataThrough, seasonField } from "./freshness-rules";
 import { GLOSSARY, HEADERS, define, registerFamilyLabels, titlesFor } from "./glossary";
@@ -226,21 +226,10 @@ const TAB_PURPOSE: Record<Tab, string> = {
   adjust: "Owner-only one-off fixes to the model price. Saving does not change prices until the next run.",
 };
 
-function ChartTip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: unknown; color?: string; payload?: { name?: string; hint?: string } }>; label?: unknown }) {
-  if (!active || !payload?.length) return null;
-  const hint = payload[0]?.payload?.hint;
-  return (
-    <div className="chart-tooltip">
-      <strong>{String(label ?? payload[0]?.payload?.name ?? "")}</strong>
-      {hint && <span>{hint}</span>}
-      {payload.map((item, index) => (
-        <span key={`${item.name}-${index}`} style={{ color: item.color }}>
-          {item.name}: {Array.isArray(item.value) ? item.value.map((x) => Number(x).toFixed(2)).join(" to ") : typeof item.value === "number" ? (Number.isInteger(item.value) ? String(item.value) : item.value.toFixed(2)) : String(item.value ?? "—")}
-        </span>
-      ))}
-    </div>
-  );
-}
+const WaterfallChart = lazy(() => import("./InputsCharts").then((m) => ({ default: m.WaterfallChart })));
+const HoleChart = lazy(() => import("./InputsCharts").then((m) => ({ default: m.HoleChart })));
+const SpreadChart = lazy(() => import("./InputsCharts").then((m) => ({ default: m.SpreadChart })));
+const WindChart = lazy(() => import("./InputsCharts").then((m) => ({ default: m.WindChart })));
 
 function Select({ label, value, options, onChange }: { label: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void }) {
   return (
@@ -515,20 +504,7 @@ function PlayerDetail({ player, onAdjust, fmtTee, playedRounds }: { player: Obj;
       <h3 className="inputs-h3">How the rating is built (strokes per round, relative to the field)</h3>
       <p className="inputs-muted">Hover a bar for what that piece means.</p>
       <div className="chart-medium waterfall">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={steps} layout="vertical" margin={{ top: 6, right: 24, bottom: 6, left: 8 }}>
-            <CartesianGrid stroke="var(--line)" horizontal={false} />
-            <XAxis type="number" tickCount={7} tickFormatter={(v: number) => (Math.round(v * 100) / 100).toFixed(2)} tick={{ fill: "var(--muted-strong)", fontSize: 12 }} />
-            <YAxis type="category" dataKey="name" width={200} tick={{ fill: "var(--muted-strong)", fontSize: 12 }} />
-            <ReferenceLine x={0} stroke="var(--line-strong)" />
-            <Tooltip content={<ChartTip />} />
-            <Bar dataKey="range" name="Component (start to end)" radius={3} isAnimationActive={false}>
-              {steps.map((step, index) => (
-                <Cell key={step.name} fill={index === steps.length - 1 ? "var(--model)" : step.value >= 0 ? "var(--positive)" : "var(--negative)"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <ChartSlot near><WaterfallChart steps={steps} /></ChartSlot>
       </div>
       <div className="two-column inputs-split">
         <div>
@@ -607,7 +583,8 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
     setSelected(id);
     window.setTimeout(() => detailRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 30);
   };
-  const current = players.find((p) => num(p.dg_id) === selected) ?? players[0];
+  const best = players.reduce<Obj | null>((top, p) => ((num(obj(p.challenger).mu) ?? -Infinity) > (num(obj(top?.challenger).mu) ?? -Infinity) ? p : top), null);
+  const current = players.find((p) => num(p.dg_id) === selected) ?? best ?? players[0];
   const currentRow = rows.find((row) => row.dg_id === num(current?.dg_id)) ?? null;
   const choices = useMemo(() => players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }])), [players]);
   const fmtTee = useMemo(() => teeFormatter(doc), [doc]);
@@ -619,7 +596,6 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   const defaultColumns = ["name", "mu", "mu_untouched", "sd", "sd_untouched", "location", ...(split ? ["course_fit_part", "course_history_part"] : ["course_fit"]), "override_total", "prior_rounds", "prob_win", "prob_top_10", "prob_make_cut"].filter((key) => present.has(key));
   const headerLabels: Record<string, string> = { ...HEADERS, [LABELS.thisWeekPga.short]: LABELS.thisWeekPga.short };
   const headerTitles = titlesFor([...present], { [LABELS.thisWeekPga.short]: GLOSSARY.mu_tour });
-  const best = players.reduce<Obj | null>((top, p) => ((num(obj(p.challenger).mu) ?? -Infinity) > (num(obj(top?.challenger).mu) ?? -Infinity) ? p : top), null);
   const strength = obj(obj(doc.event).field_strength);
   const fieldOffset = num(strength.field_offset);
   const withOverride = players.filter(playerHasOverride).length;
@@ -632,8 +608,10 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
       <section className="in-finder" aria-label="Find a golfer">
         <h2 className="sr-only">Find a golfer</h2>
         <PlayerSearch players={choices} onPick={pickPlayer} />
-        <p className="in-finder-tip">Search a golfer, or tap a table row, for the full breakdown.</p>
+        <p className="in-finder-tip">{selected === null ? "Showing the field's top-rated player. Search a golfer, or tap a table row, for another." : "Search a golfer, or tap a table row, for another."}</p>
       </section>
+      <div ref={detailRef} className="in-detail-anchor" />
+      {current && <PlayerDetail player={current} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
       <div className="kpi-grid">
         <Stat label="Players" value={String(players.length)} unit="in field" note={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "No amateurs"} hint="Players in this run's field." />
         <Stat label="Strongest rating" value={signed(num(obj(best?.challenger).mu), 2)} unit="strokes/round" note={`${playerDisplayName(String(best?.name ?? ""))}, vs this field's average`} hint={GLOSSARY.mu} />
@@ -672,8 +650,6 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
         />
         {showUntouched && <p className="inputs-muted">The &quot;before your override&quot; columns stay empty for players you have not adjusted.</p>}
       </Panel>
-      <div ref={detailRef} className="in-detail-anchor" />
-      {current && <PlayerDetail player={current} onAdjust={onAdjust} fmtTee={fmtTee} playedRounds={playedRounds} />}
     </div>
   );
 }
@@ -765,18 +741,7 @@ function CourseTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
         )}
         {!estimated && (
           <div className="chart-medium">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="hole" tick={{ fill: "var(--muted)", fontSize: 12 }} />
-                <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Expected score vs par (red = hard, green = easy)", angle: -90, fill: "var(--muted)", fontSize: 12, position: "insideLeft" }} />
-                <Tooltip content={<ChartTip />} />
-                <ReferenceLine y={0} stroke="var(--line-strong)" />
-                <Bar dataKey="expected" name="Expected score vs par" radius={3} isAnimationActive={false}>
-                  {chartData.map((point) => <Cell key={point.hole} fill={point.expected > 0 ? "var(--negative)" : "var(--positive)"} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <ChartSlot near><HoleChart data={chartData} /></ChartSlot>
           </div>
         )}
         <DataTable
@@ -883,16 +848,7 @@ function VarianceTab({ doc, extra }: { doc: Obj; extra?: ReactNode }) {
         <Panel eyebrow="Std dev" title="Rating against std dev">
           <p className="inputs-muted">Each dot is a player: how good they are (rating) against their std dev. Hover a dot for the name.</p>
           <div className="chart-medium">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 16, bottom: 18, left: 0 }}>
-                <CartesianGrid stroke="var(--line)" />
-                <XAxis type="number" dataKey="mu" name="Rating" tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Rating (strokes per round vs field)", fill: "var(--muted)", fontSize: 12, position: "insideBottom", offset: -8 }} />
-                <YAxis type="number" dataKey="sd" name="Std dev" domain={["auto", "auto"]} tick={{ fill: "var(--muted)", fontSize: 12 }} label={{ value: "Std dev", angle: -90, fill: "var(--muted)", fontSize: 12, position: "insideLeft" }} />
-                <ZAxis range={[26, 26]} />
-                <Tooltip content={<ChartTip />} />
-                <Scatter data={points} fill={palette[0]} name="Player" isAnimationActive={false} />
-              </ScatterChart>
-            </ResponsiveContainer>
+            <ChartSlot near><SpreadChart points={points} /></ChartSlot>
           </div>
         </Panel>
         <div className="stack-lg">
@@ -1013,15 +969,7 @@ function WeatherTab({ doc, runAsOf, extra }: { doc: Obj; runAsOf: string; extra?
       {data.length > 0 && (
         <Panel eyebrow="Forecast" title="Average forecast wind by wave (mph)">
           <div className="chart-medium">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data} margin={{ top: 10, right: 16, bottom: 4, left: 0 }}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
-                <YAxis tick={{ fill: "var(--muted)", fontSize: 12 }} allowDecimals={false} />
-                <Tooltip content={<ChartTip />} />
-                <Bar dataKey="wind" name="Average wind (mph)" fill={palette[2]} radius={3} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ChartSlot near><WindChart data={data} /></ChartSlot>
           </div>
         </Panel>
       )}
@@ -1709,21 +1657,24 @@ export function InputsView() {
         purpose={`What went into the simulation, and what each input does to a price${owner ? ". Adjust makes one-off overrides" : ""}.`}
       />
       <div className="in-context">
-        <div className="in-toolbar">
-          <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
-        </div>
-        <details className="in-chips-wrap"><summary>Run details: {event.course}, {ymd(event.date_start)} to {ymd(event.date_end)}{run?.overrides_applied.length ? `, ${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"}` : ""}</summary><div className="in-chips" aria-label="Run summary">
-          <Chip tone="neutral" title="The course this event is played on.">{event.course}</Chip>
-          <Chip tone="neutral">{ymd(event.date_start)} to {ymd(event.date_end)}</Chip>
-          {asOf && <Chip tone="neutral" title="When this model run was built.">Model run {asOf}</Chip>}
-          {pulled && <Chip tone="neutral" title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">Odds pulled {pulled}</Chip>}
-          {run && <Chip tone="neutral">{run.n_players} players</Chip>}
-          <Chip tone={run?.overrides_applied.length ? "warning" : "neutral"} title="Owner overrides applied to this run's prices.">{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "No overrides applied"}</Chip>
-        </div></details>
+        <details className="in-chips-wrap in-run">
+          <summary><span className="in-run-label">Run: {run ? (run.kind === "live" ? `Live after R${run.after_round}` : "Pre-tournament") : "none"}</span><span className="in-run-change"> · Change</span></summary>
+          <div className="in-toolbar">
+            <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
+          </div>
+          <div className="in-chips" aria-label="Run summary">
+            <Chip tone="neutral" title="The course this event is played on.">{event.course}</Chip>
+            <Chip tone="neutral">{ymd(event.date_start)} to {ymd(event.date_end)}</Chip>
+            {asOf && <Chip tone="neutral" title="When this model run was built.">Model run {asOf}</Chip>}
+            {pulled && <Chip tone="neutral" title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">Odds pulled {pulled}</Chip>}
+            {run && <Chip tone="neutral">{run.n_players} players</Chip>}
+            <Chip tone={run?.overrides_applied.length ? "warning" : "neutral"} title="Owner overrides applied to this run's prices.">{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "No overrides applied"}</Chip>
+          </div>
+        </details>
       </div>
       <OnThisPage label="Model inputs area" sections={tabOptions.map((t) => ({ id: t.value, label: t.label }))} value={activeTab} onSelect={(id) => setTab(id as Tab)} />
       {activeTab !== "adjust" && activeTab !== "players" && <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>}
-      {docLoading && activeTab !== "features" && <LoadingState label="Loading run" />}
+      {docLoading && activeTab !== "features" && <div className="in-skeleton"><LoadingState label="Loading run" /></div>}
       {docError && activeTab !== "features" && activeTab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
       {doc && activeTab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={owner ? (id) => { setPresetPlayer(id); setTab("adjust"); } : undefined} />}
       {doc && activeTab === "course" && <CourseTab doc={doc} extra={runTech} />}
@@ -1733,7 +1684,7 @@ export function InputsView() {
       {doc && activeTab === "config" && <ConfigTab doc={doc} extra={runTech} />}
       {activeTab === "features" && <FeaturesTab />}
       {doc && activeTab === "adjust" && <AdjustTab doc={doc} eventUid={event.event_uid} presetPlayer={presetPlayer} onPresetUsed={clearPreset} appliedIds={run?.overrides_applied ?? []} />}
-      {run && !OWN_TECHNICAL.includes(activeTab) && (
+      {run && !docLoading && !OWN_TECHNICAL.includes(activeTab) && (
         <div style={{ marginTop: 24 }}>
           <Technical>{runTech}</Technical>
         </div>

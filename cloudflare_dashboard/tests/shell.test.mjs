@@ -401,3 +401,15 @@ test("the early-fetch script also asks for the stored diff of the latest run, ex
   assert.equal(latestChangesDataName(lone), null);
   assert.deepEqual((await runEarly({ path: "/this-week", index: { events: [lone] } })).calls.slice(1).map((x) => x.url), [`/api/${lone.explain_key}?slim=1`], "nothing earlier to compare with: no diff request");
 });
+
+test("the early-fetch script covers Distributions (checkpoint only), Scoring (checkpoint + weather) and Inputs (the opened run)", async () => {
+  const wk = { kind: "week", key: "golfprice/explain/pga_2/week_x.json", as_of: "2026-11-05T01:00:00Z", validated: true };
+  const ev = EV("pga:2:2026-11-05", "pga", "2026-11-05", { distribution_runs: [wk], latest_key: "golfprice/runs/b.json", runs: [{ key: "golfprice/runs/a.json" }, { key: "golfprice/runs/b.json" }] });
+  const index = { events: [ev] };
+  const urls = async (path) => (await runEarly({ path, index })).calls.slice(1).map((x) => x.url);
+  assert.deepEqual(await urls("/distributions"), [`/api/${wk.key}`]);
+  assert.deepEqual(await urls("/round-scores"), [`/api/${wk.key}`, "/api/golfprice/weather/pga_2_2026-11-05/latest.json"]);
+  assert.deepEqual(await urls("/inputs"), ["/api/golfprice/runs/b.json"]);
+  const noLatest = { events: [{ ...ev, latest_key: undefined }] };
+  assert.deepEqual((await runEarly({ path: "/inputs", index: noLatest })).calls.slice(1).map((x) => x.url), ["/api/golfprice/runs/a.json"]);
+});

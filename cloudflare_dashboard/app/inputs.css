@@ -66,3 +66,12 @@
 
 .in-chips-wrap > summary { cursor: pointer; color: var(--muted-strong); font-size: var(--fs-small); min-height: 44px; display: flex; align-items: center; }
 .in-chips-wrap[open] > summary { margin-bottom: var(--sp-2); }
+
+/* Run selector: one line ("Run: Live after R1 · Change"); the picker and run facts open beneath it. */
+.in-run > summary { list-style: none; }
+.in-run > summary::-webkit-details-marker { display: none; }
+.in-run-label { color: var(--foreground); font-weight: 650; }
+.in-run-change { color: var(--accent); white-space: pre; }
+.in-run .in-toolbar { margin-bottom: var(--sp-3); }
+/* Loading skeleton reserves roughly the loaded Players screen, and nothing renders below it, so nothing moves when the run arrives. */
+.in-skeleton { min-height: 1400px; }

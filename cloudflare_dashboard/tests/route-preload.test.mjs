@@ -47,7 +47,7 @@ test("injectBeforeHeadEnd inserts once, even when </head> is split across chunks
 });
 
 /* ------------------------------------------------------------------ Round 5: first-screen data inlined into the HTML */
-import { collectFirstScreen, defaultEvent, explainPaths, firstScreenPage, profileBatchPath, scoringPaths, weatherPaths, withFirstScreen, WRAPPER_SCRIPT } from "../worker/first-screen.ts";
+import { collectFirstScreen, defaultEvent, distributionPaths, explainPaths, inputsPaths, firstScreenPage, profileBatchPath, scoringPaths, weatherPaths, withFirstScreen, WRAPPER_SCRIPT } from "../worker/first-screen.ts";
 
 const INDEX = { events: [
   { event_uid: "pga:1:2026-11-05", date_start: "2026-11-05", tour: "pga", explain_key: "golfprice/explain/pga_1/pre.json", explain_run: "week_1", distribution_runs: [{ kind: "week", key: "golfprice/explain/pga_1/pre.json", as_of: "2026-11-02", validated: true }] },
@@ -153,4 +153,22 @@ test("round 5c: Scoring inlines the newest checkpoint document and the weather d
   assert.deepEqual(scoringPaths(null), []);
   const out = await collectFirstScreen(new URL("https://x.test/round-scores"), async (path) => new Response(path.endsWith("index.json") ? JSON.stringify({ events: [ev] }) : "{}", { status: 200 }));
   assert.deepEqual(Object.keys(out), ["/api/golfprice/index.json", ...scoringPaths(ev)]);
+});
+
+test("round 6: Distributions inlines only the checkpoint document; Inputs inlines the run it opens", async () => {
+  assert.equal(firstScreenPage("/distributions"), "distributions");
+  assert.equal(firstScreenPage("/inputs"), "inputs");
+  const ev = { event_uid: "euro:1:2026-11-05", date_start: "2026-11-05", tour: "euro", explain_key: "golfprice/explain/euro_1/pre.json", latest_key: "golfprice/runs/b.json",
+    distribution_runs: [{ kind: "week", key: "golfprice/explain/euro_1/wk.json", as_of: "2026-11-02T10:00:00Z", validated: true }],
+    runs: [{ key: "golfprice/runs/a.json" }, { key: "golfprice/runs/b.json" }] };
+  assert.deepEqual(distributionPaths(ev), ["/api/golfprice/explain/euro_1/wk.json"]);
+  assert.deepEqual(distributionPaths(null), []);
+  assert.deepEqual(inputsPaths(ev), ["/api/golfprice/runs/b.json"]);
+  assert.deepEqual(inputsPaths({ ...ev, latest_key: "nope" }), ["/api/golfprice/runs/a.json"]);
+  assert.deepEqual(inputsPaths({ ...ev, runs: [{ key: "../x" }] }), []);
+  assert.deepEqual(inputsPaths(null), []);
+  for (const [p, paths] of [["/distributions", distributionPaths(ev)], ["/inputs", inputsPaths(ev)]]) {
+    const out = await collectFirstScreen(new URL("https://x.test" + p), async (path) => new Response(path.endsWith("index.json") ? JSON.stringify({ events: [ev] }) : "{}", { status: 200 }));
+    assert.deepEqual(Object.keys(out), ["/api/golfprice/index.json", ...paths], p);
+  }
 });

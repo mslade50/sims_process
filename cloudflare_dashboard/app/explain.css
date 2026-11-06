@@ -496,5 +496,5 @@
 .ex-fact { box-shadow: none; border-radius: var(--radius-lg); }
 .ex-reset { align-self: center; min-height: 44px; }
 
-/* R5b: sections below the first screen of This week skip layout until scrolled near (the cold-load layout task was ~200 ms on a phone). */
-#chances.ds-section, #course.ds-section { content-visibility: auto; contain-intrinsic-size: auto 640px; }
+/* R5b added content-visibility:auto on #chances/#course; R6-fix removed it: on desktop the skipped-then-rendered subtrees reported stale boxes overlapping #weather (8 text-overlap errors). */
+

@@ -23,13 +23,15 @@ type IndexEvent = {
 };
 
 /** Which page this is, or null when nothing is inlined for it. `/` is This week. */
-export function firstScreenPage(pathname: string): "this-week" | "why-priced" | "players" | "weather" | "scoring" | null {
+export function firstScreenPage(pathname: string): "this-week" | "why-priced" | "players" | "weather" | "scoring" | "distributions" | "inputs" | null {
   const key = pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
   if (key === "" || key === "this-week") return "this-week";
   if (key === "why-priced") return "why-priced";
   if (key === "players") return "players";
   if (key === "weather-effects") return "weather";
   if (key === "round-scores") return "scoring";
+  if (key === "distributions") return "distributions";
+  if (key === "inputs") return "inputs";
   return null;
 }
 
@@ -86,6 +88,17 @@ export function scoringPaths(e: IndexEvent | null): string[] {
   return [run, doc].filter((k): k is string => typeof k === "string" && /^[A-Za-z0-9_./:=-]+$/.test(k) && !k.includes("..")).map((k) => `/api/${k}`);
 }
 
+/** Finish distributions: the newest checkpoint document only (the same pick as Scoring, without the weather). */
+export function distributionPaths(e: IndexEvent | null): string[] { return scoringPaths(e).slice(0, 1); }
+
+/** Model inputs: the run the page opens (InputsView: the event's latest run, else its first). */
+export function inputsPaths(e: IndexEvent | null): string[] {
+  const runs = ((e as (IndexEvent & { runs?: Array<{ key?: string }>; latest_key?: string }) | null)?.runs ?? []).filter((r) => r && typeof r.key === "string" && r.key);
+  const latest = (e as { latest_key?: string } | null)?.latest_key;
+  const key = (runs.find((r) => r.key === latest) ?? runs[0])?.key;
+  return key && /^[A-Za-z0-9_./:=-]+$/.test(key) && !key.includes("..") ? [`/api/${key}`] : [];
+}
+
 /** The profile batch a one-golfer slice names (mirrors parseSearchIndex + profileKey in the app). */
 export function profileBatchPath(slice: unknown): string | null {
   if (!isObj(slice) || !Array.isArray(slice.keys) || !Array.isArray(slice.key)) return null;
@@ -131,7 +144,7 @@ export async function collectFirstScreen(url: URL, fetchApi: FetchApi): Promise<
     if (!indexText) return out;
     out[INDEX_PATH] = indexText;
     const picked = defaultEvent(JSON.parse(indexText), url.searchParams.get("e"));
-    const paths = page === "weather" ? weatherPaths(picked) : page === "scoring" ? scoringPaths(picked) : explainPaths(page, picked, url.searchParams.get("v"));
+    const paths = page === "weather" ? weatherPaths(picked) : page === "scoring" ? scoringPaths(picked) : page === "distributions" ? distributionPaths(picked) : page === "inputs" ? inputsPaths(picked) : explainPaths(page, picked, url.searchParams.get("v"));
     const bodies = await Promise.all(paths.map((p) => text(fetchApi, p)));
     paths.forEach((p, i) => { const b = bodies[i]; if (b) out[p] = b; });
   } catch { /* inline less; the page fetches the rest itself */ }

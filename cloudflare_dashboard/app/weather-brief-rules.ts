@@ -134,6 +134,26 @@ export function shortHeadline(rounds: BriefRound[]): string | null {
   const concentrated = have.length >= 2 && Math.sign(top.field) === Math.sign(avg) && Math.abs(top.field) >= 1.6 * Math.abs(avg);
   return `${sign} than usual: ${size}${concentrated && day ? `, mostly ${day}` : ""}`;
 }
+/** One supporting fact that does not repeat the headline: the biggest day (unless the headline already names it) and what a field effect moves. */
+export function supportingFact(rounds: BriefRound[]): string | null {
+  const have = rounds.filter((r) => r.field !== null) as Array<BriefRound & { field: number }>;
+  if (!have.length) return null;
+  const head = shortHeadline(rounds) ?? "";
+  if (head.startsWith("Weather barely")) return null;
+  const top = [...have].sort((a, b) => Math.abs(b.field) - Math.abs(a.field))[0];
+  const ms = Date.parse(`${top.date_local}T12:00:00Z`);
+  const day = Number.isFinite(ms) ? new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(ms) : `Round ${top.round}`;
+  const waves = rounds.filter((r) => r.wave !== null) as Array<BriefRound & { wave: number }>;
+  const w = [...waves].sort((x, y) => Math.abs(y.wave) - Math.abs(x.wave))[0];
+  const waveText = !w ? "" : Math.abs(w.wave) < 0.02 ? "Tee waves are about even." : `${waveWords(w.wave, 1)} in Round ${w.round}.`;
+  return [head.includes("mostly") ? "" : `Biggest on ${day}: ${Math.abs(top.field).toFixed(1)} strokes.`, waveText].filter(Boolean).join(" ") || null;
+}
+/** Compact signed field effect per round for the phone mini strip (negative = easier). */
+export function miniRoundEffect(v: number | null): string {
+  if (v === null) return "n/a";
+  if (Math.abs(v) < 0.05) return "0.0";
+  return `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+}
 /** A player or group: the weather helps or hurts. */
 export function helpWords(v: number | null, d = 2): string {
   if (v === null) return "not available";
@@ -352,3 +372,5 @@ export function slotWords(s: Slot | null): string {
   if (s.rain_prob !== null) parts.push(`${Math.round(s.rain_prob * 100)}% chance of rain`);
   return parts.join(", ");
 }
+
+export const FIELD_EFFECT_NOTE = "A field effect moves the scoring average and the cut line, not who wins.";
