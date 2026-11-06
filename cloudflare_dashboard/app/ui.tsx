@@ -238,11 +238,13 @@ export function Section({ id, title, purpose, actions, children, className = "" 
  * has passed the sticky header, the first section while the page is at the top, and the last one at the very bottom. The active item is
  * kept in view inside the strip.
  */
-export function OnThisPage({ sections, label = "On this page" }: { sections: Array<{ id: string; label: string }>; label?: string }) {
+export function OnThisPage({ sections, label = "On this page", value, onSelect }: { sections: Array<{ id: string; label: string }>; label?: string; /** Tab mode: the selected id (controlled). Omit both for anchor mode. */ value?: string; onSelect?: (id: string) => void }) {
+  const tabs = onSelect !== undefined;
   const [current, setCurrent] = useState(sections[0]?.id ?? "");
   const navRef = useRef<HTMLElement>(null);
   const key = sections.map((s) => s.id).join("|");
   useEffect(() => {
+    if (tabs) return;
     const ids = key.split("|");
     let frame = 0;
     const update = () => {
@@ -258,13 +260,35 @@ export function OnThisPage({ sections, label = "On this page" }: { sections: Arr
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll);
     return () => { window.removeEventListener("scroll", onScroll); window.removeEventListener("resize", onScroll); if (frame) cancelAnimationFrame(frame); };
-  }, [key]);
+  }, [key, tabs]);
+  const active = tabs ? value : current;
   useEffect(() => {
     const strip = navRef.current;
-    const link = strip?.querySelector<HTMLElement>('[aria-current="true"]');
+    const link = strip?.querySelector<HTMLElement>('[aria-current="true"], [aria-selected="true"]');
     if (!strip || !link || strip.scrollWidth <= strip.clientWidth) return;
     strip.scrollTo({ left: link.offsetLeft - (strip.clientWidth - link.offsetWidth) / 2, behavior: "auto" });
-  }, [current]);
+  }, [active]);
+  if (tabs) {
+    // Tab mode: the same strip, as a WAI-ARIA tablist (roving tabindex, arrow keys, Home/End). The page owns the panels.
+    const move = (event: React.KeyboardEvent<HTMLElement>) => {
+      const ids = sections.map((s) => s.id);
+      const at = Math.max(0, ids.indexOf(active ?? ""));
+      const next = event.key === "ArrowRight" ? at + 1 : event.key === "ArrowLeft" ? at - 1 : event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault();
+      const id = ids[(next + ids.length) % ids.length];
+      onSelect(id);
+      requestAnimationFrame(() => navRef.current?.querySelector<HTMLElement>(`[data-section="${id}"]`)?.focus());
+    };
+    return (
+      <nav className="on-this-page" aria-label={label} ref={navRef}>
+        {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus -- the tab buttons inside carry the roving tabindex */}
+        <div role="tablist" aria-label={label} className="otp-tablist" onKeyDown={move}>
+          {sections.map((s) => <button key={s.id} type="button" role="tab" data-section={s.id} aria-selected={active === s.id} tabIndex={active === s.id ? 0 : -1} onClick={() => onSelect(s.id)}>{s.label}</button>)}
+        </div>
+      </nav>
+    );
+  }
   return (
     <nav className="on-this-page" aria-label={label} ref={navRef}>
       {sections.map((s) => <a key={s.id} href={`#${s.id}`} aria-current={current === s.id ? "true" : undefined}>{s.label}</a>)}

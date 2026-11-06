@@ -72,6 +72,7 @@ export function ShapeLadder({ doc, a, onPick, onSeeMore, title = true }: { doc: 
           );
         })}
       </div>
+      <p className="shl-scale">Bars show the gap in percentage points; the longest bar is {max.toFixed(1)} points. Bars to the right mean {al} finishes there more often.</p>
     </div>
   );
 }
@@ -94,7 +95,8 @@ export function ShapeScatter({ a, selectedId, onSelect }: { a: ShapeAnalysis; se
   const sx = (w: number) => L + ((Math.log(w) - x0) / (x1 - x0 || 1)) * (SW - L - R);
   const sy = (v: number) => T + (1 - (v - y0) / (y1 - y0 || 1)) * (SH - T - B);
   const curve = Array.from({ length: 41 }, (_, i) => { const w = Math.exp(x0 + ((x1 - x0) * i) / 40); return `${i ? "L" : "M"}${sx(w).toFixed(1)},${sy(curveAt(a.fit, w) * 100).toFixed(1)}`; }).join(" ");
-  const xt = [0.005, 0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.2, 0.3].filter((w) => Math.log(w) >= x0 && Math.log(w) <= x1);
+  // Ticks closer than 34 units apart would print over each other at the larger label size; keep the first of each crowd.
+  const xt = [0.005, 0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.2, 0.3].filter((w) => Math.log(w) >= x0 && Math.log(w) <= x1).reduce<number[]>((kept, w) => (kept.length && sx(w) - sx(kept[kept.length - 1]) < 34 ? kept : [...kept, w]), []);
   const yt = niceTicks(y0, y1);
   const labelled: Array<{ p: ShapePlayer; x: number; y: number; end: boolean }> = [];
   for (const p of a.unusual.filter((q) => q.kind !== "typical").slice(0, 6)) {

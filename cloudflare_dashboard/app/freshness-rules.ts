@@ -37,6 +37,12 @@ export function dataThrough(value: unknown, prefix = "Data through"): string | n
   return text ? `${prefix} ${text}` : null;
 }
 
+/** Shell text for a retired archive page: neutral, with the last data date when one is published. Never an age ("3 d ago"), which reads as a fault. */
+export function archivedStatusText(lastData: unknown): string {
+  const date = plainDate(lastData);
+  return date ? `Archived · last data ${date}` : "Archived";
+}
+
 /** Whole calendar days from `date` to `now` (ET calendar), null when unreadable. Negative when the date is ahead of now. */
 export function daysSince(value: unknown, now: number): number | null {
   const d = calendarDate(value);

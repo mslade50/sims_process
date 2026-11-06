@@ -65,12 +65,12 @@ export function ShotDataContent({ sources, refreshing, now, onRefresh }: Monitor
   return <div className="shot-monitor">
     <header className="sm-intro page-intro">
       <div role="status" aria-live="polite" aria-atomic="true"><span className="eyebrow">Shot data</span><h1>{loading ? "Checking shot data…" : attention.length ? `${attention.length} ${attention.length === 1 ? "tour needs" : "tours need"} attention` : "Tour checks are clear"}</h1>
-      <p className="sm-start">{loading ? "Waiting for the latest update." : attention.length ? `Start with ${TOUR_LABELS[attention[0].tour]}. ${attention[0].next}` : "No action needed. Paused collection stays paused."}</p></div>
+      <p className="sm-start">{loading ? "Waiting for the latest update." : attention.length ? `Start with ${TOUR_LABELS[attention[0].tour]}: see Next action below.` : "No action needed. Paused collection stays paused."}</p></div>
       <div className="sm-check"><span>{checkedAge(sources, now)}</span>{onRefresh && <button className="sm-refresh" type="button" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Checking…" : "Refresh"}</button>}</div>
     </header>
     <section className="sm-matrix-wrap" aria-labelledby="sm-matrix-title">
       <h2 id="sm-matrix-title" className="sm-matrix-title">Tour status</h2>
-      <p className="sm-muted">Collect is the machine (is a collector running). Check and Publish are verification evidence (did published output validate). Times are New York time.</p>
+      <p className="sm-muted">Collect = a collector is running. Check and Publish = output validated. New York time.</p>
       <table className="sm-matrix">
         <thead><tr><th scope="col">Tour</th><th scope="col">Collect <span className="sm-sub">machine</span></th><th scope="col">Check <span className="sm-sub">evidence</span></th><th scope="col">Publish <span className="sm-sub">evidence</span></th><th scope="col">Known / unknown</th><th scope="col">Next action</th></tr></thead>
         <tbody>{matrix.map(row => <tr key={row.tour} id={`sm-${row.tour}`} className={row.attention ? "sm-attn" : undefined}>
@@ -84,7 +84,7 @@ export function ShotDataContent({ sources, refreshing, now, onRefresh }: Monitor
     <div className="sm-board">{summaries.map(summary => <details className="sm-tour sm-details" key={summary.tour} aria-labelledby={`sm-d-${summary.tour}`}>
       <summary id={`sm-d-${summary.tour}`}>{TOUR_LABELS[summary.tour]} details<span className="sm-sub">collectors and published datasets</span></summary>
         <div className="sm-tour-grid">
-          <div className="sm-stage"><h3>Captured and cleaned</h3><p className="sm-muted">Captured data does not imply cleaned or published data.</p>
+          <div className="sm-stage"><h3>Captured and cleaned</h3>
             {(collectors.data?.collectors ?? []).filter(r => r.tour === summary.tour).map(row => <CollectorRow key={row.id} row={row} source={collectors} now={now}/>)}
             {!collectors.data?.collectors?.some(r => r.tour === summary.tour) && <p className="sm-empty">No collector reported. Capture and cleaning status unknown.</p>}
           </div>

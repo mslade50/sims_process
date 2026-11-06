@@ -12,6 +12,7 @@ import { handleOwnerGate, ownerEmails, viewerFor } from "./owner";
 import { handleOverridesApi } from "./overrides-api";
 import { handleWeatherOverridesApi } from "./weather-overrides-api";
 import { cacheControlFor, respondWithObject } from "./data-http";
+import { withViewPreload } from "./route-preload";
 
 interface Env {
   ASSETS: Fetcher;
@@ -209,7 +210,7 @@ async function routeRequest(request: Request, env: Env, ctx: ExecutionContext): 
     }, allowedWidths);
   }
 
-  return handler.fetch(request, env, ctx);
+  return withViewPreload(request, await handler.fetch(request, env, ctx), env.ASSETS);
 }
 
 export default worker;

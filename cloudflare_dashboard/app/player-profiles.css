@@ -60,5 +60,16 @@
   .pp-search input{font-size:16px}
 }
 
-.pp-change{min-height:44px;padding:0 var(--sp-4);border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--foreground);font:inherit;cursor:pointer;justify-self:start}.pp-chip-toggle{min-height:44px;padding:0 var(--sp-3);border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--foreground);font:inherit;cursor:pointer}.pp-chip-toggle[aria-pressed=true]{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
+.pp-change{min-height:44px;padding:0 var(--sp-4);border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--foreground);font:inherit;cursor:pointer;justify-self:start}.pp-chip-toggle{min-height:44px;padding:0 var(--sp-3);border:1px solid var(--line-strong);border-radius:var(--radius-control);background:var(--surface);color:var(--foreground);font:inherit;cursor:pointer}.pp-chip-toggle[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}.pp-chip-toggle[aria-pressed=true]:hover{background:var(--accent);color:var(--accent-ink);filter:brightness(1.06)}
 @media(max-width:700px){.pp-page select,.pp-page input{min-height:44px;font-size:16px}.pp-compare button{min-height:44px}.pp-catalog button{min-height:44px}.pp-pagination button{min-height:44px}.pp-browse-toggle{min-height:44px}}
+
+/* Round 3: one golfer. The page header carries the name and the Change golfer action on one row (phone included), so the answer starts high. */
+.pp-page .page-intro .page-controls{flex:none}
+.pp-change{padding:0 var(--sp-3);white-space:nowrap}
+@media(max-width:820px){
+  .pp-page .page-intro{flex-direction:row;align-items:flex-start;justify-content:space-between;gap:var(--sp-3);margin-bottom:var(--sp-3);padding-bottom:var(--sp-2)}
+  .pp-page .page-intro>div:first-child{flex:1;min-width:0}
+  .pp-page .page-intro h1{overflow-wrap:anywhere}
+  .pp-page .page-intro .page-controls{width:auto}
+  .pp-change{min-height:44px;margin-top:var(--sp-1)}
+}

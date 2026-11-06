@@ -11,11 +11,13 @@ export function tourSummary(tour: Tour, sources: Source[], now: number): TourSum
   const rows = capture?.data?.collectors?.filter(r => r.tour === tour) ?? [];
   const datasets = published?.data?.publications?.filter(r => r.tour === tour) ?? [];
   const primary = rows.find(r => r.id === primaryIds[tour]) ?? (rows.length === 1 ? rows[0] : undefined);
-  const base: TourSummary = { tour, badge: "Unknown", headline: "Current status is unknown.", available: "No checked data confirmed.", next: "Refresh status.", attention: true,
+  const base: TourSummary = { tour, badge: "Unknown", headline: "Current status is unknown.", available: "No checked data confirmed.", next: "Wait for the next monitor snapshot.", attention: true,
     stages: ["Collect", "Check", "Save"].map(label => ({ label, state: "Unknown", tone: "neutral" })) };
   if (![capture, published].every(s => s && s.status === "ready" && sourceFreshness(s, now) === "fresh")) {
     const loading = [capture, published].some(s => s?.status === "loading");
-    return { ...base, badge: loading ? "Checking" : "Check status", headline: loading ? "Checking the latest snapshots…" : "Cannot check right now.", available: "Data status is unknown." };
+    const bad = [capture, published].map((s, i) => ({ s, name: i === 0 ? "collector" : "publication" })).filter(({ s }) => !s || s.status !== "ready" || sourceFreshness(s, now) !== "fresh").map(({ name }) => name);
+    const nextStep = loading ? "Wait: snapshots are loading." : `Owner: restart the monitor task on the always-on desktop; no fresh ${bad.join(" or ")} snapshot.`;
+    return { ...base, badge: loading ? "Checking" : "Check status", headline: loading ? "Checking the latest snapshots…" : "Cannot check right now.", available: "Data status is unknown.", next: nextStep };
   }
   const states = rows.map(r => collectorStatus(r, capture!, now));
   if (states.some(s => !["running", "idle", "paused", "error", "unknown"].includes(s))) return { ...base, badge: "Check status", headline: "Collector checks are out of date.", available: "Data status is unknown." };

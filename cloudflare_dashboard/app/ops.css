@@ -6,7 +6,7 @@
 .ops-toolbar, .ops-week-controls, .ops-week-picker, .ops-actions, .ops-calendar-options { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; justify-content: space-between; }
 .ops-updated, .ops-explain, .ops-empty-day, .ops-frequent { color: var(--muted-strong); font-size: var(--fs-small); margin: 0; }
 .ops-explain { margin-bottom: var(--sp-3); }
-.ops-week-controls { margin-bottom: var(--sp-2); }
+.ops-week-controls { margin-bottom: 0; align-items: flex-end; }
 .ops-week-picker strong { font-size: var(--fs-data); font-variant-numeric: tabular-nums; }
 .ops-week-controls label, .ops-editor label { display: grid; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); font-weight: 600; }
 .ops-week-controls select, .ops-editor select, .ops-editor textarea { background: var(--surface); color: var(--foreground); border: 1px solid var(--line-strong); border-radius: var(--radius-control); padding: var(--sp-3); max-width: 100%; font: inherit; font-size: var(--fs-data); min-height: 44px; }
@@ -127,3 +127,24 @@
 .ops-day-compact > summary small { color: var(--muted-strong); font-size: var(--fs-small); }
 .ops-day-compact.today > summary strong { color: var(--accent); }
 .ops-day-compact .ops-day-events { padding-bottom: var(--sp-3); }
+
+/* R3: ruled machines, ruled chain steps, and the rollout / decisions records at design-system quality. */
+.ops-machines { padding: var(--sp-3) 0; background: transparent; border: 0; border-block: 1px solid var(--line-strong); border-radius: 0; }
+.ops-node { border-radius: 0; border: 0; border-top: 2px solid var(--line-strong); background: transparent; padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; }
+.ops-node:hover { background: var(--tint-1); border-top-color: var(--accent); }
+.ops-node.selected { background: var(--accent-soft); border-top-color: var(--accent); padding-left: var(--sp-3); }
+.ops-flow { gap: var(--sp-4); }
+.ops-stage-detail { border: 0; border-left: 2px solid var(--accent); border-radius: 0; background: transparent; padding: var(--sp-1) 0 var(--sp-1) var(--sp-4); }
+.ops-calendar { border-radius: 0; border-inline: 0; background: transparent; }
+.ops-toolbar { padding-bottom: var(--sp-2); }
+#records .ops-work-layout { gap: var(--sp-8); }
+#records .ops-task-list { border-top: 1px solid var(--line-strong); }
+#records .ops-task { grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-2); }
+#records .ops-task small { grid-column: auto; white-space: nowrap; }
+#records .ops-task > span { font-variant-numeric: tabular-nums; }
+#records .ops-task-detail { padding-left: var(--sp-5); border-left: 1px solid var(--line); }
+#records .ops-task-detail h3 { font-size: var(--fs-h2); letter-spacing: -.01em; }
+#records .ops-editor { padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+#records .ops-editor textarea, #records .ops-editor select { width: 100%; box-sizing: border-box; }
+#records .ops-history li { border-left-color: var(--line-strong); }
+@media (max-width: 820px) { #records .ops-task-detail { padding-left: 0; border-left: 0; } .ops-node { padding-right: var(--sp-2); } }

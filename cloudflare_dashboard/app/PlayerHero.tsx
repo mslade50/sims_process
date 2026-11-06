@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Badge, GapRail, Skeleton } from "./ui";
 import { LABELS, vsPgaAvgLong, zeroLabel, zeroSentence } from "./labels";
 import { etTime } from "./lib";
-import { entryName, pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, referenceSpan, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
+import { pgaSkillWords, type PgaSkill, checkpointBenchmarkValue, benchmarkValue, isShrunk, NOT_YET_SHRUNK, referenceSpan, savedFieldSkill, shortProfileDate, type PlayerProfile, type PgaBenchmarkReference, type ProfileEntry } from "./player-profile-rules";
 import type { ExplainDoc } from "./explain-rules";
 import type { DeepProfile } from "./player-deep-rules";
 import { performanceSeries, visiblePerformance } from "./player-performance-rules";
@@ -21,6 +21,8 @@ export type HeroWeekly = {
   savedDoc: ExplainDoc | null;
   /** Saved model skill on the PGA scale (mu_tour) from the matching model_inputs; absent falls back to vs field. */
   pgaSkill?: PgaSkill | null;
+  /** This week's event, model run or skill is still loading: reserve the card's height so the page below does not jump. */
+  pending?: boolean;
   onEvent: (uid: string) => void;
 };
 export type HeroProps = {
@@ -52,7 +54,7 @@ function HeadlineBar({ value, tick }: { value: number; tick: { value: number; as
 }
 
 function TrendTeaser({ deep, loading, error, anchor }: { deep: DeepProfile | null; loading: boolean; error: string | null; anchor: number | null | undefined }) {
-  if (loading) return <div className="ph-trend" data-testid="trend-skeleton" aria-label="Loading trend"><span className="eyebrow">Trend</span><Skeleton lines={2} height={12} /></div>;
+  if (loading) return <div className="ph-trend ph-trend-loading" data-testid="trend-skeleton" aria-label="Loading trend"><span className="eyebrow">Trend</span><Skeleton lines={2} height={12} /></div>;
   const series = deep ? performanceSeries(deep.history?.events ?? [], anchor, false) : [];
   const visible = deep ? visiblePerformance(series, deep.as_of, "3y") : [];
   const paths = sparklinePaths(visible, 180, 44);
@@ -97,21 +99,6 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
   const strengths = best ? `Strongest part of the game: ${best.label.toLowerCase()} (${sd(best.z)} vs the typical PGA player).${worst && worst.key !== best.key ? ` Weakest: ${worst.label.toLowerCase()} (${sd(worst.z)}).` : ""}` : null;
   return (
     <section className="ph-hero" data-testid="player-hero" aria-label="Player summary">
-      <div className="ph-row ph-identity">
-        {photo}
-        <div className="ph-id-text">
-          <span className="eyebrow">Player</span>
-          <h2>{entryName(entry)}</h2>
-          <p>{entry.country ?? entry.country_code ?? "Country unavailable"}{(entry.tours ?? []).length > 0 && <> · {(entry.tours ?? []).map(t => t.toUpperCase()).join(" / ")}</>}</p>
-        </div>
-        <dl className="ph-facts">
-          <div><dt>Rounds on record</dt><dd>{entry.n_rounds ?? "Unavailable"}</dd></div>
-          <div><dt>Latest round on record</dt><dd>{shortProfileDate(entry.last_observation)}</dd></div>
-          <div><dt>Profile as of</dt><dd title={etTime(profile.as_of)}>{shortProfileDate(profile.as_of)}</dd></div>
-        </dl>
-      </div>
-
-      {strengths && <p className="ph-story" data-testid="hero-story">{strengths}</p>}
       <div className="ph-row ph-stats">
         <article className="ph-headline" title={`${vsPgaAvgLong(referenceSpan(reference))}. ${zeroSentence(referenceSpan(reference))}`}>
           <span className="eyebrow">{LABELS.vsPgaAvg.short} · {zeroLabel(referenceSpan(reference))}</span>
@@ -125,13 +112,10 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
             {mix && <Badge tone="warning">{mix}</Badge>}
             {unsupported && <Badge tone="neutral">Too few opening-round results for a stable number</Badge>}
           </div>
-          <p className="ph-caveat">{CAVEAT_REFERENCE_ONLY}</p>
-          {value !== null && !shrunk && <p className="ph-caveat" data-testid="not-shrunk">{NOT_YET_SHRUNK}</p>}
-          {withheld && <p className="ph-caveat" role="status">Withheld for this old checkpoint: the profile is rebuilt from the latest data, so it would include rounds played after that moment.</p>}
         </article>
 
-        <article className="ph-week" aria-label="This week">
-          <span className="eyebrow">{weekly.eventName ? `This week · ${weekly.eventName}` : "This week"}</span>
+        <article className="ph-week" aria-label="This week" data-pending={weekly.pending ? "true" : undefined}>
+          <span className="eyebrow">This week</span>
           {weekly.savedDoc && row ? (
             <>
               <div className="ph-chips">
@@ -149,6 +133,8 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
               )}
               {pga ? <p className="ph-muted" data-testid="pga-sub">{pgaSkillWords(pga).sub}.</p> : <p className="ph-muted">{LABELS.vsField.short}: the model&apos;s skill minus the field&apos;s average.</p>}
             </>
+          ) : weekly.pending ? (
+            <div data-testid="week-pending" aria-busy="true"><Skeleton lines={4} height={14} /></div>
           ) : (
             <p className="ph-muted" data-testid="week-absent">
               {weekly.savedDoc ? "Not in this week's field." : weekly.eventName ? "No saved model run for this field yet." : "This golfer is not in any saved field."}{" "}
@@ -159,6 +145,22 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
         </article>
 
         <TrendTeaser deep={deep} loading={deepLoading} error={deepError} anchor={reference?.adjusted_sg_mean} />
+      </div>
+      {strengths && <p className="ph-story" data-testid="hero-story">{strengths}</p>}
+      <div className="ph-notes">
+        <p className="ph-caveat">{CAVEAT_REFERENCE_ONLY}</p>
+          {value !== null && !shrunk && <p className="ph-caveat" data-testid="not-shrunk">{NOT_YET_SHRUNK}</p>}
+          {withheld && <p className="ph-caveat" role="status">Withheld for this old checkpoint: the profile is rebuilt from the latest data, so it would include rounds played after that moment.</p>}
+      </div>
+      <div className="ph-meta" data-testid="hero-meta">
+        <span className="ph-meta-photo">{photo}</span>
+        <p>
+          <b>{entry.country ?? entry.country_code ?? "Country unavailable"}</b>
+          {(entry.tours ?? []).length > 0 && <> · {(entry.tours ?? []).map(t => t.toUpperCase()).join(" / ")}</>}
+          {" · "}{entry.n_rounds ?? "Unavailable"} rounds on record
+          {" · "}latest round {shortProfileDate(entry.last_observation)}
+          {" · "}profile as of <span title={etTime(profile.as_of)}>{shortProfileDate(profile.as_of)}</span>
+        </p>
       </div>
     </section>
   );

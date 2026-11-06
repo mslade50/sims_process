@@ -132,8 +132,17 @@ details.sm-tour > summary { cursor: pointer; min-height: 44px; display: flex; al
 @media (min-width: 821px) {
   .sm-matrix { table-layout: fixed; }
   .sm-matrix th, .sm-matrix td { overflow-wrap: anywhere; }
-  .sm-matrix th:first-child { width: 15%; }
-  .sm-matrix th:nth-child(2), .sm-matrix th:nth-child(3), .sm-matrix th:nth-child(4) { width: 14%; }
-  .sm-matrix th:nth-child(5) { width: 24%; }
+  .sm-matrix th:first-child { width: 12%; }
+  .sm-matrix th:nth-child(2), .sm-matrix th:nth-child(3), .sm-matrix th:nth-child(4) { width: 12%; }
+  .sm-matrix th:nth-child(5) { width: 20%; }
 }
 .sm-matrix td, .sm-matrix td > div, .sm-matrix th { white-space: normal; overflow: visible; text-overflow: clip; max-width: none; overflow-wrap: anywhere; }
+
+/* R3: ruled tour details, matching the ruled lists elsewhere; next action reads as a sentence. */
+.sm-board { gap: 0; border-top: 1px solid var(--line-strong); }
+.sm-tour.sm-details { padding: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
+.sm-details > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); min-height: 48px; cursor: pointer; }
+.sm-details > summary .sm-sub { margin-left: auto; font-weight: 500; }
+.sm-details[open] > .sm-tour-grid { padding-bottom: var(--sp-4); }
+.sm-matrix td[data-label="Next action"] { line-height: 1.45; }
+.sm-tour.sm-details, .sm-details { border-radius: 0; }

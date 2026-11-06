@@ -14,6 +14,18 @@ const latest = (values: Array<string | null | undefined>): string | null => {
   return valid.length ? valid.reduce((a, b) => (timestamp(b) > timestamp(a) ? b : a)) : null;
 };
 
+/** Who and where for each next action, so no row ends in a bare instruction. Suffix only; the action text itself comes from tourSummary. */
+const WHERE: Array<[RegExp, (primary: string) => string]> = [
+  [/^Restore the approved publishing code/, () => " Owner: redeploy the approved publish code to the always-on desktop (the GolfShotRoundPublish task), then rerun that task."],
+  [/^Check the publishing job failure/, () => " Owner: open the GolfShotRoundPublish task log on the always-on desktop; the reason is in the details below."],
+  [/^Check the missing capture status/, (p) => ` Owner: confirm ${p} is scheduled on the always-on desktop; it has not reported.`],
+  [/^Check the collection problem/, (p) => ` Owner: open ${p} on the always-on desktop and read its last error (shown in this tour's details).`],
+  [/^Resolve the held data checks/, () => " Owner: read the validation limits in this tour's published datasets below; corrections are made in the publish job, not here."],
+  [/^Review the reported job issues/, () => " Open this tour's details to see which collector reported the issue."],
+  [/^Review the dataset validation limits/, () => " Open this tour's details, Published datasets."],
+];
+const PRIMARY: Record<string, string> = { pga: "GolfRichShotCollector", dpwt: "SimPrep-DPWT-forward", kft: "SimPrep-KFT-forward" };
+
 export function tourMatrix(tour: Tour, sources: Source[], now: number): MatrixRow {
   const summary = tourSummary(tour, sources, now);
   const collectors = sources.find((s) => s.file === "collectors-desktop.json")?.data?.collectors?.filter((r) => r.tour === tour) ?? [];
@@ -30,6 +42,6 @@ export function tourMatrix(tour: Tour, sources: Source[], now: number): MatrixRo
     publish: { state: save.state, tone: save.tone, at: latest(datasets.map((r) => r.published_at)) },
     reason: known ? summary.headline : `Unknown: ${summary.headline}`,
     available: summary.available,
-    next: summary.next ?? "None needed.",
+    next: summary.next ? summary.next + (WHERE.find(([re]) => re.test(summary.next!))?.[1](PRIMARY[tour]) ?? "") : "None needed.",
   };
 }

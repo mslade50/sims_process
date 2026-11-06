@@ -8,13 +8,8 @@
 .in-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
 /* Area tabs: one scrolling strip on every width, so no tab is hidden and nothing becomes a dropdown. */
-.in-tabs { display: flex; gap: var(--sp-1); overflow-x: auto; border-bottom: 1px solid var(--line); margin: 0 0 var(--sp-3); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.in-tabs::-webkit-scrollbar { display: none; }
-.in-tabs button { flex: none; min-height: 44px; padding: 0 var(--sp-4); color: var(--muted-strong); background: transparent; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; font: inherit; font-size: var(--fs-data); font-weight: 600; cursor: pointer; white-space: nowrap; transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
 /* phone: wrap to two rows so no tab (Adjust) hides off-screen */
 @media (max-width: 640px) { .in-tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; } .in-tabs button { flex: 1 1 auto; padding: 0 var(--sp-3); } }
-.in-tabs button:hover { color: var(--foreground); }
-.in-tabs button.active { color: var(--foreground); border-bottom-color: var(--accent); }
 .in-tab-purpose { margin: 0 0 var(--sp-5); max-width: 70ch; color: var(--muted-strong); font-size: var(--fs-data); line-height: 1.5; }
 
 /* Player finder: the first thing after the headline numbers. */
@@ -64,3 +59,11 @@
 .two-column td, .two-column th { overflow-wrap: anywhere; }
 @media (max-width: 820px) { .two-column { grid-template-columns: minmax(0, 1fr); } }
 .in-odds td { white-space: normal; overflow: visible; text-overflow: clip; max-width: none; overflow-wrap: anywhere; }
+
+/* Adjust form (R3): every control stays inside its grid cell; selects never size to their longest option. */
+.override-form .form-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--sp-4); align-items: end; }
+.override-form .form-grid > * { min-width: 0; }
+.override-form .select-control, .override-form .field-label { display: grid; gap: var(--sp-1); min-width: 0; }
+.override-form select, .override-form .field-label input, .override-form .field-label textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
+.override-form .field-label textarea { min-height: 88px; }
+.override-form ~ .panel .wrap-cell, .panel .table-scroll td.wrap-cell { min-width: 260px; }

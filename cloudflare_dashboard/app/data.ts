@@ -77,7 +77,20 @@ const lastGood = (): LastGoodStore | undefined => (store === null ? (store = (()
 // Identity data (golfer names), not prose: skip the spelling pass so a golfer called "Grey" stays "Grey" (and 16,600 names are not scanned).
 const VERBATIM = /(^|\/)search-index\.json(\?|$)/;
 
-const fetchImpl: FetchLike = (url, init) => fetch(url, init);
+/** The index and This week's explain document are requested by an inline <head> script (earlyFetchScript, shell-rules.ts) before the framework arrives; take that request once if it matches. */
+type EarlyMap = Record<string, { p: Promise<Response>; c: RequestCache } | undefined>;
+function takeEarly(url: string, cache: RequestCache): Promise<Response> | null {
+  if (typeof window === "undefined") return null;
+  const map = (window as Window & { __earlyFetch?: EarlyMap }).__earlyFetch;
+  const hit = map?.[url];
+  if (!map || !hit || hit.c !== cache) return null;
+  delete map[url];
+  return hit.p;
+}
+const fetchImpl: FetchLike = (url, init) => {
+  const early = takeEarly(url, init.cache);
+  return early ? early.catch(() => fetch(url, init)) : fetch(url, init);
+};
 
 function loadEntry(name: string, force: boolean): Promise<Entry> {
   return loads.run(name, async () => {

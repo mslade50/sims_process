@@ -8,7 +8,7 @@ import { Panel } from "./components";
 import { useDashboardData } from "./data";
 import { explainKeyFor, orderEvents, parseExplain, pct, signed, type ExplainDoc, type ExPlayer, type IndexEvent } from "./explain-rules";
 import { STAGES, STAGE_EVIDENCE_CONTRACT, weekStart } from "./ops-rules";
-import { PageHeader, Section as UiSection, Stat, useNow } from "./ui";
+import { PageHeader, Section as UiSection, useNow } from "./ui";
 import { finishBuckets, matchingExplain, safeEvidenceLink, stageSignal, workflowFor, type Signal } from "./walkthrough-rules";
 import "./walkthrough.css";
 
@@ -40,7 +40,7 @@ export function WalkthroughView() {
   const selection = barEvent; // the event is chosen in the top bar only
   const event = events.find(e => e.event_uid === selection) ?? events[0];
   return <div className="wt-page">
-    <PageHeader title="From golf shots to prices" purpose={`Follow a golfer's skill estimate into the tournament simulation, then see which weekly outputs have been verified.${event ? ` Showing ${event.name ?? event.event_uid}.` : ""}`} actions={<Link prefetch={false} href="/ops" className="wt-linkbtn">Open full weekly workflow</Link>} />
+    <PageHeader title="From golf shots to prices" purpose="How a golfer's skill becomes a price, and which weekly outputs are verified." actions={<Link prefetch={false} href="/ops" className="wt-linkbtn">Open full weekly workflow</Link>} />
     {index.error && <p className="wt-notice" role="status">Event data unavailable: {index.error} <button type="button" onClick={index.refetch}>Retry</button></p>}
     <nav aria-label="On this page: the pipeline in five steps"><ol className="wt-flow">{TOPICS.map(([key, label, detail], i) => <li key={key}><a href={`#${key}`}><span className="wt-flow-n">{i + 1}</span><strong>{label}</strong><small>{detail}</small></a></li>)}</ol></nav>
     {event ? <EventGuide key={event.event_uid} event={event} indexStale={index.stale || !!index.error} /> : <>
@@ -78,14 +78,11 @@ function EventGuide({ event, indexStale }: { event: IndexEvent; indexStale: bool
   const green = signals.filter(s => s.tone === "green").length, red = signals.filter(s => s.tone === "red").length;
   const headline = red ? `${red} step${red === 1 ? " needs" : "s need"} attention` : green === STAGES.length ? "All weekly outputs verified" : "Weekly verification is incomplete";
   return <>
-    <UiSection id="week" title="This week’s process" purpose={`Week beginning ${week}. Evidence checked ${fmt(flow?.now)}. A published price is separate from a verified handoff.`} actions={<button type="button" className="wt-btn" onClick={() => setRefresh(n => n + 1)}>Refresh status</button>}>
+    <UiSection id="week" title="This week’s process" purpose={`Week of ${week}, checked ${fmt(flow?.now)}. A published price is not a verified handoff.`} actions={<button type="button" className="wt-btn" onClick={() => setRefresh(n => n + 1)}>Refresh</button>}>
       <div className="wt-status" role="status" aria-label="Weekly status summary">
-        <h3>{headline}</h3>
-        <div className="kpi-grid">
-          <Stat label="Verified" value={String(green)} unit={`of ${STAGES.length}`} tone="positive" note="Current output proof" />
-          <Stat label="Pending or unverified" value={String(STAGES.length - green - red)} note="Pending, stale or missing proof" />
-          <Stat label="Needs attention" value={String(red)} tone={red ? "negative" : "neutral"} note="Failure or attention required" />
-        </div>
+        <div className="wt-status-head"><h3>{headline}</h3><p>{green} verified · {STAGES.length - green - red} unverified · {red} need attention</p></div>
+        <ol className="wt-strip" aria-hidden="true">{signals.map((signal, i) => <li key={STAGES[i].id} className={`wt-seg wt-${signal.tone}`} title={`${STAGES[i].label}: ${signal.tone}`} />)}</ol>
+        <p className="wt-status-note">Unverified means no fresh output proof yet, not a failure.</p>
       </div>
       <WeeklyRail signals={signals} flow={flow} />
     </UiSection>

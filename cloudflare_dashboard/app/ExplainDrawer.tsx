@@ -2,7 +2,9 @@
 
 /** Player drawer (finish shape, score distribution, why-this-price waterfall, competitor overlay). Loaded when a player is opened. */
 import Link from "next/link";
-import { lazy, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useDialogFocus } from "./ShellParts";
 import { ChevronRight, CloudSun, Search, X } from "lucide-react";
 import { Kpi, SegmentedControl } from "./components";
 import { MarketRows, PLAYER_COLORS, ScoreFan, ShapeBars, Waterfall } from "./ExplainBits";
@@ -35,27 +37,21 @@ export function PlayerDrawer({ doc, player, competitors, market, setCompetitors,
   const t = f ? topK(f.pos, [1, 5, 10, 20]) : [];
   const rounds = doc.event.rounds ?? 4;
   const live = player.live;
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; });
-  useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCloseRef.current(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [player.id]);
-  return (
-    <div className="ex-drawer-layer" role="dialog" aria-modal="true" aria-label={`${player.name} pricing detail`}>
-      <button className="ex-drawer-backdrop" aria-label="Close player detail" onClick={onClose} />
+  const layerRef = useRef<HTMLDivElement>(null);
+  // Modal contract (same hook as the phone More sheet): focus moves in, Tab is trapped, Escape closes, the page behind is inert, focus returns to the row that opened it.
+  useDialogFocus(true, layerRef, onClose, ["main", ".sidebar", ".tabbar", ".skip-link", ".sidebar-backdrop"], { initial: ".ex-close" });
+  const layer = (
+    <div className="ex-drawer-layer" role="dialog" aria-modal="true" aria-labelledby="ex-drawer-title" ref={layerRef}>
+      <button className="ex-drawer-backdrop" aria-label="Close player detail" tabIndex={-1} onClick={onClose} />
       <aside className="ex-drawer">
         <header>
           <div>
             <span className="eyebrow">{doc.kind === "live" ? `In play, after round ${doc.after_round}` : "Before the event"}</span>
-            <h2>{player.name}</h2>
+            <h2 id="ex-drawer-title">{player.name}</h2>
             <a className="ex-link" href={`/players?player=${player.id}`}>Profile and vs PGA avg <ChevronRight size={14} /></a>
             <Tags tags={player.tags} max={8} />
           </div>
-          <button type="button" className="ex-close" onClick={onClose} aria-label="Close" ref={closeRef}><X size={20} /></button>
+          <button type="button" className="ex-close" onClick={onClose} aria-label="Close player detail"><X size={20} /></button>
         </header>
 
         <div className="ex-drawer-kpis">
@@ -136,5 +132,6 @@ export function PlayerDrawer({ doc, player, competitors, market, setCompetitors,
       </aside>
     </div>
   );
+  return typeof document === "undefined" ? layer : createPortal(layer, document.body);
 }
 

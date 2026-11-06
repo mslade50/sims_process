@@ -1,4 +1,5 @@
 "use client";
+import {useSvgFont} from "./player-chart-scale";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {useDashboardData} from "./data";
 import {HOLE_BASED} from "./player-fingerprint-rules";
@@ -26,6 +27,7 @@ export function MetricTrendPanel(props:PanelProps){
   return <RoundTrendPanel {...props} loadingShots={!!props.seriesKey&&load.loading}/>;
 }
 function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClose,windowDays}:PanelProps&{series:ShotSeries;selected:Set<string>}){
+  const {fs,ref:svgFont}=useSvgFont(640);
   const shots=useMemo(()=>seriesValues(series,metric.key,selected),[series,metric.key,selected]),total=shots.length,windows=shotWindows(metric.key);
   const [win,setWin]=useState<number>(()=>defaultShotWindow(total,metric.key)),[hover,setHover]=useState<number|null>(null),closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();},[]);
@@ -54,13 +56,13 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
     <div className="pd-mt-tools"><div className="pd-mt-windows" role="group" aria-label={`Moving average window in ${words}`}>{windows.map(w=><button key={w} type="button" aria-pressed={win===w} onClick={()=>{setWin(w);setHover(null);}}>{w}</button>)}</div><label title="Shaded: where this average would wander from luck alone if the player never changed"><input type="checkbox" checked={showBand} disabled={!band} onChange={e=>setShowBand(e.target.checked)}/> Show luck band <span className="pd-muted">(shaded)</span></label></div>
     <p className="pd-mt-trend" role="status"><b>{changeText}</b></p>
     <p className="pd-muted">{full.length?<>Latest {win}-{word} average <b>{fmt(sum.current)}</b> over {total.toLocaleString("en-US")} {words}</>:<>{total} {words} recorded</>}{ref!==null?<> · PGA average {fmt(ref)} (dashed line)</>:" · PGA average not published for this view"}.{lower&&" Lower is better for this measure (the radar flips it so further out is still better)."}{descriptive&&" Ball flight, not skill: higher is not better or worse."}</p>
-    {full.length>=MIN_POINTS?<svg className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-${word} moving average over ${total} ${words}, from ${fmt(full[0].sma)} to ${fmt(sum.current)}. Use left and right arrows to read along the line.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
-      {unit&&<text x={L} y={10} fontSize="12" fill="var(--muted-strong)">{unit}</text>}{niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="12" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
-      {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title><text x={W-R} y={y(ref)-4} textAnchor="end" fontSize="12" fill="var(--muted-strong)">PGA average</text></g>}
+    {full.length>=MIN_POINTS?<svg ref={svgFont} className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-${word} moving average over ${total} ${words}, from ${fmt(full[0].sma)} to ${fmt(sum.current)}. Use left and right arrows to read along the line.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
+      {unit&&<text x={L} y={10} fontSize={fs} fill="var(--muted-strong)">{unit}</text>}{niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize={fs} fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
+      {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title><text x={W-R} y={y(ref)-4} textAnchor="end" fontSize={fs} fill="var(--muted-strong)">PGA average</text></g>}
       {bandOn&&<g><rect x={L} width={W-L-R} y={y(band!.hi)} height={Math.max(0,y(band!.lo)-y(band!.hi))} fill="var(--chart-2)" opacity=".1"/><line x1={L} x2={W-R} y1={y(band!.mean)} y2={y(band!.mean)} stroke="var(--chart-2)" strokeOpacity=".45" strokeDasharray="2 3"/></g>}
       <polyline points={line} fill="none" stroke="var(--chart-2)" strokeWidth="2.5" strokeLinejoin="round"/>
-      {ticks.map((i,k)=><text key={i} x={x(i)} y={H-14} textAnchor={k===0?"start":k===ticks.length-1?"end":"middle"} fontSize="12" fill="var(--muted)">{tickText(i)}</text>)}
-      <text x={(L+W-R)/2} y={H-1} textAnchor="middle" fontSize="12" fill="var(--muted)">{word[0].toUpperCase()+word.slice(1)}s in play order (dates are rough markers) · the line starts once {win} {words} are behind it</text>
+      {ticks.map((i,k)=><text key={i} x={x(i)} y={H-14} textAnchor={k===0?"start":k===ticks.length-1?"end":"middle"} fontSize={fs} fill="var(--muted)">{tickText(i)}</text>)}
+      <text x={(L+W-R)/2} y={H-1} textAnchor="middle" fontSize={fs} fill="var(--muted)">{word[0].toUpperCase()+word.slice(1)}s in play order (dates are rough markers) · the line starts once {win} {words} are behind it</text>
       {sel&&hover!==null&&<g><line x1={x(hover)} x2={x(hover)} y1={T} y2={H-B} stroke="var(--muted)"/><circle cx={x(hover)} cy={y(sel.sma)} r="4.5" fill="var(--chart-2)"/></g>}
     </svg>:<p className="pd-empty">Not enough {words} yet: {total.toLocaleString("en-US")} recorded, and a {win}-{word} line needs about {win+MIN_POINTS} to show anything. {win>windows[0]?"Try a shorter average.":"Check back after a few more events."}</p>}
     <p className="pd-mt-readout" aria-live="polite">{sel?<>{dayText(sel.date)} · {word} {sel.index.toLocaleString("en-US")} of {total.toLocaleString("en-US")} · average {fmt(sel.sma)} (last {win} {words})</>:"Hover or use the arrow keys (Shift for bigger steps) to read along the line."}</p>
@@ -72,6 +74,7 @@ function ShotTrendPanel({metric,title,series,selected,filtered,descriptive,onClo
   </section></div>;
 }
 function RoundTrendPanel({metric,title,rows,filtered,descriptive,onClose,windowDays,loadingShots=false}:PanelProps&{loadingShots?:boolean}){
+  const {fs,ref:svgFont}=useSvgFont(640);
   const [win,setWin]=useState<number>(()=>defaultTrendWindow(trendRoundCount(rows,metric.key))),[dots,setDots]=useState(false),[hover,setHover]=useState<number|null>(null);
   const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();},[]);
@@ -99,14 +102,14 @@ function RoundTrendPanel({metric,title,rows,filtered,descriptive,onClose,windowD
     {total===0?<p className="pd-empty">No {descriptive?"radar ":""}rounds with this measure are available for the current selection.</p>:<>
       <p className="pd-mt-trend" role="status"><b>{changeText}</b></p>
       <p className="pd-muted">{full.length?<>Latest {win}-round average <b>{fmt(sum.current)}</b> over {total} {descriptive?"radar rounds":"rounds"}</>:<>{total} {descriptive?"radar rounds":"rounds"} shown as single rounds</>}{ref!==null?<> · PGA average {fmt(ref)} (dashed line)</>:" · PGA average not published for this view"}.{lower&&" Lower is better for this measure (the radar flips it so further out is still better)."}{descriptive&&" Ball flight, not skill: higher is not better or worse."}</p>
-      <svg className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-round moving average over ${total} rounds${full.length?`, from ${fmt(full[0].sma)} to ${fmt(sum.current)}`:" (not enough rounds yet; single rounds shown)"}. Use left and right arrows to read each round.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
-        {unit&&<text x={L} y={10} fontSize="12" fill="var(--muted-strong)">{unit}</text>}{niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize="12" fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
-        {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title><text x={W-R} y={y(ref)-4} textAnchor="end" fontSize="12" fill="var(--muted-strong)">PGA average</text></g>}
+      <svg ref={svgFont} className="pd-mt-chart" viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label={`${title}: ${win}-round moving average over ${total} rounds${full.length?`, from ${fmt(full[0].sma)} to ${fmt(sum.current)}`:" (not enough rounds yet; single rounds shown)"}. Use left and right arrows to read each round.`} onKeyDown={key} onPointerMove={pointer} onPointerLeave={()=>setHover(null)} onBlur={()=>setHover(null)}>
+        {unit&&<text x={L} y={10} fontSize={fs} fill="var(--muted-strong)">{unit}</text>}{niceTicks(lo,hi).map(v=>{return <g key={v}><line x1={L} x2={W-R} y1={y(v)} y2={y(v)} stroke="var(--line)"/><text x={L-6} y={y(v)+4} textAnchor="end" fontSize={fs} fill="var(--muted)">{formatMetric(v,unit)}</text></g>;})}
+        {ref!==null&&ref>lo&&ref<hi&&<g><line x1={L} x2={W-R} y1={y(ref)} y2={y(ref)} stroke="var(--muted-strong)" strokeDasharray="5 4"/><title>PGA average {formatMetric(ref,unit)}</title><text x={W-R} y={y(ref)-4} textAnchor="end" fontSize={fs} fill="var(--muted-strong)">PGA average</text></g>}
         {showDots&&shown.map(p=><circle key={p.index} cx={x(p.index)} cy={y(p.value)} r="2.2" fill="var(--chart-1)" opacity=".28"/>)}
         {full.length>1&&<polyline points={line} fill="none" stroke="var(--chart-2)" strokeWidth="2.5" strokeLinejoin="round"/>}
         {full.length===1&&<circle cx={x(full[0].index)} cy={y(full[0].sma)} r="4" fill="var(--chart-2)"/>}
-        {ticks.map((t,k)=><text key={t} x={x(t)} y={H-14} textAnchor={ticks.length>1&&k===0?"start":ticks.length>1&&k===ticks.length-1?"end":"middle"} fontSize="12" fill="var(--muted)">{roundTick(t)}</text>)}
-        <text x={(L+W-R)/2} y={H-1} textAnchor="middle" fontSize="12" fill="var(--muted)">Rounds in order, oldest → newest (dates are rough markers){full.length>0&&full[0].index>1&&showDots?` · the average starts at round ${full[0].index}`:""}</text>
+        {ticks.map((t,k)=><text key={t} x={x(t)} y={H-14} textAnchor={ticks.length>1&&k===0?"start":ticks.length>1&&k===ticks.length-1?"end":"middle"} fontSize={fs} fill="var(--muted)">{roundTick(t)}</text>)}
+        <text x={(L+W-R)/2} y={H-1} textAnchor="middle" fontSize={fs} fill="var(--muted)">Rounds in order, oldest → newest (dates are rough markers){full.length>0&&full[0].index>1&&showDots?` · the average starts at round ${full[0].index}`:""}</text>
         {sel&&<g><line x1={x(sel.index)} x2={x(sel.index)} y1={T} y2={H-B} stroke="var(--muted)"/>{finite(sel.sma)&&<circle cx={x(sel.index)} cy={y(sel.sma)} r="4.5" fill="var(--chart-2)"/>}</g>}
       </svg>
       <p className="pd-mt-readout" aria-live="polite">{sel?<>Round {sel.index} · {dayText(sel.date)} · {finite(sel.sma)?<>average {fmt(sel.sma)} (last {win} rounds)</>:<>no {win}-round average yet (it starts at round {win})</>} · this round {fmt(sel.value)} from {sel.n} {sel.n===1?"shot":"shots"}</>:"Hover or use the arrow keys to read a round."}</p>

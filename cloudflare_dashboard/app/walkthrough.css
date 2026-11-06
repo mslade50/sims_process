@@ -117,3 +117,15 @@
 .wt-fold > summary { border: 1px solid var(--line-strong); border-radius: var(--radius-control); padding: 0 var(--sp-4); background: var(--surface); }
 .wt-fold[open] > summary { margin-bottom: var(--sp-4); }
 @media (max-width: 600px) { .wt-rail button { grid-template-columns: 28px minmax(0, 1fr) auto; padding: var(--sp-1) var(--sp-2); min-height: 56px; } .wt-rail .wt-lamp { grid-column: auto; } }
+
+/* R3: week status as one headline, one count line and a step strip (replaces three stat tiles). */
+.wt-status { display: grid; gap: var(--sp-3); padding: var(--sp-4) 0; border-block: 1px solid var(--line); margin-bottom: var(--sp-5); }
+.wt-status-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-4); }
+.wt-status-head h3 { margin: 0; font-size: var(--fs-h2); }
+.wt-page .wt-status-head p, .wt-page .wt-status-note { margin: 0; color: var(--muted-strong); font-size: var(--fs-data); font-variant-numeric: tabular-nums; }
+.wt-page .wt-status-note { font-size: var(--fs-small); }
+.wt-strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--sp-1); list-style: none; margin: 0; padding: 0; }
+.wt-page .wt-strip li { margin: 0; height: 8px; border-radius: 2px; background: var(--line-strong); }
+.wt-strip .wt-seg.wt-green { background: var(--pos); }
+.wt-strip .wt-seg.wt-yellow { background: transparent; box-shadow: inset 0 0 0 2px var(--warn); }
+.wt-strip .wt-seg.wt-red { background: var(--neg); }

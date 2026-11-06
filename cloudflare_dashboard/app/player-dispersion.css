@@ -21,7 +21,7 @@
 .dsp-grid-v{stroke-dasharray:2 4}
 .dsp-tick{font-size:var(--fs-small);fill:var(--muted)}
 .dsp-axis-title{font-size:var(--fs-small);fill:var(--muted-strong)}
-.dsp-note{font-size:8.5px;fill:var(--muted)}
+.dsp-note{font-size:var(--fs-small);fill:var(--muted)}
 .dsp-centre{stroke:var(--foreground);stroke-width:1.3;stroke-dasharray:5 3;opacity:.7}
 .dsp-dot{opacity:.55}
 .dsp-bar{stroke-width:4;stroke-linecap:round}
@@ -78,7 +78,7 @@
 .dsp-readout{font-size:14px;line-height:1.6;margin:8px 0 10px;padding:10px 14px;border-left:2px solid var(--warning);background:var(--surface-soft);border-radius:4px}
 .dsp-readout b{font-weight:600}
 .dsp-readout span{color:var(--muted-strong);font-size:13px}
-.dsp-readout small{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.dsp-readout small{display:block;margin-top:3px;font-size:var(--fs-small);color:var(--muted)}
 .dsp-dot-dim{opacity:.14}
 .dsp-dot-hit{opacity:.9;stroke:var(--surface);stroke-width:.4}
 .dsp-shift marker path{fill:var(--foreground)}

@@ -5,7 +5,7 @@ import { useEventParam } from "./event-param";
 import { Search } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { DataTable, EmptyState, ErrorState, Kpi, LoadingState, PageIntro, Panel, humanValue } from "./components";
-import { Chip, PageHeader, SegmentedControl, Stat } from "./ui";
+import { Chip, OnThisPage, PageHeader, SegmentedControl, Stat } from "./ui";
 import { ChangeTray, type TrayChange, type TrayStage } from "./ChangeTray";
 import "./inputs.css";
 import { useIsOwner } from "./viewer";
@@ -1721,10 +1721,8 @@ export function InputsView() {
           <Chip tone={run?.overrides_applied.length ? "warning" : "neutral"} title="Owner overrides applied to this run's prices.">{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "No overrides applied"}</Chip>
         </div>
       </div>
-      <nav className="in-tabs" aria-label="Model inputs area">
-        {tabOptions.map((t) => <button key={t.value} type="button" className={activeTab === t.value ? "active" : ""} aria-current={activeTab === t.value ? "page" : undefined} onClick={() => setTab(t.value as Tab)}>{t.label}</button>)}
-      </nav>
-      <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>
+      <OnThisPage label="Model inputs area" sections={tabOptions.map((t) => ({ id: t.value, label: t.label }))} value={activeTab} onSelect={(id) => setTab(id as Tab)} />
+      {activeTab !== "adjust" && <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>}
       {docLoading && activeTab !== "features" && <LoadingState label="Loading run" />}
       {docError && activeTab !== "features" && activeTab !== "adjust" && <EmptyState title="No saved inputs for this run" detail="Model inputs were not saved for this event or run. Pick another event or run above." />}
       {doc && activeTab === "players" && <PlayersTab key={run?.key} doc={doc} playedRounds={playedRounds} onAdjust={owner ? (id) => { setPresetPlayer(id); setTab("adjust"); } : undefined} />}

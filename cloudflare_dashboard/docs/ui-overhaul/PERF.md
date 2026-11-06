@@ -66,3 +66,30 @@ Waterfall (`perf-check.mjs --waterfall`): the shell (framework + vinext client +
 
 `npx tsc --noEmit` clean; `eslint . --ignore-pattern dist --ignore-pattern .next` clean; `npm test` 798 tests, 0 failures, 1 todo (the 150 KB This week target); `node scripts/ui-check.mjs --extra --crops --out dist-visual/r3-perf`: 80 cases, 0 errors, 0 warnings.
 Tests changed: `tests/budgets.test.mjs` (ratchets and notes), `tests/views-render.test.mjs` (Why priced now renders from `ExplainWhy.tsx`).
+
+# Integration pass r3-int (2026-11-06)
+
+Raw run: `perf-r3-final.json` (3 runs, medians). Phone = 375x812, 4x CPU, fast 4G. Before = start of this pass (single run).
+
+| Route (phone) | LCP before | LCP after | CLS before | CLS after |
+|---|---|---|---|---|
+| this-week | 3088 ms | 2944 ms | 0.412 | 0.007 |
+| why-priced | 3528 ms | 2952 ms | 0.004 | 0.000 |
+| players?player=10091 | 5948 ms (r3-perf) / 3000 ms | 3060 ms | 0.134 (intermittent) | 0.006 |
+| weekly-players | 2576 ms | 2584 ms | 0.000 | 0.000 |
+| weather-effects | 3400 ms | 3336 ms | 0.000 | 0.000 |
+
+Desktop: LCP 128-204 ms, CLS 0.030-0.046 on every route (target < 0.05 met).
+
+What changed
+- CLS 0.41 on This week: `usePhone()` started false and flipped after mount, so the board section moved from below the lede to above "What changed" (shift of about 490 px). It now reads the viewport on first render (every caller mounts only after data is in the browser, never in server markup).
+- Route code hints: `scripts/route-chunks.mjs` (postbuild) writes `dist/client/route-chunks.json` (route to view chunk, its non-shell imports and CSS from Vite's manifest). `worker/route-preload.ts` adds `Link: rel=modulepreload` headers and the route's stylesheets as `<link>` tags at the end of `<head>` on the HTML response (additive, streamed, any miss returns the response untouched; tests/route-preload.test.mjs). The stylesheets matter: once code and data arrive early, the lazy view's CSS (injected only when its code runs) arrived after the first render and shifted the Players page (CLS 0.13). Deploy note: `postbuild` runs with `npm run build`; if the deploy builds some other way the file is absent and the Worker simply sends no hints.
+- Early fetch (head script): `/players?player=<id>` now starts `player_profiles/golfer/search-index.json?id=` (the one-golfer slice) before hydration; `/why-priced` starts the document it will open (pre-tournament run when a live run exists, else the latest) after the index names it. Players LCP 5.9 s to 3.0 s; Why priced 3.5 s to 2.95 s. Covered in tests/shell.test.mjs.
+- No slim explain variant exists (the document is 111 KB brotli for Abu Dhabi); a slim one needs a publisher change, not done.
+
+LCP < 2.5 s on the throttled phone: not reached (2.9-3.1 s on the three target routes). Arithmetic at 1.6 Mbps (200 KB/s) and 150 ms RTT: the first screen needs the shell JS 147 KB + CSS about 30 KB + HTML, then (sequentially, because the document key is in index.json) index 8 KB and the explain document 111 KB, plus the view 60 KB: about 370 KB = 1.85 s of pure transfer, about 0.45 s of round trips (HTML, then index, then document) and about 0.4 s of hydration at 4x CPU, which is 2.7-2.9 s. The waterfall shows the document arriving at 2.77 s. Getting under 2.5 s needs a smaller shell (floor is React + vinext client 105 KB) or server-rendering the first screen, both outside this pass.
+
+Other fixes: Why priced rows use one stretched name button (one tab stop per row, whole row clickable, no nested handler); Ops and Inputs use `OnThisPage` tab mode (Players one-golfer already used `OnThisPage`); `/players` eyebrow is "Players" while `/weekly-players` stays "Week"; weather wave bars carry an axis ("-X easier / 0 = field average / +X harder", unit line); the contenders table is now compact rows; shapes scatter text is 13 user units (about 12.4 px on a 375 px phone) with crowded x ticks dropped; trend end labels sit in a right margin instead of on the line.
+
+Budgets unchanged: shell 146.5 KB gz (148), This week + view 200.1 KB (201), CSS 65.3 KB (66). CSS did not get back to 64 KB: the contenders rows and weather axis added about 0.4 KB; removed `.in-tabs` and dead differ rules.
+Verification: tsc clean, eslint 0/0, `npm test` 807 pass / 0 fail / 1 todo; ui-check r3-full 80 cases 0/0; r3-events 56 cases 0/0; contrast 0 failing groups.

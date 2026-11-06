@@ -1,27 +1,37 @@
 "use client";
 
-import { Component, Suspense, type ReactNode } from "react";
+import { Component, Suspense, useEffect, type ReactNode } from "react";
 import { SkeletonPage } from "./ui";
+import { isChunkLoadError, mayReloadForChunk } from "./shell-rules";
 
 const RELOAD_KEY = "golf-dashboard-chunk-reload";
 
-/** A failed dynamic import after a deploy: the old page asks for a chunk hash that no longer exists. */
-export function isChunkLoadError(error: unknown): boolean {
-  const e = error as { name?: string; message?: string } | null;
-  const text = `${e?.name ?? ""} ${e?.message ?? String(error ?? "")}`;
-  return /ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Loading chunk [\w-]+ failed|Loading CSS chunk/i.test(text);
-}
-
-/** One hard reload per tab session for a stale-chunk error; sessionStorage guards against a reload loop. Returns true when a reload started. */
+/** One hard reload per minute for a stale-chunk error; sessionStorage guards against a reload loop. Returns true when a reload started. */
 export function reloadOnceForStaleChunk(): boolean {
   try {
-    if (sessionStorage.getItem(RELOAD_KEY)) return false;
+    if (!mayReloadForChunk(sessionStorage.getItem(RELOAD_KEY), Date.now())) return false;
     sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
   } catch {
     return false; // storage blocked: do not risk a loop
   }
   window.location.reload();
   return true;
+}
+
+/**
+ * Page-wide recovery for a deploy that happened while this page was open: any script or lazy import (shell search, customize dialog,
+ * prefetches, views) that fails with a missing-chunk error reloads once to pick up the new build. Mounted once by the shell.
+ */
+export function useChunkLoadRecovery() {
+  useEffect(() => {
+    const onPreload = (event: Event) => { event.preventDefault(); reloadOnceForStaleChunk(); };
+    const onRejection = (event: PromiseRejectionEvent) => { if (isChunkLoadError(event.reason)) reloadOnceForStaleChunk(); };
+    const onError = (event: ErrorEvent) => { if (isChunkLoadError(event.error ?? event.message)) reloadOnceForStaleChunk(); };
+    window.addEventListener("vite:preloadError", onPreload);
+    window.addEventListener("unhandledrejection", onRejection);
+    window.addEventListener("error", onError);
+    return () => { window.removeEventListener("vite:preloadError", onPreload); window.removeEventListener("unhandledrejection", onRejection); window.removeEventListener("error", onError); };
+  }, []);
 }
 
 type Props = { viewKey: string; children: ReactNode };

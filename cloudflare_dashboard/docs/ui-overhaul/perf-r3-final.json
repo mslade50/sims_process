@@ -1,0 +1,5617 @@
+{
+  "at": "2026-11-06T06:13:11.732Z",
+  "base": "http://localhost:3111",
+  "results": [
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 834,
+          "h": "template#B:0:0 div.skeleton-page:326"
+        },
+        {
+          "t": 1184,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2599,
+          "h": "div.page-intro:92 div.ex-viewbar:50 div.skeleton-page:326"
+        },
+        {
+          "t": 2949,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1000 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:112"
+        },
+        {
+          "t": 3214,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1000 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:964"
+        },
+        {
+          "t": 3458,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1000 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:965"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/ExplainViews-B35jeBkM.js",
+          "t": "script",
+          "s": 184,
+          "e": 747,
+          "kb": 19.1
+        },
+        {
+          "n": "/_next/static/chunks/explain-DTFxSZw-.js",
+          "t": "script",
+          "s": 184,
+          "e": 452,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 185,
+          "e": 670,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/glossary-DAbXMYiB.js",
+          "t": "script",
+          "s": 185,
+          "e": 498,
+          "kb": 4.4
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 185,
+          "e": 499,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 185,
+          "e": 763,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 185,
+          "e": 839,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 188,
+          "e": 671,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 188,
+          "e": 701,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 188,
+          "e": 2338,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 189,
+          "e": 839,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 189,
+          "e": 1246,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 189,
+          "e": 950,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 189,
+          "e": 919,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 189,
+          "e": 935,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 190,
+          "e": 1012,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 190,
+          "e": 1028,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 190,
+          "e": 1090,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 190,
+          "e": 1090,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 190,
+          "e": 1122,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 190,
+          "e": 1201,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 190,
+          "e": 1278,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 190,
+          "e": 1248,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 191,
+          "e": 1324,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 191,
+          "e": 1339,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 191,
+          "e": 1371,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 191,
+          "e": 1434,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 191,
+          "e": 1434,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 192,
+          "e": 1464,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 192,
+          "e": 1496,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 192,
+          "e": 1512,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 192,
+          "e": 1543,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 192,
+          "e": 1605,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 192,
+          "e": 1605,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 192,
+          "e": 1637,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 193,
+          "e": 1668,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 193,
+          "e": 1699,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 193,
+          "e": 1730,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 193,
+          "e": 1777,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 193,
+          "e": 1777,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 193,
+          "e": 1808,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 193,
+          "e": 1838,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/explain.mu_vgyjJ.css",
+          "t": "link",
+          "s": 194,
+          "e": 762,
+          "kb": 6.5
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 1295,
+          "e": 2508,
+          "kb": 86.6
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 2409,
+          "e": 2633,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2443,
+          "e": 2617,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2446,
+          "e": 2617,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2459,
+          "e": 2633,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 2459,
+          "e": 2648,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 2460,
+          "e": 2679,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 2460,
+          "e": 2789,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/changes.json?event=euro%3A2026142%3A2026-11-05&from=golfprice%2Fexplain%2Fe",
+          "t": "fetch",
+          "s": 2565,
+          "e": 2805,
+          "kb": 3.3
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2758,
+          "e": 3259,
+          "kb": 47.3
+        },
+        {
+          "n": "/_next/static/chunks/ShapeViews-1sXvYF1r.js",
+          "t": "script",
+          "s": 2847,
+          "e": 3133,
+          "kb": 9.5
+        },
+        {
+          "n": "/_next/static/css/ShapeViews.DXtjiKEB.css",
+          "t": "link",
+          "s": 2849,
+          "e": 3054,
+          "kb": 2.1
+        }
+      ],
+      "route": "this-week",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 2944,
+      "lcpEl": "p.ex-muted",
+      "fcp": 844,
+      "ttfb": 18,
+      "cls": 0.0075,
+      "shifts": [
+        {
+          "t": 2946,
+          "v": 0.007,
+          "el": "a 423->423 | a 425->425"
+        },
+        {
+          "t": 3451,
+          "v": 0.0004,
+          "el": "button.active 234->234 |  607->607"
+        }
+      ],
+      "tbt": 114,
+      "longestTask": 164,
+      "longTasks": 1,
+      "jsKB": 217.9,
+      "cssKB": 27.7,
+      "otherKB": 162.4,
+      "requests": 56,
+      "inp": {
+        "target": "Pre-tournament prices",
+        "frames": 39,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0.0138
+      },
+      "nav": null,
+      "runs": [
+        2904,
+        2944,
+        2972
+      ]
+    },
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 819,
+          "h": "template#B:0:0 div.skeleton-page:326"
+        },
+        {
+          "t": 1181,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2681,
+          "h": "div.page-intro:113 div.ex-viewbar:50 div.skeleton-page:326"
+        },
+        {
+          "t": 2945,
+          "h": "div.page-intro:113 div.ex-viewbar:50 p.ex-runnote:116 section.ex-glance:381 section#players.ds-section:2559 section#legend.ds-section:114 section#tech.ds-section:126"
+        },
+        {
+          "t": 3464,
+          "h": "div.page-intro:113 div.ex-viewbar:50 p.ex-runnote:116 section.ex-glance:381 section#players.ds-section:2542 section#legend.ds-section:114 section#tech.ds-section:126"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/ExplainWhy-DIpeBJAK.js",
+          "t": "script",
+          "s": 181,
+          "e": 400,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/explain-DTFxSZw-.js",
+          "t": "script",
+          "s": 182,
+          "e": 446,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/glossary-DAbXMYiB.js",
+          "t": "script",
+          "s": 182,
+          "e": 493,
+          "kb": 4.4
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 182,
+          "e": 665,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 182,
+          "e": 744,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/ExplainViews-B35jeBkM.js",
+          "t": "script",
+          "s": 182,
+          "e": 758,
+          "kb": 19.1
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 182,
+          "e": 821,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 183,
+          "e": 825,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 185,
+          "e": 712,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 185,
+          "e": 633,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 185,
+          "e": 2368,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 186,
+          "e": 874,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 186,
+          "e": 1367,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 186,
+          "e": 929,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 186,
+          "e": 945,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 186,
+          "e": 992,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 186,
+          "e": 1007,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 186,
+          "e": 1054,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 187,
+          "e": 1102,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 187,
+          "e": 1118,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 187,
+          "e": 1166,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 187,
+          "e": 1181,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 187,
+          "e": 1305,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 187,
+          "e": 1275,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 187,
+          "e": 1396,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 187,
+          "e": 1382,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 187,
+          "e": 1382,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 188,
+          "e": 1459,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 188,
+          "e": 1474,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 188,
+          "e": 1553,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 188,
+          "e": 1567,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 188,
+          "e": 1551,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 188,
+          "e": 1567,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 189,
+          "e": 1631,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 189,
+          "e": 1631,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 189,
+          "e": 1725,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 189,
+          "e": 1725,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 189,
+          "e": 1741,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 189,
+          "e": 1756,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 189,
+          "e": 1802,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 190,
+          "e": 1802,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 190,
+          "e": 1897,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 190,
+          "e": 1897,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/explain.mu_vgyjJ.css",
+          "t": "link",
+          "s": 190,
+          "e": 743,
+          "kb": 6.5
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/week_20261105T011500Z_ca6a18cbc274.json",
+          "t": "fetch",
+          "s": 1326,
+          "e": 2759,
+          "kb": 110.9
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 2440,
+          "e": 2711,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2477,
+          "e": 2650,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2481,
+          "e": 2650,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2494,
+          "e": 2671,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 2495,
+          "e": 2681,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 2495,
+          "e": 2834,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 2495,
+          "e": 2820,
+          "kb": 0.5
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2833,
+          "e": 3347,
+          "kb": 47.3
+        }
+      ],
+      "route": "why-priced",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 2952,
+      "lcpEl": "span",
+      "fcp": 836,
+      "ttfb": 15,
+      "cls": 0.0002,
+      "shifts": [
+        {
+          "t": 3459,
+          "v": 0.0002,
+          "el": "button 257->257 | span.evstat-age 69->69"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 211.8,
+      "cssKB": 25.3,
+      "otherKB": 183.2,
+      "requests": 54,
+      "inp": {
+        "target": "Prices after R1",
+        "frames": 42,
+        "eventDuration": 56,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 2752,
+        "cls": 0.0071,
+        "wallMs": 2231
+      },
+      "runs": [
+        2940,
+        2952,
+        3080
+      ]
+    },
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 894,
+          "h": "template#B:0:0 div.skeleton-page:326"
+        },
+        {
+          "t": 1190,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2596,
+          "h": "div.pp-page:467"
+        },
+        {
+          "t": 3071,
+          "h": "div.pp-page:3633"
+        },
+        {
+          "t": 3414,
+          "h": "div.pp-page:3613"
+        },
+        {
+          "t": 4533,
+          "h": "div.pp-page:3695"
+        },
+        {
+          "t": 6152,
+          "h": "div.pp-page:5970"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/PlayerProfilesView-CwHHYlZj.js",
+          "t": "script",
+          "s": 189,
+          "e": 1026,
+          "kb": 56.1
+        },
+        {
+          "n": "/_next/static/chunks/CourseGeometry-Cm8_zWa4.js",
+          "t": "script",
+          "s": 189,
+          "e": 474,
+          "kb": 5.4
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 190,
+          "e": 379,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 190,
+          "e": 474,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 190,
+          "e": 632,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 190,
+          "e": 395,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 191,
+          "e": 852,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/labels-CV6Lcjz1.js",
+          "t": "script",
+          "s": 191,
+          "e": 852,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 191,
+          "e": 937,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 195,
+          "e": 788,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 195,
+          "e": 632,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 195,
+          "e": 962,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 195,
+          "e": 2296,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 195,
+          "e": 1386,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 195,
+          "e": 1056,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 196,
+          "e": 1024,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 196,
+          "e": 1104,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 196,
+          "e": 1151,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 196,
+          "e": 1197,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 196,
+          "e": 1197,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 196,
+          "e": 1228,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 197,
+          "e": 1276,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 197,
+          "e": 1338,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 197,
+          "e": 1450,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 197,
+          "e": 1371,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 197,
+          "e": 1480,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 197,
+          "e": 1481,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 198,
+          "e": 1513,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 198,
+          "e": 1558,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 198,
+          "e": 1573,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 198,
+          "e": 1621,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 198,
+          "e": 1668,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 199,
+          "e": 1653,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 199,
+          "e": 1670,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 199,
+          "e": 1730,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 199,
+          "e": 1746,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 199,
+          "e": 1792,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 199,
+          "e": 1823,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 200,
+          "e": 1839,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 200,
+          "e": 1855,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 200,
+          "e": 1903,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 200,
+          "e": 1919,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 200,
+          "e": 1966,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 200,
+          "e": 1997,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/PlayerProfilesView.DrShe1IO.css",
+          "t": "link",
+          "s": 201,
+          "e": 774,
+          "kb": 8.4
+        },
+        {
+          "n": "/_next/static/css/CourseGeometry.7YVvYf1Q.css",
+          "t": "link",
+          "s": 201,
+          "e": 664,
+          "kb": 1.2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 201,
+          "e": 798,
+          "kb": 0.4
+        },
+        {
+          "n": "/api/golfprice/player_profiles/golfer/search-index.json?id=10091",
+          "t": "fetch",
+          "s": 797,
+          "e": 2107,
+          "kb": 13.6
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 2374,
+          "e": 2565,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2418,
+          "e": 2595,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2421,
+          "e": 2595,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2436,
+          "e": 2611,
+          "kb": 1.1
+        },
+        {
+          "n": "/api/golfprice/player_profiles/fields.json",
+          "t": "fetch",
+          "s": 2469,
+          "e": 2643,
+          "kb": 0.7
+        },
+        {
+          "n": "/api/golfprice/player_profiles/19b458d778a9d56abf7d/batch_0004.json",
+          "t": "fetch",
+          "s": 2556,
+          "e": 2845,
+          "kb": 22
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2730,
+          "e": 3279,
+          "kb": 47.3
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion/index.json",
+          "t": "fetch",
+          "s": 2999,
+          "e": 3203,
+          "kb": 2.3
+        },
+        {
+          "n": "/api/golfprice/course_geometry/index.json",
+          "t": "fetch",
+          "s": 3001,
+          "e": 3357,
+          "kb": 7.4
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 3003,
+          "e": 4438,
+          "kb": 86.6
+        },
+        {
+          "n": "/api/golfprice/runs/euro_2026142_2026-11-05/live_R1_20261105T134500Z/model_inputs.json",
+          "t": "fetch",
+          "s": 3004,
+          "e": 4078,
+          "kb": 50.2
+        },
+        {
+          "n": "/api/golfprice/player_profiles/deep-53c890a51e9ce2869d1b/batch_0016.json",
+          "t": "fetch",
+          "s": 3006,
+          "e": 5484,
+          "kb": 296.6
+        },
+        {
+          "n": "https://pga-tour-res.cloudinary.com/image/upload/c_thumb,g_face,w_280,h_350,z_0.7/headshot",
+          "t": "img",
+          "s": 3046,
+          "e": 3591,
+          "kb": 14.4
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion-5c4a599ab2a5ec6318c5/10091.json",
+          "t": "fetch",
+          "s": 3212,
+          "e": 3398,
+          "kb": 0
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion-5c4a599ab2a5ec6318c5/reference.json",
+          "t": "fetch",
+          "s": 3213,
+          "e": 3468,
+          "kb": 0
+        },
+        {
+          "n": "/api/golfprice/player_profiles/deep-reference-b732aa714f0ef5f13690/rounds.json",
+          "t": "fetch",
+          "s": 5851,
+          "e": 6027,
+          "kb": 0
+        }
+      ],
+      "route": "players?player=10091",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 3060,
+      "lcpEl": "span.badge.tone-warning",
+      "fcp": 888,
+      "ttfb": 19,
+      "cls": 0.0058,
+      "shifts": [
+        {
+          "t": 3401,
+          "v": 0.0004,
+          "el": " 292->292 |  333->333"
+        },
+        {
+          "t": 4525,
+          "v": 0.0054,
+          "el": "a.ph-link 650->0"
+        }
+      ],
+      "tbt": 545,
+      "longestTask": 418,
+      "longTasks": 5,
+      "jsKB": 238.2,
+      "cssKB": 29.3,
+      "otherKB": 569.8,
+      "requests": 66,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 17,
+        "eventDuration": 32,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 2968,
+        "cls": 0.0071,
+        "wallMs": 2474
+      },
+      "runs": [
+        3016,
+        3060,
+        3148
+      ]
+    },
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 748,
+          "h": "template#B:0:0 div.skeleton-page:326"
+        },
+        {
+          "t": 885,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2586,
+          "h": "div.pp-page:467"
+        },
+        {
+          "t": 3898,
+          "h": "div.pp-page:2173"
+        },
+        {
+          "t": 4002,
+          "h": "div.pp-page:2251"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/WeeklyPlayersView-C2Sfp2nX.js",
+          "t": "script",
+          "s": 185,
+          "e": 545,
+          "kb": 9.2
+        },
+        {
+          "n": "/_next/static/chunks/PlayerProfilesView-CwHHYlZj.js",
+          "t": "script",
+          "s": 186,
+          "e": 1043,
+          "kb": 56.1
+        },
+        {
+          "n": "/_next/static/chunks/CourseGeometry-Cm8_zWa4.js",
+          "t": "script",
+          "s": 187,
+          "e": 482,
+          "kb": 5.4
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 187,
+          "e": 388,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 187,
+          "e": 498,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 187,
+          "e": 1011,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 187,
+          "e": 837,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 188,
+          "e": 933,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/labels-CV6Lcjz1.js",
+          "t": "script",
+          "s": 188,
+          "e": 948,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 188,
+          "e": 963,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/distributions-rules-D8ZLzHze.js",
+          "t": "script",
+          "s": 188,
+          "e": 1011,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 191,
+          "e": 653,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 191,
+          "e": 607,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 192,
+          "e": 2320,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 192,
+          "e": 1106,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 192,
+          "e": 1167,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 192,
+          "e": 1541,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 192,
+          "e": 1169,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 192,
+          "e": 1183,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 193,
+          "e": 1232,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 193,
+          "e": 1278,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 193,
+          "e": 1340,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 193,
+          "e": 1340,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 193,
+          "e": 1355,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 193,
+          "e": 1417,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 193,
+          "e": 1556,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 194,
+          "e": 1502,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 194,
+          "e": 1620,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 194,
+          "e": 1573,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 194,
+          "e": 1604,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 194,
+          "e": 1699,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 195,
+          "e": 1714,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 195,
+          "e": 1746,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 195,
+          "e": 1761,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 195,
+          "e": 1762,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 195,
+          "e": 1792,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 196,
+          "e": 1871,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 196,
+          "e": 1886,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 196,
+          "e": 1917,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 196,
+          "e": 1932,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 196,
+          "e": 1933,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 196,
+          "e": 1977,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 197,
+          "e": 2040,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 197,
+          "e": 2056,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 197,
+          "e": 2087,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 197,
+          "e": 2103,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/WeeklyPlayersView.C9G9DXSF.css",
+          "t": "link",
+          "s": 197,
+          "e": 668,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/css/PlayerProfilesView.DrShe1IO.css",
+          "t": "link",
+          "s": 197,
+          "e": 748,
+          "kb": 8.4
+        },
+        {
+          "n": "/_next/static/css/CourseGeometry.7YVvYf1Q.css",
+          "t": "link",
+          "s": 197,
+          "e": 716,
+          "kb": 1.2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 197,
+          "e": 777,
+          "kb": 0.4
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 2398,
+          "e": 2602,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2437,
+          "e": 2608,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2440,
+          "e": 2618,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2454,
+          "e": 2633,
+          "kb": 1.1
+        },
+        {
+          "n": "/api/golfprice/player_profiles/fields.json",
+          "t": "fetch",
+          "s": 2483,
+          "e": 2664,
+          "kb": 0.7
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 2569,
+          "e": 3644,
+          "kb": 86.6
+        },
+        {
+          "n": "/api/golfprice/runs/euro_2026142_2026-11-05/live_R1_20261105T134500Z/model_inputs.json",
+          "t": "fetch",
+          "s": 2570,
+          "e": 3410,
+          "kb": 50.2
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2750,
+          "e": 3582,
+          "kb": 47.3
+        },
+        {
+          "n": "/api/golfprice/player_profiles/benchmarks.json?ids=6430,7049,7655,7677,9531,10091,10158,10",
+          "t": "fetch",
+          "s": 3894,
+          "e": 4173,
+          "kb": 11.4
+        }
+      ],
+      "route": "weekly-players",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 2584,
+      "lcpEl": "p",
+      "fcp": 800,
+      "ttfb": 9,
+      "cls": 0,
+      "shifts": [
+        {
+          "t": 3654,
+          "v": 0,
+          "el": "span.evstat-age 69->69"
+        }
+      ],
+      "tbt": 76,
+      "longestTask": 113,
+      "longTasks": 4,
+      "jsKB": 248.9,
+      "cssKB": 31.3,
+      "otherKB": 222.5,
+      "requests": 60,
+      "inp": {
+        "target": "Top 5",
+        "frames": 31,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": null,
+      "runs": [
+        2576,
+        2584,
+        2604
+      ]
+    },
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 2205,
+          "h": "div:845"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/BetBreakdownsView-DOlJspi-.js",
+          "t": "script",
+          "s": 192,
+          "e": 493,
+          "kb": 5.9
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 193,
+          "e": 368,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/bet-breakdowns-rules-CPWwlEYo.js",
+          "t": "script",
+          "s": 193,
+          "e": 445,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 193,
+          "e": 477,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 196,
+          "e": 572,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 196,
+          "e": 477,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 196,
+          "e": 1859,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 196,
+          "e": 651,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 197,
+          "e": 696,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 197,
+          "e": 1073,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 197,
+          "e": 713,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 197,
+          "e": 740,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 197,
+          "e": 807,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 197,
+          "e": 822,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 197,
+          "e": 869,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 198,
+          "e": 871,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 198,
+          "e": 917,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 198,
+          "e": 995,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 198,
+          "e": 1104,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 199,
+          "e": 1042,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 199,
+          "e": 1136,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 199,
+          "e": 1120,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 199,
+          "e": 1167,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 199,
+          "e": 1214,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 199,
+          "e": 1245,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 199,
+          "e": 1293,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 200,
+          "e": 1293,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 200,
+          "e": 1309,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 200,
+          "e": 1340,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 200,
+          "e": 1387,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 200,
+          "e": 1418,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 200,
+          "e": 1466,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 201,
+          "e": 1466,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 201,
+          "e": 1482,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 201,
+          "e": 1528,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 201,
+          "e": 1558,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 201,
+          "e": 1590,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 201,
+          "e": 1638,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 202,
+          "e": 1638,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/BetBreakdownsView.BSHt86yB.css",
+          "t": "link",
+          "s": 202,
+          "e": 556,
+          "kb": 2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 202,
+          "e": 619,
+          "kb": 0.4
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 1933,
+          "e": 2140,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 1970,
+          "e": 2140,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 1974,
+          "e": 2155,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 1987,
+          "e": 2156,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 1988,
+          "e": 2171,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 1988,
+          "e": 2187,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 1988,
+          "e": 2311,
+          "kb": 0.5
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2294,
+          "e": 2985,
+          "kb": 47.3
+        }
+      ],
+      "route": "bet-breakdowns",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 2216,
+      "lcpEl": "p",
+      "fcp": 708,
+      "ttfb": 9,
+      "cls": 0.0001,
+      "shifts": [
+        {
+          "t": 3057,
+          "v": 0.0001,
+          "el": "span.owner-chip 125->125 | span.evstat-age 69->69"
+        }
+      ],
+      "tbt": 14,
+      "longestTask": 62,
+      "longTasks": 2,
+      "jsKB": 169.2,
+      "cssKB": 21.4,
+      "otherKB": 71.5,
+      "requests": 50,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 15,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 3340,
+        "cls": 0.0071,
+        "wallMs": 2828
+      },
+      "runs": [
+        2196,
+        2216,
+        2228
+      ]
+    },
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 759,
+          "h": "template#B:0:0 div.skeleton-page:326"
+        },
+        {
+          "t": 789,
+          "h": "div:455"
+        },
+        {
+          "t": 2606,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2695,
+          "h": "div:455"
+        },
+        {
+          "t": 3329,
+          "h": "div:7612"
+        },
+        {
+          "t": 3536,
+          "h": "div:7616"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/WeatherEffectsView-nyA-qp4r.js",
+          "t": "script",
+          "s": 190,
+          "e": 535,
+          "kb": 9.4
+        },
+        {
+          "n": "/_next/static/chunks/WeatherBriefView-CXaeHVuH.js",
+          "t": "script",
+          "s": 190,
+          "e": 551,
+          "kb": 9.8
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 190,
+          "e": 488,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 191,
+          "e": 378,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 191,
+          "e": 489,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/weather-rules-msBtpikA.js",
+          "t": "script",
+          "s": 191,
+          "e": 504,
+          "kb": 4.2
+        },
+        {
+          "n": "/_next/static/chunks/CartesianChart-Zqi6aZQB.js",
+          "t": "script",
+          "s": 191,
+          "e": 1761,
+          "kb": 88.4
+        },
+        {
+          "n": "/_next/static/chunks/Bar-DWAnS9Rg.js",
+          "t": "script",
+          "s": 192,
+          "e": 773,
+          "kb": 6.5
+        },
+        {
+          "n": "/_next/static/chunks/Area-BX_5Wrl9.js",
+          "t": "script",
+          "s": 192,
+          "e": 851,
+          "kb": 4.6
+        },
+        {
+          "n": "/_next/static/chunks/Line-DNMi6Jnk.js",
+          "t": "script",
+          "s": 192,
+          "e": 897,
+          "kb": 5
+        },
+        {
+          "n": "/_next/static/chunks/ComposedChart-xc7S9av0.js",
+          "t": "script",
+          "s": 192,
+          "e": 851,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 195,
+          "e": 630,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 196,
+          "e": 677,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 196,
+          "e": 872,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 196,
+          "e": 2432,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 196,
+          "e": 1697,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 196,
+          "e": 1022,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 196,
+          "e": 1086,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 196,
+          "e": 1054,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 197,
+          "e": 1101,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 197,
+          "e": 1196,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 197,
+          "e": 1228,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 197,
+          "e": 1260,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 197,
+          "e": 1276,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 198,
+          "e": 1387,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 198,
+          "e": 1544,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 198,
+          "e": 1435,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 198,
+          "e": 1606,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 198,
+          "e": 1636,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 198,
+          "e": 1636,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 199,
+          "e": 1729,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 199,
+          "e": 1777,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 199,
+          "e": 1840,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 199,
+          "e": 1825,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 199,
+          "e": 1871,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 200,
+          "e": 1902,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 200,
+          "e": 1932,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 200,
+          "e": 1948,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 200,
+          "e": 1995,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 200,
+          "e": 2010,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 201,
+          "e": 2041,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 201,
+          "e": 2088,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 201,
+          "e": 2104,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 201,
+          "e": 2119,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 202,
+          "e": 2165,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 202,
+          "e": 2181,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/css/WeatherEffectsView.B3rVfLFH.css",
+          "t": "link",
+          "s": 202,
+          "e": 662,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/WeatherBriefView.BkMREKgy.css",
+          "t": "link",
+          "s": 202,
+          "e": 693,
+          "kb": 2.2
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 2510,
+          "e": 2713,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2547,
+          "e": 2712,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2550,
+          "e": 2727,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2564,
+          "e": 2730,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 2565,
+          "e": 2746,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 2565,
+          "e": 2761,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 2565,
+          "e": 2885,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/weather/pga_457_2026-11-05/brief_latest.json",
+          "t": "fetch",
+          "s": 2685,
+          "e": 3151,
+          "kb": 16.9
+        },
+        {
+          "n": "/api/golfprice/weather/pga_457_2026-11-05/latest.json",
+          "t": "fetch",
+          "s": 2686,
+          "e": 3090,
+          "kb": 10.1
+        },
+        {
+          "n": "/api/golfprice/weather/euro_2026142_2026-11-05/brief_latest.json",
+          "t": "fetch",
+          "s": 2696,
+          "e": 3105,
+          "kb": 10.1
+        },
+        {
+          "n": "/api/golfprice/weather/euro_2026142_2026-11-05/latest.json",
+          "t": "fetch",
+          "s": 2697,
+          "e": 3027,
+          "kb": 5.7
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2856,
+          "e": 3351,
+          "kb": 47.3
+        }
+      ],
+      "route": "weather-effects",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 3336,
+      "lcpEl": "li",
+      "fcp": 776,
+      "ttfb": 19,
+      "cls": 0,
+      "shifts": [
+        {
+          "t": 3524,
+          "v": 0,
+          "el": "span.evstat-age 69->69"
+        }
+      ],
+      "tbt": 2,
+      "longestTask": 65,
+      "longTasks": 2,
+      "jsKB": 295.4,
+      "cssKB": 22.2,
+      "otherKB": 116.2,
+      "requests": 61,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 28,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 3160,
+        "cls": 0.0071,
+        "wallMs": 2648
+      },
+      "runs": [
+        3328,
+        3336,
+        3420
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 117,
+          "h": "div.page-intro:104 div.ex-viewbar:50 div.skeleton-page:256"
+        },
+        {
+          "t": 215,
+          "h": "div.page-intro:104 div.ex-viewbar:50 section.ex-hero:144 nav.on-this-page:38 section#changed.ex-changed:533 div.ex-lede-block:124 section#board.ds-section:951 section#chances.ds-section:1400 section#course.ds-section:557 section#weather.ds-section:847 section#shapes.ds-section:104"
+        },
+        {
+          "t": 514,
+          "h": "div.page-intro:104 div.ex-viewbar:50 section.ex-hero:144 nav.on-this-page:38 section#changed.ex-changed:533 div.ex-lede-block:124 section#board.ds-section:951 section#chances.ds-section:1400 section#course.ds-section:557 section#weather.ds-section:847 section#shapes.ds-section:659"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/ExplainViews-B35jeBkM.js",
+          "t": "script",
+          "s": 13,
+          "e": 20,
+          "kb": 19.1
+        },
+        {
+          "n": "/_next/static/chunks/explain-DTFxSZw-.js",
+          "t": "script",
+          "s": 13,
+          "e": 22,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 13,
+          "e": 25,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/chunks/glossary-DAbXMYiB.js",
+          "t": "script",
+          "s": 13,
+          "e": 24,
+          "kb": 4.4
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 13,
+          "e": 24,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 13,
+          "e": 23,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 13,
+          "e": 27,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 14,
+          "e": 26,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 14,
+          "e": 26,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 14,
+          "e": 28,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 14,
+          "e": 29,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 14,
+          "e": 29,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 14,
+          "e": 51,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 14,
+          "e": 30,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 14,
+          "e": 30,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 14,
+          "e": 31,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 14,
+          "e": 31,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 14,
+          "e": 32,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 14,
+          "e": 33,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 14,
+          "e": 34,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 14,
+          "e": 34,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 14,
+          "e": 36,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 14,
+          "e": 37,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 14,
+          "e": 38,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 14,
+          "e": 39,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 14,
+          "e": 40,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 14,
+          "e": 40,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 14,
+          "e": 41,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 14,
+          "e": 41,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 14,
+          "e": 42,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 14,
+          "e": 43,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 14,
+          "e": 44,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 14,
+          "e": 44,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 14,
+          "e": 45,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 14,
+          "e": 45,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 14,
+          "e": 46,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 14,
+          "e": 47,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 14,
+          "e": 48,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 14,
+          "e": 48,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 14,
+          "e": 49,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 14,
+          "e": 49,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/css/explain.mu_vgyjJ.css",
+          "t": "link",
+          "s": 14,
+          "e": 37,
+          "kb": 6.5
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 14,
+          "e": 50,
+          "kb": 0.2
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 60,
+          "e": 72,
+          "kb": 86.6
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 78,
+          "e": 88,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 85,
+          "e": 90,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 85,
+          "e": 90,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 86,
+          "e": 91,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 86,
+          "e": 92,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 86,
+          "e": 92,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 86,
+          "e": 93,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/changes.json?event=euro%3A2026142%3A2026-11-05&from=golfprice%2Fexplain%2Fe",
+          "t": "fetch",
+          "s": 118,
+          "e": 120,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/ShapeViews-1sXvYF1r.js",
+          "t": "script",
+          "s": 135,
+          "e": 137,
+          "kb": 9.5
+        },
+        {
+          "n": "/_next/static/css/ShapeViews.DXtjiKEB.css",
+          "t": "link",
+          "s": 136,
+          "e": 138,
+          "kb": 2.1
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 387,
+          "e": 412,
+          "kb": 47.3
+        }
+      ],
+      "route": "this-week",
+      "viewport": "desktop (no throttle)",
+      "lcp": 184,
+      "lcpEl": "p.ex-scale",
+      "fcp": 72,
+      "ttfb": 8,
+      "cls": 0.0459,
+      "shifts": [
+        {
+          "t": 93,
+          "v": 0.0009,
+          "el": "div.ctx-meta 15->15"
+        },
+        {
+          "t": 110,
+          "v": 0.0433,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 153,
+          "v": 0.0001,
+          "el": "div.evstat 12->12 | div.header-search 10->10"
+        },
+        {
+          "t": 158,
+          "v": 0.0013,
+          "el": "a 423->423 | a 425->425"
+        },
+        {
+          "t": 440,
+          "v": 0.0003,
+          "el": " 612->612 |  305->305"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 217.9,
+      "cssKB": 27.7,
+      "otherKB": 162.4,
+      "requests": 56,
+      "inp": {
+        "target": "Pre-tournament prices",
+        "frames": 18,
+        "eventDuration": 16,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/why-priced",
+        "lcp": 172,
+        "cls": 0.0433,
+        "wallMs": 108
+      },
+      "runs": [
+        180,
+        184,
+        192
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 133,
+          "h": "div.page-intro:104 div.ex-viewbar:50 div.skeleton-page:256"
+        },
+        {
+          "t": 237,
+          "h": "div.page-intro:104 div.ex-viewbar:50 p.ex-runnote:60 section.ex-glance:251 section#players.ds-section:1666 section#legend.ds-section:114 section#tech.ds-section:90"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/ExplainWhy-DIpeBJAK.js",
+          "t": "script",
+          "s": 27,
+          "e": 33,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/explain-DTFxSZw-.js",
+          "t": "script",
+          "s": 27,
+          "e": 36,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 27,
+          "e": 36,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/glossary-DAbXMYiB.js",
+          "t": "script",
+          "s": 27,
+          "e": 36,
+          "kb": 4.4
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 27,
+          "e": 38,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 27,
+          "e": 37,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 27,
+          "e": 38,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/ExplainViews-B35jeBkM.js",
+          "t": "script",
+          "s": 27,
+          "e": 36,
+          "kb": 19.1
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 28,
+          "e": 39,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 28,
+          "e": 39,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 28,
+          "e": 40,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 28,
+          "e": 42,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 28,
+          "e": 42,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 28,
+          "e": 43,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 28,
+          "e": 44,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 28,
+          "e": 43,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 28,
+          "e": 43,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 28,
+          "e": 41,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 28,
+          "e": 42,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 28,
+          "e": 60,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 28,
+          "e": 45,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 28,
+          "e": 45,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 28,
+          "e": 48,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 28,
+          "e": 47,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 28,
+          "e": 49,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 28,
+          "e": 49,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 28,
+          "e": 50,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 28,
+          "e": 50,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 28,
+          "e": 51,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 28,
+          "e": 52,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 28,
+          "e": 53,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 28,
+          "e": 53,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 28,
+          "e": 54,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 28,
+          "e": 54,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 28,
+          "e": 55,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 28,
+          "e": 56,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 28,
+          "e": 56,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 28,
+          "e": 57,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 29,
+          "e": 57,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 29,
+          "e": 58,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/explain.mu_vgyjJ.css",
+          "t": "link",
+          "s": 29,
+          "e": 51,
+          "kb": 6.5
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 29,
+          "e": 59,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 29,
+          "e": 59,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 29,
+          "e": 60,
+          "kb": 0.2
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/week_20261105T011500Z_ca6a18cbc274.json",
+          "t": "fetch",
+          "s": 71,
+          "e": 84,
+          "kb": 110.9
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 89,
+          "e": 98,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 94,
+          "e": 98,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 95,
+          "e": 99,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 96,
+          "e": 100,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 96,
+          "e": 101,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 96,
+          "e": 102,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 96,
+          "e": 102,
+          "kb": 0.5
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 403,
+          "e": 423,
+          "kb": 47.3
+        }
+      ],
+      "route": "why-priced",
+      "viewport": "desktop (no throttle)",
+      "lcp": 180,
+      "lcpEl": "span",
+      "fcp": 92,
+      "ttfb": 23,
+      "cls": 0.0305,
+      "shifts": [
+        {
+          "t": 117,
+          "v": 0.0299,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 151,
+          "v": 0.0001,
+          "el": "div.evstat 12->12 | div.header-search 10->10"
+        },
+        {
+          "t": 444,
+          "v": 0.0004,
+          "el": "div.section-actions 621->621 | span.pl-rail 855->855"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 211.8,
+      "cssKB": 25.3,
+      "otherKB": 183.2,
+      "requests": 54,
+      "inp": {
+        "target": "Prices after R1",
+        "frames": 18,
+        "eventDuration": 16,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 156,
+        "cls": 0.0376,
+        "wallMs": 77
+      },
+      "runs": [
+        164,
+        180,
+        480
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 119,
+          "h": "div.skeleton-page:256"
+        },
+        {
+          "t": 217,
+          "h": "div.pp-page:2782"
+        },
+        {
+          "t": 326,
+          "h": "div.pp-page:4482"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/PlayerProfilesView-CwHHYlZj.js",
+          "t": "script",
+          "s": 16,
+          "e": 24,
+          "kb": 56.1
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 16,
+          "e": 27,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/CourseGeometry-Cm8_zWa4.js",
+          "t": "script",
+          "s": 16,
+          "e": 25,
+          "kb": 5.4
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 16,
+          "e": 27,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 16,
+          "e": 28,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/labels-CV6Lcjz1.js",
+          "t": "script",
+          "s": 16,
+          "e": 30,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 16,
+          "e": 30,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 16,
+          "e": 28,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 16,
+          "e": 31,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 17,
+          "e": 30,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 17,
+          "e": 31,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 17,
+          "e": 32,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 17,
+          "e": 32,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 17,
+          "e": 33,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 17,
+          "e": 81,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 17,
+          "e": 33,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 17,
+          "e": 34,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 17,
+          "e": 35,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 17,
+          "e": 34,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 17,
+          "e": 35,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 17,
+          "e": 36,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 17,
+          "e": 37,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 17,
+          "e": 37,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 17,
+          "e": 40,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 17,
+          "e": 41,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 17,
+          "e": 42,
+          "kb": 3.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 17,
+          "e": 40,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 18,
+          "e": 42,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 18,
+          "e": 43,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 18,
+          "e": 45,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 18,
+          "e": 46,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 18,
+          "e": 46,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 18,
+          "e": 47,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 18,
+          "e": 47,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 18,
+          "e": 48,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 18,
+          "e": 48,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 18,
+          "e": 49,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 18,
+          "e": 50,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 18,
+          "e": 50,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 18,
+          "e": 51,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 18,
+          "e": 51,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/PlayerProfilesView.DrShe1IO.css",
+          "t": "link",
+          "s": 18,
+          "e": 44,
+          "kb": 8.4
+        },
+        {
+          "n": "/_next/static/css/CourseGeometry.7YVvYf1Q.css",
+          "t": "link",
+          "s": 18,
+          "e": 44,
+          "kb": 1.2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 18,
+          "e": 45,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 18,
+          "e": 52,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 18,
+          "e": 53,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 18,
+          "e": 53,
+          "kb": 0.2
+        },
+        {
+          "n": "/api/golfprice/player_profiles/golfer/search-index.json?id=10091",
+          "t": "fetch",
+          "s": 44,
+          "e": 81,
+          "kb": 13.6
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 99,
+          "e": 105,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 105,
+          "e": 108,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 106,
+          "e": 108,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 107,
+          "e": 109,
+          "kb": 1.1
+        },
+        {
+          "n": "/api/golfprice/player_profiles/fields.json",
+          "t": "fetch",
+          "s": 133,
+          "e": 136,
+          "kb": 0.7
+        },
+        {
+          "n": "/api/golfprice/player_profiles/19b458d778a9d56abf7d/batch_0004.json",
+          "t": "fetch",
+          "s": 139,
+          "e": 144,
+          "kb": 22
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion/index.json",
+          "t": "fetch",
+          "s": 176,
+          "e": 178,
+          "kb": 2.3
+        },
+        {
+          "n": "/api/golfprice/course_geometry/index.json",
+          "t": "fetch",
+          "s": 176,
+          "e": 180,
+          "kb": 7.4
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 176,
+          "e": 192,
+          "kb": 86.6
+        },
+        {
+          "n": "/api/golfprice/runs/euro_2026142_2026-11-05/live_R1_20261105T134500Z/model_inputs.json",
+          "t": "fetch",
+          "s": 176,
+          "e": 198,
+          "kb": 50.2
+        },
+        {
+          "n": "/api/golfprice/player_profiles/deep-53c890a51e9ce2869d1b/batch_0016.json",
+          "t": "fetch",
+          "s": 176,
+          "e": 234,
+          "kb": 296.6
+        },
+        {
+          "n": "https://pga-tour-res.cloudinary.com/image/upload/c_thumb,g_face,w_280,h_350,z_0.7/headshot",
+          "t": "img",
+          "s": 183,
+          "e": 221,
+          "kb": 14.4
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion-5c4a599ab2a5ec6318c5/10091.json",
+          "t": "fetch",
+          "s": 190,
+          "e": 229,
+          "kb": 0
+        },
+        {
+          "n": "/api/golfprice/player_profiles/dispersion-5c4a599ab2a5ec6318c5/reference.json",
+          "t": "fetch",
+          "s": 190,
+          "e": 230,
+          "kb": 0
+        },
+        {
+          "n": "/api/golfprice/player_profiles/deep-reference-b732aa714f0ef5f13690/rounds.json",
+          "t": "fetch",
+          "s": 296,
+          "e": 298,
+          "kb": 0
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 419,
+          "e": 439,
+          "kb": 47.3
+        }
+      ],
+      "route": "players?player=10091",
+      "viewport": "desktop (no throttle)",
+      "lcp": 204,
+      "lcpEl": "p.ph-story",
+      "fcp": 76,
+      "ttfb": 12,
+      "cls": 0.0428,
+      "shifts": [
+        {
+          "t": 118,
+          "v": 0.0261,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 133,
+          "v": 0.008,
+          "el": "div.ctx-identity 11->8 | div.ctx-meta 15->12"
+        },
+        {
+          "t": 181,
+          "v": 0.0002,
+          "el": "div.evstat 12->12 | div.header-search 10->10"
+        },
+        {
+          "t": 208,
+          "v": 0.0014,
+          "el": "a.ph-link 371->583"
+        },
+        {
+          "t": 223,
+          "v": 0.0059,
+          "el": "div.ph-meta 734->748 | p.ph-story 639->653"
+        },
+        {
+          "t": 464,
+          "v": 0.0014,
+          "el": " 298->298 |  258->258"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 238.2,
+      "cssKB": 29.3,
+      "otherKB": 569.8,
+      "requests": 66,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 8,
+        "eventDuration": 24,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 172,
+        "cls": 0.0451,
+        "wallMs": 94
+      },
+      "runs": [
+        204,
+        204,
+        212
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 125,
+          "h": "div.pp-page:425"
+        },
+        {
+          "t": 233,
+          "h": "div.pp-page:2419"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/WeeklyPlayersView-C2Sfp2nX.js",
+          "t": "script",
+          "s": 25,
+          "e": 31,
+          "kb": 9.2
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 25,
+          "e": 34,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/CourseGeometry-Cm8_zWa4.js",
+          "t": "script",
+          "s": 25,
+          "e": 34,
+          "kb": 5.4
+        },
+        {
+          "n": "/_next/static/chunks/PlayerProfilesView-CwHHYlZj.js",
+          "t": "script",
+          "s": 25,
+          "e": 34,
+          "kb": 56.1
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 25,
+          "e": 36,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 25,
+          "e": 34,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 25,
+          "e": 35,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/labels-CV6Lcjz1.js",
+          "t": "script",
+          "s": 25,
+          "e": 37,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 25,
+          "e": 35,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 26,
+          "e": 37,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/distributions-rules-D8ZLzHze.js",
+          "t": "script",
+          "s": 26,
+          "e": 38,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 26,
+          "e": 38,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 26,
+          "e": 39,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 26,
+          "e": 40,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 26,
+          "e": 62,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 26,
+          "e": 42,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 26,
+          "e": 42,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 26,
+          "e": 43,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 26,
+          "e": 41,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 26,
+          "e": 43,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 26,
+          "e": 44,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 26,
+          "e": 44,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 26,
+          "e": 45,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 26,
+          "e": 45,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 26,
+          "e": 41,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 26,
+          "e": 48,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 26,
+          "e": 48,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 26,
+          "e": 51,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 26,
+          "e": 52,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 26,
+          "e": 52,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 26,
+          "e": 53,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 26,
+          "e": 53,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 26,
+          "e": 54,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 26,
+          "e": 55,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 26,
+          "e": 55,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 26,
+          "e": 56,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 26,
+          "e": 56,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 26,
+          "e": 57,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 27,
+          "e": 57,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 27,
+          "e": 58,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 27,
+          "e": 58,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 27,
+          "e": 59,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 27,
+          "e": 59,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 27,
+          "e": 60,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 27,
+          "e": 61,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/css/WeeklyPlayersView.C9G9DXSF.css",
+          "t": "link",
+          "s": 27,
+          "e": 49,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/css/PlayerProfilesView.DrShe1IO.css",
+          "t": "link",
+          "s": 27,
+          "e": 50,
+          "kb": 8.4
+        },
+        {
+          "n": "/_next/static/css/CourseGeometry.7YVvYf1Q.css",
+          "t": "link",
+          "s": 27,
+          "e": 50,
+          "kb": 1.2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 27,
+          "e": 51,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 27,
+          "e": 61,
+          "kb": 0.2
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 87,
+          "e": 92,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 92,
+          "e": 95,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 92,
+          "e": 95,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 93,
+          "e": 95,
+          "kb": 1.1
+        },
+        {
+          "n": "/api/golfprice/player_profiles/fields.json",
+          "t": "fetch",
+          "s": 118,
+          "e": 121,
+          "kb": 0.7
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 121,
+          "e": 131,
+          "kb": 86.6
+        },
+        {
+          "n": "/api/golfprice/runs/euro_2026142_2026-11-05/live_R1_20261105T134500Z/model_inputs.json",
+          "t": "fetch",
+          "s": 121,
+          "e": 137,
+          "kb": 50.2
+        },
+        {
+          "n": "/api/golfprice/player_profiles/benchmarks.json?ids=6430,7049,7655,7677,9531,10091,10158,10",
+          "t": "fetch",
+          "s": 167,
+          "e": 304,
+          "kb": 11.4
+        },
+        {
+          "n": "/api/golfprice/player_profiles/index.json",
+          "t": "fetch",
+          "s": 167,
+          "e": 325,
+          "kb": 1029
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 433,
+          "e": 453,
+          "kb": 47.3
+        }
+      ],
+      "route": "weekly-players",
+      "viewport": "desktop (no throttle)",
+      "lcp": 156,
+      "lcpEl": "p",
+      "fcp": 84,
+      "ttfb": 21,
+      "cls": 0.0306,
+      "shifts": [
+        {
+          "t": 117,
+          "v": 0.03,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 165,
+          "v": 0.0001,
+          "el": "div.evstat 12->12 | div.header-search 10->10"
+        },
+        {
+          "t": 514,
+          "v": 0.0004,
+          "el": "div.fb-control.fb-sort-wide 485->485 | label.fb-search 499->499"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 248.9,
+      "cssKB": 31.3,
+      "otherKB": 1251.7,
+      "requests": 61,
+      "inp": {
+        "target": "Top 5",
+        "frames": 18,
+        "eventDuration": 32,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/why-priced",
+        "lcp": 180,
+        "cls": 0.0361,
+        "wallMs": 108
+      },
+      "runs": [
+        152,
+        156,
+        164
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 118,
+          "h": "div:761"
+        },
+        {
+          "t": 540,
+          "h": "div:844"
+        },
+        {
+          "t": 618,
+          "h": "div:1409"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/BetBreakdownsView-DOlJspi-.js",
+          "t": "script",
+          "s": 16,
+          "e": 24,
+          "kb": 5.9
+        },
+        {
+          "n": "/_next/static/chunks/DataThrough-CRulOMBd.js",
+          "t": "script",
+          "s": 17,
+          "e": 26,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/bet-breakdowns-rules-CPWwlEYo.js",
+          "t": "script",
+          "s": 17,
+          "e": 26,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 17,
+          "e": 27,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 17,
+          "e": 27,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 17,
+          "e": 28,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 17,
+          "e": 28,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 17,
+          "e": 30,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 17,
+          "e": 30,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 17,
+          "e": 49,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 17,
+          "e": 30,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 17,
+          "e": 30,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 17,
+          "e": 31,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 17,
+          "e": 31,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 17,
+          "e": 32,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 17,
+          "e": 32,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 17,
+          "e": 32,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 17,
+          "e": 33,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 17,
+          "e": 36,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 17,
+          "e": 36,
+          "kb": 7.9
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 17,
+          "e": 35,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 17,
+          "e": 37,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 17,
+          "e": 37,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 17,
+          "e": 38,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 17,
+          "e": 40,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 17,
+          "e": 41,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 17,
+          "e": 41,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 17,
+          "e": 42,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 17,
+          "e": 43,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 18,
+          "e": 43,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 18,
+          "e": 44,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 18,
+          "e": 44,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 18,
+          "e": 45,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 18,
+          "e": 45,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 18,
+          "e": 46,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 18,
+          "e": 47,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/BetBreakdownsView.BSHt86yB.css",
+          "t": "link",
+          "s": 18,
+          "e": 39,
+          "kb": 2
+        },
+        {
+          "n": "/_next/static/css/freshness.BxgDEtrp.css",
+          "t": "link",
+          "s": 18,
+          "e": 39,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 18,
+          "e": 47,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 18,
+          "e": 48,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 18,
+          "e": 48,
+          "kb": 0.2
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 74,
+          "e": 84,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 80,
+          "e": 85,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 81,
+          "e": 85,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 81,
+          "e": 86,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 81,
+          "e": 87,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 81,
+          "e": 87,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 81,
+          "e": 88,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/owner-data/bet_breakdowns.json",
+          "t": "fetch",
+          "s": 110,
+          "e": 465,
+          "kb": 4255.2
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 392,
+          "e": 427,
+          "kb": 47.3
+        }
+      ],
+      "route": "bet-breakdowns",
+      "viewport": "desktop (no throttle)",
+      "lcp": 128,
+      "lcpEl": "p",
+      "fcp": 80,
+      "ttfb": 12,
+      "cls": 0.0464,
+      "shifts": [
+        {
+          "t": 93,
+          "v": 0.0261,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 109,
+          "v": 0.0091,
+          "el": "div.ctx-identity 11->8 | div.ctx-meta 15->12"
+        },
+        {
+          "t": 447,
+          "v": 0,
+          "el": "div.evstat 12->12 | span.owner-chip 80->80"
+        },
+        {
+          "t": 549,
+          "v": 0.0112,
+          "el": "details.bb-about 871->0"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 169.2,
+      "cssKB": 21.4,
+      "otherKB": 4326.9,
+      "requests": 51,
+      "inp": {
+        "target": "At the close",
+        "frames": 19,
+        "eventDuration": null,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 176,
+        "cls": 0.0366,
+        "wallMs": 79
+      },
+      "runs": [
+        116,
+        128,
+        132
+      ]
+    },
+    {
+      "vp": "desktop",
+      "series": [
+        {
+          "t": 121,
+          "h": "div.skeleton-page:256"
+        },
+        {
+          "t": 212,
+          "h": "div:4819"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/chunks/WeatherEffectsView-nyA-qp4r.js",
+          "t": "script",
+          "s": 12,
+          "e": 19,
+          "kb": 9.4
+        },
+        {
+          "n": "/_next/static/chunks/WeatherBriefView-CXaeHVuH.js",
+          "t": "script",
+          "s": 12,
+          "e": 23,
+          "kb": 9.8
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 12,
+          "e": 23,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 12,
+          "e": 24,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/link-Bkb6DmyY.js",
+          "t": "script",
+          "s": 12,
+          "e": 23,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/weather-rules-msBtpikA.js",
+          "t": "script",
+          "s": 12,
+          "e": 25,
+          "kb": 4.2
+        },
+        {
+          "n": "/_next/static/chunks/ComposedChart-xc7S9av0.js",
+          "t": "script",
+          "s": 12,
+          "e": 28,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/Area-BX_5Wrl9.js",
+          "t": "script",
+          "s": 12,
+          "e": 27,
+          "kb": 4.6
+        },
+        {
+          "n": "/_next/static/chunks/Bar-DWAnS9Rg.js",
+          "t": "script",
+          "s": 12,
+          "e": 27,
+          "kb": 6.5
+        },
+        {
+          "n": "/_next/static/chunks/Line-DNMi6Jnk.js",
+          "t": "script",
+          "s": 12,
+          "e": 28,
+          "kb": 5
+        },
+        {
+          "n": "/_next/static/chunks/CartesianChart-Zqi6aZQB.js",
+          "t": "script",
+          "s": 12,
+          "e": 27,
+          "kb": 88.4
+        },
+        {
+          "n": "/_next/static/css/index.D_5zewjj.css",
+          "t": "link",
+          "s": 13,
+          "e": 29,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 13,
+          "e": 30,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 13,
+          "e": 30,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 13,
+          "e": 32,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/index-CwrhWRVf.js",
+          "t": "other",
+          "s": 13,
+          "e": 57,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 13,
+          "e": 32,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 13,
+          "e": 32,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 13,
+          "e": 33,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 13,
+          "e": 34,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BZdk1XSg.js",
+          "t": "script",
+          "s": 13,
+          "e": 33,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 13,
+          "e": 35,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 13,
+          "e": 36,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 13,
+          "e": 34,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 13,
+          "e": 37,
+          "kb": 1.5
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-LM9WSPzk.js",
+          "t": "other",
+          "s": 13,
+          "e": 40,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 13,
+          "e": 40,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-pEhhMwXV.js",
+          "t": "other",
+          "s": 13,
+          "e": 43,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 13,
+          "e": 44,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 13,
+          "e": 44,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 13,
+          "e": 45,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 13,
+          "e": 46,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 13,
+          "e": 47,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 13,
+          "e": 48,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 13,
+          "e": 48,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 14,
+          "e": 49,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 14,
+          "e": 50,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 14,
+          "e": 50,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 14,
+          "e": 51,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 14,
+          "e": 51,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 14,
+          "e": 52,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 14,
+          "e": 53,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 14,
+          "e": 53,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/css/WeatherEffectsView.B3rVfLFH.css",
+          "t": "link",
+          "s": 14,
+          "e": 41,
+          "kb": 1
+        },
+        {
+          "n": "/_next/static/css/WeatherBriefView.BkMREKgy.css",
+          "t": "link",
+          "s": 14,
+          "e": 42,
+          "kb": 2.2
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 14,
+          "e": 54,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 14,
+          "e": 55,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 14,
+          "e": 56,
+          "kb": 0.2
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 80,
+          "e": 91,
+          "kb": 7.3
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 87,
+          "e": 93,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 88,
+          "e": 93,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 88,
+          "e": 94,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 88,
+          "e": 95,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 88,
+          "e": 95,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 88,
+          "e": 96,
+          "kb": 0.5
+        },
+        {
+          "n": "/api/golfprice/weather/pga_457_2026-11-05/brief_latest.json",
+          "t": "fetch",
+          "s": 126,
+          "e": 132,
+          "kb": 16.9
+        },
+        {
+          "n": "/api/golfprice/weather/pga_457_2026-11-05/latest.json",
+          "t": "fetch",
+          "s": 126,
+          "e": 135,
+          "kb": 10.1
+        },
+        {
+          "n": "/api/golfprice/weather/euro_2026142_2026-11-05/brief_latest.json",
+          "t": "fetch",
+          "s": 127,
+          "e": 138,
+          "kb": 10.1
+        },
+        {
+          "n": "/api/golfprice/weather/euro_2026142_2026-11-05/latest.json",
+          "t": "fetch",
+          "s": 128,
+          "e": 140,
+          "kb": 5.7
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 400,
+          "e": 426,
+          "kb": 47.3
+        }
+      ],
+      "route": "weather-effects",
+      "viewport": "desktop (no throttle)",
+      "lcp": 192,
+      "lcpEl": "p.wb-status",
+      "fcp": 76,
+      "ttfb": 7,
+      "cls": 0.0342,
+      "shifts": [
+        {
+          "t": 95,
+          "v": 0.0009,
+          "el": "div.ctx-meta 15->15"
+        },
+        {
+          "t": 108,
+          "v": 0.025,
+          "el": "div.nav-group 68->137 | div.nav-group 391->460"
+        },
+        {
+          "t": 120,
+          "v": 0.0047,
+          "el": "div.ctx-identity 11->8 | div.ctx-meta 15->12"
+        },
+        {
+          "t": 125,
+          "v": 0.0031,
+          "el": "div.evstat 12->12 | svg.lucide.lucide-chevron-down 20->20"
+        },
+        {
+          "t": 170,
+          "v": 0.0001,
+          "el": "div.evstat 12->12 | div.header-search 10->10"
+        },
+        {
+          "t": 181,
+          "v": 0.0003,
+          "el": "a 516->516"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 295.4,
+      "cssKB": 22.2,
+      "otherKB": 116.2,
+      "requests": 61,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 17,
+        "eventDuration": 16,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 172,
+        "cls": 0.0319,
+        "wallMs": 91
+      },
+      "runs": [
+        192,
+        192,
+        488
+      ]
+    }
+  ]
+}

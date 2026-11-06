@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chip, EmptyState, InfoTip, LoadingState, PageHeader, Section, SegmentedControl } from "./components";
 import {
-  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, filterBets, formatET, historyText, minPriceText, nextCheckShort, nextCheckText, pctText, stageText, statusHeadline, timeAgo, totals,
+  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, filterBets, formatET, historyText, minPriceText, nextCheckShort, nextCheckText, pctText, stageText, timeAgo, totals,
   type Bet, type Card, type CardEvent, type Filters, type Group, type TierFilter,
 } from "./bet-card-rules";
 import "./bet-card.css";
@@ -96,12 +96,11 @@ function EventSection({ event, filters }: { event: CardEvent; filters: Filters }
   const t = totals(shown);
   const lean = shown.filter((b) => b.tier === "LEAN IN");
   const small = shown.filter((b) => b.tier === "SMALL STAKE");
-  const moment = `${event.moment}${event.pricedRound ? `, pricing round ${event.pricedRound}` : ""}`;
   return (
     <Section
       id={`event-${event.eventUid.replace(/[^a-z0-9]+/gi, "-")}`}
       title={event.name}
-      purpose={`${event.tour.toUpperCase()} · ${moment}`}
+      purpose={`${event.tour.toUpperCase()} · ${stageText(event)}`}
       actions={<span className="bc-total num">{t.bets} {t.bets === 1 ? "bet" : "bets"} · {t.units.toFixed(2)}u</span>}
     >
       {shown.length === 0 ? (
@@ -128,7 +127,7 @@ function QuietEvents({ events }: { events: CardEvent[] }) {
             <div className="bc-status-head">
               <Chip>{e.tour.toUpperCase()}</Chip>
               <strong>{e.name}</strong>
-              <Chip tone="warning">{statusHeadline(e)}</Chip>
+              <Chip tone="warning">{stageText(e)}</Chip>
             </div>
             <p>{e.note ?? "No bet clears the rules at the current prices."}</p>
             <p className="bc-next">{nextCheckText(e)}</p>
@@ -218,7 +217,7 @@ export function BetCardView() {
     return () => { live = false; };
   }, [attempt]);
 
-  const intro = <PageHeader title="Bet card" purpose="Current suggested bets across every event being priced, each with the lowest price worth taking. Refreshed every 30 minutes before an event and after each round." />;
+  const intro = <PageHeader title="Bet card" purpose="Suggested bets across every event being priced, with the lowest price worth taking." />;
   if (load.state === "loading") return <div>{intro}<LoadingState label="Loading the bet card" /></div>;
   if (load.state === "error") return <div>{intro}<EmptyState title="The bet card is not available" detail={load.message} onRetry={() => { setLoad({ state: "loading" }); setAttempt((a) => a + 1); }} /></div>;
   return <div>{intro}<CardBody card={load.card} /></div>;

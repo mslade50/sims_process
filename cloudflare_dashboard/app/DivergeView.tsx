@@ -39,7 +39,7 @@ export function DivergeSection({ doc, player, onSelect }: { doc: ExplainDoc; pla
       {rows.length > 0 && (
         <div className="table-scroll"><table className="ex-table ex-dv-table" aria-label="Chances: ours, Data Golf and the sportsbooks">
           <thead><tr><th>Chance</th>{SOURCE_KEYS.map((k) => (
-            <th key={k} className={odd === k ? "is-odd" : ""}>{SOURCE_LABEL[k]}{odd === k && <small className="ex-dv-odd"><Term k="ex_odd_one_out">odd one out</Term></small>}</th>
+            <th key={k} className={odd === k ? "is-odd" : ""}>{SOURCE_LABEL[k]}{odd === k && <small className="ex-dv-odd" title="The source whose chances sit furthest from the other two across win, top 10 and top 20.">odd one out</small>}</th>
           ))}</tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.market}><th scope="row">{r.label}</th>{SOURCE_KEYS.map((k) => <td key={k} data-label={SOURCE_LABEL[k]} className={odd === k ? "is-odd" : ""}>{pct(r.values[k])}</td>)}</tr>

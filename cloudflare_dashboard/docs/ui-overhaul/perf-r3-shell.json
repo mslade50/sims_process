@@ -1,0 +1,463 @@
+{
+  "at": "2026-11-06T05:16:41.951Z",
+  "base": "http://localhost:3111",
+  "results": [
+    {
+      "vp": "phone",
+      "series": [
+        {
+          "t": 641,
+          "h": "div.skeleton-page:326"
+        },
+        {
+          "t": 2582,
+          "h": "div.page-intro:92 div.ex-viewbar:50 div.skeleton-page:326"
+        },
+        {
+          "t": 3125,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#changed.ex-changed:737 div.ex-lede-block:124 section#board.ds-section:1348 section#chances.ds-section:1532 section#course.ds-section:718 section#weather.ds-section:1153 section#shapes.ds-section:184"
+        },
+        {
+          "t": 3178,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1348 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:112"
+        },
+        {
+          "t": 3209,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1000 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:112"
+        },
+        {
+          "t": 3590,
+          "h": "div.page-intro:92 div.ex-viewbar:50 section.ex-hero:120 nav.on-this-page:50 section#board.ds-section:1000 section#changed.ex-changed:641 div.ex-lede-block:124 section#chances.ds-section:885 section#course.ds-section:268 section#weather.ds-section:268 section#shapes.ds-section:965"
+        }
+      ],
+      "resources": [
+        {
+          "n": "/_next/static/css/index.BdDyDPsc.css",
+          "t": "link",
+          "s": 185,
+          "e": 544,
+          "kb": 14.4
+        },
+        {
+          "n": "/_next/static/css/DashboardApp.Ce-mW4L5.css",
+          "t": "link",
+          "s": 187,
+          "e": 435,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/index-BGRghzGO.js",
+          "t": "other",
+          "s": 187,
+          "e": 1894,
+          "kb": 44.3
+        },
+        {
+          "n": "/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+          "t": "script",
+          "s": 187,
+          "e": 373,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/framework-BaE7mD_r.js",
+          "t": "script",
+          "s": 187,
+          "e": 870,
+          "kb": 54.6
+        },
+        {
+          "n": "/_next/static/chunks/app-elements-Drg5O4vw.js",
+          "t": "script",
+          "s": 188,
+          "e": 451,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/hash-D0ldriCF.js",
+          "t": "script",
+          "s": 188,
+          "e": 388,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/record-BdkTR7AP.js",
+          "t": "script",
+          "s": 188,
+          "e": 544,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-cache-busting-BWJLPVul.js",
+          "t": "script",
+          "s": 188,
+          "e": 575,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/app-rsc-render-mode-IDJu5NEE.js",
+          "t": "script",
+          "s": 188,
+          "e": 607,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/headers-CeAbe3am.js",
+          "t": "script",
+          "s": 189,
+          "e": 623,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/protocol-headers-URL33uU5.js",
+          "t": "script",
+          "s": 189,
+          "e": 712,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/deployment-id-DFhHa9wO.js",
+          "t": "script",
+          "s": 189,
+          "e": 712,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/navigation-errors-wvgRKjB-.js",
+          "t": "script",
+          "s": 189,
+          "e": 762,
+          "kb": 1.5
+        },
+        {
+          "n": "/api/golfprice/index.json",
+          "t": "link",
+          "s": 189,
+          "e": 855,
+          "kb": 7.6
+        },
+        {
+          "n": "/_next/static/chunks/layout-segment-context-848eyPn_.js",
+          "t": "other",
+          "s": 190,
+          "e": 793,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/DashboardApp-BGJwuRz-.js",
+          "t": "other",
+          "s": 190,
+          "e": 963,
+          "kb": 7.9
+        },
+        {
+          "n": "/_next/static/chunks/ShellParts-D47lcdFV.js",
+          "t": "other",
+          "s": 190,
+          "e": 916,
+          "kb": 3.5
+        },
+        {
+          "n": "/_next/static/chunks/freshness-rules-bElbDoF-.js",
+          "t": "other",
+          "s": 190,
+          "e": 948,
+          "kb": 1.6
+        },
+        {
+          "n": "/_next/static/chunks/shell-rules-CAGyEfAE.js",
+          "t": "other",
+          "s": 190,
+          "e": 979,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-rules-BN1Ou8rN.js",
+          "t": "other",
+          "s": 191,
+          "e": 1026,
+          "kb": 1.7
+        },
+        {
+          "n": "/_next/static/chunks/ui-CFIMk9YY.js",
+          "t": "other",
+          "s": 191,
+          "e": 1042,
+          "kb": 3.7
+        },
+        {
+          "n": "/_next/static/chunks/lib-CRTbtZcX.js",
+          "t": "other",
+          "s": 191,
+          "e": 1089,
+          "kb": 1.8
+        },
+        {
+          "n": "/_next/static/chunks/createLucideIcon-aJRETgn2.js",
+          "t": "other",
+          "s": 191,
+          "e": 1119,
+          "kb": 0.9
+        },
+        {
+          "n": "/_next/static/chunks/sliders-horizontal-CpqCF5NE.js",
+          "t": "other",
+          "s": 191,
+          "e": 1135,
+          "kb": 0.6
+        },
+        {
+          "n": "/_next/static/chunks/circle-gauge-DahbnYS8.js",
+          "t": "other",
+          "s": 191,
+          "e": 1151,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/cloud-sun-CYo70I_X.js",
+          "t": "other",
+          "s": 192,
+          "e": 1198,
+          "kb": 0.4
+        },
+        {
+          "n": "/_next/static/chunks/info-C2G0SUpV.js",
+          "t": "other",
+          "s": 192,
+          "e": 1214,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/search-BxrGvy9x.js",
+          "t": "other",
+          "s": 192,
+          "e": 1260,
+          "kb": 0.2
+        },
+        {
+          "n": "/_next/static/chunks/users-BfteTM_A.js",
+          "t": "other",
+          "s": 192,
+          "e": 1290,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/data-dSNRyt0h.js",
+          "t": "other",
+          "s": 192,
+          "e": 1306,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/event-param-BuNGVI1Z.js",
+          "t": "other",
+          "s": 193,
+          "e": 1322,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/viewer-BDbexmFD.js",
+          "t": "other",
+          "s": 193,
+          "e": 1368,
+          "kb": 0.5
+        },
+        {
+          "n": "/_next/static/chunks/chevron-right-CS16X4Dg.js",
+          "t": "other",
+          "s": 193,
+          "e": 1384,
+          "kb": 0.1
+        },
+        {
+          "n": "/_next/static/chunks/x-CnKHxMTK.js",
+          "t": "other",
+          "s": 193,
+          "e": 1431,
+          "kb": 0.2
+        },
+        {
+          "n": "/api/golfprice/explain/euro_2026142_2026-11-05/live_R1_20261105T134500Z_ea75bab6b3e7.json",
+          "t": "fetch",
+          "s": 872,
+          "e": 2097,
+          "kb": 86.6
+        },
+        {
+          "n": "/favicon.ico",
+          "t": "other",
+          "s": 1987,
+          "e": 2302,
+          "kb": 6.9
+        },
+        {
+          "n": "/_next/static/chunks/ExplainViews-B9jc-qPd.js",
+          "t": "script",
+          "s": 1993,
+          "e": 2504,
+          "kb": 19.4
+        },
+        {
+          "n": "/_next/static/chunks/explain-DbL65ldg.js",
+          "t": "script",
+          "s": 1993,
+          "e": 2235,
+          "kb": 3.8
+        },
+        {
+          "n": "/_next/static/chunks/explain-rules-B_pC2WcO.js",
+          "t": "script",
+          "s": 1994,
+          "e": 2437,
+          "kb": 14.6
+        },
+        {
+          "n": "/_next/static/chunks/glossary-DAbXMYiB.js",
+          "t": "script",
+          "s": 1994,
+          "e": 2296,
+          "kb": 4.4
+        },
+        {
+          "n": "/_next/static/css/explain.C9kSvJEA.css",
+          "t": "link",
+          "s": 1996,
+          "e": 2378,
+          "kb": 6.4
+        },
+        {
+          "n": "/_next/static/chunks/components-CVIuFJ36.js",
+          "t": "script",
+          "s": 1997,
+          "e": 2457,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/link-DNOJb-YL.js",
+          "t": "script",
+          "s": 1997,
+          "e": 2520,
+          "kb": 4.7
+        },
+        {
+          "n": "/_next/static/chunks/query-CfBlugvG.js",
+          "t": "script",
+          "s": 1998,
+          "e": 2473,
+          "kb": 1
+        },
+        {
+          "n": "/api/whoami",
+          "t": "fetch",
+          "s": 2032,
+          "e": 2552,
+          "kb": 0.1
+        },
+        {
+          "n": "/api/data/manifest.json",
+          "t": "fetch",
+          "s": 2035,
+          "e": 2629,
+          "kb": 0.3
+        },
+        {
+          "n": "/_next/static/chunks/HeaderSearch-C42DvWT8.js",
+          "t": "script",
+          "s": 2051,
+          "e": 2645,
+          "kb": 1.1
+        },
+        {
+          "n": "/_next/static/chunks/player-directory-CVXDI4jp.js",
+          "t": "script",
+          "s": 2052,
+          "e": 2675,
+          "kb": 0.7
+        },
+        {
+          "n": "/_next/static/chunks/player-profile-rules-DI9Dev4G.js",
+          "t": "script",
+          "s": 2052,
+          "e": 2707,
+          "kb": 3.2
+        },
+        {
+          "n": "/_next/static/chunks/player-name-CSj7UmtD.js",
+          "t": "script",
+          "s": 2053,
+          "e": 2723,
+          "kb": 0.5
+        },
+        {
+          "n": "/fonts/inter-var.woff2",
+          "t": "css",
+          "s": 2350,
+          "e": 2923,
+          "kb": 47.3
+        },
+        {
+          "n": "/api/golfprice/changes.json?event=euro%3A2026142%3A2026-11-05&from=golfprice%2Fexplain%2Fe",
+          "t": "fetch",
+          "s": 2556,
+          "e": 2817,
+          "kb": 3.3
+        },
+        {
+          "n": "/_next/static/chunks/ShapeViews-Dt3w7Uaj.js",
+          "t": "script",
+          "s": 2855,
+          "e": 3096,
+          "kb": 9.5
+        },
+        {
+          "n": "/_next/static/css/ShapeViews.CpHmQ6B6.css",
+          "t": "link",
+          "s": 2857,
+          "e": 3049,
+          "kb": 2.1
+        }
+      ],
+      "route": "this-week",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 3028,
+      "lcpEl": "p.ex-scale",
+      "fcp": 724,
+      "ttfb": 17,
+      "cls": 0.412,
+      "shifts": [
+        {
+          "t": 3133,
+          "v": 0.0003,
+          "el": "button.active 234->234 |  692->692"
+        },
+        {
+          "t": 3182,
+          "v": 0.4117,
+          "el": "section#changed.ex-changed 492->0 | a 423->423"
+        }
+      ],
+      "tbt": 113,
+      "longestTask": 152,
+      "longTasks": 3,
+      "jsKB": 218.1,
+      "cssKB": 27.5,
+      "otherKB": 161.1,
+      "requests": 56,
+      "inp": {
+        "target": "Pre-tournament prices",
+        "frames": 38,
+        "eventDuration": 56,
+        "longestTask": 107,
+        "cls": 0
+      },
+      "nav": null,
+      "runs": [
+        220,
+        380,
+        3028,
+        3144,
+        3296
+      ]
+    }
+  ]
+}

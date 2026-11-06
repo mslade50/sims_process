@@ -112,7 +112,7 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "react") return { ...React, useState: (initial) => { const slot = state++; return [slot === 2 && player ? false : typeof initial === "function" ? initial() : initial, () => {}]; } };
     /* eslint-disable react/prop-types -- test-only stand-in components */
     if (id === "./ui") return { Section: ({ title, purpose, children }) => React.createElement("section", null, React.createElement("h3", null, title), React.createElement("small", null, purpose), children), OnThisPage: () => null, PageHeader: () => null };
-    if (id === "./score-block") return { Block: ({ title, eyebrow, children }) => React.createElement("section", null, React.createElement("h3", null, title), React.createElement("small", null, eyebrow), children) };
+    if (id === "./score-block") return { Block: ({ title, eyebrow, children }) => React.createElement("section", null, React.createElement("h3", null, title), React.createElement("small", null, eyebrow), children), Fold: ({ children }) => React.createElement("div", null, children) };
     if (id === "./event-param") return { useEventParam: () => "" };
     if (id === "./components") return {
       Panel: ({ title, eyebrow, children }) => React.createElement("section", null, React.createElement("h3", null, title), React.createElement("small", null, eyebrow), children),

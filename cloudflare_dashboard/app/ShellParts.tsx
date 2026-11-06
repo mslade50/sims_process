@@ -5,11 +5,11 @@
  * the phone tab bar, the context-bar controls and the shared modal-dialog focus contract.
  * Pure navigation helpers live in shell-rules.ts; DashboardApp owns state and routing.
  */
-import Link from "next/link";
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
-import { CircleGauge, CloudSun, Ellipsis, Info, Moon, Search, Sun, Ticket, TriangleAlert, Users, Scale, ChevronDown } from "lucide-react";
+import { Archive, CircleGauge, CloudSun, Ellipsis, Info, Moon, Search, Sun, Ticket, TriangleAlert, Users, Scale, ChevronDown } from "lucide-react";
 import { eventHref, primaryTabKeys, tourShort, type ShellEvent } from "./shell-rules";
 import { etStamp, parseTimestamp, relativeAge } from "./ui-rules";
+import { archivedStatusText } from "./freshness-rules";
 import { useNow } from "./ui";
 
 type Navigate = (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void;
@@ -77,6 +77,12 @@ function ageWords(asOf: string | null, now: number): string {
   return at === null ? "no run yet" : relativeAge(now - at);
 }
 
+/** Native navigation like the rest of the shell; it also keeps next/link out of the shell bundle. */
+function RunLink() {
+  // eslint-disable-next-line @next/next/no-html-link-for-pages -- full-page navigation is this app's routing
+  return <a className="ex-link" href="/run">Open the Run page</a>;
+}
+
 /**
  * Context-bar status, e.g. "R2 in play | Prices after R1 | Run 13 h ago". Three separate facts and one disclosure that says what it means
  * for the numbers and when they next change. Neutral by default; amber when the prices lag the event; red only for a saved copy.
@@ -111,11 +117,18 @@ export function EventStatusBar({ event, savedCopy, owner }: { event: ShellEvent;
             <div><dt>Last run</dt><dd>{at === null ? "None published" : `${etStamp(at)} (${age})`}</dd></div>
           </dl>
           <p className="evstat-consequence">{consequence}</p>
-          <p className="evstat-next"><strong>Next update.</strong> {status.next}{owner && status.state !== "final" && <> <Link className="ex-link" href="/run" prefetch={false}>Open the Run page</Link></>}</p>
+          <p className="evstat-next"><strong>Next update.</strong> {status.next}{owner && status.state !== "final" && <> <RunLink /></>}</p>
         </div>
       )}
     </div>
   );
+}
+
+/** Retired archive pages (History, Diagnostics) have no live data to be late: a neutral "Archived" state, never an age, a pulse or a warning colour. */
+export function ArchivedStatus({ lastData }: { lastData?: unknown }) {
+  const text = archivedStatusText(lastData);
+  const [head, ...rest] = text.split(" · ");
+  return <span className="archived-status" title={`${text}. This pipeline was retired, so there is no live data to go stale. Nothing here needs attention.`}><Archive size={14} aria-hidden="true" />{head}{rest.length > 0 && <span className="archived-date"> · {rest.join(" · ")}</span>}</span>;
 }
 
 /** Current event as the single identity in the bar; opens a list of this week's events (grouped by tour) that swaps ?e= on the current page. Fully keyboard operable. */

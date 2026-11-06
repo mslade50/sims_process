@@ -1,3 +1,5 @@
+/* Metric-matched stand-in while the web font loads, so the swap moves nothing (Inter vs Arial). */
+@font-face { font-family: "Inter Fallback"; src: local("Arial"); size-adjust: 107.4%; ascent-override: 90.2%; descent-override: 22.5%; line-gap-override: 0%; }
 @font-face { font-family: "Inter Var"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/inter-var.woff2") format("woff2"); }
 /*
  * Golf Model design tokens (design system v2, see docs/ui-overhaul/DESIGN_SYSTEM.md). Cool navy and blue identity with a matching
@@ -55,7 +57,7 @@
   --chart-7: #d6dc5c;
   --chart-8: #9fb3cc;
   /* type scale */
-  --font-sans: "Inter Var", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: Inter, "Inter Fallback", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --fs-label: 12px;
   --fs-small: 12px;
@@ -193,3 +195,5 @@
   --shadow-card: 0 1px 2px rgba(20, 40, 70, 0.05);
   --shadow-lift: 0 14px 34px rgba(23, 44, 75, 0.14);
 }
+/* The web font is fetched after the first screen is interactive (DashboardApp), so its 47 KB never competes with the page's own code and data; the metric-matched fallback keeps the swap from moving anything. */
+html.fonts-ready { --font-sans: "Inter Var", Inter, "Inter Fallback", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }

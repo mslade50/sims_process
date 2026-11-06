@@ -4,6 +4,7 @@ import "./tokens.css";
 import "./globals.css";
 import "./design.css";
 import { themeBootScript } from "./ui-rules";
+import { earlyFetchScript } from "./shell-rules";
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
@@ -39,8 +40,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="color-scheme" content="dark light" />
-        <link rel="preload" href="/fonts/inter-var.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        {/* Found by the preload scanner while stylesheets still block scripts; the same request is then reused by app/data.ts. */}
+        <link rel="preload" href="/api/golfprice/index.json" as="fetch" crossOrigin="anonymous" fetchPriority="high" />
         <script dangerouslySetInnerHTML={{ __html: themeBootScript() }} />
+        <script dangerouslySetInnerHTML={{ __html: earlyFetchScript() }} />
       </head>
       <body>{children}</body>
     </html>

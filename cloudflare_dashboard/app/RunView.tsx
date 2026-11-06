@@ -250,15 +250,15 @@ export function RunView() {
         ) : (
           <>
             {everyOffline && (
-              <div className="run-notice error" role="alert"><span><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong> Jobs wait in the queue until a machine comes back online.</span></div>
+              <div className="run-notice warn" role="alert"><span><strong>The desktop runner is offline{(() => { const seen = machines.map((m) => m.lastSeen).filter(Boolean).sort().at(-1); return seen ? ` (last seen ${etTime(seen)})` : ""; })()}.</strong> Jobs wait in the queue until a machine comes back online.</span></div>
             )}
-            {(data.roles_invalid || data.roles_read_error) && <div className="run-notice error" role="alert"><span>Role configuration could not be verified. Built-in defaults are shown for reference; they do not establish runner ownership or backup readiness.</span></div>}
+            {(data.roles_invalid || data.roles_read_error) && <div className="run-notice warn" role="alert"><span>Role configuration could not be verified. Built-in defaults are shown for reference; they do not establish runner ownership or backup readiness.</span></div>}
             <div className="run-now-grid">
               <div className="run-now-card">
-                <h3>Running</h3>
+                <h3>{active.length === 0 || active.some((job) => job.state === "running" || job.state === "claimed") ? "Running now" : "Queue"}</h3>
                 {active.length === 0 ? <p className="run-quiet">Nothing you started is running or waiting.</p> : (
                   <ul className="run-active">{active.map((job) => (
-                    <li key={job.id}><StateIcon state={job.state} /><span><strong>{specFor(job.type)?.label ?? job.type}</strong>
+                    <li key={job.id}><StateIcon state={job.state} /><span><strong>{specFor(job.type)?.label ?? job.type}</strong><small className="run-job-state">{stateLabel(job.state)}</small>
                       <small>{stateDetail(job, job.state, data.heartbeats, now)}{duration(job.status, now) ? `, ${duration(job.status, now)} so far` : `, requested ${ago(job.requested_at, now)}`}</small>
                       <small className="run-job-line">Machine: {jobMachine(job)}</small></span></li>
                   ))}</ul>

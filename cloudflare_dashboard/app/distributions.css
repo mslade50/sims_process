@@ -77,3 +77,8 @@
 @media(max-width:650px){.dist-chart-tools{gap:var(--sp-2)}}
 .dist-setup>summary span{color:var(--foreground);font-weight:700;text-decoration:underline}
 @media(max-width:650px){.dist-prices td{min-width:0;padding-inline:6px}.dist-prices th{padding-inline:6px}.dist-prices th:first-child{min-width:96px}}
+@media(max-width:600px){
+  .dist-explorer .dist-chart{height:250px !important}
+  .dist-chart-tools{gap:var(--sp-2);margin-bottom:var(--sp-2)}
+  .dist-explorer > .ds-section{margin-top:var(--sp-4)}
+}

@@ -236,6 +236,32 @@ const staticFile = (pathname) => {
 const assets = { async fetch(request) { const f = staticFile(new URL(request.url).pathname); return f ? new Response(f.body, { headers: { "content-type": f.type } }) : new Response("not found", { status: 404 }); } };
 const images = { input: (body) => ({ transform: () => ({ output: async () => ({ response: () => new Response(body) }) }) }) };
 
+/** Build signature: the preview holds the built Worker (and the asset hashes inside its HTML) in memory, so a rebuild underneath it leaves
+ *  HTML that names chunks which no longer exist in dist/client (cold loads then 404 on /_next/static/chunks/*). The server notices a new build
+ *  and restarts itself once the build has settled; until then it answers 503 + Retry-After instead of serving a half-matching page. */
+const SIG_FILES = [join(ROOT, "dist", "server", "index.js"), join(ROOT, "dist", "client", "vinext-client-entry-manifest.json"), join(ROOT, "dist", "server", "BUILD_ID")];
+const buildSig = () => SIG_FILES.map((f) => { try { return Math.floor(statSync(f).mtimeMs); } catch { return 0; } }).join("-");
+const loadedSig = buildSig();
+let lastSig = loadedSig, lastSigChange = 0, restarting = false;
+/** "ok" = serve; "wait" = a build is in progress or just finished; the process restarts itself when it has been stable for 1.5 s. */
+function buildState() {
+  const sig = buildSig();
+  if (sig === loadedSig) return "ok";
+  if (sig !== lastSig) { lastSig = sig; lastSigChange = Date.now(); }
+  if (SIG_FILES.some((f) => !existsSync(f))) return "wait";
+  if (Date.now() - lastSigChange > 1500 && !restarting) restartSelf();
+  return "wait";
+}
+function restartSelf() {
+  restarting = true;
+  log("new build detected in dist/; restarting to serve it");
+  const out = openSync(LOG_FILE, "a");
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args.filter((a) => a !== "--detach" && a !== "--build" && a !== "--refresh"), "--no-build"], { cwd: ROOT, detached: true, stdio: ["ignore", out, out], windowsHide: true, env: { ...process.env, UI_PREVIEW_CHILD: "1" } });
+  child.unref();
+  try { writeFileSync(PID_FILE, String(child.pid)); } catch { /* the child writes its own on listen */ }
+  server.close();
+  setTimeout(() => process.exit(0), 200);
+}
 const worker = (await import(pathToUrl(join(ROOT, "dist", "server", "index.js")))).default;
 function pathToUrl(p) { return new URL("file:///" + p.replace(/\\/g, "/")).href; }
 const env = { DASHBOARD_DATA: bucket, ASSETS: assets, IMAGES: images, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, OWNER_EMAILS: OWNER, LEGACY_ALERTS_ENABLED: "0", OPS_SHADOW_ENABLED: "0", DATA_FRESHNESS_ENABLED: "0", DATA_FRESHNESS_INBOX: "0" };
@@ -256,6 +282,7 @@ function send(req, res, status, headers, body, cacheKey) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (buildState() === "wait") { res.writeHead(503, { "content-type": "text/plain", "retry-after": "2", "cache-control": "no-store" }); res.end("ui-preview: a new build is being served in a moment; retry"); return; }
     const asStatic = url.pathname.startsWith("/_next/") || url.pathname.startsWith("/data/") || url.pathname === "/og.png" ? staticFile(url.pathname) : null;
     if (asStatic) { send(req, res, 200, { "content-type": asStatic.type, "cache-control": "no-cache" }, asStatic.body, url.pathname); return; }
     const chunks = []; for await (const c of req) chunks.push(c);
@@ -270,9 +297,18 @@ const server = http.createServer(async (req, res) => {
     send(req, res, response.status, out, Buffer.from(await response.arrayBuffer()), null);
   } catch (error) { res.writeHead(500, { "content-type": "text/plain" }); res.end("ui-preview error: " + (error?.stack ?? error)); }
 });
-server.listen(PORT, "127.0.0.1", () => {
-  mkdirSync(PREVIEW, { recursive: true }); writeFileSync(PID_FILE, String(process.pid));
-  log(`LOCAL OWNER PREVIEW on http://localhost:${PORT} (live files from ${LIVE}; writes are in-memory only). Ctrl+C or --stop to end.`);
+// A replacement process may start while its predecessor is still releasing the port.
+let listenTries = 0;
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE" && listenTries++ < 40) setTimeout(listen, 250);
+  else { console.error("[ui-preview] cannot listen:", error.message); process.exit(1); }
 });
+function listen() {
+  server.listen(PORT, "127.0.0.1", () => {
+    mkdirSync(PREVIEW, { recursive: true }); writeFileSync(PID_FILE, String(process.pid));
+    log(`LOCAL OWNER PREVIEW on http://localhost:${PORT} (live files from ${LIVE}; writes are in-memory only). Ctrl+C or --stop to end.`);
+  });
+}
+listen();
 const quit = () => { rmSync(PID_FILE, { force: true }); server.close(); process.exit(0); };
 process.on("SIGINT", quit); process.on("SIGTERM", quit);

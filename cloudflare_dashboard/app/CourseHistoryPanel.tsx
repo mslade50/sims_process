@@ -32,7 +32,7 @@ export function CourseHistoryPanel({ historyKey }: { historyKey: string | null |
   const { rows, years } = historyRoundRows(doc, metric);
   const multiCourse = new Set(doc.editions.flatMap((e) => e.rounds.map((r) => r.course))).size > 1;
   const otherEvents = doc.editions.filter((e) => !e.same_event);
-  return <Block id="history" title={title} eyebrow={eyebrow}>
+  return <Block id="history" title={title} eyebrow={eyebrow} fold>
     <DataThrough text={dataThrough(doc.through, "Course history through")} />
     {doc.by_round.length > 0 && <div className="score-hist-cards">{doc.by_round.map((r) => <div key={r.round}>
       <span>Round {r.round} · {r.editions} edition{r.editions === 1 ? "" : "s"}</span>

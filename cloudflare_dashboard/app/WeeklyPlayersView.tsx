@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useEventParam } from "./event-param";
 import { useParams, BenchmarkCard, BenchmarkMethod, type WeeklyEvent } from "./PlayerProfilesView";
 import { DataTable, LoadingState, Panel } from "./components";
-import { Chip, EmptyState, PageHeader } from "./ui";
+import { EmptyState, PageHeader } from "./ui";
 import { WeeklyFieldBoard } from "./WeeklyFieldBoard";
 import { useDashboardData } from "./data";
 import { usePlayerBenchmarks } from "./player-directory";
@@ -24,7 +24,7 @@ export function WeeklyPlayersView() {
   const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const barEvent=useEventParam();const event=selectWeeklyEvent(events,params.get("e") || barEvent || null,params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
   // Until the bar's event is known (read after mount) the default event would be shown for one render and its large documents fetched for nothing.
   if(load.loading || (!params.get("e") && !barEvent && events.length>0) || (params.get("player") && !params.get("e") && !barEvent && fields.loading)) return <LoadingState label="Loading events"/>;
-  return <div className="pp-page"><PageHeader title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
+  return <div className="pp-page"><PageHeader title="Whole field" purpose="Our chance against the book for every golfer, and where we disagree most. Tap a golfer for why."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
 }
 function WeeklyBody({event,playerId}:{event:WeeklyEvent;playerId:string|null}) {
   const choices=dedupeRuns(checkpoints(event)); const [run,setRun]=useState(""); const checkpoint=choices.find(r=>r.run===run); const key=checkpoint?.key ?? explainKeyFor(event); const expected=matchingInputRun(event,checkpoint);
@@ -48,8 +48,7 @@ function WeeklyExplain({event,dataKey,inputsKey,expected,playerId,picker=null}:{
   if(playerId && !doc.players.some(p=>String(p.id)===playerId)) return <EmptyState title="This player is not in this field" detail="Choose another event above, or remove the player filter to see the full field."/>;
   const historicalCoverage=doc.players.filter(p=>checkpointBenchmarkValue(catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark,catalog?.pga_benchmark_reference,doc.as_of)!==null).length;
   const players=doc.players.filter(p=>!playerId || String(p.id)===playerId);
-  const stage=doc.kind==="live" ? `In play, after round ${doc.after_round}` : "Pre-tournament";
-  return <><p className="fb-runbar" role="status"><Chip tone={doc.kind==="live" ? "accent" : "neutral"}>{stage}</Chip><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players in {doc.event.name}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}{picker}</p>
+  return <><p className="fb-runbar" role="status"><span>{humanCheckpoint(doc.as_of,doc.kind)}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}{picker}</p>
     <WeeklyFieldBoard doc={doc} playerId={playerId} query={query} setQuery={setQuery}/>
     <details className="fb-more"><summary>All columns, column picker and CSV download</summary><div className="fb-more-body"><WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players} query={query}/>{!players.length && <p>No players match this selection in the saved event.</p>}</div></details>
     {catalogLoading && !playerId && <div className="fb-more fb-more-pending" aria-hidden="true"/>}

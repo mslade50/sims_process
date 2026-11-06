@@ -11,7 +11,7 @@ import { useEventParam } from "./event-param";
 import { ChevronRight } from "lucide-react";
 import { EmptyState, LoadingState, SegmentedControl } from "./components";
 import { DeltaBar, RangeBar, ShapeBars, shapeCap, Term } from "./ExplainBits";
-import { EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
+import { MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
 
@@ -103,8 +103,8 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
   const doc = useMemo(() => parseExplain(data), [data]);
   const toggle = offerToggle && (
     <div className="ex-viewbar" title={view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}>
-      <SegmentedControl label="Pricing run" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
-        options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live, after R${choices.liveRound}` : "Live" }]} />
+      <SegmentedControl label="Prices shown" value={view} onChange={(v) => update({ v, p: null, vs: [] })}
+        options={[{ value: "pre", label: "Pre-tournament prices" }, { value: "live", label: choices.liveRound ? `Prices after R${choices.liveRound}` : "Latest prices" }]} />
     </div>
   );
   if (loading || early.loading) return <>{toggle}<LoadingState label="Loading the pricing explanation" /></>;   // the small diff is waited for so "What changed" arrives with the page instead of pushing it down
@@ -113,15 +113,28 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
   const market = params.m ?? "win";
   const player = params.p ? doc.players.find((p) => p.id === params.p) ?? null : null;
   const competitors = params.vs;
+  const isLatest = !!event.explain_run && `${doc.kind}_${doc.run}` === event.explain_run;
   return (
     <>
       {toggle}
+      {!isLatest && <RunNote doc={doc} switchToLatest={offerToggle && view !== "live" ? () => update({ v: "live", p: null, vs: [] }) : null} />}
       <RunNotes doc={doc} />
       {preEventFirst && choices.hasLive && !choices.preKey && <p className="ex-muted ex-notice">The pre-tournament explanation was not kept for this event, so this shows the live pricing.</p>}
       {children({ doc, event, latest: !!event.explain_run && `${doc.kind}_${doc.run}` === event.explain_run, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
       {player && <Suspense fallback={null}><PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
         setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} /></Suspense>}
     </>
+  );
+}
+
+/** Shown only when the page is not on the latest run, so the bar's "Prices after R1" is never silently contradicted. */
+function RunNote({ doc, switchToLatest }: { doc: ExplainDoc; switchToLatest: (() => void) | null }) {
+  const what = doc.kind === "live" ? `the prices after round ${doc.after_round ?? "?"}` : "the pre-tournament prices";
+  return (
+    <p className="ex-runnote" role="status">
+      <span>Showing {what}, priced {etTime(doc.as_of)}. This is not the latest run, so its gaps may no longer match the bar above.</span>
+      {switchToLatest && <button type="button" className="ex-linkbtn" onClick={switchToLatest}>Show the latest prices</button>}
+    </p>
   );
 }
 
@@ -137,9 +150,9 @@ function RunNotes({ doc }: { doc: ExplainDoc }) {
   );
 }
 
-/** True on phone widths (client only; false on first render so server and client markup match). */
+/** True on phone widths. Every caller mounts after its data has loaded in the browser (never in server markup), so the first render already reads the real width: a late flip moved whole sections (CLS 0.41 on This week). */
 export function usePhone(): boolean {
-  const [phone, setPhone] = useState(false);
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 820px)").matches);
   useEffect(() => {
     const q = window.matchMedia("(max-width: 820px)");
     const sync = () => setPhone(q.matches);
@@ -203,11 +216,11 @@ export function PriceList({ rows: allRows, heads, range, label, onOpen, limit = 
     <div className={`pl${hasRail ? "" : " pl-norail"}${hasWhy ? "" : " pl-nowhy"}`}>
       <div className="pl-head" aria-hidden="true"><span>{heads[0]}</span><span>{heads[1]}</span>{hasRail && <span>{heads[2]}</span>}{hasWhy && <span>{heads[3]}</span>}</div>
       <ul aria-label={label}>{rows.map((r) => (
-        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the row's own buttons are the keyboard path
-        <li key={r.id} className="pl-row" onClick={() => onOpen(r.id)}>
+        // The name button is the row's one tab stop; its ::after covers the whole row (stretched target), so a click anywhere opens the player without a nested handler.
+        <li key={r.id} className="pl-row">
           <span className="pl-name">
             {r.lead && <span className="pl-pos num">{r.lead}</span>}
-            <span className="pl-who"><button type="button" className="ex-linkbtn" onClick={(ev) => { ev.stopPropagation(); onOpen(r.id); }}>{r.name}</button>{r.tags && r.tags.length > 0 && <Tags tags={r.tags} max={2} />}</span>
+            <span className="pl-who"><button type="button" className="ex-linkbtn pl-open" onClick={() => onOpen(r.id)}>{r.name}</button>{r.tags && r.tags.length > 0 && <Tags tags={r.tags} max={2} />}</span>
           </span>
           <span className="pl-nums">{r.nums.map((n) => <span key={n.k} className={`pl-n${n.minor ? " pl-minor" : ""}`} title={n.help}><small>{n.k}</small><b className={`num ${n.cls ?? ""}`}>{n.v}</b></span>)}</span>
           {hasRail && <span className="pl-rail">{r.rail ? <><GapRail model={r.rail.model} book={r.rail.book} range={range} />{r.relNote && <small className="pl-rel num">{r.relNote}</small>}</> : <small className="ex-muted">no book price</small>}</span>}
@@ -265,11 +278,21 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   });
   const phone = usePhone();
   const [hasChanged, setHasChanged] = useState(false);
+  const boardSection = live ? (
+    <Section id="board" title="Leaderboard" purpose="Top 12 by win chance now, with the move since the last run (arrow and points).">
+      <LiveSection doc={doc} openPlayer={openPlayer} />
+    </Section>
+  ) : (
+    <Section id="board" title="Model vs sportsbook" purpose="Win chance, ours against the book with its margin removed. Plus (green) means we rate the player higher.">
+      <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />
+    </Section>
+  );
   const nav = [...(hasChanged ? [{ id: "changed", label: "What changed" }] : []), { id: "board", label: live ? "Leaderboard" : "Model vs book" }, { id: "chances", label: "Chances" }, { id: "course", label: "Course" }, { id: "weather", label: "Weather" }, { id: "shapes", label: "Shapes" }];
   return (
     <>
       <KeyFacts doc={doc} ids={contenderIds} openPlayer={openPlayer} />
       <OnThisPage sections={nav} />
+      {phone && boardSection}
       <WhatChangedStrip doc={doc} event={event} latest={latest} openPlayer={openPlayer} onPresent={setHasChanged} />
 
       <div className="ex-lede-block">
@@ -290,15 +313,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         </details>
       </div>
 
-      {live ? (
-        <Section id="board" title="Leaderboard" purpose="Current top 12 with our win chance now and how it moved since the last run (points of win chance).">
-          <LiveSection doc={doc} openPlayer={openPlayer} />
-        </Section>
-      ) : (
-        <Section id="board" title="Model vs sportsbook" purpose="Win chance, ours against the book with its margin removed. Plus (green) means we rate the player higher.">
-          <GapGlance doc={doc} ids={contenderIds} openPlayer={openPlayer} />
-        </Section>
-      )}
+      {!phone && boardSection}
 
       <Section id="chances" title={live ? "Best chances" : "Shortest prices"} purpose={live ? "Ten best chances for the selected bet type." : "Ten shortest-priced players; the rail is zero-centred on the sportsbook (right of the line = we are higher)."}
         actions={<SegmentedControl label="Bet type" value={shownMarket} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
@@ -354,7 +369,7 @@ function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
         <div className="ex-fact">
           <span className="ex-fact-label"><Term k="ex_our_chance">{live ? "Best chance to win" : "Favorite to win"}</Term></span>
           <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(f.id)}>{f.name}</button></strong>
-          <span className="ex-fact-sub"><b className="num">{pct(f.model)}</b> ours{f.market !== null ? <> vs <b className="num">{pct(f.market)}</b> book</> : <> · book not live</>}</span>
+          <span className="ex-fact-sub"><b className="num">{pct(f.model)}</b> ours{f.market !== null ? <> vs <b className="num">{pct(f.market)}</b> book</> : <> · <span title="Sportsbooks have not posted a win price for this player in this run. It appears here after the next run that finds one.">no book price posted yet</span></>}</span>
         </div>
       )}
       {s?.kind === "gap" && (
@@ -696,32 +711,33 @@ function DifferPanel({ doc, rows, differ, openPlayer }: { doc: ExplainDoc; rows:
     <Panel title="All contenders, bet by bet" eyebrow="Where we differ from the market" actions={<SegmentedControl label="Order" value={sort} onChange={setSort} options={SORT_DIFFER.map((o) => ({ value: o.value, label: o.label }))} />}>
       <p className="ex-muted ex-differ-rule" title="Long shots with thin records swing wildly in percentage terms and would crowd out the players a bet actually depends on.">{differ.rule}</p>
       {fieldLine && <p className="ex-differ-field">{fieldLine}</p>}
-      <div className="table-scroll ex-scroll"><table className="ex-table ex-cards ex-differ">
-        <thead><tr><th>Player</th>
-          <th title={`One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, gray means within 5% (in line). Bar height grows with the square root of the gap; a full bar is a ${Math.round(cap * 100)}% gap (bigger gaps are cut off with a notch).`}>Shape</th>
-          {markets.map((m) => <th key={m} title={`${MARKET_HELP[m]} The % is how much higher (+) or lower (−) our chance is than the sportsbook's with its margin removed; under ${Math.round(EDGE_MIN * 100)}% counts as in line.`}>{MARKET_LABEL[m]}</th>)}
-          <th title="The pattern across bet types in words, with the skill and the spread (how much their scores swing round to round) that the sportsbook's prices imply, compared with ours.">What we see</th></tr></thead>
-        <tbody>{(showAll ? shown : shown.slice(0, DIFFER_PREVIEW)).map(({ player: p, shape: s }) => {
-          const value = valueBets(s);
-          return (
-            <tr key={p.id} className="clickable-row" onClick={() => openPlayer(p.id)}>
-              <th scope="row"><button type="button" className="ex-linkbtn" onClick={(ev) => { ev.stopPropagation(); openPlayer(p.id); }}>{p.name}</button></th>
-              <td data-label="Shape" className="ex-shape-cell"><ShapeBars shape={s} markets={markets} cap={cap} /></td>
-              {markets.map((m) => {
-                const e = s.markets[m];
-                return <td key={m} data-label={MARKET_LABEL[m]} title={e ? `Ours ${pct(e.model)}, sportsbook ${pct(e.market)} (margin removed)` : "No sportsbook price"}>
-                  {e ? <span className="ex-differ-cell"><span className={e.tone === "pos" || (e.tone === "neg" && e.side === "miss_cut") ? "pos" : e.tone === "neg" ? "neg" : "ex-muted"}>{edgeCellText(e)}</span><small className="ex-differ-nums">{pct(e.model)} vs {pct(e.market)}</small></span> : "-"}
-                </td>;
-              })}
-              <td data-label="What we see" className="ex-why ex-differ-why">
-                <strong>{s.sentence}</strong>
-                <span className="ex-differ-sub" title="Skill: strokes a round better than the field average. Our week-specific adjustments are course fit, travel and home country, weather and tee times, and any owner adjustment. The sportsbook does not say which parts it prices, so the rest is shown as one number.">{s.parts_sentence}</span>
-                {value.length > 0 && <span className="ex-differ-value">Value against the sportsbook: {value.join(", ")}</span>}
-              </td>
-            </tr>
-          );
-        })}</tbody>
-      </table></div>
+      <div className="ex-dfl-head" aria-hidden="true">
+        <span>Player</span>
+        <span title={`One bar per bet type: up means our chance is higher than the sportsbook's, down means lower, gray means within 5% (in line). Bar height grows with the square root of the gap; a full bar is a ${Math.round(cap * 100)}% gap (bigger gaps are cut off with a notch).`}>Shape</span>
+        <span>Ours vs book, by bet</span>
+        <span>What we see</span>
+      </div>
+      <ul className="ex-dfl" aria-label="Contenders, bet by bet">{(showAll ? shown : shown.slice(0, DIFFER_PREVIEW)).map(({ player: p, shape: s }) => {
+        const value = valueBets(s);
+        return (
+          <li key={p.id} className="ex-dfl-row">
+            <button type="button" className="ex-linkbtn ex-dfl-name pl-open" onClick={() => openPlayer(p.id)}>{p.name}</button>
+            <span className="ex-dfl-shape"><ShapeBars shape={s} markets={markets} cap={cap} /></span>
+            <span className="ex-dfl-cells">{markets.map((m) => {
+              const e = s.markets[m];
+              if (!e) return null;
+              return <span key={m} className="ex-dfl-cell" title={`${MARKET_HELP[m]} Ours ${pct(e.model)}, sportsbook ${pct(e.market)} (margin removed)`}>
+                <small>{MARKET_LABEL[m]}</small>
+                <b className={e.tone === "pos" || (e.tone === "neg" && e.side === "miss_cut") ? "pos" : e.tone === "neg" ? "neg" : "ex-muted"}>{edgeCellText(e)}</b>
+              </span>;
+            })}</span>
+            <span className="ex-dfl-why">
+              <strong>{s.sentence}</strong>
+              {value.length > 0 && <span className="ex-differ-value">Value against the sportsbook: {value.join(", ")}</span>}
+            </span>
+          </li>
+        );
+      })}</ul>
       {shown.length > DIFFER_PREVIEW && (
         <button type="button" className="ex-showall" aria-expanded={showAll} onClick={() => setShowAll((v) => !v)}>
           {showAll ? `Show the first ${DIFFER_PREVIEW}` : `Show all ${shown.length} contenders`}
@@ -819,7 +835,7 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
       nums: [
         { k: "To par", v: toParText(p.live?.to_par), help: "Score to par so far." },
         { k: "Win", v: pct(p.probs.win.model), help: "Our chance to win now." },
-        { k: "Win change", v: Math.abs(d) < 0.05 ? <span className="ex-muted">none</span> : <Delta value={d} digits={1} suffix=" pts" />, help: "Change in win chance since the previous run, in percentage points." },
+        { k: "Win change", v: Math.abs(d) < 0.05 ? <span className="ex-muted">none</span> : <span data-flash className="ex-moved"><Delta value={d} digits={1} suffix=" pts" /></span>, help: "Change in win chance since the previous run, in percentage points." },
         { k: "Top 10", v: pct(p.probs.top_10.model) },
         { k: "Skill now", v: signed(p.live?.mu_live), help: "Strokes per round better (+) or worse (-) than the field average." },
         ...(hasB8 ? [{ k: "Form", minor: true, v: signed(p.live?.b8_delta), help: "How much play this week has moved our rating, strokes per round." }] : []),

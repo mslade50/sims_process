@@ -71,3 +71,17 @@
 .fb-runbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2) var(--sp-3);margin:0}
 
 .wk-audit-pending{min-height:61px}
+
+/* Round 3: phone shows the comparison before configuration. Two answer tiles, one compact control row, the list, then the gap summaries. */
+.fb-sort-select{display:none}
+@media(max-width:820px){
+  .fb-stats>:nth-child(1),.fb-stats>:nth-child(4){display:none}
+  .fb-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-2)}
+  .fb-controls{gap:var(--sp-2)}
+  .fb-sort-wide{display:none}
+  .fb-sort-select{display:grid;gap:var(--sp-1);flex:0 0 132px}
+  .fb-sort-select select{min-height:44px;font-size:16px;width:100%}
+  .fb-search{flex:1 1 0;min-width:0;min-height:44px}
+  .fb-controls .fb-control{flex:1 0 100%}
+  .fb-gaps{order:5}
+}

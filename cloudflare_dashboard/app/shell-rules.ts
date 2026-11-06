@@ -344,3 +344,52 @@ export function eventHref(pathname: string, search: string, uid: string): string
 export function primaryTabKeys(owner: boolean): string[] {
   return ["this-week", "weekly-players", owner ? "bet-card" : "why-priced", "weather-effects"];
 }
+
+/** The explain document This week will open for an event, when that is certain from the index alone: its latest run (the common case); null when the page may choose another run. */
+export function explainWarmKey(events: Array<{ event_uid?: string; explain_key?: string | null; explain_run?: string | null; distribution_runs?: Array<{ kind?: string } | null> }> | undefined, uid: string | null): string | null {
+  const event = events?.find((e) => e.event_uid === uid);
+  if (!event?.explain_key) return null;
+  const hasLive = (event.distribution_runs ?? []).some((r) => r?.kind === "live");
+  return hasLive && !(event.explain_run ?? "").startsWith("live_") ? null : event.explain_key;
+}
+
+/**
+ * Inline <head> script: start the two requests every first screen waits on (the event index, then This week's explain document for the event
+ * the page will resolve) while the framework is still downloading, instead of after hydration. app/data.ts takes each promise once
+ * (window.__earlyFetch) and falls back to a normal fetch on any miss, so a wrong guess here only costs bytes, never correctness.
+ * The event choice mirrors resolveEventUid + explainWarmKey above; tests/shell.test.mjs runs this script against them.
+ */
+export function earlyFetchScript(): string {
+  return `(function(){try{if(localStorage.getItem("golf-fonts")==="1")document.documentElement.classList.add("fonts-ready")}catch(x){}try{var E={};window.__earlyFetch=E;var go=function(u,c){var p=fetch(u,{headers:{accept:"application/json"},cache:c,priority:"high",credentials:"same-origin"});p.catch(function(){});E[u]={p:p,c:c};return p};`
+    + `var ix=go("/api/golfprice/index.json","no-cache"),P=location.pathname;`
+    + `if(P==="/players"){var sp=new URLSearchParams(location.search),pid=sp.get("player");if(pid&&/^(?:[1-9][0-9]*|historical-[a-z0-9]+)$/.test(pid)&&!sp.get("generation"))go("/api/golfprice/player_profiles/golfer/search-index.json?id="+pid,"no-cache")}`
+    + `var W=P==="/why-priced";if(P!=="/"&&P!=="/this-week"&&!W)return;`
+    + `ix.then(function(r){return r.ok?r.clone().json():null}).then(function(j){var ev=j&&j.events;if(!ev)return;`
+    + `var known=ev.filter(function(e){return e.event_uid}),dated=known.filter(function(e){return e.date_start}),q=new URLSearchParams(location.search).get("e"),m=null,uid="";`
+    + `try{m=localStorage.getItem("${EVENT_STORAGE_KEY}")}catch(x){}`
+    + `if(q&&known.some(function(e){return e.event_uid===q}))uid=q;else if(dated.length){var n=dated.map(function(e){return e.date_start}).sort().pop(),`
+    + `rows=dated.filter(function(e){return e.date_start===n});rows.sort(function(a,b){return String(a.tour||"").toLowerCase().localeCompare(String(b.tour||"").toLowerCase())});`
+    + `var l=-1;rows.some(function(e,i){if(e.explain_key){l=i;return true}});if(l>0)rows.unshift(rows.splice(l,1)[0]);`
+    + `uid=m&&rows.some(function(e){return e.event_uid===m})?m:rows[0].event_uid}`
+    + `var e=known.filter(function(x){return x.event_uid===uid})[0];if(!e||!e.explain_key)return;`
+    + `var runs=e.distribution_runs||[],live=runs.some(function(r){return r&&r.kind==="live"});`
+    + `if(W){var cur=String(e.explain_run||"").indexOf("live_")===0;if(live||cur){var v=new URLSearchParams(location.search).get("v");if(v&&v!=="pre")return;`
+    + `var wk=runs.filter(function(r){return r&&r.kind==="week"&&typeof r.key==="string"&&r.key&&r.validated!==false}).sort(function(a,b){return String(a.as_of||"").localeCompare(String(b.as_of||""))}).pop();`
+    + `if(wk&&(live||cur))go("/api/"+wk.key,"default");return}go("/api/"+e.explain_key,"default");return}`
+    + `if(live&&String(e.explain_run||"").indexOf("live_")!==0)return;`
+    + `go("/api/"+e.explain_key,"default")}).catch(function(){})}catch(x){}})()`;
+}
+
+/* ------------------------------------------------------------------ stale-chunk recovery (used by ViewBoundary.tsx) */
+/** A failed dynamic import after a deploy: the old page asks for a chunk hash that no longer exists. */
+export function isChunkLoadError(error: unknown): boolean {
+  const e = error as { name?: string; message?: string } | null;
+  const text = `${e?.name ?? ""} ${e?.message ?? String(error ?? "")}`;
+  return /ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Loading chunk [\w-]+ failed|Loading CSS chunk/i.test(text);
+}
+const RELOAD_WINDOW_MS = 60_000;
+/** Pure guard: a reload is allowed unless one already started within the last minute (a loop), so a tab left open across two deploys recovers twice. */
+export function mayReloadForChunk(lastReloadAt: string | null, now: number): boolean {
+  const last = Number(lastReloadAt);
+  return !(Number.isFinite(last) && last > 0 && now - last < RELOAD_WINDOW_MS);
+}

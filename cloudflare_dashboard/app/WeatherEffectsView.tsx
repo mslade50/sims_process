@@ -10,7 +10,7 @@ import { useDashboardData } from "./data";
 import { useIsOwner } from "./viewer";
 import { WeatherBriefBody } from "./WeatherBriefView";
 import { OwnerEditNote, WeatherHourTable, editTitle } from "./WeatherHourTable";
-import { briefCurrency } from "./freshness-rules";
+import { briefCurrency, etStamp } from "./freshness-rules";
 import { briefKeyFor, fieldWords, helpWords, parseBrief } from "./weather-brief-rules";
 import { etTime } from "./lib";
 import {
@@ -154,12 +154,17 @@ function RangeBar({ rel, lo, hi, scale }: { rel: number | null; lo: number | nul
   const pos = (v: number) => `${Math.max(0, Math.min(100, 50 + (v / scale) * 50))}%`;
   const a = lo ?? rel;
   const b = hi ?? rel;
+  const edge = scale >= 1 ? scale.toFixed(1).replace(/\.0$/, "") : scale.toFixed(2);
   return (
-    <div className="wx-range" aria-hidden="true">
-      <i className="wx-zero" />
-      <i className="wx-band" style={{ left: pos(Math.min(a, b)), width: `calc(${pos(Math.max(a, b))} - ${pos(Math.min(a, b))})` }} />
-      <i className="wx-dot" style={{ left: pos(rel) }} />
-    </div>
+    <>
+      <div className="wx-range" aria-hidden="true">
+        <i className="wx-zero" />
+        <i className="wx-band" style={{ left: pos(Math.min(a, b)), width: `calc(${pos(Math.max(a, b))} - ${pos(Math.min(a, b))})` }} />
+        <i className="wx-dot" style={{ left: pos(rel) }} />
+      </div>
+      <div className="wx-range-axis" aria-hidden="true"><span>&minus;{edge} easier</span><span>0 = field average</span><span>+{edge} harder</span></div>
+      <span className="wx-range-unit">Strokes per round vs the field average (dot = expected, bar = likely range)</span>
+    </>
   );
 }
 
@@ -306,6 +311,18 @@ function PlayerRows({ p, rounds, teeRounds, effectRounds, showSd, cols, open, on
 export function BriefCurrencyBanner({ event }: { event: IndexEvent }) {
   const c = briefCurrency(event);
   if (c.state !== "behind") return null;
+  // Run ids carry seconds but the page shows minutes: two runs a few seconds apart would read as "behind" with identical times.
+  const moment = (asOf: string | null | undefined, run: string | null | undefined) => {
+    const t = asOf ? Date.parse(asOf) : NaN;
+    if (Number.isFinite(t)) return t;
+    const m = /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/.exec(run ?? "");
+    return m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`) : NaN;
+  };
+  const w = moment(event.weather_as_of, event.weather_run), b = moment(event.weather_brief_as_of, event.weather_brief_run);
+  if (Number.isFinite(w) && Number.isFinite(b) && etStamp(new Date(w).toISOString()) === etStamp(new Date(b).toISOString())) {
+    const gap = Math.abs(w - b) / 1000;
+    if (gap <= 300) return null;
+  }
   return <div className="inputs-note accent" role="status" data-state="brief-behind"><strong>This summary is behind the weather data.</strong><span> {c.message}</span></div>;
 }
 
@@ -400,7 +417,7 @@ export function WeatherEffectsView() {
   const intro = (
     <PageHeader
       title="Weather"
-      purpose="How the forecast changes scoring this week: how hard each round plays against a typical day, which tee wave has the edge, and who the weather helps or hurts."
+      purpose="How the forecast moves scoring: round difficulty, tee-wave edge, who it helps."
     />
   );
   if (loading) return <div>{intro}<LoadingState label="Loading published events" /></div>;

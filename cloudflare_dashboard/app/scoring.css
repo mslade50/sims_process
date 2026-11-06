@@ -65,3 +65,25 @@
 .score-page > .ds-section#outcomes{margin-top:var(--sp-4)}
 @media(max-width:600px){.score-chart{height:260px}.score-decision-compact .score-decision-main{padding:var(--sp-4)}}
 @media(max-width:600px){.score-timeline{display:none}.score-decision-compact .score-kicker{font-size:var(--fs-small)}.score-decision-compact h2{font-size:40px;margin:4px 0}}
+
+/* Round 3: answer first. Headline beside the histogram on desktop, directly above it on a phone. */
+.score-answer{display:grid;grid-template-columns:minmax(260px,.34fr) minmax(0,.66fr);gap:var(--sp-5);align-items:start;margin:0 0 var(--sp-3)}
+.score-answer > .score-decision{margin:0}
+.score-answer > .ds-section#outcomes,.score-page > .score-answer > .ds-section{margin-top:0}
+@media(max-width:900px){.score-answer{grid-template-columns:1fr;gap:var(--sp-3)}}
+.score-runline{margin:0 0 var(--sp-3);border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0 var(--sp-3)}
+.score-runline > summary{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);min-height:44px;cursor:pointer;color:var(--muted);font-size:var(--fs-small);list-style:none}
+.score-runline > summary::-webkit-details-marker{display:none}
+.score-runline b{color:var(--foreground);font-weight:650}
+.score-runline-change{color:var(--accent,var(--chart-1));font-weight:650}
+.score-runline .score-select{margin:0 0 var(--sp-3)}
+.score-fold > summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--accent,var(--chart-1));font-size:var(--fs-small);font-weight:650}
+.score-fold-inner{margin-top:var(--sp-3)}
+@media(max-width:600px){
+  .score-answer .score-population{display:none}
+  .score-answer .score-decision-compact .score-decision-main{padding:var(--sp-3) var(--sp-4)}
+  .score-answer .score-decision-compact h2{font-size:34px;margin:2px 0}
+  .score-answer .score-vspar{margin:0 0 var(--sp-2)}
+  .score-answer .score-ci{margin-top:var(--sp-2);padding:var(--sp-2) var(--sp-3)}
+  .score-answer .score-chart{height:230px}
+}

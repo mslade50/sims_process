@@ -271,3 +271,33 @@ test("benchmarks: size for a ~150 player field from the real snapshot", { skip: 
   assert.equal(slice.players.length, 150);
   slice.players.forEach((p) => assert.deepEqual(p.pga_benchmark, full.players.find((q) => q.dg_id === p.dg_id).pga_benchmark));
 });
+
+import { handlePlayerOne, PLAYER_ONE_PATH } from "../worker/player-one.ts";
+
+test("single-golfer endpoint: slices the stored derived index to one row, decodes with parseSearchIndex, writes nothing, 404 without a derived object", async () => {
+  const base = fakeBucket({ [`golfprice/player_profiles/${GEN}/catalog.json`]: catalogText() });
+  await handleSearchIndex(req(`player_profiles/search-index.json?gen=${GEN}`), base);   // stores the derived index (the existing path)
+  const putsBefore = base.puts.length;
+  for (const [id, name] of [["15", "Bolling, Charlie"], ["31", "Åberg, Ludvig"], ["historical-5170aa8892ac5c6bba19", "Al Shahrani, Abdulrahman"]]) {
+    const res = await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=${id}&gen=${GEN}`), base);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    const body = await res.json();
+    assert.equal(body.count, 1);
+    const cat = parseSearchIndex(body);
+    assert.equal(cat.players.length, 1);
+    assert.equal(cat.players[0].name, name);
+    assert.ok(cat.players[0].profile_key.endsWith(".json"));
+    assert.equal(cat.deep_coverage !== undefined || body.meta.deep_coverage !== undefined, true);
+  }
+  const full = parseSearchIndex(await (await handleSearchIndex(req(`player_profiles/search-index.json?gen=${GEN}`), base)).json());
+  const one = parseSearchIndex(await (await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=15&gen=${GEN}`), base)).json());
+  assert.deepEqual(one.players[0], full.players.find((p) => p.dg_id === 15), "same decoded entry as the full index");
+  assert.equal(base.puts.length, putsBefore, "read-only: no R2 write");
+  assert.equal((await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=999&gen=${GEN}`), base)).status, 404);
+  assert.equal((await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=../x&gen=${GEN}`), base)).status, 400);
+  assert.equal((await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=15&gen=zz`), base)).status, 400);
+  const empty = fakeBucket({});
+  assert.equal((await handlePlayerOne(req(`${PLAYER_ONE_PATH}?id=15&gen=${GEN}`), empty)).status, 404);
+  assert.equal(empty.puts.length, 0);
+});

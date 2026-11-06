@@ -1,13 +1,8 @@
 /* One-golfer page: hero, SG bars, filter summary bar, disclosures. Tokens only (theme.test scans globals.css for hex). */
 .ph-hero{display:grid;gap:var(--sp-4);padding:var(--sp-5);border:1px solid var(--line-strong);border-radius:var(--radius-lg);background:var(--surface)}
 .ph-row{display:grid;gap:var(--sp-4)}
-.ph-identity{grid-template-columns:auto minmax(180px,1fr) auto;align-items:center}
-.ph-id-text h2{margin:2px 0;font-size:var(--fs-h1);letter-spacing:-.01em}.ph-id-text p{margin:0;color:var(--muted-strong);font-size:var(--fs-data)}
-.ph-facts{display:grid;grid-template-columns:repeat(3,auto);gap:var(--sp-1) var(--sp-5);margin:0}
-.ph-facts dt{font-size:var(--fs-small);color:var(--muted)}.ph-facts dd{margin:0;font-weight:600;font-size:var(--fs-data);font-variant-numeric:tabular-nums}
 .ph-story{margin:0;padding:var(--sp-3) var(--sp-4);border-left:3px solid var(--accent);background:var(--accent-soft);color:var(--foreground);font-size:var(--fs-data);line-height:1.5;border-radius:0 var(--radius-control) var(--radius-control) 0}
 .ph-stats{grid-template-columns:minmax(0,1.4fr) minmax(0,1.1fr) minmax(0,.9fr);align-items:start;gap:0}
-.ph-id-text{min-width:180px}
 .ph-stats>*{min-width:0;padding:var(--sp-1) var(--sp-5);border-left:1px solid var(--line)}
 .ph-stats>:first-child{padding-left:0;border-left:0}
 .ph-headline{display:grid;gap:var(--sp-2);align-content:start}
@@ -49,6 +44,17 @@
 .ph-section{display:grid;gap:var(--sp-4);scroll-margin-top:calc(var(--bar-h) + var(--sp-12))}
 .ph-section>h2{margin:0;font-size:var(--fs-h2)}
 .ph-section-purpose{margin:calc(var(--sp-3) * -1) 0 0;color:var(--muted-strong);font-size:var(--fs-data)}
-@media(max-width:1100px){.ph-stats{grid-template-columns:minmax(0,1fr);gap:var(--sp-4)}.ph-stats>*{padding:var(--sp-4) 0 0;border-left:0;border-top:1px solid var(--line)}.ph-stats>:first-child{padding-top:0;border-top:0}.ph-identity{grid-template-columns:auto minmax(180px,1fr)}.ph-facts{grid-column:1/-1}}
-@media(max-width:700px){.ph-hero{padding:var(--sp-4)}.ph-number{font-size:var(--fs-kpi)}.ph-sg{padding:var(--sp-4)}.ph-sg-rows li{grid-template-columns:90px minmax(0,1fr);row-gap:2px}.ph-sg-value,.ph-sg-rows li small{grid-column:2}.ph-facts{grid-template-columns:repeat(3,minmax(0,1fr))}.ph-id-text h2{font-size:var(--fs-h1)}}
+@media(max-width:1100px){.ph-stats{grid-template-columns:minmax(0,1fr);gap:var(--sp-4)}.ph-stats>*{padding:var(--sp-4) 0 0;border-left:0;border-top:1px solid var(--line)}.ph-stats>:first-child{padding-top:0;border-top:0}}
+@media(max-width:700px){.ph-hero{padding:var(--sp-4)}.ph-number{font-size:var(--fs-kpi)}.ph-sg{padding:var(--sp-4)}.ph-sg-rows li{grid-template-columns:90px minmax(0,1fr);row-gap:2px}.ph-sg-value,.ph-sg-rows li small{grid-column:2}}
 @media (pointer: coarse) { .ph-link { min-height: 44px; } }.ph-trend-note{margin:0;color:var(--muted-strong);font-size:var(--fs-small)}
+
+/* Round 3: answer first. Skill and this week's price lead; identity is one compact meta line after the evidence. */
+.ph-notes{display:grid;gap:var(--sp-1)}.ph-notes:empty{display:none}
+.ph-meta{display:flex;align-items:center;gap:var(--sp-3);padding-top:var(--sp-3);border-top:1px solid var(--line)}
+.ph-meta p{margin:0;color:var(--muted-strong);font-size:var(--fs-small);line-height:1.5}.ph-meta b{color:var(--foreground);font-weight:600}
+.ph-meta-photo{flex:none}.ph-meta .pp-photo-wrap{width:40px;gap:0}.ph-meta .pp-photo{width:40px;height:40px}.ph-meta .pp-photo span{font-size:var(--fs-small);letter-spacing:0}
+.ph-hero{padding-top:var(--sp-4)}
+@media(max-width:700px){.ph-hero{gap:var(--sp-3)}.ph-stats>*{padding-top:var(--sp-3)}.ph-bar{margin:var(--sp-6) 0 var(--sp-5)}}
+.ph-week[data-pending=true]{min-height:370px}
+@media(max-width:1100px){.ph-week[data-pending=true]{min-height:300px}}
+.ph-trend-loading{min-height:250px}

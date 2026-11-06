@@ -58,3 +58,15 @@
   details > summary { min-height: 40px; display: flex; align-items: center; gap: 6px; }
   .th-sort { min-height: 40px; }
 }
+
+/* Panel switches and disclosures: a short fade-rise on the panel that appears (tab/section content, details body); closing details fades where the browser supports it. */
+@keyframes disclose { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes panel-in { from { opacity: 0; transform: translateY(4px); } }
+details[open] > :not(summary) { animation: disclose var(--dur) var(--ease); }
+[role="tabpanel"] { animation: panel-in var(--dur) var(--ease); }
+details > summary { transition: color var(--dur-fast) ease; }
+@supports selector(::details-content) {
+  details::details-content { opacity: 0; transition: opacity var(--dur-fast) ease, content-visibility var(--dur-fast) allow-discrete; }
+  details[open]::details-content { opacity: 1; }
+  details[open] > :not(summary) { animation: none; }
+}

@@ -313,3 +313,73 @@ test("freshness is usability: stage now, which round the prices reflect and whet
   assert.equal(groupOf("history"), "Archive");
   assert.equal(groupOf("nope"), null);
 });
+
+/* ------------------------------------------------------------------ round 3: archive status, early fetch, chunk recovery */
+import vm from "node:vm";
+import { archivedStatusText } from "../app/freshness-rules.ts";
+import { earlyFetchScript, explainWarmKey, resolveEventUid, mayReloadForChunk, isChunkLoadError } from "../app/shell-rules.ts";
+
+test("retired archives show a neutral Archived state, never an age", () => {
+  assert.equal(archivedStatusText(undefined), "Archived");
+  assert.equal(archivedStatusText("2026-10-27T12:00:00Z"), "Archived · last data Oct 27, 2026");
+  assert.doesNotMatch(archivedStatusText("2020-01-01"), /ago/);
+  assert.match(app, /<ArchivedStatus/);
+  assert.doesNotMatch(app, /label="Data"/, "the legacy bar no longer uses the freshness badge");
+});
+
+function runEarly({ path, search = "", remembered = null, index }) {
+  const calls = [];
+  const fetch = (url, init) => {
+    calls.push({ url, cache: init.cache });
+    const body = url === "/api/golfprice/index.json" ? index : {};
+    return Promise.resolve({ ok: true, clone() { return this; }, json: async () => body });
+  };
+  const win = {};
+  const ctx = { window: win, fetch, location: { pathname: path, search }, localStorage: { getItem: () => remembered }, URLSearchParams, String };
+  vm.runInNewContext(earlyFetchScript(), ctx);
+  return new Promise((resolve) => setTimeout(() => resolve({ calls, early: win.__earlyFetch }), 20));
+}
+const EV = (uid, tour, start, extra = {}) => ({ event_uid: uid, tour, date_start: start, explain_key: `golfprice/explain/${uid.replace(/:/g, "_")}/latest.json`, explain_run: "pre_x", ...extra });
+
+test("the early-fetch script requests the index, then exactly the explain document this page will resolve", async () => {
+  const index = { events: [EV("euro:1:2026-11-05", "euro", "2026-11-05"), EV("pga:2:2026-11-05", "pga", "2026-11-05"), EV("pga:0:2026-10-29", "pga", "2026-10-29")] };
+  const cases = [
+    { path: "/this-week" }, { path: "/" }, { path: "/this-week", search: "?e=pga%3A2%3A2026-11-05" }, { path: "/this-week", search: "?e=pga%3A0%3A2026-10-29" },
+    { path: "/this-week", search: "?e=nope" }, { path: "/this-week", remembered: "pga:2:2026-11-05" }, { path: "/this-week", remembered: "pga:0:2026-10-29" },
+  ];
+  for (const c of cases) {
+    const { calls } = await runEarly({ ...c, index });
+    const params = new URLSearchParams(c.search ?? "");
+    const uid = resolveEventUid(index, params.get("e"), c.remembered, 0);
+    const want = explainWarmKey(index.events, uid);
+    assert.equal(calls[0].url, "/api/golfprice/index.json");
+    assert.equal(calls[0].cache, "no-cache");
+    assert.deepEqual(calls.slice(1).map((x) => x.url), want ? [`/api/${want}`] : [], JSON.stringify(c));
+  }
+  const live = { events: [EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "pre_x", distribution_runs: [{ kind: "live" }] })] };
+  assert.equal((await runEarly({ path: "/this-week", index: live })).calls.length, 1, "a live run newer than the explain run leaves the choice to the page");
+  assert.equal((await runEarly({ path: "/players", index })).calls.length, 1, "other pages only start the index");
+  assert.equal((await runEarly({ path: "/weekly-players", index })).calls.length, 1, "other pages only start the index");
+});
+
+test("the early-fetch script warms the one-golfer slice and Why priced's document", async () => {
+  const index = { events: [EV("pga:2:2026-11-05", "pga", "2026-11-05")] };
+  const one = await runEarly({ path: "/players", search: "?player=10091", index });
+  assert.deepEqual(one.calls.map((x) => x.url), ["/api/golfprice/index.json", "/api/golfprice/player_profiles/golfer/search-index.json?id=10091"]);
+  assert.equal(one.calls[1].cache, "no-cache");
+  assert.equal((await runEarly({ path: "/players", search: "?player=10091&generation=" + "a".repeat(20), index })).calls.length, 1, "a pinned generation uses another URL: left to the page");
+  assert.equal((await runEarly({ path: "/players", search: "?player=../x", index })).calls.length, 1);
+  const pre = await runEarly({ path: "/why-priced", index });
+  assert.deepEqual(pre.calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2_2026-11-05/latest.json"]);
+  const withLive = { events: [EV("pga:2:2026-11-05", "pga", "2026-11-05", { explain_run: "live_R1_x", distribution_runs: [{ kind: "week", key: "golfprice/explain/pga_2/week_x.json", as_of: "2026-11-05T01:00:00Z" }, { kind: "live", key: "golfprice/explain/pga_2/live_R1_x.json" }] })] };
+  assert.deepEqual((await runEarly({ path: "/why-priced", index: withLive })).calls.slice(1).map((x) => x.url), ["/api/golfprice/explain/pga_2/week_x.json"], "with a live run Why priced opens on the pre-tournament document");
+  assert.equal((await runEarly({ path: "/why-priced", search: "?v=live", index: withLive })).calls.length, 1);
+});
+
+test("a deploy under an open tab reloads once a minute at most", () => {
+  assert.equal(mayReloadForChunk(null, 1_000_000), true);
+  assert.equal(mayReloadForChunk(String(1_000_000 - 5_000), 1_000_000), false);
+  assert.equal(mayReloadForChunk(String(1_000_000 - 61_000), 1_000_000), true);
+  assert.equal(isChunkLoadError(new TypeError("Failed to fetch dynamically imported module: /_next/static/chunks/x.js")), true);
+  assert.equal(isChunkLoadError(new Error("boom")), false);
+});

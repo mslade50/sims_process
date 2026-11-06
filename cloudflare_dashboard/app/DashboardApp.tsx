@@ -3,12 +3,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, BookOpen, ChartColumn, ChartNoAxesCombined, ChevronLeft, ChevronRight, CircleGauge, CloudRain, CloudSun, Crosshair, Flag, LayoutDashboard, ListChecks, Microscope, Play, Scale, Settings2, SlidersHorizontal, Ticket, TrendingUp, Users, X } from "lucide-react";
 import { readRememberedEvent, rememberEvent } from "./event-param";
-import { EventStatusBar, EventSwitcher, SearchToggle, TabBar, ThemeToggle, useDialogFocus } from "./ShellParts";
+import { ArchivedStatus, EventStatusBar, EventSwitcher, SearchToggle, TabBar, ThemeToggle, useDialogFocus } from "./ShellParts";
 import { useDashboardData, useSavedCopies, warmDashboardData } from "./data";
-import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, type NavGroup, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavItem } from "./shell-rules";
+import { LEGACY_VIEWS, explainWarmKey, isChunkLoadError, OWNER_ONLY_VIEWS, type NavGroup, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavItem } from "./shell-rules";
 import { EmptyState, FreshnessBadge, PageGroupContext, PageHeader, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
-import { ViewBoundary } from "./ViewBoundary";
+import { ViewBoundary, reloadOnceForStaleChunk, useChunkLoadRecovery } from "./ViewBoundary";
 import { useViewer } from "./viewer";
 import "./shell.css";
 
@@ -86,6 +86,11 @@ function prefetchView(key: string) {
   warmed.add(key);
   load().catch(() => warmed.delete(key));
 }
+// The view for the address being opened is requested as soon as this module runs (before hydration finishes), not when React first renders it.
+if (typeof window !== "undefined") {
+  const first = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/")[0] || "this-week";
+  if (Object.hasOwn(loaders, first)) prefetchView(first);
+}
 const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
 const PREFETCH_DELAY_MS = 8000;
 
@@ -111,14 +116,6 @@ const views: Record<ViewKey, React.ComponentType> = {
   "bet-breakdowns": BetBreakdownsView,
   "bet-card": BetCardView,
 };
-
-/** The document This week will open for the event, when that is certain from the index alone: its latest run (the common case); null when the page may choose another run. */
-function explainWarmKey(events: Array<{ event_uid?: string; explain_key?: string | null; explain_run?: string | null; distribution_runs?: Array<{ kind?: string } | null> }> | undefined, uid: string | null): string | null {
-  const event = events?.find((e) => e.event_uid === uid);
-  if (!event?.explain_key) return null;
-  const hasLive = (event.distribution_runs ?? []).some((r) => r?.kind === "live");
-  return hasLive && !(event.explain_run ?? "").startsWith("live_") ? null : event.explain_key;
-}
 
 function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -175,6 +172,7 @@ function NavLink({ item, activeView, collapsed }: { item: NavItem; activeView: s
 }
 
 export function DashboardApp({ initialView }: { initialView: string }) {
+  useChunkLoadRecovery();
   const route = resolveRoute(initialView, Object.keys(views));
   const activeKey = route.kind === "view" || route.kind === "redirect" || route.kind === "retired" ? route.key : "";
   const ActiveView = route.kind === "view" ? views[route.key as ViewKey] : route.kind === "retired" ? ResearchView : null;
@@ -182,7 +180,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const viewer = useViewer();
   const navigation = navigationFor(viewer?.owner === true);
   const ownerOnly = route.kind === "view" && OWNER_ONLY_VIEWS.includes(route.key);
-  const { data: manifest, stale: manifestSaved } = useDashboardData<Manifest>("manifest.json");
+  const { data: manifest } = useDashboardData<Manifest>("manifest.json");
   // golfprice is the production model since 2026-10-06: the header shows its current week (all events sharing the newest start date),
   // with no run shown when the golfprice index is unavailable (the legacy manifest is only the badge on the Legacy views, never a stand-in for the current week). Freshness is the OLDEST event's
   // newest run, so a stale event cannot hide behind a fresh one (site audit C3).
@@ -201,6 +199,14 @@ export function DashboardApp({ initialView }: { initialView: string }) {
     let idleId: number | undefined;
     const timer = window.setTimeout(() => { if (w.requestIdleCallback) idleId = w.requestIdleCallback(run, { timeout: 4000 }); else run(); }, PREFETCH_DELAY_MS);
     return () => { window.clearTimeout(timer); if (idleId !== undefined) w.cancelIdleCallback?.(idleId); };
+  }, []);
+  // The web font is requested once the page has settled: the class below makes the CSS rule use it (a boot flag applies it at once on later visits, when it is cached).
+  useEffect(() => {
+    const root = document.documentElement;
+    if (root.classList.contains("fonts-ready")) return;
+    const apply = () => window.setTimeout(() => { root.classList.add("fonts-ready"); try { localStorage.setItem("golf-fonts", "1"); } catch { /* flag is only an optimisation */ } }, 300);
+    if (document.readyState === "complete") apply(); else window.addEventListener("load", apply, { once: true });
+    return () => window.removeEventListener("load", apply);
   }, []);
   const isLegacy = LEGACY_VIEWS.includes(activeKey);
   // An invalid ?e= used to fall back to the default event with no word of it (site audit B5). Read after mount so the server render matches.
@@ -242,7 +248,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The dialog code is fetched on the first click and the panel opens only once it is in hand, so focus handling finds it mounted.
   const [SettingsPanel, setSettingsPanel] = useState<typeof import("./ShellExtras").SettingsPanel | null>(null);
-  const openSettings = () => { import("./ShellExtras").then((m) => { setSettingsPanel(() => m.SettingsPanel); setSettingsOpen(true); }).catch(() => undefined); };
+  const openSettings = () => { import("./ShellExtras").then((m) => { setSettingsPanel(() => m.SettingsPanel); setSettingsOpen(true); }).catch((error) => { if (isChunkLoadError(error)) reloadOnceForStaleChunk(); }); };
   useDialogFocus(settingsOpen, settingsRef, () => setSettingsOpen(false), [".sidebar", "main", ".tabbar", ".skip-link", ".sidebar-backdrop"], { returnSelector: ".sidebar-footer button" });
   // Saved preferences are read after mount: the server render has no localStorage, so a lazy initial read would differ from it on
   // hydration (React error #418). The boot script in <head> has already applied the saved theme/accent before first paint.
@@ -287,7 +293,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const [archiveOpen, setArchiveOpen] = useState(archiveActive);
 
   return (
-    <PageGroupContext.Provider value={{ group: groupOf(activeKey), ownerOnly: ownerOnly }}>
+    <PageGroupContext.Provider value={{ group: activeKey === "players" ? "Players" : groupOf(activeKey), ownerOnly: ownerOnly }}>   {/* a golfer profile is not week-scoped: the field board stays "Week", the golfer page is "Players" */}
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); const target = document.getElementById("main-content"); target?.focus(); target?.scrollIntoView({ block: "start" }); }}>Skip to content</a>
       <aside ref={sidebarRef} className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`} aria-label="Site menu" {...(sheetOpen ? { role: "dialog", "aria-modal": true } : {})}>
@@ -333,7 +339,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
             {activeKey === "shot-data" ? <div className="ctx-static"><strong>Scheduled shot snapshots</strong></div> : isLegacy ? (
               <>
                 <span className="legacy-pill">Legacy data</span>
-                <FreshnessBadge at={manifest?.generated_at} label="Data" savedCopy={manifestSaved} />
+                <ArchivedStatus lastData={manifest?.generated_at} />
               </>
             ) : selectedEvent ? (
               <EventSwitcher events={events} selected={selectedEvent} onNavigate={navigateWithReload} />

@@ -5,9 +5,9 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { EmptyState, SegmentedControl } from "./components";
 import { LegendGroups } from "./ExplainBits";
-import { MARKET_LABEL, TAG_GROUPS, availableMarkets, availableTags, edgeBadge, filterWhy, gapText, pct, shapeMap, shapeOf, signed, sortWhy, tagLabel, type SortKey } from "./explain-rules";
+import { MARKET_LABEL, TAG_GROUPS, biggestGaps, favourites, relText, plainName, availableMarkets, availableTags, edgeBadge, filterWhy, gapText, pct, shapeMap, shapeOf, signed, sortWhy, tagLabel, type SortKey } from "./explain-rules";
 import { etTime } from "./lib";
-import { OnThisPage, Section } from "./ui";
+import { Section } from "./ui";
 import "./explain.css";
 import { ExplainShell, PriceList, RAIL_RANGE, type Shell, type PriceRowData } from "./ExplainViews";
 
@@ -74,7 +74,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   });
   return (
     <>
-      <OnThisPage sections={[{ id: "players", label: "Players" }, { id: "legend", label: "What reasons mean" }, { id: "tech", label: "Technical" }]} />
+      {!live && <WhyGlance doc={doc} openPlayer={openPlayer} />}
       <Section id="players" title={`${rows.length} players, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the driver breakdown.${hasMarket ? " Bars to the right of the zero tick: we are higher than the book." : ""}`}
         actions={<SegmentedControl label="Bet type" value={market} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
         <div className="ex-filters">
@@ -118,3 +118,24 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
   );
 }
 
+
+/** The comparison first (also on phone): the favourite and the biggest gaps, ours vs the book, before any filter or control. */
+function WhyGlance({ doc, openPlayer }: { doc: Shell["doc"]; openPlayer: (id: number) => void }) {
+  const fav = favourites(doc, 1)[0];
+  const g = useMemo(() => biggestGaps(doc, 2), [doc]);
+  const rows = [...g.higher, ...g.lower].sort((a, b) => Math.abs(b.rel) - Math.abs(a.rel)).slice(0, 4);
+  const fm = fav?.probs.win;
+  if (!fav && !rows.length) return null;
+  return (
+    <section className="ex-glance" aria-label="Win chance, ours against the book">
+      <h2 className="ex-glance-h">Win chance, ours vs the book</h2>
+      <ul>
+        {fav && fm && <li><span className="ex-glance-tag">Favourite</span><button type="button" className="ex-linkbtn" onClick={() => openPlayer(fav.id)}>{plainName(fav.name)}</button>
+          <span className="num">{pct(fm.model)} vs {fm.market === null ? "no book price yet" : pct(fm.market)}</span>
+          {fm.rel !== null && fm.market !== null && <b className={`num ${fm.rel > 0 ? "pos" : fm.rel < 0 ? "neg" : ""}`}>{fm.rel > 0 ? "▲" : fm.rel < 0 ? "▼" : ""} {relText(fm.rel)}</b>}</li>}
+        {rows.map((r) => <li key={r.id}><span className="ex-glance-tag">{r.rel > 0 ? "We are higher" : "We are lower"}</span><button type="button" className="ex-linkbtn" onClick={() => openPlayer(r.id)}>{r.name}</button>
+          <span className="num">{pct(r.model)} vs {pct(r.market)}</span><b className={`num ${r.rel > 0 ? "pos" : "neg"}`}>{r.rel > 0 ? "▲" : "▼"} {relText(r.rel)}</b></li>)}
+      </ul>
+    </section>
+  );
+}

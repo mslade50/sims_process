@@ -126,7 +126,8 @@ test("hero renders the headline value, caveat rows 1 and 2, the zero sentence, s
   assert.match(html, /158 rounds/);
   assert.equal(html.includes("regular-tick"), false);
   assert.equal(html.includes("typical regular"), false);
-  assert.match(html, /Zac|Blair/);
+  assert.doesNotMatch(html, /<h2[^>]*>(Zac|Blair)/);   // round 3: the golfer name is the page h1 only, not repeated in the hero
+  assert.match(html, /data-testid="hero-meta"/);
 });
 
 test("hero shows the stored typical-regular tick only when the catalog carries one", () => {
@@ -229,7 +230,7 @@ test("SG bars: skeleton while loading; bars with Z and rounds when category data
 test("W1: layout guards - hero identity keeps a minimum column; legacy header row wraps on phones", async () => {
   const { readFileSync: rf } = await import("node:fs");
   const hero = rf(new URL("../app/player-hero.css", import.meta.url), "utf8");
-  assert.match(hero, /\.ph-identity\{grid-template-columns:auto minmax\(180px,1fr\) auto/);
+  assert.match(hero, /\.ph-meta\{display:flex;/);   // round 3: identity is one compact meta line after the answer (was a 3-column identity row)
   assert.match(hero, /@media\(max-width:1100px\)\{\.ph-stats\{grid-template-columns:minmax\(0,1fr\)[;}]/);
 });
 

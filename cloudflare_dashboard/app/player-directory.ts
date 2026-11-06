@@ -46,3 +46,19 @@ export function usePlayerBenchmarks(ids: number[] | null): { catalog: ProfileCat
   const fullCatalog = useMemo(() => parseCatalog(full.data), [full.data]);
   return { catalog: slimCatalog ?? fullCatalog, loading: !!sorted && !slimCatalog && (slim.loading || (failed && full.loading)) };
 }
+
+/** Worker endpoint that cuts the search index down to one golfer (worker/player-one.ts). Same document shape, count 1. */
+export const PLAYER_ONE_KEY = "golfprice/player_profiles/golfer/search-index.json";
+
+/**
+ * One golfer's identity plus the catalog metadata the page needs (reference blocks, shot coverage), without the ~430 KB index.
+ * Used by the one-golfer page so it can draw before the directory has loaded; the directory is then fetched only when the page needs
+ * a list (change golfer, browse, compare). `failed` means the endpoint was not available and the caller should load the full directory.
+ */
+export function useSinglePlayer(id: string | null, generation: string | null = null): { catalog: ProfileCatalog | null; loading: boolean; failed: boolean } {
+  const key = id && /^(?:[1-9][0-9]*|historical-[a-z0-9]+)$/.test(id) ? `${PLAYER_ONE_KEY}?id=${id}${generation ? `&gen=${generation}` : ""}` : null;
+  const one = useDashboardData<unknown>(key);
+  const catalog = useMemo(() => parseSearchIndexOnce(one.data), [one.data]);
+  const failed = !!key && !one.loading && catalog === null;
+  return { catalog, loading: !!key && catalog === null && one.loading, failed };
+}

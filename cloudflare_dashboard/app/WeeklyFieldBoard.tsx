@@ -45,7 +45,8 @@ export function WeeklyFieldBoard({ doc, playerId, query, setQuery }: { doc: Expl
 
       <div className="fb-controls">
         <div className="fb-control"><span id="fb-market-l" className="fb-label">Market</span><SegmentedControl label="Market" value={market} options={MARKET_OPTIONS} onChange={(v) => { setMarket(v); setShown(first); }} /></div>
-        <div className="fb-control"><span className="fb-label">Sort by</span><SegmentedControl label="Sort by" value={sort} options={SORTS} onChange={(v) => { setSort(v); setShown(first); }} /></div>
+        <div className="fb-control fb-sort-wide"><span className="fb-label">Sort by</span><SegmentedControl label="Sort by" value={sort} options={SORTS} onChange={(v) => { setSort(v); setShown(first); }} /></div>
+        <label className="fb-sort-select"><span className="fb-label">Sort by</span><select value={sort} onChange={(e) => { setSort(e.target.value as BoardSort); setShown(first); }}>{SORTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
         <label className="fb-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="Search golfers in this field" placeholder="Search name or country" value={query} onChange={(e) => { setQuery(e.target.value); setShown(first); }} /></label>
       </div>
 
@@ -76,7 +77,7 @@ export function WeeklyFieldBoard({ doc, playerId, query, setQuery }: { doc: Expl
         {!found.length && <p className="fb-empty" role="status">No golfer matches “{query}”. Clear the search to see the whole field.</p>}
       </div>
       <div className="fb-foot">
-        <span className="num" role="status">Showing {Math.min(shown, found.length)} of {found.length}</span>
+        <span className="num" role="status">Showing {Math.min(shown, found.length)} of {found.length} · {priced} with a book price</span>
         {shown < found.length && <><button type="button" className="fb-btn" onClick={() => setShown(shown + STEP)}>Show {Math.min(STEP, found.length - shown)} more</button><button type="button" className="fb-btn" onClick={() => setShown(found.length)}>Show all</button></>}
         {query && <button type="button" className="fb-btn" onClick={() => setQuery("")}>Clear search</button>}
       </div>
