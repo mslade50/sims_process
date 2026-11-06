@@ -77,7 +77,7 @@
   --warn: var(--warning);
   --pos-soft: var(--positive-soft);
   --neg-soft: var(--negative-soft);
-  --warn-soft: var(--warning-soft);
+  --warn-soft: #212328;   /* opaque surface with a hint of amber: crisp, not beige (literal so it resolves per theme) */
   /* gap rail: model vs market on a shared zero */
   --rail-model: var(--model);
   --rail-market: var(--market);
@@ -128,6 +128,7 @@
     --positive: #09683f;
     --negative: #b3261e;
     --warning: #8a5600;
+    --warn-soft: #fcfaf6;
     --model: #1d5fb8;
     --market: #076b67;
     --wave-am: #9c4a0a;
@@ -173,6 +174,7 @@
   --positive: #09683f;
   --negative: #b3261e;
   --warning: #8a5600;
+  --warn-soft: #fcfaf6;
   --model: #1d5fb8;
   --market: #076b67;
   --wave-am: #9c4a0a;

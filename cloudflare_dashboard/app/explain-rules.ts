@@ -1166,7 +1166,12 @@ export function ptsText(v: number | null | undefined, digits = 1): string {
   const r = Number(Math.abs(v).toFixed(digits));
   return r === 0 ? "no change" : `${v > 0 ? "+" : "−"}${r.toFixed(digits)} pts`;
 }
-/** Signed whole percent of the sportsbook's chance, "+39%". */
+/** Gap between our chance and the sportsbook's (both 0-1 fractions) in percentage points, "+1.2 pts". */
+export function gapPtsText(model: number | null | undefined, market: number | null | undefined): string {
+  if (model === null || model === undefined || market === null || market === undefined) return "-";
+  return ptsText((model - market) * 100);
+}
+/** Signed whole percent of the sportsbook's chance, "+39%" (relative; only ever shown labelled as such). */
 export function relText(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "-";
   const r = Math.round(Math.abs(v) * 100);

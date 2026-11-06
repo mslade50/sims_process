@@ -67,3 +67,6 @@
 .override-form select, .override-form .field-label input, .override-form .field-label textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
 .override-form .field-label textarea { min-height: 88px; }
 .override-form ~ .panel .wrap-cell, .panel .table-scroll td.wrap-cell { min-width: 260px; }
+
+.in-chips-wrap > summary { cursor: pointer; color: var(--muted-strong); font-size: var(--fs-small); min-height: 44px; display: flex; align-items: center; }
+.in-chips-wrap[open] > summary { margin-bottom: var(--sp-2); }

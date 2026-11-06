@@ -142,3 +142,5 @@ button.bb-group.on { color: var(--accent); }
   .bb-table { display: none; }
   .bb-compact { display: block; }
 }
+/* Round 4: same flat card as .stat */
+.bb-stats div, .bb-seasons div { background: var(--surface); }

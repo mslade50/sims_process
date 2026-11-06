@@ -199,3 +199,20 @@ export function nextCheckShort(e: Pick<CardEvent, "status" | "note" | "moment">)
   if (/off week|not started|no event/i.test(e.note ?? "")) return "next check when the next event is priced";
   return "next check within 30 minutes";
 }
+
+/** Notes that restate a round or stage ("round 2 in play: ...") can disagree with the stage derived from the calendar; those are replaced by wording built from the derived stage. */
+const STAGE_CLAIM = /round \d|in play|after round|pre-?event|R\d/i;
+
+/** Why an event has nothing to suggest, in words consistent with the derived stage (never the file's own stage claim). */
+export function quietReason(e: Pick<CardEvent, "note">, stage: string): string {
+  if (/in play/i.test(stage)) return "No next-round prices until the after-round run.";
+  if (e.note && !STAGE_CLAIM.test(e.note)) return e.note;
+  return "No bet clears the rules at the current prices.";
+}
+
+/** Next-check wording driven by the derived stage, so it cannot contradict the stage chip. */
+export function nextCheckForStage(e: Pick<CardEvent, "status" | "note" | "moment">, stage: string): string {
+  if (/in play/i.test(stage)) return nextCheckText({ status: e.status, note: "round in play", moment: "" });
+  if (/off week|not started|no event/i.test(e.note ?? "")) return nextCheckText(e);
+  return nextCheckText({ status: e.status, note: null, moment: "" });
+}

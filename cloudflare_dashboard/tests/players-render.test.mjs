@@ -139,7 +139,7 @@ test("/players default layout: secondary card shows mu_tour with the PGA-scale l
 test("/players?layout=next: This-week chip shows mu_tour; the Method names the shared PGA-scale zero", () => {
   const html = next("?player=17639&layout=next", savedData());
   assert.match(html, /data-testid="pga-chip"/);
-  assert.match(html, /<b>\+0\.40<\/b><small>This week \(PGA scale\)/);
+  assert.match(html, /<small>This week \(PGA scale\)<\/small><b>\+0\.40<\/b>/);
   assert.match(html, /the gap is form versus model/);
 });
 test("/players: no mu_tour in the matching document (or no matching document) keeps the old vs-field display", () => {

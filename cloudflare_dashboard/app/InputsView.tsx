@@ -428,6 +428,7 @@ function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (d
           onKeyDown={onKeyDown}
         />
       </label>
+      <span className="sr-only" role="status" aria-live="polite">{showList ? (matches.length === 0 ? "No players match" : `${matches.length} ${matches.length === 1 ? "player matches" : "players match"}`) : ""}</span>
       {showList && (
         <ul className="player-search-list" id="player-search-list" role="listbox">
           {matches.length === 0 && <li className="player-search-empty">No player matches “{query.trim()}”</li>}
@@ -627,6 +628,13 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
   const gap = fieldOffset === null ? "" : Math.abs(fieldOffset).toFixed(2);
   return (
     <div className="stack-lg">
+      <section className="in-finder" aria-label="Find a golfer">
+        <div>
+          <h2>Find a golfer</h2>
+          <p>Search by name to open their full breakdown, or click a row in the table.</p>
+        </div>
+        <PlayerSearch players={choices} onPick={pickPlayer} />
+      </section>
       <div className="kpi-grid">
         <Stat label="Players" value={String(players.length)} unit="in field" note={nAmateur ? `${nAmateur} amateur${nAmateur === 1 ? "" : "s"}` : "No amateurs"} hint="Players in this run's field." />
         <Stat label="Strongest rating" value={signed(num(obj(best?.challenger).mu), 2)} unit="strokes/round" note={`${String(best?.name ?? "")}, vs this field's average`} hint={GLOSSARY.mu} />
@@ -640,13 +648,6 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
           <p>The average player in this field is {gap} strokes per round {fieldOffset < 0 ? "worse" : "better"} than an average PGA Tour player. Player ratings on this page are measured against this field, so add {signed(fieldOffset, 2)} to put them on the PGA Tour scale. Prices are not affected.{ymd(strength.vintage) ? ` Skills as of ${ymd(strength.vintage)}.` : ""}</p>
         </details>
       )}
-      <section className="in-finder" aria-label="Find a golfer">
-        <div>
-          <h2>Find a golfer</h2>
-          <p>Search by name to open their full breakdown, or click a row in the table.</p>
-        </div>
-        <PlayerSearch players={choices} onPick={pickPlayer} />
-      </section>
       <Panel eyebrow="Whole field" title="Every player, every component" actions={<span className="inputs-muted">Click a row for the breakdown. Hover a column header for what it means.</span>}>
         <DataTable
           rows={rows}
@@ -1280,7 +1281,7 @@ function FeaturesTab() {
           <Select label="Order" value={sort} onChange={(v) => setSort(v as SortMode)} options={[{ value: "model", label: "Model order" }, { value: "weight", label: "Largest weight first" }]} />
           <SegmentedControl label="Weights from" value={model} onChange={setModel} options={[{ value: "chl", label: "Skill model alone" }, { value: "v21", label: "Refit with location" }]} />
         </div>
-        <p className="inputs-muted">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardized coefficients ({model === "chl" ? "the skill model on its own" : "the skill model refit together with the location inputs"}).</p>
+        <p className="inputs-muted" role="status" aria-live="polite">{shown.length + locShown.length} of {glossary.features.length + glossary.location.columns.length} shown · weights are {glossary.season}-season standardized coefficients ({model === "chl" ? "the skill model on its own" : "the skill model refit together with the location inputs"}).</p>
       </Panel>
       {visibleFamilies.map((fam) => (
         <Panel key={fam.key} eyebrow={`${fam.n_features} features · ${(share(fam) * 100).toFixed(1)}% of total absolute weight`} title={plain(fam.label)}>
@@ -1712,14 +1713,14 @@ export function InputsView() {
         <div className="in-toolbar">
           <Select label="Run" value={run?.key ?? ""} onChange={setRunKey} options={runs.map((r) => ({ value: r.key, label: `${r.kind === "live" ? `Live, after round ${r.after_round}` : "Pre-tournament"} · ${etTime(r.as_of ?? "", "") || "time unknown"}` }))} />
         </div>
-        <div className="in-chips" aria-label="Run summary">
+        <details className="in-chips-wrap"><summary>Run details: {event.course}, {ymd(event.date_start)} to {ymd(event.date_end)}{run?.overrides_applied.length ? `, ${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"}` : ""}</summary><div className="in-chips" aria-label="Run summary">
           <Chip tone="neutral" title="The course this event is played on.">{event.course}</Chip>
           <Chip tone="neutral">{ymd(event.date_start)} to {ymd(event.date_end)}</Chip>
           {asOf && <Chip tone="neutral" title="When this model run was built.">Model run {asOf}</Chip>}
           {pulled && <Chip tone="neutral" title="The most recent time any book's prices were pulled. A live run can reuse earlier odds.">Odds pulled {pulled}</Chip>}
           {run && <Chip tone="neutral">{run.n_players} players</Chip>}
           <Chip tone={run?.overrides_applied.length ? "warning" : "neutral"} title="Owner overrides applied to this run's prices.">{run?.overrides_applied.length ? `${run.overrides_applied.length} override${run.overrides_applied.length === 1 ? "" : "s"} applied` : "No overrides applied"}</Chip>
-        </div>
+        </div></details>
       </div>
       <OnThisPage label="Model inputs area" sections={tabOptions.map((t) => ({ id: t.value, label: t.label }))} value={activeTab} onSelect={(id) => setTab(id as Tab)} />
       {activeTab !== "adjust" && <p className="in-tab-purpose">{TAB_PURPOSE[activeTab]}</p>}

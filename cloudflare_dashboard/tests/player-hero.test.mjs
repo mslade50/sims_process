@@ -184,7 +184,7 @@ test("week chips: vs field, win and top 10 from the saved doc; live checkpoints 
   assert.match(html, /win/);
   assert.match(html, /top 10/);
   assert.match(html, /data-testid="live-chips"/);
-  assert.match(html, /skill for next round/);
+  assert.match(html, /skill for next round/i);
   assert.match(html, /Measured against everyone who started, not only players still in the field/);
   const week = hero({ entry, profile, weekly: { ...weekly, savedDoc: { ...live, kind: "week" } } });
   assert.equal(week.includes("live-chips"), false);
@@ -241,7 +241,7 @@ test("week chip shows saved model skill on the PGA scale (mu_tour) with its labe
   const base = { ...weekly, eventUid: live.event_uid, eventName: live.event.name, eventTour: "pga" };
   const week = hero({ entry, profile, weekly: { ...base, savedDoc: { ...live, kind: "week" }, pgaSkill: { value: 0.851, offset: 0.1002, live: false, preEvent: 0.851 } } });
   assert.match(week, /data-testid="pga-chip"/);
-  assert.match(week, /<b>\+0\.85<\/b><small>This week \(PGA scale\)<\/small>/);
+  assert.match(week, /<small>This week \(PGA scale\)<\/small><b>\+0\.85<\/b>/);
   assert.match(week, /saved skill plus this field&#x27;s offset to the PGA scale \(\+0\.100, how this field compares with a normal PGA field\)/);
   assert.match(week, /win/); assert.match(week, /top 10/);
   const lv = hero({ entry, profile, weekly: { ...base, savedDoc: live, pgaSkill: { value: 0.7, offset: 0.1002, live: true, preEvent: 0.851 } } });

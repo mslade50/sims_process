@@ -140,7 +140,7 @@
 /* ---- misc shell pieces ---- */
 .route-notice { display: grid; gap: var(--sp-3); }
 .route-notice ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
-.legacy-notice, .link-notice { margin: 0 0 var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-left-width: 3px; border-radius: var(--radius-control); background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
+.legacy-notice, .link-notice { margin: 0 0 var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); border-left-width: 3px; border-radius: var(--radius-control); background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
 
 .run-suggested { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 details.run-collapsed { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
@@ -205,7 +205,7 @@ details.tech-details ul { margin: 6px 0 0; padding-left: 18px; }
 .evstat-stage.is-live { color: var(--accent); }
 .evstat-prices::before, .evstat-age::before { content: "\00b7"; margin-right: var(--sp-2); color: var(--muted); }
 .evstat-age { color: var(--muted); }
-.evstat[data-tone="warning"] .evstat-btn { border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: var(--warn-soft); color: var(--foreground); }
+.evstat[data-tone="warning"] .evstat-btn { border-color: color-mix(in srgb, var(--warn) 70%, transparent); background: var(--warn-soft); color: var(--foreground); }
 .evstat[data-tone="warning"] .evstat-btn > svg { color: var(--warn); }
 .evstat[data-tone="negative"] .evstat-btn { border-color: color-mix(in srgb, var(--negative) 55%, transparent); background: var(--negative-soft); color: var(--foreground); }
 .evstat[data-tone="negative"] .evstat-btn > svg { color: var(--negative); }
@@ -219,7 +219,7 @@ details.tech-details ul { margin: 6px 0 0; padding-left: 18px; }
 .evstat[data-tone="warning"] .evstat-consequence { padding-left: var(--sp-3); border-left: 3px solid var(--warn); }
 .evstat[data-tone="negative"] .evstat-consequence { padding-left: var(--sp-3); border-left: 3px solid var(--negative); }
 .evstat-next { color: var(--muted-strong); }
-.evstat-held { padding: 3px var(--sp-3); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: 999px; background: var(--warn-soft); color: var(--foreground); font-size: var(--fs-small); font-weight: 600; }
+.evstat-held { padding: 3px var(--sp-3); border: 1px solid color-mix(in srgb, var(--warn) 65%, transparent); border-radius: 999px; background: var(--warn-soft); color: var(--foreground); font-size: var(--fs-small); font-weight: 600; }
 .evsw-row { color: var(--muted); font-size: var(--fs-small); gap: var(--sp-1) var(--sp-3); }
 .evsw-stage { color: var(--foreground); font-weight: 650; }
 .evsw-stage.is-live { color: var(--accent); }

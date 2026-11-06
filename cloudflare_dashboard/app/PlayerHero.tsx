@@ -101,7 +101,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
     <section className="ph-hero" data-testid="player-hero" aria-label="Player summary">
       <div className="ph-row ph-stats">
         <article className="ph-headline" title={`${vsPgaAvgLong(referenceSpan(reference))}. ${zeroSentence(referenceSpan(reference))}`}>
-          <span className="eyebrow">{LABELS.vsPgaAvg.short} · {zeroLabel(referenceSpan(reference))}</span>
+          <span className="eyebrow">Skill vs PGA average</span>
           <strong className="ph-number" data-testid="hero-value" title={value === null ? undefined : `${signed(value, 3)} strokes per round`}>
             {value === null ? (withheld ? "Withheld" : "Unavailable") : signed(value)} {value !== null && <small>strokes per round</small>}
           </strong>
@@ -119,7 +119,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
           {weekly.savedDoc && row ? (
             <>
               <div className="ph-chips">
-                {pga ? <span className="ph-chip" data-testid="pga-chip" title={pgaSkillWords(pga).title}><b>{signed(pga.value)}</b><small>{pga.live ? `${LABELS.thisWeekPga.short}, live` : LABELS.thisWeekPga.short}</small></span> : <span className="ph-chip" title={LABELS.vsField.long}><b>{signed(model.value)}</b><small>{LABELS.vsField.short}</small></span>}
+                {pga ? <span className="ph-chip ph-stat" data-testid="pga-chip" title={pgaSkillWords(pga).title}><small>{pga.live ? `${LABELS.thisWeekPga.short}, live` : LABELS.thisWeekPga.short}</small><b>{signed(pga.value)}</b><small>strokes per round</small></span> : <span className="ph-chip ph-stat" title={LABELS.vsField.long}><small>{LABELS.vsField.short}</small><b>{signed(model.value)}</b><small>strokes per round</small></span>}
               </div>
               <div className="ph-books">
                 {(["win", "top_10"] as const).map(m => { const mp = row.probs?.[m]; const label = m === "win" ? "Chance to win" : "Chance to finish top 10"; return typeof mp?.model === "number" && typeof mp?.market === "number" ? <div key={m}><span className="ph-books-l">{label}</span><GapRail model={mp.model * 100} book={mp.market * 100} range={m === "win" ? 5 : 10} /></div> : <div key={m}><span className="ph-books-l">{label}</span><span className="ph-muted">Ours {pct1(mp?.model)} · no book price</span></div>; })}
@@ -127,8 +127,8 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
               {live && (
                 <div className="ph-chips" data-testid="live-chips">
                   {live.priced !== null
-                    ? <span className="ph-chip" title={`Live skill plus this week's scoring so far (${signed(live.transient, 2)})${live.contentionIncluded ? " plus the leaderboard-position shift" : ""}. ${LIVE_CENTRING_NOTE}.`}><b>{signed(live.priced, 2)}</b><small>skill for next round</small></span>
-                    : <span className="ph-chip" title={`How much better or worse this week's scoring is than the pre-event skill suggested. ${LIVE_CENTRING_NOTE}.`}><b>{signed(live.transient, 2)}</b><small>this week&apos;s form</small></span>}
+                    ? <span className="ph-chip ph-stat" title={`Live skill plus this week's scoring so far (${signed(live.transient, 2)})${live.contentionIncluded ? " plus the leaderboard-position shift" : ""}. ${LIVE_CENTRING_NOTE}.`}><small>Skill for next round</small><b>{signed(live.priced, 2)}</b></span>
+                    : <span className="ph-chip ph-stat" title={`How much better or worse this week's scoring is than the pre-event skill suggested. ${LIVE_CENTRING_NOTE}.`}><small>This week&apos;s form</small><b>{signed(live.transient, 2)}</b></span>}
                 </div>
               )}
               {pga ? <p className="ph-muted" data-testid="pga-sub">{pgaSkillWords(pga).sub}.</p> : <p className="ph-muted">{LABELS.vsField.short}: the model&apos;s skill minus the field&apos;s average.</p>}
@@ -159,6 +159,7 @@ export function PlayerHero({ entry, profile, catalog, photo, weekly, deep, deepL
           {(entry.tours ?? []).length > 0 && <> · {(entry.tours ?? []).map(t => t.toUpperCase()).join(" / ")}</>}
           {" · "}{entry.n_rounds ?? "Unavailable"} rounds on record
           {" · "}latest round {shortProfileDate(entry.last_observation)}
+          {" · "}skill measured {zeroLabel(referenceSpan(reference))}
           {" · "}profile as of <span title={etTime(profile.as_of)}>{shortProfileDate(profile.as_of)}</span>
         </p>
       </div>

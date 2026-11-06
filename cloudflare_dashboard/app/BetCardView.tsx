@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chip, EmptyState, InfoTip, LoadingState, PageHeader, Section, SegmentedControl } from "./components";
 import {
-  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, filterBets, formatET, historyText, minPriceText, nextCheckShort, nextCheckText, pctText, stageText, timeAgo, totals,
+  BET_CARD_KEY, DEFAULT_FILTERS, GROUP_OPTIONS, MARKET_LABEL, OWNER_DATA_PREFIX, activeFilterCount, americanOdds, betText, bookLabel, booksIn, decodeCard, filterBets, formatET, historyText, minPriceText, nextCheckForStage, quietReason, pctText, stageText, timeAgo, totals,
   type Bet, type Card, type CardEvent, type Filters, type Group, type TierFilter,
 } from "./bet-card-rules";
 import "./bet-card.css";
@@ -120,20 +120,23 @@ function EventSection({ event, filters }: { event: CardEvent; filters: Filters }
 function QuietEvents({ events }: { events: CardEvent[] }) {
   if (events.length === 0) return null;
   return (
-    <Section id="quiet" title="Nothing to suggest" purpose="Events with no bet right now, and when they are checked again.">
+    <Section id="quiet" title="Nothing to suggest" purpose="Events with no bet right now, where each stands and when it is checked again.">
       <ul className="bc-status">
-        {events.map((e) => (
+        {events.map((e) => {
+          const stage = stageText(e);
+          return (
           <li key={e.eventUid}>
             <div className="bc-status-head">
               <Chip>{e.tour.toUpperCase()}</Chip>
               <strong>{e.name}</strong>
-              <Chip tone="warning">{stageText(e)}</Chip>
+              <Chip tone="warning">{stage}</Chip>
             </div>
-            <p>{e.note ?? "No bet clears the rules at the current prices."}</p>
-            <p className="bc-next">{nextCheckText(e)}</p>
+            <p>{quietReason(e, stage)}</p>
+            <p className="bc-next">{nextCheckForStage(e, stage)}</p>
             <Coverage event={e} />
           </li>
-        ))}
+          );
+        })}
       </ul>
     </Section>
   );
@@ -155,8 +158,8 @@ function FilterBar({ filters, setFilters, books, count }: { filters: Filters; se
           {books.map((b) => <option key={b} value={b}>{bookLabel(b)}</option>)}
         </select>
       </label>
-      <span className="bc-bar-end" aria-live="polite">
-        <span className="num">{count} shown</span>
+      <span className="bc-bar-end">
+        <span className="num" role="status" aria-live="polite" aria-atomic="true">{count} {count === 1 ? "bet" : "bets"} shown</span>
         {active > 0 && <button type="button" className="bc-reset" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear {active} {active === 1 ? "filter" : "filters"}</button>}
       </span>
     </div>
@@ -180,17 +183,6 @@ function CardBody({ card }: { card: Card }) {
         </div>
         <span className="bc-quiet">Suggestions only. Nothing is placed automatically.</span>
       </div>
-      {card.events.length > 0 && (
-        <ul className="bc-scope" aria-label="Where each event stands">
-          {card.events.map((e) => (
-            <li key={e.eventUid}>
-              <Chip>{e.tour.toUpperCase()}</Chip>
-              <strong>{e.name}</strong>
-              <span className="bc-stline"><span className="bc-stage">{stageText(e)}</span><span className="bc-nextc">{nextCheckShort(e)}</span></span>
-            </li>
-          ))}
-        </ul>
-      )}
       {all.bets > 0 && <FilterBar filters={filters} setFilters={setFilters} books={books} count={shownCount} />}
       {card.events.length === 0 && <EmptyState title="No events" detail="The card lists no events right now." nextCheck="Next check: within 30 minutes" />}
       {withBets.map((e) => <EventSection key={e.eventUid} event={e} filters={filters} />)}

@@ -58,3 +58,6 @@
 .ph-week[data-pending=true]{min-height:370px}
 @media(max-width:1100px){.ph-week[data-pending=true]{min-height:300px}}
 .ph-trend-loading{min-height:250px}
+/* Round 4: the weekly skill is a proper Stat inside the This week block, not a floating chip */
+.ph-chip.ph-stat{border:0;background:transparent;padding:0;gap:var(--sp-1)}
+.ph-chip.ph-stat b{font-size:var(--fs-kpi);line-height:1.1;font-weight:700}

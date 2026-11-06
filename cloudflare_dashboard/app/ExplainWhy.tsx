@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { EmptyState, SegmentedControl } from "./components";
 import { LegendGroups } from "./ExplainBits";
-import { MARKET_LABEL, TAG_GROUPS, biggestGaps, favourites, relText, plainName, availableMarkets, availableTags, edgeBadge, filterWhy, gapText, pct, shapeMap, shapeOf, signed, sortWhy, tagLabel, type SortKey } from "./explain-rules";
+import { MARKET_LABEL, TAG_GROUPS, biggestGaps, favourites, gapPtsText, plainName, availableMarkets, availableTags, edgeBadge, filterWhy, gapText, pct, shapeMap, shapeOf, signed, sortWhy, tagLabel, type SortKey } from "./explain-rules";
 import { etTime } from "./lib";
 import { Section } from "./ui";
 import "./explain.css";
@@ -21,11 +21,11 @@ export function WhyPricedView() {
 }
 
 const SORT_LABEL: Array<{ key: SortKey; label: string }> = [
-  { key: "edge_sg", label: "Gap in strokes" }, { key: "rel", label: "Gap in %" }, { key: "model", label: "Our chance" }, { key: "market", label: "Sportsbook" }, { key: "mu", label: "Expected skill" }, { key: "name", label: "Name" },
+  { key: "edge_sg", label: "Gap in strokes" }, { key: "edge", label: "Gap in pts" }, { key: "model", label: "Our chance" }, { key: "market", label: "Sportsbook" }, { key: "mu", label: "Expected skill" }, { key: "name", label: "Name" },
 ];
 const SORT_HELP: Partial<Record<SortKey, string>> = {
   edge_sg: "Gap in strokes: how many strokes a round better (+) or worse (-) our numbers rate a player than the sportsbook prices imply, allowing for how boom-or-bust each side sees them.",
-  rel: "Gap in %: how far our chance is from the sportsbook's, as a share of the sportsbook's chance.",
+  edge: "Gap in pts: our chance minus the sportsbook's chance, in percentage points.",
   model: "Our chance for the chosen bet type.", market: "The sportsbook's chance for the chosen bet type.",
   mu: "Expected skill: strokes per round better (+) or worse (-) than the average player in this field.", name: "Alphabetical.",
 };
@@ -70,7 +70,7 @@ function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
     if (hasGap && hasMarket) nums.push({ k: "Skill gap", v: <>{gapText(p.edge_sg)}<small> str/rd</small></>, cls: Math.abs(p.edge_sg ?? 0) < 0.005 ? "" : (p.edge_sg ?? 0) > 0 ? "pos" : "neg", help: COLUMN_HELP.edge_sg });
     nums.push({ k: "Skill", v: signed(p.mu_rel), help: COLUMN_HELP.mu });
     if (hasSd) nums.push({ k: "Std dev", minor: true, v: p.sd?.toFixed(2) ?? "-", help: COLUMN_HELP.sd });
-    return { id: p.id, name: p.name, tags: p.tags, nums, rail: hasMarket && e.model != null && e.market != null ? { model: e.model * 100, book: e.market * 100 } : null, relNote: b.tone === "neutral" ? "in line" : `${b.text} vs book`, why: (hasMarket ? p.why_edge : null) ?? p.why };
+    return { id: p.id, name: p.name, tags: p.tags, nums, rail: hasMarket && e.model != null && e.market != null ? { model: e.model * 100, book: e.market * 100 } : null, relNote: b.tone === "neutral" ? "in line" : `${gapPtsText(e.model, e.market)} vs book`, why: (hasMarket ? p.why_edge : null) ?? p.why };
   });
   return (
     <>
@@ -132,9 +132,9 @@ function WhyGlance({ doc, openPlayer }: { doc: Shell["doc"]; openPlayer: (id: nu
       <ul>
         {fav && fm && <li><span className="ex-glance-tag">Favourite</span><button type="button" className="ex-linkbtn" onClick={() => openPlayer(fav.id)}>{plainName(fav.name)}</button>
           <span className="num">{pct(fm.model)} vs {fm.market === null ? "no book price yet" : pct(fm.market)}</span>
-          {fm.rel !== null && fm.market !== null && <b className={`num ${fm.rel > 0 ? "pos" : fm.rel < 0 ? "neg" : ""}`}>{fm.rel > 0 ? "▲" : fm.rel < 0 ? "▼" : ""} {relText(fm.rel)}</b>}</li>}
+          {fm.rel !== null && fm.market !== null && <b className={`num ${fm.rel > 0 ? "pos" : fm.rel < 0 ? "neg" : ""}`}>{fm.rel > 0 ? "▲" : fm.rel < 0 ? "▼" : ""} {gapPtsText(fm.model, fm.market)}</b>}</li>}
         {rows.map((r) => <li key={r.id}><span className="ex-glance-tag">{r.rel > 0 ? "We are higher" : "We are lower"}</span><button type="button" className="ex-linkbtn" onClick={() => openPlayer(r.id)}>{r.name}</button>
-          <span className="num">{pct(r.model)} vs {pct(r.market)}</span><b className={`num ${r.rel > 0 ? "pos" : "neg"}`}>{r.rel > 0 ? "▲" : "▼"} {relText(r.rel)}</b></li>)}
+          <span className="num">{pct(r.model)} vs {pct(r.market)}</span><b className={`num ${r.rel > 0 ? "pos" : "neg"}`}>{r.rel > 0 ? "▲" : "▼"} {gapPtsText(r.model, r.market)}</b></li>)}
       </ul>
     </section>
   );

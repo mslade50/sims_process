@@ -87,3 +87,22 @@
   .score-answer .score-ci{margin-top:var(--sp-2);padding:var(--sp-2) var(--sp-3)}
   .score-answer .score-chart{height:230px}
 }
+
+/* Round 4: the headline card uses the same Stat look as every other page (flat surface, one border, normal-case labels) */
+.score-decision{border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface)}
+.score-decision-main{padding:var(--sp-3) var(--sp-4)}
+.score-kicker{font-size:var(--fs-small);font-weight:600;letter-spacing:0;color:var(--muted)}
+.score-pulse{display:none}
+.score-decision-main h2{margin:var(--sp-1) 0 0;font-size:var(--fs-kpi);font-weight:700;letter-spacing:-.025em;line-height:1.1}
+.score-decision-main h2 small{font-size:var(--fs-small);font-weight:600}
+.score-vspar{margin:2px 0 0}
+.score-ci{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin-top:var(--sp-3);padding:var(--sp-2) 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:transparent}
+.score-ci span{font-size:var(--fs-small);font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)}
+.score-ci b{grid-column:auto;grid-row:auto;font-size:var(--fs-h3)}
+.score-ci small{font-size:var(--fs-small)}
+.score-more{margin:0 0 var(--sp-2)}
+.score-more > summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--accent,var(--chart-1));font-size:var(--fs-small);font-weight:650}
+@media(max-width:600px){
+  .score-answer .score-decision-compact h2{font-size:var(--fs-kpi);margin:2px 0}
+  .score-answer .score-ci{margin-top:var(--sp-2);padding:var(--sp-2) 0 0}
+}

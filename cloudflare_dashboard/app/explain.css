@@ -492,3 +492,10 @@
   .ex-dfl-row { grid-template-columns: 1fr auto; grid-template-areas: "name shape" "cells cells" "why why"; padding: var(--sp-2) var(--sp-1); }
   .ex-dfl-name { grid-area: name; } .ex-dfl-shape { grid-area: shape; } .ex-dfl-cells { grid-area: cells; } .ex-dfl-why { grid-area: why; }
 }
+
+/* Round 4: calm info note, readable small moves */
+.ex-runnote.ex-runnote-info { border-left-color: var(--line-strong); }
+.ex-dbar i.pos, .ex-dbar i.neg, .ex-dbar i.flat { min-width: 5px; }
+.ex-dbar i.flat { left: calc(50% - 2px); }
+/* Round 4: one hero card pattern (flat surface, one line border, large radius, no shadow) shared with .stat */
+.ex-fact { box-shadow: none; border-radius: var(--radius-lg); }

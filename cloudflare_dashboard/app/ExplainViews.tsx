@@ -11,7 +11,7 @@ import { useEventParam } from "./event-param";
 import { ChevronRight } from "lucide-react";
 import { EmptyState, LoadingState, SegmentedControl } from "./components";
 import { DeltaBar, RangeBar, ShapeBars, shapeCap, Term } from "./ExplainBits";
-import { MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
+import { MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, gapPtsText, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
 
@@ -129,6 +129,15 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
 
 /** Shown only when the page is not on the latest run, so the bar's "Prices after R1" is never silently contradicted. */
 function RunNote({ doc, switchToLatest }: { doc: ExplainDoc; switchToLatest: (() => void) | null }) {
+  // Books stop quoting outrights once play starts, so the pre-tournament run is the only one with a book comparison: explain that calmly instead of warning.
+  if (doc.kind !== "live" && switchToLatest) {
+    return (
+      <p className="ex-runnote ex-runnote-info" role="status">
+        <span>Books stop quoting outrights during play, so this compares our pre-tournament prices with the books&rsquo; closing prices (priced {etTime(doc.as_of)}).</span>
+        <button type="button" className="ex-linkbtn" onClick={switchToLatest}>View the latest run</button>
+      </p>
+    );
+  }
   const what = doc.kind === "live" ? `the prices after round ${doc.after_round ?? "?"}` : "the pre-tournament prices";
   return (
     <p className="ex-runnote" role="status">
@@ -273,7 +282,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         ...(showBoard ? [{ k: "Board price", v: e.fair == null ? "—" : american(e.fair), help: "The price the odds board publishes: our chance blended with the sportsbook consensus." }] : []),
       ],
       rail: !live && e.model != null && e.market != null ? { model: e.model * 100, book: e.market * 100 } : null,
-      relNote: b.tone === "neutral" ? "in line" : `${b.text} vs book`,
+      relNote: b.tone === "neutral" ? "in line" : `${gapPtsText(e.model, e.market)} vs book`,
     };
   });
   const phone = usePhone();
@@ -375,7 +384,7 @@ function KeyFacts({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; op
       {s?.kind === "gap" && (
         <div className="ex-fact">
           <span className="ex-fact-label">Biggest <Term k="ex_gap">gap to the sportsbook</Term></span>
-          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.rel > 0 ? "pos" : "neg"}>{s.rel > 0 ? "▲" : "▼"} {relText(s.rel)}</em></strong>
+          <strong className="ex-fact-value"><button type="button" className="ex-linkbtn" onClick={() => openPlayer(s.id)}>{s.name}</button> <em className={s.rel > 0 ? "pos" : "neg"}>{s.rel > 0 ? "▲" : "▼"} {gapPtsText(s.model, s.market)}</em></strong>
           <span className="ex-fact-sub">Win chance <b className="num">{pct(s.model)}</b> ours vs <b className="num">{pct(s.market)}</b> book</span>
         </div>
       )}
@@ -431,6 +440,9 @@ function useLastSeen(eventUid: string, currentId: string, latest: boolean): stri
 }
 
 /** One cause of a price move: a short chip, with the strokes and probability share in its tooltip. */
+/** "Field and other players" is the default explanation for any move; show cause chips only when they say something more specific. */
+const informativeCauses = (causes: Cause[]): Cause[] => (causes.every((c) => c.key === "field") ? [] : causes);
+
 function CauseChip({ cause }: { cause: Cause }) {
   const parts = [cause.strokes !== null ? `${signed(cause.strokes)} strokes a round` : null, cause.pts !== null ? `${ptsText(cause.pts)} of the move` : null, cause.detail].filter(Boolean);
   return <span className={`ex-cause is-${cause.key}`} title={`${cause.label}${parts.length ? `: ${parts.join(", ")}` : ""}`}>{cause.chip}</span>;
@@ -515,7 +527,7 @@ function WhatChangedStrip({ doc, event, latest, openPlayer, onPresent }: { doc: 
                 <span className="ex-mv-nums">{pct(m.before)} → {pct(m.after)}</span>
                 <b data-flash className={m.delta > 0 ? "pos" : "neg"}>{m.delta > 0 ? "▲" : "▼"} {ptsText(m.delta)}</b>
                 {m.marketDelta !== null && Math.abs(m.marketDelta) >= 0.05 && <small className="ex-mv-market">sportsbook {ptsText(m.marketDelta)}</small>}
-                {m.causes.length > 0 && <span className="ex-mv-causes" aria-label="Main causes">{m.causes.map((c) => <CauseChip key={c.key} cause={c} />)}</span>}
+                {informativeCauses(m.causes).length > 0 && <span className="ex-mv-causes" aria-label="Main causes">{informativeCauses(m.causes).map((c) => <CauseChip key={c.key} cause={c} />)}</span>}
               </button>
             </li>
           ))}</ul>
@@ -540,7 +552,7 @@ function WhatChangedStrip({ doc, event, latest, openPlayer, onPresent }: { doc: 
             {w.layer && <li>Weather model changed from {w.layer.from} to {w.layer.to}</li>}
             {sc.rounds.map((r) => <li key={`s${r.round}`}>Expected round {r.round} scoring average: {toPar(r.before, 1)} → {toPar(r.after, 1)}</li>)}
             {sc.winning && <li>Median winning score: {toPar(sc.winning.before, 1)} → {toPar(sc.winning.after, 1)}</li>}
-            {change.gaps.slice(0, 5).map((g) => <li key={`g${g.id}`}>{g.name}: win gap to the sportsbook {relText(g.before)} → {relText(g.after)}</li>)}
+            {change.gaps.slice(0, 5).map((g) => <li key={`g${g.id}`}>{g.name}: win gap to the sportsbook (relative to its chance) {relText(g.before)} → {relText(g.after)}</li>)}
             {change.overrides.added.length > 0 && <li>Manual adjustments added: {change.overrides.added.join(", ")}</li>}
             {change.overrides.removed.length > 0 && <li>Manual adjustments removed: {change.overrides.removed.join(", ")}</li>}
           </ul>
@@ -561,9 +573,9 @@ function GapGlance({ doc, ids, openPlayer }: { doc: ExplainDoc; ids: number[]; o
         <li key={r.id}>
           <button type="button" onClick={() => openPlayer(r.id)}>
             <span className="ex-mv-name">{r.name}</span>
-            <DeltaBar value={r.rel} scale={g.scale} label={`${r.name}: our win chance ${relText(r.rel)} against the sportsbook`} />
+            <DeltaBar value={r.rel} scale={g.scale} label={`${r.name}: our win chance ${gapPtsText(r.model, r.market)} against the sportsbook`} />
             <span className="ex-mv-nums">{pct(r.model)} vs {pct(r.market)}</span>
-            <b className={r.rel > 0 ? "pos" : "neg"}>{r.rel > 0 ? "▲" : "▼"} {relText(r.rel)}</b>
+            <b className={r.rel > 0 ? "pos" : "neg"}>{r.rel > 0 ? "▲" : "▼"} {gapPtsText(r.model, r.market)}</b>
           </button>
         </li>
       ))}</ul>

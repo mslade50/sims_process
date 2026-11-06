@@ -67,9 +67,12 @@
 .pp-page .page-intro .page-controls{flex:none}
 .pp-change{padding:0 var(--sp-3);white-space:nowrap}
 @media(max-width:820px){
-  .pp-page .page-intro{flex-direction:row;align-items:flex-start;justify-content:space-between;gap:var(--sp-3);margin-bottom:var(--sp-3);padding-bottom:var(--sp-2)}
-  .pp-page .page-intro>div:first-child{flex:1;min-width:0}
-  .pp-page .page-intro h1{overflow-wrap:anywhere}
-  .pp-page .page-intro .page-controls{width:auto}
-  .pp-change{min-height:44px;margin-top:var(--sp-1)}
+  /* Round 4: name and Change golfer share a row; the purpose line gets the full width underneath */
+  .pp-page .page-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--sp-3);row-gap:0;margin-bottom:var(--sp-3);padding-bottom:var(--sp-2)}
+  .pp-page .page-intro>div:first-child{display:contents}
+  .pp-page .page-intro>div:first-child>.eyebrow-row{grid-column:1/-1}
+  .pp-page .page-intro h1{grid-column:1;overflow-wrap:anywhere}
+  .pp-page .page-intro p{grid-column:1/-1}
+  .pp-page .page-intro .page-controls{grid-column:2;grid-row:2;width:auto}
+  .pp-change{min-height:44px}
 }

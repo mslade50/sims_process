@@ -143,3 +143,16 @@ export function bucketRows(players: ExPlayer[], previous: ExPlayer[], cumulative
     return row;
   });
 }
+
+/** Near-certain chances are shown bounded: above 99% reads ">99%" with odds "−9900 or shorter"; the exact figure goes in a tooltip. Everything else keeps the standard formats. */
+export const NEAR_CERTAIN = 0.99;
+export function boundedPct(p: number | null | undefined, fmt: (p: number | null | undefined, digits?: number) => string, digits = 1): string {
+  return p != null && p > NEAR_CERTAIN ? ">99%" : fmt(p, digits);
+}
+export function boundedOdds(p: number | null | undefined, fmt: (p: number | null | undefined) => string): string {
+  return p != null && p > NEAR_CERTAIN ? "−9900 or shorter" : fmt(p);
+}
+/** Exact value for a tooltip, or undefined when nothing was bounded. */
+export function exactTitle(p: number | null | undefined, fmt: (p: number | null | undefined, digits?: number) => string, odds: (p: number | null | undefined) => string): string | undefined {
+  return p != null && p > NEAR_CERTAIN ? `Exact: ${fmt(p, 3)} (${odds(p)})` : undefined;
+}

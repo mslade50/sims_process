@@ -65,7 +65,8 @@
 .run-page .run-card { display: grid; align-content: start; gap: var(--sp-2); min-height: 0; padding: var(--sp-3) 0; text-align: left; color: var(--foreground); background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; cursor: pointer; transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease; }
 .run-page .run-card:hover:not(:disabled) { transform: none; box-shadow: none; background: var(--tint-1); }
 .run-page .run-card:active:not(:disabled) { background: var(--accent-soft); transform: none; }
-.run-page .run-card:disabled { opacity: .6; cursor: not-allowed; }
+.run-page .run-card:disabled { cursor: not-allowed; }
+.run-page .run-card:disabled > *:not(.run-card-head), .run-page .run-card:disabled .run-card-head > *:not(.tag) { opacity: .6; }   /* dim the card but keep the status tag at full contrast */
 .run-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
 .run-page .run-card strong { font-size: var(--fs-h3); font-weight: 650; }
 .run-page .run-card .run-card-does { color: var(--muted-strong); font-size: var(--fs-data); line-height: 1.45; }
