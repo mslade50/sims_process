@@ -109,8 +109,6 @@
   .wt-evidence-claims { grid-template-columns: 1fr; gap: var(--sp-3); }
   .wt-chain { grid-template-columns: 1fr; }
   .wt-histogram > div:nth-child(even) small { display: none; }
-  .wt-rail button { grid-template-columns: 28px minmax(0, 1fr); }
-  .wt-rail .wt-lamp { grid-column: 2; }
   .wt-contributions > div { grid-template-columns: minmax(90px, 1fr) minmax(48px, .8fr) 54px; }
 }
 .wt-page .wt-flow a, .wt-page .wt-flow a * { text-decoration: none; }

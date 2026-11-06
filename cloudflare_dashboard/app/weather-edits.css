@@ -7,23 +7,23 @@
 .wx-hour { color: var(--foreground); font-weight: 700; }
 .wx-dir { display: inline-flex; align-items: center; gap: 6px; }
 .wx-dir-arrow { display: inline-block; color: var(--wx-wind); font-size: 16px; font-weight: 800; line-height: 1; }
-.wx-edited { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.wx-edited { box-shadow: inset 2px 0 0 var(--accent); }
 .wx-edited-tip { color: var(--accent); }
 .wx-edit-note { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .wx-table-title { margin-top: 16px; }
-.wx-edit-help { margin: 0 0 14px; padding-left: 18px; color: var(--muted-strong); font-size: 13px; line-height: 1.6; }
+.wx-edit-help { margin: 0 0 14px; padding-left: 18px; color: var(--muted-strong); line-height: 1.6; }
 .wx-fc { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
-.wx-input { width: 84px; min-height: 36px; padding: 0 8px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
+.wx-input { padding: 0 8px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); font: inherit; font-variant-numeric: tabular-nums; }
 .wx-input::placeholder { color: var(--muted); opacity: .7; }
 .wx-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .wx-input.bad { border-color: var(--negative); }
 .wx-input:disabled { opacity: .5; }
 .wx-problem { max-width: 150px; color: var(--negative); white-space: normal; }
-.wx-note-field { display: grid; gap: 6px; margin-bottom: 12px; color: var(--muted); font-size: 11px; font-weight: 700; }
-.wx-note-field textarea { width: 100%; padding: 8px 10px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 10px; font: inherit; font-size: 13px; resize: vertical; }
+.wx-note-field { display: grid; gap: 6px; margin-bottom: 12px; }
+.wx-note-field textarea { width: 100%; padding: 8px 10px; color: var(--foreground); background: var(--surface-raised); border: 1px solid var(--line-strong); font: inherit; resize: vertical; }
 .wx-note-field small { font-weight: 400; }
 .wx-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-.wx-actions .inputs-button { min-height: 40px; padding: 0 16px; }
+.wx-actions .inputs-button { padding: 0 16px; }
 @media (max-width: 600px) { .wx-input { width: 72px; } }
 
 /* ---- Weather edits: step flow, hour editor, sticky action tray ---- */
@@ -33,17 +33,6 @@
 .wx-edit-help { font-size: var(--fs-data); max-width: 70ch; }
 .wx-kind { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); }
 .wx-kind-label { color: var(--muted-strong); font-size: var(--fs-small); font-weight: 650; }
-.wx-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); counter-reset: none; }
-.wx-step { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-3) 0; border-top: 2px solid var(--line-strong); min-width: 0; }
-.wx-step strong, .wx-step small { display: block; }
-.wx-step strong { font-size: var(--fs-data); }
-.wx-step small { color: var(--muted-strong); font-size: var(--fs-small); overflow-wrap: anywhere; }
-.wx-step-n { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid currentColor; border-radius: 50%; font-size: var(--fs-small); font-weight: 700; color: var(--muted-strong); }
-.wx-step.wx-done { border-top-color: var(--pos); }
-.wx-step.wx-done .wx-step-n { color: var(--pos); }
-.wx-step.wx-current { border-top-color: var(--accent); }
-.wx-step.wx-current .wx-step-n { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-.wx-step.wx-todo { opacity: .85; }
 .wx-edit-table table { font-size: var(--fs-data); }
 .wx-edit-table th.wx-h { font-size: var(--fs-small); letter-spacing: .04em; }
 .wx-edit-table td small, .wx-fc { font-size: var(--fs-small); }
@@ -55,14 +44,6 @@
 .wx-note-field textarea { font-size: 16px; border-radius: var(--radius-control); }
 .wx-actions .inputs-button { min-height: 44px; }
 .inputs-banner.ok { background: var(--pos-soft); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
-.wx-tray { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); background: var(--popover); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); }
-.wx-tray-state { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-small); color: var(--muted-strong); flex-wrap: wrap; }
-.wx-tray .wx-actions { margin: 0; }
-@media (max-width: 820px) {
-  .wx-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--sp-4); }
-  .wx-tray .wx-actions { width: 100%; }
-  .wx-tray .wx-actions .inputs-button { flex: 1 1 auto; }
-}
 @media (max-width: 640px) {
   /* Each hour becomes a small card: hour heading, then labelled fields two across. */
   .wx-edit-table table, .wx-edit-table tbody, .wx-edit-table tr, .wx-edit-table td { display: block; }

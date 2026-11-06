@@ -12,6 +12,8 @@ import { usePlayerDirectory } from "./player-directory";
 import type { ProfileEntry } from "./player-profile-rules";
 import { playerHref, searchPlayers } from "./shell-rules";
 
+const WARM_DELAY_MS = 8000;
+
 function Results({ query, active, hits, loading, available, onNavigate }: { query: string; active: number; hits: ProfileEntry[]; loading: boolean; available: boolean; onNavigate: (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void }) {
   if (query.trim().length < 2) return null;
   return (
@@ -40,12 +42,13 @@ export function HeaderSearch({ onNavigate }: { onNavigate: (event: React.MouseEv
     const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
     if (saveData) return;
     const idle = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void });
-    if (idle.requestIdleCallback) {
-      const id = idle.requestIdleCallback(() => setPrefetch(true), { timeout: 4000 });
-      return () => idle.cancelIdleCallback?.(id);
-    }
-    const timer = window.setTimeout(() => setPrefetch(true), 2500);
-    return () => window.clearTimeout(timer);
+    // Not before the page has settled: the index is ~0.4 MB and on a phone connection would share bandwidth with the data being read.
+    let idleId: number | undefined;
+    const timer = window.setTimeout(() => {
+      if (idle.requestIdleCallback) idleId = idle.requestIdleCallback(() => setPrefetch(true), { timeout: 4000 });
+      else setPrefetch(true);
+    }, WARM_DELAY_MS);
+    return () => { window.clearTimeout(timer); if (idleId !== undefined) idle.cancelIdleCallback?.(idleId); };
   }, []);
   const { catalog, loading } = usePlayerDirectory({ load: armed || prefetch, allowFull: armed });
   const hits = useMemo(() => (catalog ? searchPlayers(catalog.players, query) : []), [catalog, query]);

@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, Suspense, type ReactNode } from "react";
-import { LoadingState } from "./components";
+import { SkeletonPage } from "./ui";
 
 const RELOAD_KEY = "golf-dashboard-chunk-reload";
 
@@ -66,7 +66,7 @@ class ViewErrorBoundary extends Component<Props, State> {
 export function ViewBoundary({ viewKey, children }: Props) {
   return (
     <ViewErrorBoundary viewKey={viewKey}>
-      <Suspense key={viewKey} fallback={<LoadingState label="Loading view" />}>{children}</Suspense>
+      <Suspense key={viewKey} fallback={<SkeletonPage label="Loading view" />}>{children}</Suspense>
     </ViewErrorBoundary>
   );
 }

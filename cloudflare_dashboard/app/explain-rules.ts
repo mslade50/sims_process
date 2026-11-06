@@ -1094,6 +1094,17 @@ export function runsBefore(event: Pick<IndexEvent, "distribution_runs">, doc: Pi
 }
 /** The run to compare with by default: the one published just before this document. */
 export const previousRunRef = (event: Pick<IndexEvent, "distribution_runs">, doc: Pick<ExplainDoc, "kind" | "run" | "as_of">): RunRef | null => runsBefore(event, doc)[0] ?? null;
+/** Data name of the stored diff between a run and the one before it (what the "What changed" strip reads), or null when there is nothing to compare. */
+export function changesDataName(event: Pick<IndexEvent, "event_uid" | "distribution_runs">, doc: { kind: string; run: string; as_of: string | null }, against?: RunRef | null): string | null {
+  const from = against === undefined ? runsBefore(event, doc as Pick<ExplainDoc, "kind" | "run" | "as_of">)[0] ?? null : against;
+  const to = (event.distribution_runs ?? []).find((r) => !!r && r.kind === doc.kind && r.run === doc.run && typeof r.key === "string" && r.key.length > 0 && r.validated !== false)?.key ?? null;
+  return from && to && from.key !== to ? `golfprice/changes.json?event=${encodeURIComponent(event.event_uid)}&from=${encodeURIComponent(from.key)}&to=${encodeURIComponent(to)}` : null;
+}
+/** The same name worked out from the index alone (before the run's document has loaded), for the run the index calls the latest; null when it cannot be told. */
+export function latestChangesDataName(event: Pick<IndexEvent, "event_uid" | "distribution_runs" | "explain_run">): string | null {
+  const latest = event.explain_run ? runRefs(event).find((r) => r.id === event.explain_run) : undefined;
+  return latest ? changesDataName(event, { kind: latest.kind, run: latest.run, as_of: latest.as_of }) : null;
+}
 /** The run the owner last looked at (stored id "<kind>_<run>"), when it is older than this document and not simply the previous run. */
 export function lastSeenRunRef(event: Pick<IndexEvent, "distribution_runs">, doc: Pick<ExplainDoc, "kind" | "run" | "as_of">, seenId: string | null | undefined): RunRef | null {
   if (!seenId) return null;

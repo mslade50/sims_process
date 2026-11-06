@@ -17,10 +17,6 @@
 .sc-gap .l { justify-self: end; background: var(--pos); border-radius: 4px 0 0 4px; }
 .sc-gap .r { background: var(--neg); border-radius: 0 4px 4px 0; }
 .sc-word { display: block; font-size: var(--fs-small); color: var(--muted-strong); }
-.sc-scale { display: flex; justify-content: space-between; width: 160px; margin-top: 2px; color: var(--muted); font-size: var(--fs-small); }
-.sc-skill { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4); margin: 0 0 var(--sp-3); color: var(--muted-strong); font-size: var(--fs-data); }
-.perf-legacy { margin-top: var(--sp-8); }
-.perf-legacy summary { display: flex; align-items: center; min-height: 44px; color: var(--muted-strong); cursor: pointer; font-size: var(--fs-data); }
 @media (max-width: 600px) {
   .sc-table th, .sc-table td { padding: var(--sp-2); }
   .sc-gap, .sc-scale { width: 100%; min-width: 96px; }

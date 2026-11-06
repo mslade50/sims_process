@@ -22,7 +22,6 @@ button.bb-group.on { color: var(--accent); }
 .bb-table thead th:first-child, .bb-table tbody th { text-align: left; }
 .bb-table tbody th { padding: 6px 8px; color: var(--foreground); font-weight: 700; white-space: nowrap; }
 .bb-table thead th:first-child, .bb-table tbody th { position: sticky; left: 0; z-index: 1; background: var(--surface); }
-.bb-total th, .bb-total td { border-top: 2px solid var(--line-strong); }
 .bb-cell { min-width: 92px; padding: 0; border-radius: 8px; text-align: center; vertical-align: middle; }
 .bb-cell button, .bb-cell .bb-static { display: grid; gap: 1px; width: 100%; padding: 7px 6px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .bb-cell .bb-static { cursor: default; }

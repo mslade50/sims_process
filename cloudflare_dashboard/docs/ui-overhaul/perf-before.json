@@ -1,0 +1,555 @@
+{
+  "at": "2026-11-06T03:56:17.803Z",
+  "base": "http://localhost:3111",
+  "results": [
+    {
+      "vp": "phone",
+      "route": "this-week",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 5100,
+      "lcpEl": "p.ex-scale",
+      "fcp": 832,
+      "ttfb": 28,
+      "cls": 0.2001,
+      "shifts": [
+        {
+          "t": 2224,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        },
+        {
+          "t": 4226,
+          "v": 0.0068,
+          "el": "a | a"
+        },
+        {
+          "t": 5082,
+          "v": 0.1802,
+          "el": "div.ex-lede-block | section#board.ds-section"
+        }
+      ],
+      "tbt": 6,
+      "longestTask": 107,
+      "longTasks": 4,
+      "jsKB": 434.7,
+      "cssKB": 45.7,
+      "otherKB": 170,
+      "requests": 76,
+      "inp": {
+        "target": "Pre-tournament",
+        "frames": 35,
+        "eventDuration": 48,
+        "longestTask": 69,
+        "cls": 0
+      },
+      "nav": null
+    },
+    {
+      "vp": "phone",
+      "route": "why-priced",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 2880,
+      "lcpEl": "p",
+      "fcp": 780,
+      "ttfb": 11,
+      "cls": 0.0131,
+      "shifts": [
+        {
+          "t": 2146,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 107,
+      "longTasks": 1,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 608.3,
+      "requests": 61,
+      "inp": {
+        "target": "Live, after R1",
+        "frames": 35,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 3716,
+        "cls": 0.2001,
+        "wallMs": 1884
+      }
+    },
+    {
+      "vp": "phone",
+      "route": "players?player=10091",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 6124,
+      "lcpEl": "p.ph-story",
+      "fcp": 768,
+      "ttfb": 23,
+      "cls": 0.0131,
+      "shifts": [
+        {
+          "t": 2295,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        }
+      ],
+      "tbt": 260,
+      "longestTask": 204,
+      "longTasks": 5,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 523,
+      "requests": 63,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 16,
+        "eventDuration": 72,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 3752,
+        "cls": 0.2001,
+        "wallMs": 1873
+      }
+    },
+    {
+      "vp": "phone",
+      "route": "weekly-players",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 3204,
+      "lcpEl": "p",
+      "fcp": 788,
+      "ttfb": 15,
+      "cls": 0.0818,
+      "shifts": [
+        {
+          "t": 2215,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        },
+        {
+          "t": 5344,
+          "v": 0.0687,
+          "el": "details.pp-details.wk-audit"
+        }
+      ],
+      "tbt": 46,
+      "longestTask": 120,
+      "longTasks": 3,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 274.9,
+      "requests": 64,
+      "inp": {
+        "target": "Top 5",
+        "frames": null,
+        "eventDuration": null,
+        "longestTask": 0,
+        "cls": -0.0818
+      },
+      "nav": {
+        "to": "/why-priced",
+        "lcp": 2864,
+        "cls": 0.0131,
+        "wallMs": 1855
+      }
+    },
+    {
+      "vp": "phone",
+      "route": "bet-breakdowns",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 3192,
+      "lcpEl": "p",
+      "fcp": 744,
+      "ttfb": 11,
+      "cls": 0.0131,
+      "shifts": [
+        {
+          "t": 2219,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 90,
+      "longTasks": 1,
+      "jsKB": 290.9,
+      "cssKB": 39.2,
+      "otherKB": 68.9,
+      "requests": 62,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 7,
+        "eventDuration": 48,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 4428,
+        "cls": 0.2001,
+        "wallMs": 1818
+      }
+    },
+    {
+      "vp": "phone",
+      "route": "weather-effects",
+      "viewport": "phone (4x CPU, fast 4G)",
+      "lcp": 4528,
+      "lcpEl": "li",
+      "fcp": 812,
+      "ttfb": 41,
+      "cls": 0.0131,
+      "shifts": [
+        {
+          "t": 2225,
+          "v": 0.0131,
+          "el": "div#main-content.content-frame | div.ctx-identity"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 130,
+      "longTasks": 1,
+      "jsKB": 411.2,
+      "cssKB": 40.6,
+      "otherKB": 541,
+      "requests": 74,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 22,
+        "eventDuration": 40,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 4512,
+        "cls": 0.2001,
+        "wallMs": 1945
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "this-week",
+      "viewport": "desktop (no throttle)",
+      "lcp": 196,
+      "lcpEl": "p.ex-lede",
+      "fcp": 76,
+      "ttfb": 21,
+      "cls": 0.1309,
+      "shifts": [
+        {
+          "t": 98,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 115,
+          "v": 0.0091,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 174,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        },
+        {
+          "t": 179,
+          "v": 0.0013,
+          "el": "a | a"
+        },
+        {
+          "t": 239,
+          "v": 0.0942,
+          "el": "section#board.ds-section | div.ex-lede-block"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 434.7,
+      "cssKB": 45.7,
+      "otherKB": 611.6,
+      "requests": 79,
+      "inp": {
+        "target": "Pre-tournament",
+        "frames": 18,
+        "eventDuration": 24,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/why-priced",
+        "lcp": 448,
+        "cls": 0.0441,
+        "wallMs": 91
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "why-priced",
+      "viewport": "desktop (no throttle)",
+      "lcp": 184,
+      "lcpEl": "span.pl-why",
+      "fcp": 64,
+      "ttfb": 11,
+      "cls": 0.0352,
+      "shifts": [
+        {
+          "t": 86,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 106,
+          "v": 0.0089,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 158,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 608.3,
+      "requests": 61,
+      "inp": {
+        "target": "Live, after R1",
+        "frames": 19,
+        "eventDuration": 16,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 428,
+        "cls": 0.1401,
+        "wallMs": 67
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "players?player=10091",
+      "viewport": "desktop (no throttle)",
+      "lcp": 440,
+      "lcpEl": "p",
+      "fcp": 56,
+      "ttfb": 9,
+      "cls": 0.035,
+      "shifts": [
+        {
+          "t": 89,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 102,
+          "v": 0.008,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 454,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        },
+        {
+          "t": 488,
+          "v": 0.0008,
+          "el": "a.ph-link"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 980.8,
+      "requests": 71,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 11,
+        "eventDuration": null,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 452,
+        "cls": 0.1245,
+        "wallMs": 86
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "weekly-players",
+      "viewport": "desktop (no throttle)",
+      "lcp": 116,
+      "lcpEl": "p",
+      "fcp": 60,
+      "ttfb": 8,
+      "cls": 0.0313,
+      "shifts": [
+        {
+          "t": 80,
+          "v": 0.0009,
+          "el": "div.ctx-meta"
+        },
+        {
+          "t": 91,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 106,
+          "v": 0.0042,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 207,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 281.3,
+      "cssKB": 36.9,
+      "otherKB": 1956.8,
+      "requests": 67,
+      "inp": {
+        "target": "Top 5",
+        "frames": 19,
+        "eventDuration": 32,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/why-priced",
+        "lcp": 456,
+        "cls": 0.0441,
+        "wallMs": 79
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "bet-breakdowns",
+      "viewport": "desktop (no throttle)",
+      "lcp": 432,
+      "lcpEl": "p",
+      "fcp": 56,
+      "ttfb": 9,
+      "cls": 0.0418,
+      "shifts": [
+        {
+          "t": 74,
+          "v": 0.0009,
+          "el": "div.ctx-meta"
+        },
+        {
+          "t": 87,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 99,
+          "v": 0.0034,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 402,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        },
+        {
+          "t": 786,
+          "v": 0.0112,
+          "el": "details.bb-about"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 290.9,
+      "cssKB": 39.2,
+      "otherKB": 4752.3,
+      "requests": 64,
+      "inp": {
+        "target": "At the close",
+        "frames": 18,
+        "eventDuration": null,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 452,
+        "cls": 0.1258,
+        "wallMs": 68
+      }
+    },
+    {
+      "vp": "desktop",
+      "route": "weather-effects",
+      "viewport": "desktop (no throttle)",
+      "lcp": 448,
+      "lcpEl": "li",
+      "fcp": 64,
+      "ttfb": 8,
+      "cls": 0.0359,
+      "shifts": [
+        {
+          "t": 86,
+          "v": 0.0261,
+          "el": "div.nav-group | div.nav-group"
+        },
+        {
+          "t": 107,
+          "v": 0.0093,
+          "el": "div.ctx-identity | div.ctx-meta"
+        },
+        {
+          "t": 431,
+          "v": 0.0001,
+          "el": "div.evstat | div.header-search"
+        },
+        {
+          "t": 441,
+          "v": 0.0003,
+          "el": "a"
+        }
+      ],
+      "tbt": 0,
+      "longestTask": 0,
+      "longTasks": 0,
+      "jsKB": 411.2,
+      "cssKB": 40.6,
+      "otherKB": 541,
+      "requests": 74,
+      "inp": {
+        "target": "DP WorldAbu Dhabi Aldar Champi",
+        "frames": 18,
+        "eventDuration": 16,
+        "longestTask": 0,
+        "cls": 0
+      },
+      "nav": {
+        "to": "/this-week",
+        "lcp": 468,
+        "cls": 0.1401,
+        "wallMs": 84
+      }
+    }
+  ]
+}

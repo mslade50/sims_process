@@ -21,11 +21,11 @@
 
 .bc-bet { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--radius-lg); }
 .bc-bet.lean { border-left-color: var(--pos); }
-.bc-bet summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main edge" "price price"; gap: var(--sp-2) var(--sp-4); align-items: start; min-height: 44px; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-lg); }
+.bc-bet summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main edge" "price price"; align-items: start; min-height: 44px; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-lg); }
 .bc-bet summary::-webkit-details-marker { display: none; }
 .bc-bet summary:hover { background: var(--tint-1); }
 .bc-main { grid-area: main; display: grid; gap: 2px; min-width: 0; }
-.bc-name { font-size: var(--fs-body); font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
+.bc-name { font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
 .bc-sub { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted-strong); font-size: var(--fs-small); }
 .bc-edge { grid-area: edge; display: grid; justify-items: end; gap: 2px; min-width: 72px; }
 .bc-edge b { color: var(--pos); font-size: 22px; font-weight: 750; letter-spacing: -.02em; line-height: 1; }
@@ -72,7 +72,7 @@
   .bc-bet summary { grid-template-columns: minmax(0, 1fr) auto 96px; grid-template-areas: "main price edge"; align-items: center; }
   .bc-price { gap: var(--sp-1) var(--sp-8); }
 }
-@media (max-width: 820px) { .bc-price { gap: var(--sp-1) var(--sp-4); } .bc-price dd span { white-space: nowrap; } }
+@media (max-width: 820px) { .bc-price dd span { white-space: nowrap; } }
 
 /* slip: the price stub sits under the name with a perforated divider */
 .bc-bet { box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 4%, transparent); transition: border-color var(--dur-fast) var(--ease); }
@@ -91,7 +91,7 @@
 .bc-detail { border-top: 0; padding-top: var(--sp-1); }
 
 .bc-scope { display: grid; gap: var(--sp-1); margin: 0 0 var(--sp-4); padding: var(--sp-2) var(--sp-3); list-style: none; background: var(--tint-1); border: 1px solid var(--line); border-radius: var(--radius-control); font-size: var(--fs-small); }
-.bc-scope li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); min-height: 28px; }
+.bc-scope li { flex-wrap: wrap; min-height: 28px; }
 .bc-stage { color: var(--foreground); font-weight: 600; }
 .bc-nextc { color: var(--muted-strong); }
 @media (min-width: 821px) { .bc-price { width: auto; padding: 0 0 0 var(--sp-4); border-top: 0; border-left: 1px dashed var(--line-strong); } .bc-stake { margin-left: 0; } }

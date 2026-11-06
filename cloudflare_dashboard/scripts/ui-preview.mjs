@@ -20,6 +20,7 @@
 // remote calls are `r2 object get --remote` reads under --refresh. Production auth code and config are untouched. No secrets are read or printed.
 import { spawn, spawnSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
+import { brotliCompressSync, constants as zc, gzipSync } from "node:zlib";
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import { dirname, extname, join, resolve, sep } from "node:path";
@@ -239,11 +240,24 @@ const worker = (await import(pathToUrl(join(ROOT, "dist", "server", "index.js"))
 function pathToUrl(p) { return new URL("file:///" + p.replace(/\\/g, "/")).href; }
 const env = { DASHBOARD_DATA: bucket, ASSETS: assets, IMAGES: images, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, OWNER_EMAILS: OWNER, LEGACY_ALERTS_ENABLED: "0", OPS_SHADOW_ENABLED: "0", DATA_FRESHNESS_ENABLED: "0", DATA_FRESHNESS_INBOX: "0" };
 
+/** Like Cloudflare's edge, compress text responses (brotli, else gzip) so perf-check measures realistic transfer sizes. Static compressions are cached. */
+const compressed = new Map();
+function send(req, res, status, headers, body, cacheKey) {
+  const type = String(headers["content-type"] ?? "");
+  const accept = String(req.headers["accept-encoding"] ?? "");
+  const enc = /(^|[\s,])br(\s|,|;|$)/.test(accept) ? "br" : /(^|[\s,])gzip(\s|,|;|$)/.test(accept) ? "gzip" : null;
+  if (!enc || body.length < 1024 || !/text|json|javascript|xml|svg/.test(type) || process.env.UI_PREVIEW_NO_COMPRESS) { res.writeHead(status, headers); res.end(body); return; }
+  const key = cacheKey ? `${enc}:${cacheKey}:${body.length}` : null;
+  let out = key ? compressed.get(key) : undefined;
+  if (!out) { out = enc === "br" ? brotliCompressSync(body, { params: { [zc.BROTLI_PARAM_QUALITY]: 5, [zc.BROTLI_PARAM_SIZE_HINT]: body.length } }) : gzipSync(body, { level: 6 }); if (key) compressed.set(key, out); }
+  res.writeHead(status, { ...headers, "content-encoding": enc, vary: "accept-encoding" }); res.end(out);
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const asStatic = url.pathname.startsWith("/_next/") || url.pathname.startsWith("/data/") || url.pathname === "/og.png" ? staticFile(url.pathname) : null;
-    if (asStatic) { res.writeHead(200, { "content-type": asStatic.type, "cache-control": "no-cache" }); res.end(asStatic.body); return; }
+    if (asStatic) { send(req, res, 200, { "content-type": asStatic.type, "cache-control": "no-cache" }, asStatic.body, url.pathname); return; }
     const chunks = []; for await (const c of req) chunks.push(c);
     const body = Buffer.concat(chunks);
     const headers = new Headers(); for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !["host", "connection", "content-length"].includes(k)) headers.set(k, Array.isArray(v) ? v.join(",") : v);
@@ -253,7 +267,7 @@ const server = http.createServer(async (req, res) => {
     const out = {}; response.headers.forEach((v, k) => { out[k] = v; });
     const setCookie = response.headers.getSetCookie?.(); if (setCookie?.length) out["set-cookie"] = setCookie;
     delete out["content-encoding"]; delete out["content-length"];
-    res.writeHead(response.status, out); res.end(Buffer.from(await response.arrayBuffer()));
+    send(req, res, response.status, out, Buffer.from(await response.arrayBuffer()), null);
   } catch (error) { res.writeHead(500, { "content-type": "text/plain" }); res.end("ui-preview error: " + (error?.stack ?? error)); }
 });
 server.listen(PORT, "127.0.0.1", () => {

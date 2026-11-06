@@ -31,7 +31,6 @@
 .live-dot, .live-pulse { position: relative; display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; }
 .live-dot { width: 7px; height: 7px; }
 .live-dot.pulse::after, .live-pulse--fresh::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0; animation: ping 2.4s var(--ease) infinite; }
-.live-pulse--aging { animation: breathe 2.4s ease-in-out infinite; }
 
 /* number tween: a brief accent wash when a value changes after the first paint */
 .anim-num { border-radius: 6px; font-variant-numeric: tabular-nums; }

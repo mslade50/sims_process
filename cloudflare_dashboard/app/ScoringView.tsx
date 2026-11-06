@@ -241,6 +241,14 @@ const KNOWN_COMPONENTS = ["wind", "gust", "temp", "rain", "tod", "traj_wind"];
 const teeHourOf = (t: string): number | null => { const m = /(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(t.trim()); return m ? Number(m[1]) + Number(m[2]) / 60 : null; };
 
 /** Expected wave split and its causes, built only from what the published weather document contains. */
+/** This week's weather block: reads and parses the weather document here, so the This week chunk does not carry the weather parsers. */
+export function WeatherThisRoundFor({ weatherKey, round, latest }: { weatherKey: string; round: number | null; latest: boolean }) {
+  const source = useDashboardData<unknown>(weatherKey);
+  const doc = useMemo(() => parseWeather(source.data), [source.data]);
+  const extras = useMemo(() => parseWeatherExtras(source.data), [source.data]);
+  return <WeatherThisRound doc={doc} extras={extras} loading={source.loading} round={round} latest={latest} />;
+}
+
 export function WeatherThisRound({ doc, extras, loading, round, latest }: { doc: WeatherDoc | null; extras: WeatherExtras; loading: boolean; round: number | null; latest: boolean }) {
   const [pick, setPick] = useState<number | null>(null);
   const link = <Link prefetch={false} className="ex-link" href="/weather-effects">Full weather effects page <ChevronRight size={14} /></Link>;

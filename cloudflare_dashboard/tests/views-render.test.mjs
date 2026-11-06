@@ -44,7 +44,7 @@ const VIEWS = [
   ["weather-effects", "WeatherEffectsView.tsx", "WeatherEffectsView"],
   ["weather-edits", "WeatherEditsView.tsx", "WeatherEditsView"],
   ["this-week", "ExplainViews.tsx", "ThisWeekView"],
-  ["why-priced", "ExplainViews.tsx", "WhyPricedView"],
+  ["why-priced", "ExplainWhy.tsx", "WhyPricedView"],
   ["bet-breakdowns", "BetBreakdownsView.tsx", "BetBreakdownsView"],
   ["bet-card", "BetCardView.tsx", "BetCardView"],
 ];

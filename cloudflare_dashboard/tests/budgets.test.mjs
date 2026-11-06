@@ -4,18 +4,18 @@ import test from "node:test";
 import { measureAllCss, measureChunks, measureRoute } from "../scripts/measure-bundle.mjs";
 
 const KB = 1024;
-const SHELL_JS_GZIP_BUDGET = 160 * KB; // framework + shell, the JS in the first HTML, before any view chunk. 160: round-2 shell (event status bar, stage rules, dialogs, scroll-spy nav in ui) measured 157.4 KB gz on 2026-11-05 (was 150)
+const SHELL_JS_GZIP_BUDGET = 150 * KB; // 150 (ratchet, r3-perf 2026-11-05): measured 148.6 KB gz after the golfer search, Customize dialog and not-found notices went lazy and the shell stopped importing components.tsx. Was 160 (round-2 shell, 157.4); original budget 150
 const LAZY_CHUNK_GZIP_BUDGET = 250 * KB;
-const TOTAL_CSS_GZIP_BUDGET = 68 * KB; // 68: round-2 integration measured 67.1 KB gz on 2026-11-05. 66: 66: design system v2 redesign of every page measured 63.2 KB gz on 2026-11-05 (was 60)
+const TOTAL_CSS_GZIP_BUDGET = 64 * KB; // 64 (ratchet, r3-perf 2026-11-05): measured 63.4 KB gz after removing ~190 dead rules and ~6 KB of shadowed declarations (was 68 / 67.1). The original 60 is not reachable without dropping design-system v2 styling: what is left is live or conditional UI (menus, empty/error states) plus the Tailwind layer
 // Ratchet for shell + the This week view chunks together. Lower it whenever the view's heavy imports (Recharts) go lazy.
-const THIS_WEEK_WITH_VIEW_RATCHET = 220 * KB; // 220: round-2 integration measured 216.4 KB gz on 2026-11-05. 212: 212: design system v2 shell (event switcher, phone tab bar, per-page nav icons, design primitives) measured 209.0 KB gz on 2026-11-05. Earlier: measured 195.6 KB gz on 2026-10-14 after lazy Recharts; was 432 KB. 206: the Bet card nav entry (2026-10-22) added ~0.1 KB at 205.0
+const THIS_WEEK_WITH_VIEW_RATCHET = 198 * KB; // 198 (r3-perf 2026-11-05): measured 196.8 KB gz after Why priced and the player drawer left the This week chunk and the weather parsers went lazy (was 220 / 216.4). 205 was the original ratchet. Earlier: 195.6 KB gz on 2026-10-14 after lazy Recharts; was 432 KB
 const THIS_WEEK_WITH_VIEW_TARGET = 150 * KB;
 
 const root = await measureRoute("/");
 const { chunks, duplicates } = await measureChunks();
 
 test("the first route's initial JS (framework + shell) is within 150 KB gzip", () => {
-  assert.ok(root.jsGzip <= SHELL_JS_GZIP_BUDGET, `/ ships ${(root.jsGzip / KB).toFixed(1)} KB gzip of initial JS (budget 160 KB)`);
+  assert.ok(root.jsGzip <= SHELL_JS_GZIP_BUDGET, `/ ships ${(root.jsGzip / KB).toFixed(1)} KB gzip of initial JS (budget 150 KB)`);
   assert.deepEqual(root.missing, [], "every asset the HTML references exists in dist/client");
 });
 
@@ -29,10 +29,10 @@ test("no single built JS chunk exceeds 250 KB gzip", () => {
   assert.deepEqual(big.map((c) => `${c.file} ${(c.gzip / KB).toFixed(1)} KB`), []);
 });
 
-test("total CSS stays within 68 KB gzip", async () => {
+test("total CSS stays within 64 KB gzip", async () => {
   const css = await measureAllCss();
   const total = css.reduce((a, f) => a + f.gzip, 0);
-  assert.ok(total <= TOTAL_CSS_GZIP_BUDGET, `CSS is ${(total / KB).toFixed(1)} KB gzip (budget 68 KB)`);
+  assert.ok(total <= TOTAL_CSS_GZIP_BUDGET, `CSS is ${(total / KB).toFixed(1)} KB gzip (budget 64 KB)`);
 });
 
 test("dist has no stale duplicate chunks (same chunk name under two hashes)", () => {
@@ -51,6 +51,6 @@ test("This week with its view chunks stays under the ratchet", () => {
   assert.ok(root.withViewGzip <= THIS_WEEK_WITH_VIEW_RATCHET, `/ with view is ${(root.withViewGzip / KB).toFixed(1)} KB gzip (ratchet ${THIS_WEEK_WITH_VIEW_RATCHET / KB} KB)`);
 });
 
-test("This week including its view reaches the 150 KB target", { todo: "needs ExplainViews to lazy-load Recharts, ScoringView, WeatherBriefView and CourseGeometry" }, () => {
+test("This week including its view reaches the 150 KB target", { todo: "196.8 KB after r3-perf; the rest is ExplainViews 19.6 + explain-rules 14.9 + glossary 4.6 + shell 148.6. Needs a shorter shell (framework + vinext client are 105 KB of it) or splitting explain-rules" }, () => {
   assert.ok(root.withViewGzip <= THIS_WEEK_WITH_VIEW_TARGET, `/ with view is ${(root.withViewGzip / KB).toFixed(1)} KB gzip`);
 });

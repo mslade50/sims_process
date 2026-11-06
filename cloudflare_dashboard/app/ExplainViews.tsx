@@ -8,34 +8,37 @@
 import Link from "next/link";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useEventParam } from "./event-param";
-import { ArrowDown, ArrowUp, ChevronRight, CloudSun, Search, X } from "lucide-react";
-import { EmptyState, Kpi, LoadingState, SegmentedControl } from "./components";
-import { DeltaBar, LegendGroups, MarketRows, PLAYER_COLORS, RangeBar, ScoreFan, ShapeBars, shapeCap, Term, Waterfall } from "./ExplainBits";
-import type { FinishSeries } from "./ExplainCharts";
-import {
-  EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, MAX_OVERLAY, SHAPE_METHOD, TAG_GROUPS, american, availableMarkets, availableTags, cutLineRows, defaultCompetitors, differView, edgeBadge, edgeCellText,
-  explainChoices, explainKeyFor, favourites, fieldStrengthText, filterWhy, toPar, gapText, groupSentence, leaderboard, nameMatches, orderEvents, parseExplain, pct, plainCourseBullets, plainHoleSource, plainText, shapeMap, spreadGapOf, spreadLeanNote, shapeOf, signed, sortWhy, roundsWithoutTeeTimes,
-  modalFinish, modalFinishText, waterfallScale, waterfallRowScales, tagLabel, toParText, toggleCompetitor, topK, valueBets, venueClassLines, waterfall, weatherEffectLines, weatherStatus,
-  type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape, type SortKey,
-} from "./explain-rules";
+import { ChevronRight } from "lucide-react";
+import { EmptyState, LoadingState, SegmentedControl } from "./components";
+import { DeltaBar, RangeBar, ShapeBars, shapeCap, Term } from "./ExplainBits";
+import { EDGE_MIN, MARKETS, WINNING_SCORE_MISSING, DG_GAP_LABEL, DG_GAP_KINDS, DG_PTS_MIN, DG_FILTER_DEFAULT, DG_ROUNDS_OPTIONS, DG_SKILL_OPTIONS, biggestDgSkillGap, biggestGaps, dgGaps, hasDg, eventLede, heroFacts, lastSeenRunRef, plainName, previousRunRef, ptsText, relText, spanText, MARKET_LABEL, SHAPE_METHOD, american, availableMarkets, cutLineRows, differView, edgeBadge, edgeCellText, explainChoices, explainKeyFor, favourites, fieldStrengthText, toPar, groupSentence, leaderboard, orderEvents, parseExplain, pct, changesDataName, latestChangesDataName, plainCourseBullets, plainHoleSource, plainText, spreadGapOf, spreadLeanNote, signed, roundsWithoutTeeTimes, tagLabel, toParText, valueBets, venueClassLines, weatherEffectLines, weatherStatus, type DgGapKind, type DgFilter, type Differ, type ExPlayer, type ExplainDoc, type FieldScores, type IndexEvent, type Market, type Shape } from "./explain-rules";
 import { parseChangesPayload, whatChanged, type BookMove, type Cause } from "./changes-rules";
 import { useDashboardData } from "./data";
 
 // Heavy parts load on demand so the summary (key facts, what changed) renders without Recharts, the weather views or the course-geometry viewer.
-const FinishChart = lazy(() => import("./ExplainCharts").then((m) => ({ default: m.FinishChart })));
 const HoleStrip = lazy(() => import("./ExplainCharts").then((m) => ({ default: m.HoleStrip })));
-const WeatherThisRound = lazy(() => import("./ScoringView").then((m) => ({ default: m.WeatherThisRound })));
+const WeatherThisRound = lazy(() => import("./ScoringView").then((m) => ({ default: m.WeatherThisRoundFor })));
 const CourseGeometry = lazy(() => import("./CourseGeometry").then((m) => ({ default: m.CourseGeometry })));
 const WeatherLinkCard = lazy(() => import("./WeatherBriefView").then((m) => ({ default: m.WeatherLinkCard })));
 const ShapeSpotlightCard = lazy(() => import("./ShapeViews").then((m) => ({ default: m.ShapeSpotlightCard })));
-const DivergeSection = lazy(() => import("./DivergeView").then((m) => ({ default: m.DivergeSection })));
-/** Suspense with a placeholder of the final height, so nothing below jumps when the chunk arrives. */
-function Lazy({ height, children }: { height: number; children: React.ReactNode }) {
-  return <Suspense fallback={<div className="ex-lazy" style={{ minHeight: height }} aria-hidden="true" />}>{children}</Suspense>;
+const PlayerDrawer = lazy(() => import("./ExplainDrawer").then((m) => ({ default: m.PlayerDrawer })));
+/** Suspense with a placeholder of the final height, so nothing below jumps when the chunk arrives. The chunk (and its data) is requested only when the block is within
+ *  600px of the viewport, so below-the-fold charts and panels never compete with the content being read (Recharts alone is ~90 KB). */
+export function Lazy({ height, children }: { height: number; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") { queueMicrotask(() => setNear(true)); return; }
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { setNear(true); io.disconnect(); } }, { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const placeholder = <div className="ex-lazy" style={{ minHeight: height }} aria-hidden="true" />;
+  if (!near) return <div ref={ref}>{placeholder}</div>;
+  return <Suspense fallback={placeholder}>{children}</Suspense>;
 }
-import { parseWeatherExtras } from "./scoring-rules";
-import { parseWeather } from "./weather-rules";
-import { LABELS } from "./labels";
 import { etTime } from "./lib";
 import { Chip, Delta, GapRail, OnThisPage, PageHeader, Section } from "./ui";
 import "./explain.css";
@@ -64,14 +67,14 @@ function writeParams(next: Params) {
 }
 
 /* ------------------------------------------------------------------ shell: event picker, loading, empty states */
-type Shell = { doc: ExplainDoc; event: IndexEvent; latest: boolean; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
+export type Shell = { doc: ExplainDoc; event: IndexEvent; latest: boolean; market: Market; setMarket: (m: Market) => void; openPlayer: (id: number) => void };
 
-function ExplainShell({ title, description, preEventFirst = false, defaultView = "pre", children }: { title: string; description: string; preEventFirst?: boolean; defaultView?: View; children: (s: Shell) => React.ReactNode }) {
+export function ExplainShell({ title, description, preEventFirst = false, defaultView = "pre", children }: { title: string; description: string; preEventFirst?: boolean; defaultView?: View; children: (s: Shell) => React.ReactNode }) {
   const index = useDashboardData<{ events?: IndexEvent[] }>("golfprice/index.json");
   const events = useMemo(() => orderEvents(index.data?.events ?? []), [index.data]);
   const [params, setParams] = useState<Params>(readParams);
   const barEvent = useEventParam();
-  if (index.loading) return <LoadingState label="Loading golfprice events" />;
+  if (index.loading || (!params.e && !barEvent && events.length > 0)) return <LoadingState label="Loading golfprice events" />;   // the bar's event is read after mount; the default event must not load a document first
   if (index.error && index.errorKind === "outage") return <EmptyState title="Can’t reach the model data right now" detail={`${index.error} Nothing has been lost; this page retries on its own, or try again now.`} onRetry={index.refetch} />;
   if (index.error || !events.length) return <EmptyState title="No golfprice events published yet" detail={index.error ?? "Publish a run (python -m golfprice.publish_dashboard) and reload."} />;
   const current = events.find((e) => e.event_uid === (params.e || barEvent)) ?? events.find((e) => e.explain_key) ?? events[0];
@@ -95,6 +98,8 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
   const view: View = offerToggle ? params.v ?? defaultView : "live";
   const key = !preEventFirst || !choices.hasLive ? explainKeyFor(event) : view === "pre" && choices.preKey ? choices.preKey : choices.liveKey ?? explainKeyFor(event);
   const { data, loading, error } = useDashboardData<unknown>(key);
+  // "What changed" needs the stored diff of the latest run: ask for it now, in parallel with the run's document, so the strip arrives with the page instead of pushing it down later.
+  const early = useDashboardData<unknown>(defaultView === "live" && view === "live" ? latestChangesDataName(event) : null);
   const doc = useMemo(() => parseExplain(data), [data]);
   const toggle = offerToggle && (
     <div className="ex-viewbar" title={view === "pre" ? "Prices as set before the first tee shot." : "Prices updated with scores so far."}>
@@ -102,7 +107,7 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
         options={[{ value: "pre", label: "Pre-tournament" }, { value: "live", label: choices.liveRound ? `Live, after R${choices.liveRound}` : "Live" }]} />
     </div>
   );
-  if (loading) return <>{toggle}<LoadingState label="Loading the pricing explanation" /></>;
+  if (loading || early.loading) return <>{toggle}<LoadingState label="Loading the pricing explanation" /></>;   // the small diff is waited for so "What changed" arrives with the page instead of pushing it down
   const stale = !preEventFirst && event.explain_run && doc && `${doc.kind}_${doc.run}` !== event.explain_run;
   if (error || !doc || stale) return <>{toggle}<EmptyState title={`Nothing to show for ${event.name ?? event.event_uid} yet`} detail="Prices for this event have not been run since this page was updated. They will appear after the next pricing run." /></>;
   const market = params.m ?? "win";
@@ -114,8 +119,8 @@ function ExplainBody({ event, params, update, preEventFirst, defaultView, childr
       <RunNotes doc={doc} />
       {preEventFirst && choices.hasLive && !choices.preKey && <p className="ex-muted ex-notice">The pre-tournament explanation was not kept for this event, so this shows the live pricing.</p>}
       {children({ doc, event, latest: !!event.explain_run && `${doc.kind}_${doc.run}` === event.explain_run, market, setMarket: (m) => update({ m }), openPlayer: (id) => update({ p: id, vs: [] }) })}
-      {player && <PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
-        setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} />}
+      {player && <Suspense fallback={null}><PlayerDrawer doc={doc} player={player} competitors={competitors} market={market}
+        setCompetitors={(vs) => update({ vs })} onSelect={(id) => update({ p: id, vs: [] })} onClose={() => update({ p: null, vs: [] })} /></Suspense>}
     </>
   );
 }
@@ -133,7 +138,7 @@ function RunNotes({ doc }: { doc: ExplainDoc }) {
 }
 
 /** True on phone widths (client only; false on first render so server and client markup match). */
-function usePhone(): boolean {
+export function usePhone(): boolean {
   const [phone, setPhone] = useState(false);
   useEffect(() => {
     const q = window.matchMedia("(max-width: 820px)");
@@ -146,7 +151,7 @@ function usePhone(): boolean {
 }
 
 /** A section body that is collapsed on phones (everything stays one tap away) and open on desktop. */
-function Fold({ summary, children }: { summary: string; children: React.ReactNode }) {
+export function Fold({ summary, children }: { summary: string; children: React.ReactNode }) {
   const phone = usePhone();
   const [touched, setTouched] = useState<boolean | null>(null);
   const open = touched ?? !phone;
@@ -159,7 +164,7 @@ function Fold({ summary, children }: { summary: string; children: React.ReactNod
 }
 
 /** "Show all N" for a long list: the first `limit` items, the rest on demand. */
-function useLimit<T>(items: T[], limit: number, reset: unknown = null): { shown: T[]; more: React.ReactNode } {
+export function useLimit<T>(items: T[], limit: number, reset: unknown = null): { shown: T[]; more: React.ReactNode } {
   const [all, setAll] = useState<{ on: boolean; key: unknown }>({ on: false, key: reset });
   const on = all.on && all.key === reset;
   const shown = on ? items : items.slice(0, limit);
@@ -170,13 +175,13 @@ function useLimit<T>(items: T[], limit: number, reset: unknown = null): { shown:
 }
 
 /** One line under a bar list that gives the zero line, the unit and what a full bar means. */
-function ScaleNote({ scale, unit, what }: { scale: number; unit: string; what: string }) {
+export function ScaleNote({ scale, unit, what }: { scale: number; unit: string; what: string }) {
   const end = scale.toFixed(scale < 10 ? 1 : 0);
   return <p className="ex-scale">Bars show {what} in {unit}. Centre line is 0 (no difference); each end is ±{end} {unit}.</p>;
 }
 
 /** A flat titled block inside a Section (the design system flattens cards). */
-function Panel({ title, eyebrow, actions, children }: { title: string; eyebrow?: string; actions?: React.ReactNode; children: React.ReactNode }) {
+export function Panel({ title, eyebrow, actions, children }: { title: string; eyebrow?: string; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="ex-sub">
       <header className="ex-sub-head">
@@ -188,9 +193,9 @@ function Panel({ title, eyebrow, actions, children }: { title: string; eyebrow?:
   );
 }
 
-type PriceRowData = { id: number; name: string; tags?: string[]; lead?: string; nums: Array<{ k: string; v: React.ReactNode; cls?: string; help?: string; minor?: boolean }>; rail?: { model: number; book: number } | null; relNote?: string; why?: string | null };
+export type PriceRowData = { id: number; name: string; tags?: string[]; lead?: string; nums: Array<{ k: string; v: React.ReactNode; cls?: string; help?: string; minor?: boolean }>; rail?: { model: number; book: number } | null; relNote?: string; why?: string | null };
 /** Shared price list: player, numbers, model-vs-book gap on a zero-centred rail, one-line reason. Whole row opens the player. Compact two-line rows on phone. */
-function PriceList({ rows: allRows, heads, range, label, onOpen, limit = 12 }: { rows: PriceRowData[]; heads: [string, string, string, string]; range: number; label: string; onOpen: (id: number) => void; limit?: number }) {
+export function PriceList({ rows: allRows, heads, range, label, onOpen, limit = 12 }: { rows: PriceRowData[]; heads: [string, string, string, string]; range: number; label: string; onOpen: (id: number) => void; limit?: number }) {
   const { shown: rows, more } = useLimit(allRows, limit);
   const hasRail = allRows.some((r) => r.rail);
   const hasWhy = allRows.some((r) => r.why);
@@ -213,9 +218,9 @@ function PriceList({ rows: allRows, heads, range, label, onOpen, limit = 12 }: {
     </div>
   );
 }
-const RAIL_RANGE: Record<Market, number> = { win: 6, top_5: 10, top_10: 12, top_20: 15, make_cut: 15 };
+export const RAIL_RANGE: Record<Market, number> = { win: 6, top_5: 10, top_10: 12, top_20: 15, make_cut: 15 };
 
-const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span className="ex-tags">{tags.slice(0, max).map((t) => <em key={t}>{tagLabel(t)}</em>)}{tags.length > max && <em>+{tags.length - max}</em>}</span>;
+export const Tags = ({ tags, max = 4 }: { tags: string[]; max?: number }) => <span className="ex-tags">{tags.slice(0, max).map((t) => <em key={t}>{tagLabel(t)}</em>)}{tags.length > max && <em>+{tags.length - max}</em>}</span>;
 
 /* ------------------------------------------------------------------ This week */
 export function ThisWeekView() {
@@ -229,9 +234,6 @@ export function ThisWeekView() {
 function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) {
   const live = doc.kind === "live";
   const weatherKey = event.weather_key || `golfprice/weather/${event.event_uid.replace(/:/g, "_")}/latest.json`;
-  const weatherSource = useDashboardData<unknown>(weatherKey);
-  const weatherDoc = useMemo(() => parseWeather(weatherSource.data), [weatherSource.data]);
-  const weatherExtras = useMemo(() => parseWeatherExtras(weatherSource.data), [weatherSource.data]);
   const fav = useMemo(() => favourites(doc, 10), [doc]);
   const differ = useMemo(() => differView(doc), [doc]);
   const markets = useMemo(() => availableMarkets(doc), [doc]);
@@ -320,7 +322,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
         <Fold summary="Forecast detail and effect by round">
         <WeatherSnapshot doc={doc} />
         <WeatherEffects doc={doc} />
-        <Lazy height={160}><WeatherThisRound doc={weatherDoc} extras={weatherExtras} loading={weatherSource.loading} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} /></Lazy>
+        <Lazy height={160}><WeatherThisRound weatherKey={weatherKey} round={live ? (doc.after_round ?? 0) + 1 : 1} latest={latest} /></Lazy>
         </Fold>
       </Section>
 
@@ -446,8 +448,7 @@ function WhatChangedStrip({ doc, event, latest, openPlayer, onPresent }: { doc: 
   const [against, setAgainst] = useState<"prev" | "visit">("prev");
   const ref = against === "visit" && visitRef ? visitRef : prevRef;
   // One small request for the stored diff of the two runs; the earlier run's whole document is fetched only when that request fails.
-  const toKey = useMemo(() => (event.distribution_runs ?? []).find((r) => !!r && r.kind === doc.kind && r.run === doc.run && typeof r.key === "string" && r.key.length > 0 && r.validated !== false)?.key ?? null, [event, doc]);
-  const changesName = ref && toKey && ref.key !== toKey ? `golfprice/changes.json?event=${encodeURIComponent(event.event_uid)}&from=${encodeURIComponent(ref.key)}&to=${encodeURIComponent(toKey)}` : null;
+  const changesName = useMemo(() => changesDataName(event, doc, ref), [event, doc, ref]);
   const served = useDashboardData<unknown>(changesName);
   const fromServer = useMemo(() => parseChangesPayload(served.data), [served.data]);
   const needFallback = !changesName || (!served.loading && !fromServer);
@@ -830,235 +831,6 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
     <div className="ex-sub">
       <p className="ex-muted">After round {doc.after_round}{prev ? `; changes compared with ${prev}` : ""}. {withB8 > 0 ? `Form this week changed the prices of ${withB8} players` : "No player price moved much on form this week"}{withCon > 0 ? `, and the title race changed ${withCon}` : ""}.</p>
       <PriceList rows={rows} limit={phone ? 8 : 12} range={6} label="Leaderboard" onOpen={openPlayer} heads={["Pos / player", "Score and chances", "", ""]} />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ Why priced */
-export function WhyPricedView() {
-  return (
-    <ExplainShell title="Why priced" preEventFirst description="Every player's price against the market, with the reasons.">
-      {(s) => <WhyPriced {...s} />}
-    </ExplainShell>
-  );
-}
-
-const SORT_LABEL: Array<{ key: SortKey; label: string }> = [
-  { key: "edge_sg", label: "Gap in strokes" }, { key: "rel", label: "Gap in %" }, { key: "model", label: "Our chance" }, { key: "market", label: "Sportsbook" }, { key: "mu", label: "Expected skill" }, { key: "name", label: "Name" },
-];
-const SORT_HELP: Partial<Record<SortKey, string>> = {
-  edge_sg: "Gap in strokes: how many strokes a round better (+) or worse (-) our numbers rate a player than the sportsbook prices imply, allowing for how boom-or-bust each side sees them.",
-  rel: "Gap in %: how far our chance is from the sportsbook's, as a share of the sportsbook's chance.",
-  model: "Our chance for the chosen bet type.", market: "The sportsbook's chance for the chosen bet type.",
-  mu: "Expected skill: strokes per round better (+) or worse (-) than the average player in this field.", name: "Alphabetical.",
-};
-const COLUMN_HELP = {
-  pos: "Current place on the leaderboard (MC = missed the cut, WD = withdrew).",
-  model: "Our chance for this bet type, from the simulations.",
-  market: "The chance implied by sportsbook odds, with the bookmaker margin removed.",
-  rel: "How far our chance is from the sportsbook's, as a share of the sportsbook's. Plus means we are higher than the sportsbook.",
-  edge_sg: "Skill gap: how many strokes a round better (+) or worse (-) we rate them than the sportsbook prices imply, after allowing for how much their scores swing (spread). Blank when the sportsbook prices too few bet types to tell.",
-  mu: "Our estimate of their skill: strokes per round better (+) or worse (-) than the average player in this field.",
-  sd: "Std dev: the standard deviation of their round scores, in strokes. Higher means a streakier, less predictable player.",
-} as const;
-
-function WhyPriced({ doc, market, setMarket, openPlayer }: Shell) {
-  const [query, setQuery] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
-  const [only, setOnly] = useState<"all" | "above" | "below">("all");
-  const [top, setTop] = useState<"all" | "60" | "25">("25");
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "edge_sg", dir: "desc" });
-  const live = doc.kind === "live";
-  const activeFilters = (only !== "all" ? 1 : 0) + (top !== "25" ? 1 : 0) + (sort.key !== "edge_sg" || sort.dir !== "desc" ? 1 : 0) + tags.length;
-  const markets = useMemo(() => availableMarkets(doc), [doc]);
-  const tagOptions = useMemo(() => availableTags(doc.players), [doc.players]);
-  // Before the event the strokes gap and the reason come from the bet-by-bet shape comparison (skill the sportsbook's prices imply vs ours); players it cannot be computed for show no gap.
-  const players = useMemo(() => {
-    if (live) return doc.players;
-    const map = shapeMap(doc);
-    return doc.players.map((p) => { const s = p.withdrawn ? null : shapeOf(p, map, markets); return { ...p, edge_sg: s ? s.skill_gap : null, why_edge: s ? s.sentence : null }; });
-  }, [doc, live, markets]);
-  const rows = useMemo(() => sortWhy(filterWhy(players, { query, tags, market, onlyEdge: only, top: top === "all" ? null : Number(top) }), sort.key, sort.dir, market), [players, query, tags, market, only, top, sort]);
-  const hasMarket = !live && rows.some((p) => p.probs[market].market !== null);
-  const hasModel = rows.some((p) => p.probs[market].model !== null);
-  const hasGap = rows.some((p) => p.edge_sg !== null);
-  const hasSd = rows.some((p) => p.sd !== null && p.sd !== undefined);
-  const plRows: PriceRowData[] = rows.map((p) => {
-    const e = p.probs[market];
-    const b = edgeBadge(p, market);
-    const nums: PriceRowData["nums"] = [];
-    if (live) nums.push({ k: "Pos", v: p.live?.tier === 0 ? p.live?.pos ?? "-" : p.live?.tier === 2 ? "MC" : "WD", help: COLUMN_HELP.pos });
-    if (hasModel) nums.push({ k: "Model", v: pct(e.model), help: COLUMN_HELP.model });
-    if (hasMarket) nums.push({ k: "Book", v: pct(e.market), help: COLUMN_HELP.market });
-    if (hasGap && hasMarket) nums.push({ k: "Skill gap", v: <>{gapText(p.edge_sg)}<small> str/rd</small></>, cls: Math.abs(p.edge_sg ?? 0) < 0.005 ? "" : (p.edge_sg ?? 0) > 0 ? "pos" : "neg", help: COLUMN_HELP.edge_sg });
-    nums.push({ k: "Skill", v: signed(p.mu_rel), help: COLUMN_HELP.mu });
-    if (hasSd) nums.push({ k: "Std dev", minor: true, v: p.sd?.toFixed(2) ?? "-", help: COLUMN_HELP.sd });
-    return { id: p.id, name: p.name, tags: p.tags, nums, rail: hasMarket && e.model != null && e.market != null ? { model: e.model * 100, book: e.market * 100 } : null, relNote: b.tone === "neutral" ? "in line" : `${b.text} vs book`, why: (hasMarket ? p.why_edge : null) ?? p.why };
-  });
-  return (
-    <>
-      <OnThisPage sections={[{ id: "players", label: "Players" }, { id: "legend", label: "What reasons mean" }, { id: "tech", label: "Technical" }]} />
-      <Section id="players" title={`${rows.length} players, ${MARKET_LABEL[market].toLowerCase()}`} purpose={`Tap a player for the driver breakdown.${hasMarket ? " Bars to the right of the zero tick: we are higher than the book." : ""}`}
-        actions={<SegmentedControl label="Bet type" value={market} onChange={setMarket} options={markets.map((m) => ({ value: m, label: MARKET_LABEL[m] }))} />}>
-        <div className="ex-filters">
-          <label className="search-box"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search player" aria-label="Search player" /></label>
-        </div>
-        <details className="ex-details ex-typefilter ex-filterbox" open={undefined}>
-          <summary>Filters{activeFilters > 0 ? ` (${activeFilters})` : ""}</summary>
-          <div className="ex-filters">
-            <SegmentedControl label="Show players we rate" value={only} onChange={setOnly} options={[{ value: "all", label: "All" }, { value: "above", label: "We are higher" }, { value: "below", label: "We are lower" }]} />
-            <SegmentedControl label="Show" value={top} onChange={setTop} options={[{ value: "25", label: "Top 25" }, { value: "60", label: "Top 60" }, { value: "all", label: "Whole field" }]} />
-            <label className="ex-sort">Sort by <select value={sort.key} title={SORT_HELP[sort.key]} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: e.target.value === "name" ? "asc" : "desc" })}>{SORT_LABEL.map((o) => <option key={o.key} value={o.key} title={SORT_HELP[o.key]}>{o.label}</option>)}</select>
-              <button type="button" className="ex-sortdir" onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))} title="Reverse the order" aria-label={sort.dir === "asc" ? "Sorted low to high, tap to reverse" : "Sorted high to low, tap to reverse"}>{sort.dir === "asc" ? <ArrowUp size={14} /> : <ArrowDown size={14} />}{sort.dir === "asc" ? "low to high" : "high to low"}</button></label>
-          </div>
-          <p className="ex-muted">Player type{tags.length > 0 ? ` (${tags.length} selected)` : ""}:</p>
-          <div className="ex-chipgroups" role="group" aria-label="Filter by player type">
-            {TAG_GROUPS.map((g) => {
-              const opts = g.tags.filter((t) => tagOptions.includes(t));
-              return opts.length === 0 ? null : (
-                <div className="ex-chipgroup" key={g.label}>
-                  <span className="ex-chipgroup-label" title={g.help}>{g.label}</span>
-                  <div className="ex-chips">{opts.map((t) => <button key={t} type="button" title={tagLabel(t)} aria-pressed={tags.includes(t)} className={tags.includes(t) ? "on" : ""} onClick={() => setTags((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]))}>{tagLabel(t)}</button>)}</div>
-                </div>
-              );
-            })}
-            {tags.length > 0 && <button type="button" className="ex-clear" onClick={() => setTags([])}><X size={12} /> clear player types</button>}
-          </div>
-        </details>
-        {rows.length > 0 && <PriceList rows={plRows} range={RAIL_RANGE[market]} label="Player prices" onOpen={openPlayer} heads={["Player", "Numbers", "Model vs book (points)", "Why"]} />}
-        {rows.length === 0 && <EmptyState title="No players match" detail="Clear a filter or the search." />}
-        {!hasMarket && !live && rows.length > 0 && <p className="ex-muted">No sportsbook prices are posted for {MARKET_LABEL[market].toLowerCase()}, so only our own numbers are shown.</p>}
-        <p className="ex-muted ex-marketnote">The strokes gap and its reasons are the same for every bet type; only the probability gap changes.{live ? " Sportsbook prices are not shown during play because they are not live." : ""}</p>
-      </Section>
-      <Section id="legend" title="What the reasons mean" purpose="The model components behind each price.">
-        <details className="ex-glossary-wrap"><summary>Open the glossary</summary><LegendGroups legend={doc.components_legend} /></details>
-      </Section>
-      <Section id="tech" title="Technical details">
-        <p className="ex-muted">{doc.model.n_sims ? `Prices come from ${doc.model.n_sims.toLocaleString()} simulated tournaments. ` : ""}Priced {etTime(doc.as_of)}.</p>
-        <p className="ex-muted">{doc.kind === "live" ? `In-play pricing after round ${doc.after_round}` : "Pre-tournament pricing"}; finish chances {doc.finish.method === "exact_tapes" ? "come straight from the simulations" : doc.finish.method === "unavailable" ? "are not available" : "were rebuilt by replaying the hole-by-hole model"}.</p>
-      </Section>
-    </>
-  );
-}
-
-/* ------------------------------------------------------------------ Player drawer */
-function PlayerDrawer({ doc, player, competitors, market, setCompetitors, onSelect, onClose }: {
-  doc: ExplainDoc; player: ExPlayer; competitors: number[]; market: Market; setCompetitors: (ids: number[]) => void; onSelect: (id: number) => void; onClose: () => void;
-}) {
-  const [mode, setMode] = useState<"probability" | "cumulative">("probability");
-  const [q, setQ] = useState("");
-  const byId = useMemo(() => new Map(doc.players.map((p) => [p.id, p] as const)), [doc.players]);
-  const wf = useMemo(() => waterfall(player, doc.components_legend), [player, doc.components_legend]);
-  const wfScale = useMemo(() => waterfallScale(doc.players), [doc.players]);
-  const wfScales = useMemo(() => waterfallRowScales(doc.players, doc.components_legend), [doc.players, doc.components_legend]);
-  const shape = useMemo(() => (doc.kind === "live" || player.withdrawn ? null : shapeOf(player, shapeMap(doc), availableMarkets(doc))), [doc, player]);
-  const chosen = [player, ...competitors.map((id) => byId.get(id)).filter((p): p is ExPlayer => !!p)];
-  const withShape = chosen.filter((p) => p.finish);
-  const series: FinishSeries[] = withShape.map((p, i) => ({ id: p.id, name: p.name, pos: p.finish!.pos, missCut: doc.event.cut_round ? p.finish!.p_miss_cut : null, color: PLAYER_COLORS[i % PLAYER_COLORS.length] }));
-  const hits = q.trim() ? doc.players.filter((p) => p.finish && !p.withdrawn && p.id !== player.id && !competitors.includes(p.id) && nameMatches(p.name, q)).slice(0, 6) : [];
-  const f = player.finish;
-  const t = f ? topK(f.pos, [1, 5, 10, 20]) : [];
-  const rounds = doc.event.rounds ?? 4;
-  const live = player.live;
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; });
-  useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCloseRef.current(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [player.id]);
-  return (
-    <div className="ex-drawer-layer" role="dialog" aria-modal="true" aria-label={`${player.name} pricing detail`}>
-      <button className="ex-drawer-backdrop" aria-label="Close player detail" onClick={onClose} />
-      <aside className="ex-drawer">
-        <header>
-          <div>
-            <span className="eyebrow">{doc.kind === "live" ? `In play, after round ${doc.after_round}` : "Before the event"}</span>
-            <h2>{player.name}</h2>
-            <a className="ex-link" href={`/players?player=${player.id}`}>Profile and vs PGA avg <ChevronRight size={14} /></a>
-            <Tags tags={player.tags} max={8} />
-          </div>
-          <button type="button" className="ex-close" onClick={onClose} aria-label="Close" ref={closeRef}><X size={20} /></button>
-        </header>
-
-        <div className="ex-drawer-kpis">
-          <Kpi label={`${MARKET_LABEL[market]} chance`} value={pct(player.probs[market].model)} detail={doc.kind === "live" ? "our chance now" : `sportsbook ${pct(player.probs[market].market)}`} tone="model" />
-          <Kpi label={`Expected skill ${LABELS.vsField.short}`} value={`${signed(player.mu_rel)} strokes a round`} detail={`Std dev ${player.sd?.toFixed(2) ?? "-"} strokes`} tone={(player.mu_rel ?? 0) >= 0 ? "positive" : "negative"} />
-          {f && <div className="ex-kpi-wrap"><Kpi label="Median finish" value={String(f.median)} detail={`Likely range: ${f.p10} to ${f.p90}`} tone="accent" /><small className="ex-modal">{modalFinishText(modalFinish(f, !!doc.event.cut_round))}</small></div>}
-          {f && <Kpi label="Top 10 chance" value={pct(t[2])} detail={`Win chance ${pct(t[0])}${doc.event.cut_round ? ` · misses the cut ${pct(f.p_miss_cut, 0)}` : ""}`} tone="neutral" />}
-        </div>
-        {shape && <p className="ex-callout"><strong>{shape.sentence}</strong> {shape.parts_sentence}{valueBets(shape).length > 0 ? ` Value against the sportsbook: ${valueBets(shape).join(", ")}.` : ""}</p>}
-        {doc.kind !== "live" && !player.withdrawn && player.diverge && <Lazy height={420}><DivergeSection doc={doc} player={player} onSelect={onSelect} /></Lazy>}
-
-        <section>
-          <h3 className="ex-h3">Why this price</h3>
-          <p className="ex-muted">Strokes per round above (+) or below (−) the average player in this field ({LABELS.vsField.short}); the {LABELS.vsPgaAvg.short} view is on the profile. The skill rows add up to their expected skill{doc.kind === "live" ? "; the in-play rows are part of it" : ""}; weather is shown separately because it adjusts scores on top.</p>
-          <Waterfall {...wf} scale={wfScale} scales={wfScales} />
-          {shape && <p className="ex-muted">The sportsbook&rsquo;s prices imply skill {signed(shape.skill_market)} and spread {shape.spread_market.toFixed(2)}; ours are {signed(shape.skill_ours)} (including weather) and {shape.spread_ours.toFixed(2)}.</p>}
-        </section>
-
-        <section>
-          <h3 className="ex-h3">Our chance vs the sportsbook</h3>
-          {shape && <div className="ex-shape-wrap"><ShapeBars shape={shape} markets={availableMarkets(doc)} /><span className="ex-muted">Up: our chance is higher than the sportsbook&rsquo;s. Down: lower. Gray: within {Math.round(EDGE_MIN * 100)}%.</span></div>}
-          <MarketRows player={player} hasCut={!!doc.event.cut_round} />
-        </section>
-
-        <section>
-          <div className="ex-sec-head"><h3 className="ex-h3">Finish shape</h3>
-            <SegmentedControl label="Chart type" value={mode} onChange={setMode} options={[{ value: "probability", label: "Position" }, { value: "cumulative", label: "Cumulative" }]} /></div>
-          {doc.finish.method === "unavailable" || !f ? <p className="ex-muted">Finish odds are not available for this run.</p> : (
-            <>
-              <Lazy height={330}><FinishChart series={series} cutTopN={doc.event.cut_round ? doc.event.cut_top_n : null} mode={mode} /></Lazy>
-              <div className="ex-compare">
-                <h4>Compare with</h4>
-                <div className="chip-row">
-                  {competitors.map((id) => <span className="chip" key={id}>{byId.get(id)?.name ?? id}<button type="button" onClick={() => setCompetitors(competitors.filter((x) => x !== id))} aria-label={`Remove ${byId.get(id)?.name}`}><X size={13} /></button></span>)}
-                  {competitors.length === 0 && <span className="ex-muted">nobody selected</span>}
-                </div>
-                <div className="ex-compare-actions">
-                  <button type="button" onClick={() => setCompetitors(defaultCompetitors(doc, player.id, 3))}>Same-odds neighbors</button>
-                  <button type="button" onClick={() => setCompetitors([])}>Clear</button>
-                </div>
-                <label className="search-box"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={competitors.length >= MAX_OVERLAY - 1 ? "Maximum reached" : "Add a competitor"} disabled={competitors.length >= MAX_OVERLAY - 1} aria-label="Add competitor" /></label>
-                {hits.length > 0 && <ul className="ex-hits">{hits.map((p) => <li key={p.id}><button type="button" onClick={() => { setCompetitors(toggleCompetitor(competitors, p.id)); setQ(""); }}>{p.name}<small>{pct(p.probs.win.model)} win</small></button></li>)}</ul>}
-              </div>
-              <div className="table-scroll"><table className="ex-table ex-compare-table">
-                <thead><tr><th>Player</th><th title="Expected skill: strokes per round better (+) or worse (-) than the field average.">Skill</th><th>Win</th><th>Top 5</th><th>Top 10</th><th>Top 20</th>{doc.event.cut_round ? <th title="Our chance to make the cut.">Make cut</th> : null}<th title="The finish position that half of the simulations beat and half did not. The smaller note is the single most likely finish.">Median finish</th></tr></thead>
-                <tbody>{withShape.map((p, i) => (
-                  <tr key={p.id}><th scope="row"><i className="ex-dot" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }} aria-hidden="true" />
-                    {p.id === player.id ? p.name : <button type="button" className="ex-linkbtn" onClick={() => onSelect(p.id)}>{p.name}</button>}</th>
-                    <td data-label="Skill">{signed(p.mu_rel)}</td><td data-label="Win">{pct(p.probs.win.model)}</td><td data-label="Top 5">{pct(p.probs.top_5.model)}</td><td data-label="Top 10">{pct(p.probs.top_10.model)}</td><td data-label="Top 20">{pct(p.probs.top_20.model)}</td>
-                    {doc.event.cut_round ? <td data-label="Make cut">{pct(p.probs.make_cut.model ?? (p.finish ? 1 - p.finish.p_miss_cut : null), 0)}</td> : null}
-                    <td data-label="Median finish">{p.finish!.median}<small className="ex-modal" title="The single most likely finish position">{modalFinishText(modalFinish(p.finish, !!doc.event.cut_round)).replace("Most likely finish: ", "most likely ").replace("Most likely: ", "most likely: ")}</small></td></tr>
-                ))}</tbody></table></div>
-              <p className="ex-muted">Finish chances come from {doc.finish.method === "exact_tapes" ? "the simulations themselves" : `${doc.finish.n_draws?.toLocaleString() ?? "many"} replayed tournaments`}{doc.finish.calibration?.top_20 ? `; on average they sit within ${pct(doc.finish.calibration.top_20.mean_abs, 1)} of the posted top-20 chances` : ""}.</p>
-            </>
-          )}
-        </section>
-
-        <section>
-          <h3 className="ex-h3">Score distribution</h3>
-          <ScoreFan rounds={rounds} items={withShape.map((p, i) => ({ id: p.id, name: p.name, color: PLAYER_COLORS[i % PLAYER_COLORS.length], scores: p.scores }))} />
-        </section>
-
-        {live && (
-          <section>
-            <h3 className="ex-h3">In play</h3>
-            <div className="ex-live-grid">
-              <span>Position <b>{live.pos ?? "-"}</b></span><span>To par <b>{toParText(live.to_par)}</b></span>
-              <span>Skill before the event → now <b>{signed(live.mu_pre)} → {signed(live.mu_live)}</b></span>
-              <span>Change since last run <b>{signed(live.d_mu_since_last)}</b> (form this week {signed(live.d_b8_since_last)}{Math.abs(live.d_contention_since_last ?? 0) >= 0.005 ? `, title race ${signed(live.d_contention_since_last)}` : ""})</span>
-            </div>
-            {live.rounds.length > 0 && <div className="table-scroll"><table className="ex-table"><thead><tr><th>Round</th><th>Score</th><th title="Strokes gained in total versus the field.">Total</th><th title="Strokes gained off the tee.">Driving</th><th title="Strokes gained on approach shots.">Approach</th><th title="Strokes gained around the green.">Short game</th><th title="Strokes gained putting.">Putting</th></tr></thead>
-              <tbody>{live.rounds.map((r) => <tr key={r.round}><th scope="row">R{r.round}</th><td>{r.score ?? "-"}</td><td>{signed(r.sg_total)}</td><td>{signed(r.sg_ott)}</td><td>{signed(r.sg_app)}</td><td>{signed(r.sg_arg)}</td><td>{signed(r.sg_putt)}</td></tr>)}</tbody></table></div>}
-            <div className="table-scroll"><table className="ex-table"><thead><tr><th>Market</th><th>Before the event</th><th>Now</th><th title="Change since the previous pricing run, in percentage points.">Change since last run</th></tr></thead>
-              <tbody>{availableMarkets(doc).map((m) => <tr key={m}><th scope="row">{MARKET_LABEL[m]}</th><td>{pct(live.pre_event[m])}</td><td>{pct(player.probs[m].model)}</td><td><Delta value={(live.since_last[m] ?? 0) * 100} digits={1} suffix="pp" /></td></tr>)}</tbody></table></div>
-          </section>
-        )}
-        <p className="ex-muted ex-foot"><CloudSun size={13} /> Wave, time-of-day and wind effects are in the waterfall (weather rows) and on the <Link prefetch={false} className="ex-link" href="/weather-effects">Weather page</Link>.</p>
-      </aside>
     </div>
   );
 }

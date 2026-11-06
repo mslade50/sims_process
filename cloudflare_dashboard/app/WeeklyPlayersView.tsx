@@ -22,13 +22,16 @@ const DEPS: WeeklyDeps = { LABELS, gapSentence: GAP_METHOD_SENTENCE, plainName, 
 
 export function WeeklyPlayersView() {
   const load=useDashboardData<{events?:WeeklyEvent[]}>("golfprice/index.json"); const fields=useDashboardData<{schema_version?:string;fields?:Array<{event_uid:string;player_ids:number[]}>}>("golfprice/player_profiles/fields.json"); const events=orderEvents(load.data?.events ?? []) as WeeklyEvent[];const {params}=useParams();const barEvent=useEventParam();const event=selectWeeklyEvent(events,params.get("e") || barEvent || null,params.get("player"),fields.data?.schema_version==="player_profiles.fields.v1" ? fields.data.fields : []);
-  if(load.loading || (params.get("player") && !params.get("e") && !barEvent && fields.loading)) return <LoadingState label="Loading events"/>;
+  // Until the bar's event is known (read after mount) the default event would be shown for one render and its large documents fetched for nothing.
+  if(load.loading || (!params.get("e") && !barEvent && events.length>0) || (params.get("player") && !params.get("e") && !barEvent && fields.loading)) return <LoadingState label="Loading events"/>;
   return <div className="pp-page"><PageHeader title="Whole field" purpose="Every golfer this week: our chance against the book's, where we disagree most, and why. Tap a golfer for the evidence. The event is set in the bar above."/>{!event ? <EmptyState title="No saved model runs" detail={load.error ?? "No model run has been published yet."}/> : <WeeklyBody key={event.event_uid} event={event as WeeklyEvent} playerId={params.get("player")}/>}</div>;
 }
 function WeeklyBody({event,playerId}:{event:WeeklyEvent;playerId:string|null}) {
   const choices=dedupeRuns(checkpoints(event)); const [run,setRun]=useState(""); const checkpoint=choices.find(r=>r.run===run); const key=checkpoint?.key ?? explainKeyFor(event); const expected=matchingInputRun(event,checkpoint);
+  // The saved-skill breakdown sits below the field board: show it only once the board's document is in, so it never sits (and then moves) under a loading skeleton.
+  const runDoc=useDashboardData<unknown>(key);
   const picker=choices.length>1 ? <details className="fb-runpick"><summary>Change model run</summary><label>Model run<select value={run} onChange={e=>setRun(e.target.value)}><option value="">Latest model run</option>{choices.map(r=><option key={`${r.kind}_${r.run}`} value={r.run}>{humanCheckpoint(r.as_of,r.kind)}</option>)}</select></label></details> : null;
-  return <><WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId} picker={picker}/><SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/></>;
+  return <><WeeklyExplain key={key} event={event} dataKey={key} inputsKey={expected?.key ?? null} expected={expected} playerId={playerId} picker={picker}/>{!runDoc.loading && <SavedInputs key={run || "current"} dataKey={expected?.key ?? null} expected={expected} playerId={playerId} explainKey={key}/>}</>;
 }
 /** Two runs of one kind within ten minutes are a rerun of the same moment: keep the later one. */
 function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
@@ -39,7 +42,7 @@ function dedupeRuns<T extends {kind:string;as_of:string|null}>(runs:T[]):T[] {
 function WeeklyExplain({event,dataKey,inputsKey,expected,playerId,picker=null}:{event:WeeklyEvent;dataKey:string;inputsKey:string|null;expected:SavedCheckpoint|null;playerId:string|null;picker?:React.ReactNode}) {
   const [query,setQuery]=useState("");const load=useDashboardData<unknown>(dataKey);const doc=useMemo(()=>parseExplain(load.data),[load.data]);
   // Only this field's ratings are fetched (a few tens of KB), not the 16 MB catalog; the catalog is the fallback if that endpoint errors.
-  const fieldIds=useMemo(()=>doc ? doc.players.map(p=>p.id) : null,[doc]);const {catalog}=usePlayerBenchmarks(fieldIds);const inputsLoad=useDashboardData<unknown>(inputsKey ?? "golfprice/none.json");const inputs=useMemo(()=>inputsKey && matchesInputCheckpoint(inputsLoad.data,expected) ? parseInputs(inputsLoad.data) : null,[inputsKey,inputsLoad.data,expected]);
+  const fieldIds=useMemo(()=>doc ? doc.players.map(p=>p.id) : null,[doc]);const {catalog,loading:catalogLoading}=usePlayerBenchmarks(fieldIds);const inputsLoad=useDashboardData<unknown>(inputsKey ?? "golfprice/none.json");const inputs=useMemo(()=>inputsKey && matchesInputCheckpoint(inputsLoad.data,expected) ? parseInputs(inputsLoad.data) : null,[inputsKey,inputsLoad.data,expected]);
   if(load.loading) return <LoadingState label="Loading the model run"/>;
   if(load.error || !doc || !matchesExplainCheckpoint(doc,expected)) return <EmptyState title="This model run is not available" detail={load.error ?? "No model run was published for this event and checkpoint."}/>;
   if(playerId && !doc.players.some(p=>String(p.id)===playerId)) return <EmptyState title="This player is not in this field" detail="Choose another event above, or remove the player filter to see the full field."/>;
@@ -49,6 +52,7 @@ function WeeklyExplain({event,dataKey,inputsKey,expected,playerId,picker=null}:{
   return <><p className="fb-runbar" role="status"><Chip tone={doc.kind==="live" ? "accent" : "neutral"}>{stage}</Chip><span>{humanCheckpoint(doc.as_of,doc.kind)} · {doc.players.length} players in {doc.event.name}</span>{playerId && <a href={`/weekly-players?e=${encodeURIComponent(event.event_uid)}`}>Show the full field</a>}{picker}</p>
     <WeeklyFieldBoard doc={doc} playerId={playerId} query={query} setQuery={setQuery}/>
     <details className="fb-more"><summary>All columns, column picker and CSV download</summary><div className="fb-more-body"><WeeklyTable doc={doc} inputs={inputs} inputsPending={!!inputsKey && inputsLoad.loading} catalog={catalog} players={players} query={query}/>{!players.length && <p>No players match this selection in the saved event.</p>}</div></details>
+    {catalogLoading && !playerId && <div className="fb-more fb-more-pending" aria-hidden="true"/>}
     {(!!playerId || historicalCoverage>=5) && <details className="fb-more"><summary>Recent form against the PGA average (not a price forecast)</summary><div className="fb-more-body"><p className="pp-muted">Form ratings as of {shortProfileDate(catalog?.as_of)}. Model run: {humanCheckpoint(doc.as_of,doc.kind)}. Rounds played after the model run are left out. {historicalCoverage} of {doc.players.length} players have enough rounds for a rating.</p>{playerId && players.map(p=>{const rating=catalog?.players.find(q=>q.dg_id===p.id)?.pga_benchmark;return <BenchmarkCard key={p.id} rating={rating} reference={catalog?.pga_benchmark_reference} fieldLabel={doc.event.name} checkpoint={doc.as_of} savedDoc={doc} playerId={p.id}/>;})}<BenchmarkMethod reference={catalog?.pga_benchmark_reference}/></div></details>}</>;
 }
 
@@ -87,7 +91,7 @@ function SavedInputs({dataKey,expected,playerId,explainKey}:{dataKey:string|null
 function SavedInputsBody({dataKey,expected,playerId,explainKey}:{dataKey:string;expected:SavedCheckpoint|null;playerId:string|null;explainKey:string}) {
   const load=useDashboardData<{players?:Array<{dg_id:number;name:string;challenger?:{breakdown?:{location?:{total?:number};override?:{total?:number}}}}>;as_of?:string;run?:string}>(dataKey);
   const explainLoad=useDashboardData<unknown>(explainKey);const legend=useMemo(()=>parseExplain(explainLoad.data)?.components_legend,[explainLoad.data]);
-  if(load.loading) return <LoadingState label="Loading how the saved skill adds up"/>;
+  if(load.loading) return <div className="pp-details wk-audit wk-audit-pending" role="status" aria-label="Loading how the saved skill adds up"/>;
   if(load.error || !Array.isArray(load.data?.players) || !matchesInputCheckpoint(load.data,expected)) return <p role="status" className="pp-muted">The breakdown of saved skill is unavailable: {load.error ?? "the published inputs do not match this model run"}.</p>;
   const players=load.data.players.filter(p=>!playerId || String(p.dg_id)===playerId);
   if(playerId && !players.length) return <Panel title="Player not in this field"><p className="pp-muted">This model run has no inputs for this player. Choose another event above, or <a href={`/weekly-players?e=${encodeURIComponent(expected?.event_uid ?? "")}`}>show the full field</a>.</p></Panel>;

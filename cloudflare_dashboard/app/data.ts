@@ -101,6 +101,12 @@ function loadEntry(name: string, force: boolean): Promise<Entry> {
   });
 }
 
+/** Start loading a dataset now so the page that needs it finds it in the cache (or joins the request in flight). Failures are left for that page to report. */
+export function warmDashboardData(name: string): void {
+  if (cache.has(name)) return;
+  void loadEntry(name, false).catch(() => undefined);
+}
+
 const staleAge = (entry: Entry | undefined): number | null => (entry?.stale ? Math.max(0, Date.now() - (entry.savedAt ?? entry.checkedAt)) : null);
 type Core = { data: unknown; loading: boolean; error: string | null; errorKind: DataErrorKind | null; stale: boolean; staleAgeMs: number | null };
 const IDLE: Core = { data: null, loading: false, error: null, errorKind: null, stale: false, staleAgeMs: null };

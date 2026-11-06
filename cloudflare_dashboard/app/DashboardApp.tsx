@@ -1,37 +1,12 @@
 "use client";
 
-import { lazy, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Archive,
-  BookOpen,
-  ChartColumn,
-  ChartNoAxesCombined,
-  ChevronLeft,
-  ChevronRight,
-  CircleGauge,
-  CloudRain,
-  CloudSun,
-  Crosshair,
-  Flag,
-  LayoutDashboard,
-  ListChecks,
-  Microscope,
-  Play,
-  Scale,
-  Settings2,
-  SlidersHorizontal,
-  Ticket,
-  TrendingUp,
-  Users,
-  X,
-} from "lucide-react";
-import { HeaderSearch } from "./HeaderSearch";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Archive, BookOpen, ChartColumn, ChartNoAxesCombined, ChevronLeft, ChevronRight, CircleGauge, CloudRain, CloudSun, Crosshair, Flag, LayoutDashboard, ListChecks, Microscope, Play, Scale, Settings2, SlidersHorizontal, Ticket, TrendingUp, Users, X } from "lucide-react";
 import { readRememberedEvent, rememberEvent } from "./event-param";
 import { EventStatusBar, EventSwitcher, SearchToggle, TabBar, ThemeToggle, useDialogFocus } from "./ShellParts";
-import { EmptyState, PageIntro } from "./components";
-import { useDashboardData, useSavedCopies } from "./data";
-import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavGroup, type NavItem } from "./shell-rules";
-import { FreshnessBadge, PageGroupContext, useNow } from "./ui";
+import { useDashboardData, useSavedCopies, warmDashboardData } from "./data";
+import { LEGACY_VIEWS, OWNER_ONLY_VIEWS, type NavGroup, groupOf, navEntryFor, navigationFor, resolveEventUid, resolveRoute, selectedShellEvent, shellEventFor, shellEvents, unknownEventParam, type NavItem } from "./shell-rules";
+import { EmptyState, FreshnessBadge, PageGroupContext, PageHeader, useNow } from "./ui";
 import { ACCENTS, ACCENT_STORAGE_KEY, THEME_STORAGE_KEY, savedCopyNotice, summarizeWeek, type AccentKey, type IndexEventLite, type ThemeMode } from "./ui-rules";
 import { ViewBoundary } from "./ViewBoundary";
 import { useViewer } from "./viewer";
@@ -55,6 +30,9 @@ const NAV_ICONS: Record<string, typeof CircleGauge> = {
   "model-walkthrough": BookOpen, "shot-data": Crosshair, ops: ListChecks, inputs: SlidersHorizontal, run: Play, performance: TrendingUp, "bet-breakdowns": ChartColumn, "bet-card": Ticket, history: Archive, diagnostics: Microscope,
 };
 
+/** The golfer search (slim index, directory parsing) loads after hydration; the server-rendered input stays in place meanwhile, so nothing shifts. */
+const HeaderSearch = lazy(() => import("./HeaderSearch").then((m) => ({ default: m.HeaderSearch })));
+
 /** Views load on demand: each file is its own chunk, so the first route ships the shell plus only the view being opened. */
 const PlayersView = lazy(() => import("./PlayerProfilesView").then((m) => ({ default: m.PlayersView })));
 const WeeklyPlayersView = lazy(() => import("./WeeklyPlayersView").then((m) => ({ default: m.WeeklyPlayersView })));
@@ -75,7 +53,7 @@ const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ 
 const ThisWeekView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.ThisWeekView })));
 const BetBreakdownsView = lazy(() => import("./BetBreakdownsView").then((m) => ({ default: m.BetBreakdownsView })));
 const BetCardView = lazy(() => import("./BetCardView").then((m) => ({ default: m.BetCardView })));
-const WhyPricedView = lazy(() => import("./ExplainViews").then((m) => ({ default: m.WhyPricedView })));
+const WhyPricedView = lazy(() => import("./ExplainWhy").then((m) => ({ default: m.WhyPricedView })));
 
 const loaders: Record<string, () => Promise<unknown>> = {
   "model-walkthrough": () => import("./WalkthroughView"),
@@ -95,7 +73,7 @@ const loaders: Record<string, () => Promise<unknown>> = {
   "weather-effects": () => import("./WeatherEffectsView"),
   "weather-edits": () => import("./WeatherEditsView"),
   "this-week": () => import("./ExplainViews"),
-  "why-priced": () => import("./ExplainViews"),
+  "why-priced": () => import("./ExplainWhy"),
   "bet-breakdowns": () => import("./BetBreakdownsView"),
   "bet-card": () => import("./BetCardView"),
 };
@@ -109,6 +87,7 @@ function prefetchView(key: string) {
   load().catch(() => warmed.delete(key));
 }
 const IDLE_PREFETCH = ["this-week", "weekly-players", "why-priced"];
+const PREFETCH_DELAY_MS = 8000;
 
 const views: Record<ViewKey, React.ComponentType> = {
   "model-walkthrough": WalkthroughView,
@@ -133,6 +112,14 @@ const views: Record<ViewKey, React.ComponentType> = {
   "bet-card": BetCardView,
 };
 
+/** The document This week will open for the event, when that is certain from the index alone: its latest run (the common case); null when the page may choose another run. */
+function explainWarmKey(events: Array<{ event_uid?: string; explain_key?: string | null; explain_run?: string | null; distribution_runs?: Array<{ kind?: string } | null> }> | undefined, uid: string | null): string | null {
+  const event = events?.find((e) => e.event_uid === uid);
+  if (!event?.explain_key) return null;
+  const hasLive = (event.distribution_runs ?? []).some((r) => r?.kind === "live");
+  return hasLive && !(event.explain_run ?? "").startsWith("live_") ? null : event.explain_key;
+}
+
 function navigateWithReload(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
@@ -145,7 +132,7 @@ function Moved({ to }: { to: string }) {
   }, [to]);
   return (
     <div>
-      <PageIntro title="This page moved" description="The older page was replaced by a newer one." />
+      <PageHeader title="This page moved" purpose="The older page was replaced by a newer one." />
       <EmptyState title="Taking you to the new page" detail="If nothing happens, use the link below or the navigation." />
       <p><a className="ex-link" href={to}>Go to the new page</a></p>
     </div>
@@ -155,7 +142,7 @@ function Moved({ to }: { to: string }) {
 function NotFound({ requested, navigation }: { requested: string; navigation: NavGroup[] }) {
   return (
     <div className="route-notice">
-      <PageIntro title="That page does not exist" description={requested ? `There is no page at /${requested}.` : "There is no page at this address."} />
+      <PageHeader title="That page does not exist" purpose={requested ? `There is no page at /${requested}.` : "There is no page at this address."} />
       <EmptyState title="Pick a page from the navigation" detail="Or start with one of these." />
       <ul>
         {navigation.filter((group) => !group.collapsed).flatMap((group) => group.items).map((item) => (
@@ -165,6 +152,7 @@ function NotFound({ requested, navigation }: { requested: string; navigation: Na
     </div>
   );
 }
+
 
 function NavLink({ item, activeView, collapsed }: { item: NavItem; activeView: string; collapsed: boolean }) {
   const Icon = NAV_ICONS[item.key] ?? CircleGauge;
@@ -204,15 +192,15 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const week = useMemo(() => summarizeWeek(gpIndex, now), [gpIndex, now]);
   const events = useMemo(() => shellEvents(gpIndex, now), [gpIndex, now]);
   useEffect(() => {
-    // After first render, once the browser is idle, warm the most used views so the next click is instant.
+    // Warm the most used views only after the page has loaded and settled: on a phone connection these downloads (the Players view alone is ~55 KB)
+    // otherwise share bandwidth with the data the visitor is waiting to read.
     const run = () => IDLE_PREFETCH.forEach(prefetchView);
     const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
-    if (w.requestIdleCallback) {
-      const id = w.requestIdleCallback(run, { timeout: 4000 });
-      return () => w.cancelIdleCallback?.(id);
-    }
-    const id = window.setTimeout(run, 2000);
-    return () => window.clearTimeout(id);
+    const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+    if (saveData) return;
+    let idleId: number | undefined;
+    const timer = window.setTimeout(() => { if (w.requestIdleCallback) idleId = w.requestIdleCallback(run, { timeout: 4000 }); else run(); }, PREFETCH_DELAY_MS);
+    return () => { window.clearTimeout(timer); if (idleId !== undefined) w.cancelIdleCallback?.(idleId); };
   }, []);
   const isLegacy = LEGACY_VIEWS.includes(activeKey);
   // An invalid ?e= used to fall back to the default event with no word of it (site audit B5). Read after mount so the server render matches.
@@ -227,6 +215,9 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   const badEvent = unknownEventParam(eventParam, gpIndex?.events);
   // The same resolver the pages use (useEventParam), so the bar and the page can never name different events.
   const resolvedUid = resolveEventUid(gpIndex, eventParam, rememberedEvent, now);
+  // This week reads the selected event's latest explanation document. Ask for it as soon as the index names it, rather than after the page's own code has loaded.
+  const warmKey = activeKey === "this-week" ? explainWarmKey(gpIndex?.events, resolvedUid) : null;
+  useEffect(() => { if (warmKey) warmDashboardData(warmKey); }, [warmKey]);
   const selectedEvent = shellEventFor(gpIndex, resolvedUid, now) ?? selectedShellEvent(events, null);
   useEffect(() => { if (eventParam && !badEvent) rememberEvent(eventParam); }, [eventParam, badEvent]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -249,6 +240,9 @@ export function DashboardApp({ initialView }: { initialView: string }) {
   useDialogFocus(sheetOpen, sidebarRef, () => setSidebarOpen(false), ["main", ".tabbar", ".skip-link", ".sidebar-backdrop"], { initial: ".mobile-close", returnSelector: ".tabbar-more" });
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The dialog code is fetched on the first click and the panel opens only once it is in hand, so focus handling finds it mounted.
+  const [SettingsPanel, setSettingsPanel] = useState<typeof import("./ShellExtras").SettingsPanel | null>(null);
+  const openSettings = () => { import("./ShellExtras").then((m) => { setSettingsPanel(() => m.SettingsPanel); setSettingsOpen(true); }).catch(() => undefined); };
   useDialogFocus(settingsOpen, settingsRef, () => setSettingsOpen(false), [".sidebar", "main", ".tabbar", ".skip-link", ".sidebar-backdrop"], { returnSelector: ".sidebar-footer button" });
   // Saved preferences are read after mount: the server render has no localStorage, so a lazy initial read would differ from it on
   // hydration (React error #418). The boot script in <head> has already applied the saved theme/accent before first paint.
@@ -324,7 +318,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
           })}
         </nav>
         <div className="sidebar-footer">
-          <button type="button" onClick={() => setSettingsOpen(true)}><Settings2 size={18} /><span className="nav-text">Customize</span></button>
+          <button type="button" onClick={openSettings}><Settings2 size={18} /><span className="nav-text">Customize</span></button>
           <button className="collapse-button" type="button" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>{collapsed ? <ChevronRight size={17} /> : <><ChevronLeft size={17} /><span>Collapse</span></>}</button>
         </div>
       </aside>
@@ -353,7 +347,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
               {week?.heldBackNote && <span className="evstat-held" role="status" title={week.heldBackNote}>Newer run held back</span>}
             </div>
           )}
-          <HeaderSearch onNavigate={navigateWithReload} />
+          <Suspense fallback={null}><HeaderSearch onNavigate={navigateWithReload} /></Suspense>
           <div className="ctx-actions">
             <SearchToggle open={searchOpen} onClick={() => setSearchOpen((o) => !o)} />
             <ThemeToggle onToggle={toggleTheme} />
@@ -368,18 +362,7 @@ export function DashboardApp({ initialView }: { initialView: string }) {
 
       <TabBar activeKey={activeKey} owner={viewer?.owner === true} moreOpen={sidebarOpen} onMore={() => setSidebarOpen(true)} onNavigate={navigateWithReload} onPrefetch={prefetchView} />
 
-      {settingsOpen && (
-        <div className="settings-layer" ref={settingsRef} role="dialog" aria-modal="true" aria-label="Customize dashboard">
-          <button className="settings-backdrop" onClick={() => setSettingsOpen(false)} aria-label="Close customization" />
-          <div className="settings-panel">
-            <div className="settings-heading"><div><span className="eyebrow">Your workspace</span><h2>Customize</h2></div><button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close customization"><X size={19}/></button></div>
-            <section><h3>Information density</h3><p>Choose how much data fits on screen. Your preference stays on this device.</p><div className="choice-grid"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensity("comfortable")}><span className="density-preview comfortable"><i/><i/><i/></span><strong>Comfortable</strong><small>More breathing room</small></button><button className={density === "compact" ? "active" : ""} onClick={() => setDensity("compact")}><span className="density-preview compact"><i/><i/><i/><i/></span><strong>Compact</strong><small>More rows at once</small></button></div></section>
-            <section><h3>Theme</h3><p>Auto follows your phone or computer. Your choice stays on this device.</p><div className="theme-picker" role="group" aria-label="Theme">{(["auto", "dark", "light"] as const).map((mode) => <button type="button" className={theme === mode ? "active" : ""} aria-pressed={theme === mode} key={mode} onClick={() => setTheme(mode)}><span className={`theme-swatch ${mode}`}/><span>{mode === "auto" ? "Auto" : mode === "dark" ? "Dark" : "Light"}</span></button>)}</div></section>
-            <section><h3>Accent color</h3><p>Use color to make key model signals easier to spot.</p><div className="accent-picker">{ACCENTS.map((option) => <button type="button" className={accent === option.key ? "active" : ""} aria-pressed={accent === option.key} key={option.key} onClick={() => setAccent(option.key)}><i style={{ backgroundColor: option.d }}/><span>{option.name}</span></button>)}</div></section>
-            <section className="settings-note"><CircleGauge size={18}/><div><strong>Tables remember what matters</strong><p>Every table has its own sortable columns, visibility controls, search, and CSV export.</p></div></section>
-          </div>
-        </div>
-      )}
+      {settingsOpen && SettingsPanel && <SettingsPanel panelRef={settingsRef} onClose={() => setSettingsOpen(false)} density={density} setDensity={setDensity} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />}
     </div>
     </PageGroupContext.Provider>
   );

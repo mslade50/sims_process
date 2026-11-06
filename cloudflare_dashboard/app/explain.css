@@ -1,6 +1,5 @@
 /* Explain views (This week, Why priced, player drawer). Tokens only (tokens.css); phone first, tap targets >= 40px on small screens. */
-.ex-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 16px; }
-.ex-banner-name { font-weight: 700; font-size: 13px; color: var(--foreground); }
+.ex-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .ex-muted { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 0; }
 .ex-h3 { margin: 18px 0 8px; font-size: 13px; font-weight: 800; letter-spacing: .01em; color: var(--foreground); }
 .ex-link { display: inline-flex; align-items: center; gap: 3px; color: var(--accent); font-size: 12px; font-weight: 700; text-decoration: none; }
@@ -16,7 +15,6 @@
 .ex-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .ex-legend i, .ex-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
 .ex-legend i { margin-right: 0; }
-.ex-legend-inline { margin-top: 2px; }
 .ex-tooltip { display: grid; gap: 3px; padding: 8px 10px; background: var(--popover); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 12px; color: var(--foreground); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
 .ex-tooltip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
 
@@ -31,7 +29,6 @@
 .ex-table thead th button { display: inline-flex; align-items: center; gap: 3px; min-height: 28px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .ex-table th[scope="row"] { font-weight: 650; color: var(--foreground); }
 .ex-table .ex-why { text-align: left; white-space: normal; min-width: 230px; max-width: 360px; color: var(--muted-strong); font-size: 12px; }
-.ex-sticky { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 150px; }
 .ex-linkbtn { display: block; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-weight: 700; text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer; }
 .ex-compare-table .ex-linkbtn { display: inline; }
 .ex-linkbtn:hover { color: var(--accent); text-decoration: underline; }
@@ -44,24 +41,14 @@
 .ex-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
 .ex-filters .segmented { margin-bottom: 0; }
 .ex-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-.ex-sort select { min-height: 36px; background: var(--surface-raised); color: var(--foreground); border: 1px solid var(--line); border-radius: 9px; padding: 0 8px; }
+.ex-sort select { background: var(--surface-raised); color: var(--foreground); border: 1px solid var(--line); padding: 0 8px; }
 .ex-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .ex-chips button { min-height: 32px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
 .ex-chips button.on { background: color-mix(in srgb, var(--accent) 18%, var(--surface-raised)); border-color: var(--accent); color: var(--foreground); font-weight: 700; }
 .ex-chips button.clear { display: inline-flex; align-items: center; gap: 3px; border-style: dashed; }
-.ex-dimbar { overflow-x: auto; }
 
 /* edge lists */
 .ex-edges, .ex-movers, .ex-hits, .ex-bias { margin: 0; padding: 0; list-style: none; }
-.ex-edges li + li { border-top: 1px solid var(--line); }
-.ex-edges button { display: grid; gap: 3px; width: 100%; padding: 10px 2px; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; min-height: 44px; }
-.ex-edges button:hover { background: var(--tint-1); }
-.ex-edge-head { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
-.ex-edge-nums { font-size: 12px; color: var(--muted-strong); }
-.ex-edge-why { font-size: 12px; color: var(--muted); line-height: 1.45; }
-.ex-movers { display: flex; flex-wrap: wrap; gap: 8px; }
-.ex-movers button { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--foreground); font-size: 12px; cursor: pointer; }
-.ex-movers small { margin-left: 6px; color: var(--muted); }
 
 /* bars: waterfall and bias */
 .ex-wf { display: grid; gap: 2px; }
@@ -75,7 +62,7 @@
 .ex-wf-bar.neg { background: var(--negative); }
 .ex-wf-small { opacity: .75; }
 .ex-wf-total { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line-strong); font-weight: 800; }
-.ex-tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--tint-2); color: var(--muted); font-size: 9.5px; font-style: normal; text-transform: uppercase; letter-spacing: .06em; }
+.ex-tag { padding: 0 6px; border-radius: 999px; background: var(--tint-2); color: var(--muted); font-size: 9.5px; font-style: normal; text-transform: uppercase; letter-spacing: .06em; }
 .ex-tag.g-weather { color: var(--wx-wind); }
 .ex-tag.g-live { color: var(--accent); }
 .ex-bias li { border-top: 1px solid var(--line); }
@@ -84,7 +71,6 @@
 .ex-bias button { display: grid; grid-template-columns: minmax(120px, 40%) 1fr 62px; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 4px 4px; border: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 12.5px; cursor: pointer; }
 .ex-bias-label small { display: block; color: var(--muted); font-size: 11px; }
 .ex-bias b { text-align: right; font-variant-numeric: tabular-nums; }
-.ex-bias-note { margin: 12px 0 0; font-size: 13px; line-height: 1.55; color: var(--muted-strong); }
 
 /* score fan */
 .ex-fan { display: grid; gap: 16px; }
@@ -140,40 +126,34 @@
 }
 
 /* Why priced: pre-tournament / live switch and notices */
-.ex-viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 14px; }
+.ex-viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ex-viewbar .segmented { margin-bottom: 0; }
 .ex-notice { margin: 0 0 14px; }
-.ex-banner-time { margin: 0; }
 
 /* plain-language cleanup (October 9) */
 .ex-wf-label { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .ex-tag { margin-left: 0; }
 .ex-wf-note { margin: 12px 0 4px; }
-.ex-events { max-width: 100%; flex-wrap: wrap; margin-bottom: 0; }
-.ex-events button.empty { opacity: .55; }
-.ex-dimhelp { margin: 0 0 10px; }
 .ex-marketnote { margin: 0 0 10px; }
 .ex-sort { flex-wrap: wrap; }
-.ex-sortdir { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
+.ex-sortdir { display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--muted-strong); cursor: pointer; }
 .ex-chipgroups { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 12px; align-items: flex-start; }
 .ex-chipgroup { display: grid; gap: 4px; }
-.ex-chipgroup-label { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.ex-chipgroup-label { color: var(--muted); }
 .ex-chipgroup .ex-chips { margin-bottom: 0; }
-.ex-clear { align-self: flex-end; display: inline-flex; align-items: center; gap: 3px; min-height: 32px; padding: 0 11px; border: 1px dashed var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
+.ex-clear { align-self: flex-end; display: inline-flex; align-items: center; gap: 3px; padding: 0 11px; border: 1px dashed var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--muted-strong); font-size: 11.5px; cursor: pointer; }
 
 /* phones: tables that matter become one card per player instead of sideways scrolling */
 @media (max-width: 640px) {
   .ex-cards { display: block; }
   .ex-cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .ex-cards tbody, .ex-cards tr { display: block; }
-  .ex-cards tr { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-raised); }
   .ex-cards th[scope="row"], .ex-cards td { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; white-space: normal; }
   .ex-cards th[scope="row"] { font-size: 14px; text-align: left; position: static; min-width: 0; background: none; }
   .ex-cards td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; font-size: 11px; font-weight: 700; flex: none; }
   .ex-cards td.ex-why { display: block; text-align: left; min-width: 0; max-width: none; padding-top: 6px; }
   .ex-cards td.ex-why::before { display: block; margin-bottom: 2px; }
   .ex-table-wrapper, .table-scroll:has(.ex-cards) { border: 0; overflow: visible; }
-  .ex-events button { white-space: normal; text-align: left; }
   .kpi small { overflow-wrap: anywhere; }
 }
 
@@ -199,14 +179,9 @@
   .ex-differ .ex-differ-why { min-width: 0; max-width: none; }
   .ex-cards td.ex-shape-cell { width: auto; }
 }
-
-.ex-wf-scale { display: grid; grid-template-columns: minmax(104px, 34%) 1fr 54px; gap: 8px; font-size: 10.5px; color: var(--muted); }
-.ex-wf-axis { display: flex; justify-content: space-between; }
-.ex-wf-axis em { font-style: normal; }
 .ex-wf-clip { position: absolute; top: -2px; bottom: -2px; display: flex; align-items: center; font-size: 13px; font-weight: 800; line-height: 1; }
 .ex-wf-clip.pos { right: 1px; color: var(--foreground); }
 .ex-wf-clip.neg { left: 1px; color: var(--foreground); }
-@media (max-width: 650px) { .ex-wf-scale { grid-template-columns: minmax(96px, 38%) 1fr 50px; } }
 .ex-modal { display: block; margin-top: 2px; font-size: 11px; opacity: .8; }
 .ex-kpi-wrap { display: flex; flex-direction: column; min-width: 0; }
 .ex-kpi-wrap .ex-modal { padding: 0 4px; color: var(--muted-strong); }
@@ -215,7 +190,6 @@
 .ex-wf-note { max-width: 70ch; }
 
 /* This week: five KPI tiles (field, field strength, skill gap, scoring average by round, winning score) */
-@media (min-width: 1100px) { .kpi-grid.ex-kpi-5 { grid-template-columns: 0.8fr 1fr 1fr 1.35fr 1.1fr; } }
 .ex-kpi-rounds { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 6px; }
 .ex-kpi-rounds > div { display: flex; flex-direction: column; gap: 1px; }
 .ex-kpi-rounds em { font-style: normal; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
@@ -228,7 +202,6 @@
 /* ===== This week overhaul (October 14): key facts, what changed, glance list, terms ===== */
 .ex-hero, .ex-changed, .ex-gap-grid, .ex-stat, .ex-lede-block { font-variant-numeric: tabular-nums; }
 .ex-lazy { border-radius: var(--radius-md, 12px); background: var(--tint-1); margin: 0 0 14px; }
-.ex-two > * { min-width: 0; }
 .ex-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
 .ex-scroll > table { min-width: 100%; }
 .ex-wx-rounds th, .ex-wx-rounds td { padding: 7px 9px; }
@@ -268,16 +241,14 @@
 .ex-range .mode { top: -2px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
 
 /* key facts */
-.ex-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin: 0 0 14px; }
-.ex-fact { display: grid; gap: 3px; align-content: start; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius-md, 12px); background: var(--surface); box-shadow: var(--shadow-card); }
+.ex-hero { display: grid; }
+.ex-fact { display: grid; align-content: start; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow-card); }
 .ex-fact.is-quiet { background: var(--tint-1); box-shadow: none; }
-.ex-fact-label { color: var(--muted); font-size: 10.5px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
-.ex-fact-value { font-size: 19px; line-height: 1.2; letter-spacing: -.02em; color: var(--foreground); }
-.ex-fact-value em { font-style: normal; font-size: 13px; font-weight: 700; margin-left: 4px; }
+.ex-fact-value { line-height: 1.2; color: var(--foreground); }
+.ex-fact-value em { font-style: normal; font-weight: 700; margin-left: 4px; }
 .ex-fact-value em:not(.pos):not(.neg) { color: var(--muted); font-weight: 600; }
-.ex-fact-value .ex-linkbtn { display: inline; font-size: inherit; font-weight: 800; letter-spacing: inherit; min-height: 28px; }
-.ex-fact-sub { color: var(--muted-strong); font-size: 12px; line-height: 1.4; }
-@media (max-width: 640px) { .ex-hero { grid-template-columns: 1fr; gap: 8px; } .ex-fact { padding: 9px 12px; } .ex-fact-value { font-size: 17px; } }
+.ex-fact-value .ex-linkbtn { font-size: inherit; font-weight: 800; letter-spacing: inherit; }
+.ex-fact-sub { color: var(--muted-strong); line-height: 1.4; }
 
 /* what changed */
 .ex-changed { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-md, 12px) var(--radius-md, 12px) 0; background: var(--surface); }
@@ -328,11 +299,6 @@
 .ex-showall { display: block; width: 100%; min-height: 44px; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: var(--radius-control); background: none; color: var(--accent); font: inherit; font-size: var(--fs-data); font-weight: 650; cursor: pointer; }
 .ex-showall:hover, .ex-showall:focus-visible { background: var(--tint-1); }
 /* Event picker: one swipeable row of chips on phones instead of four stacked rows. */
-@media (max-width: 640px) {
-  .segmented.ex-events { display: flex; flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-  .segmented.ex-events::-webkit-scrollbar { display: none; }
-  .segmented.ex-events > button { flex: 0 0 auto; scroll-snap-align: start; white-space: nowrap; }
-}
 
 /* What changed: causes behind each price move, and the sportsbook's moves */
 .ex-mv-causes { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
@@ -365,17 +331,6 @@
 .ex-dg-warn-note { margin-top: 8px; }
 .ex-tag.ex-unavail { color: var(--warning); background: var(--warning-soft); text-transform: none; letter-spacing: 0; font-size: 10px; }
 .ex-dv-split { display: grid; gap: 6px; margin: 14px 0 4px; }
-.ex-dv-cap { margin: 0 0 2px; }
-.ex-dv-row { display: grid; grid-template-columns: minmax(110px, 190px) minmax(80px, 1fr) 56px; align-items: center; gap: 4px 10px; font-size: 12.5px; }
-.ex-dv-row .ex-dv-label { color: var(--muted-strong); line-height: 1.3; }
-.ex-dv-row b { text-align: right; font-variant-numeric: tabular-nums; }
-.ex-dv-row .ex-wf-track { height: 14px; }
-.ex-dv-row.is-unexplained .ex-dv-label { color: var(--foreground); font-weight: 750; }
-.ex-dv-row.is-unexplained .ex-wf-track { outline: 1.5px dashed var(--warning); outline-offset: 2px; }
-.ex-dv-row.is-unexplained .ex-wf-bar { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .45) 0 3px, transparent 3px 7px); }
-.ex-dv-row.is-total { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line-strong); font-weight: 750; }
-.ex-dv-row.is-total .ex-dv-label { color: var(--foreground); }
-.ex-dv-flag { margin: 2px 0 0; padding: 6px 10px; border-left: 3px solid var(--warning); background: var(--warning-soft); border-radius: 0 8px 8px 0; font-size: 12.5px; line-height: 1.45; }
 .ex-dv-peerlist { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 8px; padding: 0; list-style: none; }
 .ex-dv-peerlist button { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: 12px; }
 .ex-dv-formtable th, .ex-dv-formtable td { padding: 8px 8px; }
@@ -383,9 +338,6 @@
 .ex-dv-formtable tr.is-self th[scope="row"] { background: var(--tint-2); }
 .ex-dv-note { padding-top: 6px; border-top: 1px dashed var(--line); }
 @media (max-width: 640px) {
-  .ex-dv-row { grid-template-columns: minmax(0, 1fr) 54px; }
-  .ex-dv-row .ex-wf-track { grid-column: 1 / -1; grid-row: 2; }
-  .ex-dv-row b { grid-column: 2; grid-row: 1; }
   .ex-dv-table th, .ex-dv-table td { padding: 9px 8px; }
 }
 .ex-dv-formtable .ex-linkbtn { display: inline; }
@@ -403,7 +355,6 @@
 .ex-dg-rounds { margin-left: 6px; font-size: 0.72rem; opacity: 0.7; font-weight: 400; }
 
 /* ---- round A redesign: hero, flat sub-blocks, shared price list ---- */
-.ex-viewbar-label { font-size: var(--fs-small); font-weight: 650; color: var(--muted-strong); }
 .ex-banner { margin: 0 0 var(--sp-3); }
 .ex-hero { gap: var(--sp-3); margin: 0 0 var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .ex-fact { padding: var(--sp-4); gap: var(--sp-1); border-radius: var(--radius-lg); }
@@ -412,7 +363,6 @@
 .ex-fact-value .ex-linkbtn { min-height: 44px; display: inline-flex; align-items: center; }
 .ex-fact-value em { font-size: var(--fs-data); }
 .ex-fact-sub { font-size: var(--fs-small); }
-@media (max-width: 640px) { .ex-fact { padding: var(--sp-3); } .ex-fact-value { font-size: 22px; } }
 .ex-sub { display: grid; gap: var(--sp-2); margin: 0 0 var(--sp-5); }
 .ex-sub-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-2) var(--sp-4); }
 .ex-sub-head h3 { margin: 0; font-size: var(--fs-h3); font-weight: 700; }
@@ -453,8 +403,7 @@
   .pl-head { display: none; }
   .pl, .pl.pl-norail, .pl.pl-nowhy:not(.pl-norail) { --pl-cols: 1fr; }
   .pl-row { gap: var(--sp-1); padding: var(--sp-2) var(--sp-1); }
-  .pl-why { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .pl-nums { gap: var(--sp-1) var(--sp-3); }
+  .pl-why { -webkit-box-orient: vertical; }
 }
 
 /* round A: section headers wrap, segmented scroll inside their box, tap targets, tighter phone rows */

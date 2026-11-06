@@ -7,7 +7,7 @@
 .wb-headline{border-left:4px solid var(--accent);padding:var(--sp-3) var(--sp-4);background:var(--surface);border-radius:0 var(--radius-lg) var(--radius-lg) 0;display:grid;gap:10px;margin-bottom:var(--sp-4)}
 .wb-headline-top{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .wb-status{margin:0;color:var(--muted-strong);font-size:var(--fs-body)}
-.wb-sentences{margin:0;padding-left:20px;display:grid;gap:6px;font-size:var(--fs-body);line-height:1.5}
+.wb-sentences{margin:0;padding-left:20px;display:grid;gap:6px;line-height:1.5}
 .wb-headline-title{margin:0;font-size:20px;font-weight:700;line-height:1.25;letter-spacing:-.01em}
 .wb-sentences{color:var(--muted-strong);font-size:var(--fs-data)}
 .wb-bars{display:grid;gap:8px;margin:4px 0 10px}

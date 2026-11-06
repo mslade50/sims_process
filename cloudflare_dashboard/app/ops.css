@@ -1,4 +1,4 @@
-﻿/* Ops / weekly workflow (agent F). Design-system tokens, 12px minimum text. */
+/* Ops / weekly workflow (agent F). Design-system tokens, 12px minimum text. */
 .ops-page { display: grid; gap: var(--sp-4); min-width: 0; }
 .ops-page * { min-width: 0; }
 .ops-page .ds-section { margin-top: var(--sp-6); }
