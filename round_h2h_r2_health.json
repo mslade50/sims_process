@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_h2h",
-  "generated_at": "2026-11-06 13:16:00 UTC",
+  "generated_at": "2026-11-06 14:45:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:457:2026-11-05/R0m_20261106T131600Z",
+      "run_id": "pga:457:2026-11-05/R1_20261106T144500Z",
       "model_version": "B8+v2.6 in-play",
-      "after_round": 0,
-      "run_manifest_sha256": "7116bcb94e977de429cef21dfe96275c64f86694b3a090dfc740f5277884e23b",
+      "after_round": 1,
+      "run_manifest_sha256": "f69c9c270e99a4e56e0a6887d4463d0c5b37d1f0f8d3ce760be49b199606b6f2",
       "base_run_as_of": "2026-11-05 10:30:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-11-06 13:16:00 UTC",
-      "root_generated_at": "2026-11-06 13:16:00 UTC"
+      "generated_at": "2026-11-06 14:45:00 UTC",
+      "root_generated_at": "2026-11-06 14:45:00 UTC"
     },
     "simulation": {
       "num_players": 120,
@@ -40,24 +40,24 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-11-06 13:16:00 UTC"
+      "at": "2026-11-06 14:45:00 UTC"
     },
     "checks": {
       "passed": true,
-      "n_checks": 13
+      "n_checks": 8
     },
-    "manifest_sha256": "2ac01b8ab08cfedeea03bef7b28c85aea82826666ba8530016a621caa72ec6ba"
+    "manifest_sha256": "25a580629a18d3c82eaf105afe6a5c236c995483a15d3d33f12f0c9aa354cac5"
   },
   "files": {
     "h2h_meta": {
       "path": "round_h2h_r2_meta.json",
-      "sha256": "402100495b29c37dac34d33ad299567f0d154181b0fd9e0f5ec3053b0f514ac9"
+      "sha256": "dd8ee15f87c614a9452794371defc8c5f4b57e368c16ceba234a6140e156ebf9"
     },
     "h2h_parquet": {
       "path": "round_h2h_r2.parquet",
-      "sha256": "a3bf56268ca9af4a8d2f41207c6890f213078e3d1e04b98298dfb02870dd69f4"
+      "sha256": "94d9b092756b6714f5c611c7d7f0804203a23e928834b99901aa5bc673323674"
     }
   },
   "extra": {},
-  "manifest_sha256": "df8184cf94beea5e3f2e8a2ae69237a6938f5558302250f88d81e5283483fc2f"
+  "manifest_sha256": "904fc83efd7fd4d0ed7a35deeb242f7470ddcc84090af503ab65bf3394b35428"
 }
