@@ -101,7 +101,7 @@ export function GolfpriceScorecardSection() {
   return (
     <Section id="scorecard" title="Model scorecard" purpose="How the current model did against the market's closing prices.">
       {loading ? (
-        <p className="sc-note">Loading the weekly scorecard...</p>
+        <div className="sc-loading" aria-busy="true"><p className="sc-note">Loading the weekly scorecard...</p></div>
       ) : !card ? (
         <EmptyState title={fetching ? "The scorecard is not available right now" : "No scorecard yet"} detail={fetching ? "It did not load. Reload in a minute; it updates after each Monday settle." : "It appears after the first Monday settle grades the previous week."} nextCheck="Next check: the Monday settle" />
       ) : (

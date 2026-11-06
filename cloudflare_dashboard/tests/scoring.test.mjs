@@ -105,6 +105,7 @@ function renderedScoring({ payload, error = null, loading = false, player = fals
     if (id === "./weather-rules") return weatherRules;
     if (id === "./MarketScoringPanel") return { MarketScoringPanel: () => null }; // tested with the real render harness in market-scoring.test.mjs
     if (id === "./CourseHistoryPanel") return { CourseHistoryPanel: () => null };
+    if (id === "./ChartSlot") return { ChartSlot: () => null }; // the charts are lazy and mount after the first paint; the boxes and their labels are what render here
     if (id === "next/link") return { __esModule: true, default: ({ href, children, className }) => React.createElement("a", { href, className }, children) };
     if (id === "./glossary") return glossaryRules;
     if (id === "./freshness-rules") return freshnessRules;

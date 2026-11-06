@@ -39,7 +39,7 @@ const VIEWS = [
   ["sg-distributions", "views.tsx", "SgDistributionsView"],
   ["round-scores", "ScoringView.tsx", "ScoringView"],
   ["history", "views.tsx", "HistoryView"],
-  ["performance", "views.tsx", "PerformanceView"],
+  ["performance", "PerformanceView.tsx", "PerformanceView"],
   ["diagnostics", "views.tsx", "DiagnosticsView"],
   ["weather-effects", "WeatherEffectsView.tsx", "WeatherEffectsView"],
   ["weather-edits", "WeatherEditsView.tsx", "WeatherEditsView"],

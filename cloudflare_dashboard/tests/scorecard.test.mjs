@@ -43,7 +43,7 @@ test("latest week keeps only that week's events; negative deltas are the good on
 });
 
 test("the scorecard is a section inside the Performance view, not a new tab", async () => {
-  const views = await readFile(new URL("../app/views.tsx", import.meta.url), "utf8");
+  const views = await readFile(new URL("../app/PerformanceView.tsx", import.meta.url), "utf8");
   const app = await readFile(new URL("../app/DashboardApp.tsx", import.meta.url), "utf8");
   assert.match(views, /<GolfpriceScorecardSection \/>/);
   assert.doesNotMatch(app, /scorecard/i);

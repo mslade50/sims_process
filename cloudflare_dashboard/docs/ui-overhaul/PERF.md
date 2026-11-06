@@ -178,3 +178,36 @@ Still short of 9.5 on speed
 - Phone LCP on This week, Why priced, Players and the golfer is 2.58-2.78 s: the link is bandwidth-bound (about 215-240 KB of script on 1.6 Mbps plus 150 ms latency), so the floor is script size, not data plumbing. The shell is 147 KB gzip of it.
 - This week's longest task is 121-172 ms depending on the run (it was 156-178); the remaining cost is the first full layout of the board, not code. Under 150 ms every run needs the board to render in slices or a smaller first screen.
 - Scoring (`/round-scores`) is not in this round's scope and is the slowest route: 3.9 s LCP, 318 KB JS (Recharts on the first screen), 216 ms longest task, 164 ms interaction task.
+
+# Round 5c (final): Scoring, Scorecard and P&L, consolidated table (2026-11-06, R5c)
+
+Raw runs: `dist-visual/R5c/` (`before.json`, `final.txt`, `final.json`). Phone = 375x812, 4x CPU, fast 4G; desktop 1280x900; local preview; median of 3 per route.
+
+| Route | Phone LCP | Phone longest task | Phone CLS | Phone JS | Desktop LCP | Desktop CLS |
+|---|---|---|---|---|---|---|
+| This week | 2580 ms | 161 ms (121-172 across runs) | 0.007 | 219 KB | 192 ms | 0.022 |
+| Why priced | 2604 | 70 | 0.000 | 213 KB | 188 | 0.021 |
+| One golfer (10091) | 2748 | 158 | 0.006 | 239 KB | 224 | 0.021 |
+| Players (weekly) | 2588 | 103 | 0.000 | 250 KB | 144 | 0.021 |
+| Weather | 2332 | 90 | 0.010 | 188 KB | 188 | 0.017 |
+| Scoring (round-scores) | 2776 (was 3956) | 144 (was 226) | 0.001 | 320 KB* (was 318) | 184 | 0.017 |
+| Distributions | 2748 | 161 | 0.000 | 295 KB | 192 | 0.011 |
+| Bet card | 2148 | 61 | 0.001 | 169 KB | 148 | 0.006 |
+| Bet breakdowns | 2196 | 51 | 0.000 | 170 KB | 140 | 0.026 |
+| Scorecard and P&L | 2316 (was 2888) | 87 | 0.020 (was 0.235) | 164 KB (was 288) | 160 | 0.020 (was 0.091) |
+| Inputs | 2696 | 130 | 0.000 | 295 KB | 144 | 0.081 (skeleton swap, below) |
+| Run | 2224 | 0 | 0.001 | 172 KB | 144 | 0.035 |
+
+*Scoring "JS" counts the Recharts chunks that load after the first paint; they are no longer on the path to the first screen.
+
+What changed
+- Scoring: the three Recharts charts moved to `app/ScoringCharts.tsx` and the Course history chart to `app/CourseHistoryChart.tsx`, both loaded with `lazy()` through `app/ChartSlot.tsx` (the headline chart mounts about 60 ms after the first paint; the others when within 400 px of the screen). The boxes already had fixed heights in `scoring.css`, so CLS stays 0.001. Recharts no longer sits on the critical path (it was 88 KB of CartesianChart parsed before first render).
+- Scoring data: the Worker (`worker/first-screen.ts`, new `scoring` page and `scoringPaths`) inlines the newest checkpoint document and the weather document, and `earlyFetchScript` (`shell-rules.ts`) starts the same two requests, mirroring `checkpoints()` and the weather key in `ScoringView`. The 86 KB run document used to be asked for only after hydration (about 2.9 s on the phone profile).
+- Scorecard and P&L: `PerformanceView` moved to `app/PerformanceView.tsx`; the retired pipeline's bet results (and the Recharts they use, about 124 KB of JS) load only when "Show older results" is pressed. The scorecard's loading state now reserves a screen (`.sc-loading`), which removed the 0.235 phone CLS (the Older results section was on screen and got pushed down).
+- Tests: `tests/scoring.test.mjs` stubs `./ChartSlot` (charts mount after paint), `tests/scorecard.test.mjs` and `tests/views-render.test.mjs` point at `PerformanceView.tsx`, `tests/route-preload.test.mjs` gains the scoring inlining test. Budgets unchanged.
+
+Not changed / still short
+- Distributions (2748 ms, 161 ms task) and Inputs (2696 ms, 130 ms) are under 2.8 s and 200 ms, so they were left alone; both still import Recharts statically (about 100 KB gzip) and would gain the same 0.2-0.3 s from the same move.
+- Inputs desktop CLS 0.081: the skeleton page (707 px) is replaced by a taller page at about 150 ms; a skeleton matched to the loaded height would fix it.
+- This week longest task (121-172 ms; 161 ms in the final median) is the first full layout of the board; getting reliably under 150 ms still needs a smaller first screen or rendering the board in slices. No change this round.
+- Every phone route is bandwidth-bound at about 2.1-2.8 s; the shell (148 KB gzip) is the floor.

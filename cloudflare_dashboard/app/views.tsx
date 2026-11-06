@@ -18,11 +18,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { PageHeader, Section } from "./ui";
+import { PageHeader } from "./ui";
 import "./performance.css";
 import { ArchivedState, DataTable, EmptyState, LegacyNotice, ErrorState, Kpi, LoadingState, PageIntro, Panel, PlayerPicker, SegmentedControl } from "./components";
 import { useDashboardData } from "./data";
-import { GolfpriceScorecardSection } from "./ScorecardSection";
 import { DataRow, americanOdds, diagnosticEventCount, diagnosticRoundCount, numberValue, eventDisplayName, palette, safeMean, STYLE_DEFINITIONS, styleName, sum, titleCase, uniqueStrings, weightedMean } from "./lib";
 
 const chartMargin = { top: 16, right: 18, bottom: 8, left: 0 };
@@ -431,7 +430,7 @@ function bucketRoi(rows: PerformanceRow[], group: string, color: string, buckets
   });
 }
 
-function LegacyBetResults() {
+export function LegacyBetResults() {
   const { data, loading, error } = useDashboardData<PerformancePayload>("performance.json");
   const [allStyles, setAllStyles] = useState(false);
   const [eventsSelected, setEventsSelected] = useState<string[]>([]);
@@ -650,20 +649,6 @@ function LegacyBetResults() {
         <Panel title="Event summary" eyebrow="Resolved performance by tournament"><DataTable rows={eventSummary} label="Event summary" preferredColumns={["event_name","bets","wins","losses","wagered","units_won","roi"]} pageSize={30}/></Panel>
         <Panel title="Filtered bets" eyebrow="Search, sort, customize, export"><DataTable rows={detailRows} label="Filtered bets" preferredColumns={["bet_on","opponent","market","bookmaker","bet_type","round","event_name","archetype","archetype_against","edge","raw_edge","dec_odds","pred_on","result","units_wagered","units_won"]} pageSize={40}/></Panel>
       </>}
-    </>
-  );
-}
-
-export function PerformanceView() {
-  const [showLegacy, setShowLegacy] = useState(false);
-  return (
-    <>
-      <PageHeader title="Scorecard and P&L" purpose="How the current model is doing against the market's closing prices, in log-loss (lower is better) and betting units." />
-      <GolfpriceScorecardSection />
-      <Section id="older" title="Older bet results" purpose="From the retired simulation pipeline; kept for reference, not the current model's bets." actions={<button type="button" className="icon-button" aria-expanded={showLegacy} onClick={() => setShowLegacy((value) => !value)}>{showLegacy ? "Hide older results" : "Show older results"}</button>}>
-        <LegacyNotice>These bet results come from the retired simulation pipeline. They are kept for reference and do not include the current model&apos;s bets.</LegacyNotice>
-      </Section>
-      {showLegacy && <LegacyBetResults />}
     </>
   );
 }

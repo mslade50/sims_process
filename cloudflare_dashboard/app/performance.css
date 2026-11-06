@@ -25,3 +25,5 @@
 @media (max-width: 820px) {  .ds-section .icon-button { min-height: 44px; } }
 .sc-unit { display: block; color: var(--muted); font-size: var(--fs-small); font-weight: 400; }
 .sc-gap { background-image: linear-gradient(var(--line-strong), var(--line-strong)); background-size: 1px 14px; background-repeat: no-repeat; background-position: 50% 50%; }
+/* The scorecard reserves a screen while it loads, so the older-results section below it is never on screen to be pushed down. */
+.sc-loading{min-height:100svh}

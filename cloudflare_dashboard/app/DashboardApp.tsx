@@ -46,7 +46,7 @@ const DistributionView = lazy(() => import("./DistributionView").then((m) => ({ 
 const SgDistributionsView = lazy(() => import("./views").then((m) => ({ default: m.SgDistributionsView })));
 const ScoringView = lazy(() => import("./ScoringView").then((m) => ({ default: m.ScoringView })));
 const HistoryView = lazy(() => import("./views").then((m) => ({ default: m.HistoryView })));
-const PerformanceView = lazy(() => import("./views").then((m) => ({ default: m.PerformanceView })));
+const PerformanceView = lazy(() => import("./PerformanceView").then((m) => ({ default: m.PerformanceView })));
 const DiagnosticsView = lazy(() => import("./views").then((m) => ({ default: m.DiagnosticsView })));
 const WeatherEffectsView = lazy(() => import("./WeatherEffectsView").then((m) => ({ default: m.WeatherEffectsView })));
 const WeatherEditsView = lazy(() => import("./WeatherEditsView").then((m) => ({ default: m.WeatherEditsView })));
@@ -68,7 +68,7 @@ const loaders: Record<string, () => Promise<unknown>> = {
   "sg-distributions": () => import("./views"),
   "round-scores": () => import("./ScoringView"),
   "history": () => import("./views"),
-  "performance": () => import("./views"),
+  "performance": () => import("./PerformanceView"),
   "diagnostics": () => import("./views"),
   "weather-effects": () => import("./WeatherEffectsView"),
   "weather-edits": () => import("./WeatherEditsView"),

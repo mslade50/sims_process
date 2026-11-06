@@ -23,12 +23,13 @@ type IndexEvent = {
 };
 
 /** Which page this is, or null when nothing is inlined for it. `/` is This week. */
-export function firstScreenPage(pathname: string): "this-week" | "why-priced" | "players" | "weather" | null {
+export function firstScreenPage(pathname: string): "this-week" | "why-priced" | "players" | "weather" | "scoring" | null {
   const key = pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
   if (key === "" || key === "this-week") return "this-week";
   if (key === "why-priced") return "why-priced";
   if (key === "players") return "players";
   if (key === "weather-effects") return "weather";
+  if (key === "round-scores") return "scoring";
   return null;
 }
 
@@ -72,6 +73,17 @@ export function weatherPaths(e: IndexEvent | null): string[] {
   const w = e as IndexEvent & { weather_brief_key?: string; weather_key?: string };
   const doc = w.weather_key || `golfprice/weather/${e.event_uid.replace(/:/g, "_")}/latest.json`;
   return [w.weather_brief_key, doc].filter((k): k is string => typeof k === "string" && /^[A-Za-z0-9_./:=-]+$/.test(k) && !k.includes("..")).map((k) => `/api/${k}`);
+}
+
+/** Scoring: the newest checkpoint document (checkpoints() in app/distributions-rules.ts: validated, a week run or after round 1+, newest as_of, a live run after a week run at a tie) and the event's weather document. */
+export function scoringPaths(e: IndexEvent | null): string[] {
+  if (!e || !e.event_uid) return [];
+  const runs = (e.distribution_runs ?? []).filter((r) => r && r.validated && typeof r.key === "string" && r.key && (r.kind === "week" || ((r as { after_round?: number }).after_round ?? 0) >= 1));
+  runs.sort((a, b) => String(a.as_of ?? "").localeCompare(String(b.as_of ?? "")) || Number(a.kind === "live") - Number(b.kind === "live"));
+  const run = runs.length ? runs[runs.length - 1].key : e.explain_key;
+  const w = e as IndexEvent & { weather_key?: string };
+  const doc = w.weather_key || `golfprice/weather/${e.event_uid.replace(/:/g, "_")}/latest.json`;
+  return [run, doc].filter((k): k is string => typeof k === "string" && /^[A-Za-z0-9_./:=-]+$/.test(k) && !k.includes("..")).map((k) => `/api/${k}`);
 }
 
 /** The profile batch a one-golfer slice names (mirrors parseSearchIndex + profileKey in the app). */
@@ -119,7 +131,7 @@ export async function collectFirstScreen(url: URL, fetchApi: FetchApi): Promise<
     if (!indexText) return out;
     out[INDEX_PATH] = indexText;
     const picked = defaultEvent(JSON.parse(indexText), url.searchParams.get("e"));
-    const paths = page === "weather" ? weatherPaths(picked) : explainPaths(page, picked, url.searchParams.get("v"));
+    const paths = page === "weather" ? weatherPaths(picked) : page === "scoring" ? scoringPaths(picked) : explainPaths(page, picked, url.searchParams.get("v"));
     const bodies = await Promise.all(paths.map((p) => text(fetchApi, p)));
     paths.forEach((p, i) => { const b = bodies[i]; if (b) out[p] = b; });
   } catch { /* inline less; the page fetches the rest itself */ }
