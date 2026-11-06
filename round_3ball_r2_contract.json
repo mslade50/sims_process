@@ -2,17 +2,17 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "published_round_3ball",
-  "generated_at": "2026-11-06 12:46:00 UTC",
+  "generated_at": "2026-11-06 13:04:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:457:2026-11-05/R0m_20261106T124600Z",
+      "run_id": "pga:457:2026-11-05/R0m_20261106T130400Z",
       "model_version": "B8+v2.6 in-play",
       "after_round": 0,
-      "run_manifest_sha256": "8fe09803d49ad7ce12b69e46e8b90711d9da025f41c26ce7f9a2300575f0cd26",
+      "run_manifest_sha256": "b0e82ff86e89490956ee1b9ce79a66f388345a477a6c9ee104f4c091ba5f993d",
       "base_run_as_of": "2026-11-05 10:30:00 UTC"
     },
     "event": {
@@ -21,8 +21,8 @@
       "round": 2
     },
     "source": {
-      "generated_at": "2026-11-06 12:46:00 UTC",
-      "root_generated_at": "2026-11-06 12:46:00 UTC"
+      "generated_at": "2026-11-06 13:04:00 UTC",
+      "root_generated_at": "2026-11-06 13:04:00 UTC"
     },
     "simulation": {
       "num_players": 120,
@@ -40,22 +40,22 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-11-06 12:46:00 UTC"
+      "at": "2026-11-06 13:04:00 UTC"
     },
     "checks": {
       "passed": true,
       "n_checks": 13
     },
-    "manifest_sha256": "6c2ac0ff86a8cd858dc5e9938e1c8cf6f25aea41bd170b804da5572aec2b593c"
+    "manifest_sha256": "b9ccb195130e5a104048a22be7baa83183a90c29ff930cd64fbd12c5b277bc8e"
   },
   "files": {
     "threeball_meta": {
       "path": "round_3ball_r2_meta.json",
-      "sha256": "8bafcd133b97e8965a0f55ad9b0977511a9e3b4e0d1e733de6e7297b5a2529f3"
+      "sha256": "be3b735d348c1837eb27302b04e7a181ab9408f98a6a535373c8536d7f4f6ddc"
     },
     "threeball_parquet": {
       "path": "round_3ball_r2.parquet",
-      "sha256": "47a42442e6e9f8d314ddc42e1d03a6a890b321a9be77b79997acdf8c03f17cf5"
+      "sha256": "2fe303555d1a0a302a4ba90611c38c88f5ccfb7d7f344bb23ddc7bf53b09dd03"
     }
   },
   "extra": {
@@ -323,5 +323,5 @@
       "field_player_set_sha256": "0e49858a2fb38979d2a87f16bb48f4452ef8894045b8c17efbca7db8e9239204"
     }
   },
-  "manifest_sha256": "4408a6ac199c4f2ae0f4df0891a2a2d8b6f4bbe5401919608c52cb3419f12df0"
+  "manifest_sha256": "9e2426aefea7a0c3e6f7b24411e1dc11a47553c3fef6a3b56cb4a1a1a9303294"
 }
