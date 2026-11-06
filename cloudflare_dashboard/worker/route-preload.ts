@@ -26,6 +26,12 @@ export function stylesheetTagsFor(files: readonly string[] | undefined): string 
   return (files ?? []).filter((f) => /^\/_next\/static\/css\/[A-Za-z0-9._-]+\.css$/.test(f)).slice(0, 4).map((f) => `<link rel="stylesheet" href="${f}">`).join("");
 }
 
+/** The framework marks the browser entry's modulepreload `fetchPriority="low"`, so on a slow link it queues behind every other chunk and hydration (the LCP of every route)
+ *  waits for it. Dropping the hint makes it a normal-priority module fetch like the chunks it needs. Markup only; the same file is loaded either way. */
+export function raiseEntryPriority(head: string): string {
+  return head.replace(/(<link rel="modulepreload") fetchPriority="low"/g, "$1");
+}
+
 /** Streams the HTML through, inserting `tags` before the first </head>. Falls back to the untouched stream when none is seen in the first 64 KB. */
 export function injectBeforeHeadEnd(body: ReadableStream<Uint8Array>, tags: string): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
@@ -37,7 +43,7 @@ export function injectBeforeHeadEnd(body: ReadableStream<Uint8Array>, tags: stri
       if (done) { controller.enqueue(chunk); return; }
       pending += decoder.decode(chunk, { stream: true });
       const at = pending.indexOf("</head>");
-      if (at >= 0) { controller.enqueue(encoder.encode(pending.slice(0, at) + tags + pending.slice(at))); pending = ""; done = true; }
+      if (at >= 0) { controller.enqueue(encoder.encode(raiseEntryPriority(pending.slice(0, at)) + tags + pending.slice(at))); pending = ""; done = true; }
       else if (pending.length > 65536) { controller.enqueue(encoder.encode(pending)); pending = ""; done = true; }
     },
     flush(controller) { if (pending) controller.enqueue(encoder.encode(pending)); },
@@ -69,11 +75,11 @@ export async function withViewPreload(request: Request, response: Response, asse
     const table = await loadRoutes(assets, url.origin);
     const link = linkHeaderFor(table?.[key]);
     const tags = stylesheetTagsFor(table?.[key]);
-    if ((!link && !tags) || !response.body) return response;
+    if (!response.body) return response;
     const headers = new Headers(response.headers);
-    if (tags) headers.delete("content-length");
+    headers.delete("content-length");
     if (link) { const existing = headers.get("link"); headers.set("link", existing ? `${existing}, ${link}` : link); }
-    return new Response(tags ? injectBeforeHeadEnd(response.body, tags) : response.body, { status: response.status, statusText: response.statusText, headers });
+    return new Response(injectBeforeHeadEnd(response.body, tags), { status: response.status, statusText: response.statusText, headers });
   } catch {
     return response;
   }

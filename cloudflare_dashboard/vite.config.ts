@@ -44,6 +44,34 @@ function cleanStaleBuildOutput(rootDir: string) {
   }
 }
 
+/**
+ * Round 7: the browser entry used to pull 30 tiny chunks (one per lucide icon, vinext header/hash helpers, the shell's rule files).
+ * On the phone profile (150 ms round trip) the requests alone queue for about a second before hydration, which is the LCP of every route.
+ * One "shell" chunk holds exactly the modules the entry and DashboardApp import statically; lazy views still import from it.
+ * vinext sets the client code-splitting groups itself, so this adds one group in front of them after the config is resolved. Build-only, client-only.
+ */
+function mergeShellChunks(): Plugin {
+  let done = false;
+  return {
+    name: "merge-shell-chunks",
+    apply: "build",
+    enforce: "post",
+    configResolved(config) {
+      if (done) return;
+      const output = (config.environments?.client?.build as { rolldownOptions?: { output?: { codeSplitting?: { groups?: unknown[] } } } } | undefined)?.rolldownOptions?.output;
+      const groups = output?.codeSplitting?.groups;
+      if (!Array.isArray(groups)) return;
+      done = true;
+      groups.unshift({
+        name: "shell",
+        priority: 50,
+        // Only what the entry already imports statically (the tiny vinext helpers, five lucide icons, the shell's own modules). Anything a view alone needs stays out, so the shell does not grow.
+        test: /(?:node_modules\/(?:lucide-react\/dist\/esm\/(?:Icon|createLucideIcon|defaultAttributes|shared\/.*|icons\/(?:chevron-right|circle-gauge|cloud-sun|info|search|sliders-horizontal|users|x))\.js|vinext\/dist\/(?:server\/(?:app-elements|app-rsc-cache-busting|app-rsc-render-mode|headers)|shims\/(?:headers|layout-segment-context|navigation-errors)|utils\/(?:deployment-id|hash|protocol-headers|record))\.js))|(?:\/app\/(?:ShellParts|shell-rules|freshness-rules|ui-rules|ui|lib|data|event-param|viewer)\.tsx?$)/,
+      });
+    },
+  };
+}
+
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
@@ -87,6 +115,7 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       vinext(),
+      mergeShellChunks(),
       ...(!localResearchPreview ? [sites()] : []),
       ...(!localResearchPreview && process.env.PACKAGE_GOLFPRICE_STATIC !== "1" ? [excludePackagedGolfprice()] : []),
       ...(!useNodePreview ? [cloudflare({

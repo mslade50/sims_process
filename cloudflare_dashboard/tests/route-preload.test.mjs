@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { injectBeforeHeadEnd, linkHeaderFor, routeKeyFor, stylesheetTagsFor, withViewPreload } from "../worker/route-preload.ts";
+import { injectBeforeHeadEnd, linkHeaderFor, raiseEntryPriority, routeKeyFor, stylesheetTagsFor, withViewPreload } from "../worker/route-preload.ts";
 import { buildRouteChunks } from "../scripts/route-chunks.mjs";
 
 test("route keys: root is This week; nested, dotted and API paths get no hint", () => {
@@ -93,7 +93,7 @@ test("first screen: collects index + slim doc; a failed read inlines less, never
   assert.deepEqual(none, {});
   const slice = { keys: ["g/batch_1.json"], key: [0] };
   const pl = await collectFirstScreen(new URL("https://x.test/players?player=10091"), async (p) => p.endsWith("index.json") ? ok("{}") : p.includes("search-index") ? ok(JSON.stringify(slice)) : ok("{\"p\":1}"));
-  assert.deepEqual(Object.keys(pl).sort(), ["/api/golfprice/index.json", "/api/golfprice/player_profiles/g/batch_1.json", "/api/golfprice/player_profiles/golfer/search-index.json?id=10091"]);
+  assert.deepEqual(Object.keys(pl).sort(), ["/api/golfprice/index.json", "/api/golfprice/player_profiles/fields.json", "/api/golfprice/player_profiles/g/batch_1.json", "/api/golfprice/player_profiles/golfer/search-index.json?id=10091"]);
   assert.deepEqual(await collectFirstScreen(new URL("https://x.test/players?player=bad<"), api), {});
 });
 
@@ -171,4 +171,9 @@ test("round 6: Distributions inlines only the checkpoint document; Inputs inline
     const out = await collectFirstScreen(new URL("https://x.test" + p), async (path) => new Response(path.endsWith("index.json") ? JSON.stringify({ events: [ev] }) : "{}", { status: 200 }));
     assert.deepEqual(Object.keys(out), ["/api/golfprice/index.json", ...paths], p);
   }
+});
+
+test("the browser entry's modulepreload loses the framework's low-priority hint; other links are untouched", () => {
+  const head = '<link rel="modulepreload" fetchPriority="low" href="/_next/static/chunks/index-a.js"/><link rel="preload" href="/x" as="fetch" fetchPriority="high"/>';
+  assert.equal(raiseEntryPriority(head), '<link rel="modulepreload" href="/_next/static/chunks/index-a.js"/><link rel="preload" href="/x" as="fetch" fetchPriority="high"/>');
 });

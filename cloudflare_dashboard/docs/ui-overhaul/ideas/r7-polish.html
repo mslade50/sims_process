@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8"><title>R7 polish: if unlimited</title><style>body{font:14px system-ui;max-width:720px;margin:2em auto;padding:0 1em}h1{font-size:18px}li{margin:.6em 0}</style>
+<h1>R7 polish: if unlimited</h1><ol>
+<li><b>One shared "since run" phrase helper.</b> Hypothesis: desktop "What changed", phone leaderboard and Inputs run picker drift in wording. Build: a single helper (run label + ET time + gap) used by all. Data: since_last/baseline as_of. Test: snapshot tests of the phrase. Why: consistent trust cues.</li>
+<li><b>Lint for surname-first names.</b> Hypothesis: raw p.name leaks into new views. Build: a test scanning tsx for rendering of .name without playerDisplayName. Test: run in CI-less local suite. Why: prevents regressions.</li>
+<li><b>Spacing audit script.</b> Hypothesis: stacked margins (nav margin plus section margin-top) create gaps. Build: ui-check rule flagging gaps above 40px between sibling blocks. Why: finds the next weather-style gap automatically.</li>
+<li><b>Phone leaderboard count in copy.</b> Phone shows 8 rows, desktop 12; copy could say which, and offer "show all".</li></ol>

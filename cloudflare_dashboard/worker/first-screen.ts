@@ -15,6 +15,7 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
 
 export const INDEX_PATH = "/api/golfprice/index.json";
 const PLAYER_ONE = "/api/golfprice/player_profiles/golfer/search-index.json";
+const PLAYER_FIELDS = "/api/golfprice/player_profiles/fields.json";
 const PLAYER_ID = /^(?:[1-9][0-9]*|historical-[a-z0-9]+)$/;
 
 type IndexEvent = {
@@ -131,8 +132,10 @@ export async function collectFirstScreen(url: URL, fetchApi: FetchApi): Promise<
       const pid = url.searchParams.get("player");
       if (!pid || !PLAYER_ID.test(pid) || url.searchParams.get("generation")) return out;
       const slicePath = `${PLAYER_ONE}?id=${pid}`;
-      const [indexText, sliceText] = await Promise.all([text(fetchApi, INDEX_PATH), text(fetchApi, slicePath)]);
+      // fields.json (which golfers play which event, ~1 KB) is the third request the golfer page makes before it can settle its "this week" card.
+      const [indexText, sliceText, fieldsText] = await Promise.all([text(fetchApi, INDEX_PATH), text(fetchApi, slicePath), text(fetchApi, PLAYER_FIELDS)]);
       if (indexText) out[INDEX_PATH] = indexText;
+      if (fieldsText) out[PLAYER_FIELDS] = fieldsText;
       if (!sliceText) return out;
       out[slicePath] = sliceText;
       const batch = profileBatchPath(JSON.parse(sliceText));

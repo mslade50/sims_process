@@ -1,6 +1,7 @@
 /* Weather page. Tokens only; helps/easier = var(--positive), hurts/harder = var(--negative). Sections follow the design-system layout. */
 .wb-body{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0}
 .wb-body > .ds-section{margin-top:var(--sp-8)}
+.wb-body > .on-this-page + .ds-section{margin-top:0}
 .wb-muted{color:var(--muted);font-size:var(--fs-small);margin:0}
 .wb-faint{color:var(--muted);font-weight:400;opacity:.85}
 .wb-lead{margin:0 0 12px;font-size:var(--fs-body);line-height:1.55;max-width:78ch}
@@ -165,7 +166,7 @@
 .wb-mini li.bad b{color:var(--negative,var(--warning))}
 @media(max-width:720px){
   .wb-mini{display:grid}
-  .wb-headline-top small{font-size:11px;min-width:0;flex:1 1 0}
+  .wb-headline-top small{font-size:11px;min-width:0;flex:1 1 100%}
   .wb-fact{font-size:var(--fs-small)}
   .wb-body>.wb-headline+*{margin-top:0}
 }

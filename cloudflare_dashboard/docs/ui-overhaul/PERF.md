@@ -234,3 +234,31 @@ What changed
 Still short
 - Phone LCP is 2.5-2.75 s on every route except Inputs/Why priced: bandwidth-bound shell (framework 55 KB + vinext client 44 KB + app shell; hydration completes at about 2.0-2.2 s). Reaching 2.5 s everywhere needs a smaller shell outside the files owned this round.
 - This week longest task 175 ms (first board layout) and golfer 168 ms stay under 200 ms.
+
+# Round 7 (R7-perf): phone LCP under 2.35 s on every core route (2026-11-06)
+
+Raw runs: `dist-visual/R7-perf/before.json`, `after.json`. Phone = 375x812, 4x CPU, 1.6 Mbps / 150 ms RTT; desktop 1280x900; median of 3.
+
+| Route | LCP before | LCP after | Phone CLS | Longest task before / after | JS before / after |
+|---|---|---|---|---|---|
+| This week | 2580 | 2060 | 0.112* (was 0.005) | 166 / 119 | 219 / 204 KB |
+| One golfer (10091) | 2768 | 2324 | 0.006 | 164 / 173 | 239 / 225 KB |
+| Scoring | 2788 | 2292 | 0.001 | 155 / 158 | 321 / 306 KB |
+| Why priced | 2616 | 2072 | 0.000 | 74 / 71 | 213 / 198 KB |
+| Distributions | 2632 | 2076 | 0.000 | 163 / 131 | 296 / 282 KB |
+| Inputs | 2480 | 2032 | 0.010 | 143 / 171 | 296 / 282 KB |
+
+*The This week CLS is not from this round: it is `app/ExplainViews.tsx` (other agent, uncommitted): the Leaderboard purpose line was removed and the muted paragraph under it got longer, so when Inter swaps in at about 3.1 s the paragraph wraps differently and the list moves 18 px (0.107, source `div.pl.pl-norail`). Fix there: reserve two lines for that paragraph (`min-height`) or keep it on the system face until the swap. Desktop CLS 0.011-0.030.
+
+What was on the critical path (golfer waterfall): the HTML is the shell plus a skeleton, every LCP element (hero badge, first paragraph) is drawn by the lazy view after hydration. Hydration waited for (1) the browser entry `index-*.js`, which the framework preloads with `fetchPriority="low"`, so on the throttled link it queued behind every other chunk and finished at 2.3 s, and (2) 30 tiny chunks (one per lucide icon, vinext helpers, the shell's rule files), each a round trip on the 6-connection preview link (the last finished at 2.1 s).
+
+What changed
+- `worker/route-preload.ts` `raiseEntryPriority`: drops `fetchPriority="low"` from the entry's modulepreload in the HTML head (markup only, same file). Golfer 2768 -> 2600, This week 2580 -> 2440.
+- `vite.config.ts` `mergeShellChunks`: one extra client code-splitting group "shell" holding exactly what the entry already imported statically (tiny vinext helpers, 5 lucide icons, ShellParts, shell-rules, freshness-rules, ui-rules, ui, lib, data, event-param, viewer). The shell is now 5 files instead of 31 and 4 KB smaller (139.8 KB gz measured by `scripts/measure-bundle.mjs`, was 146.4). A first try with a wider pattern pulled in 9 KB of view-only code and failed the budget; the whitelist is deliberate. This took another 0.3-0.4 s off every route.
+- `worker/first-screen.ts`: the golfer page also inlines `player_profiles/fields.json` (the third request it made before settling the "this week" card).
+- Budgets tightened: shell 148 -> 141 KB gz, This week + view ratchet 201.5 -> 195 KB.
+- Tests: `tests/route-preload.test.mjs` (priority hint, fields.json inlined). `npm test`: 829 tests, 828 pass, 1 expected-fail todo (the 150 KB This week target).
+
+Still short
+- Golfer 2.32 s: hydration finishes at about 1.9 s (shell 134 KB gz over 1.6 Mbps is the floor), then the lazy view draws. Next: split the below-the-fold golfer sections (PlayerDeepDive, FilteredPlayerShapes, PlayerDispersion, PlayingStyle: about 25 KB gz of the 56 KB view) behind `lazy()` with height-reserving slots.
+- Longest task 173 ms (golfer) / 158 ms (Scoring) / 171 ms (Inputs) are under 200 but the first layout of the page.

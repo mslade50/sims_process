@@ -425,7 +425,7 @@ function PlayerSearch({ players, onPick }: { players: PlayerChoice[]; onPick: (d
           {matches.map((choice, index) => (
             <li key={choice.dg_id} role="option" aria-selected={index === highlight}>
               <button type="button" className={index === highlight ? "active" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => pick(choice)} onMouseEnter={() => setHighlight(index)}>
-                {choice.name}
+                {playerDisplayName(choice.name)}
               </button>
             </li>
           ))}
@@ -479,7 +479,7 @@ function PlayerDetail({ player, onAdjust, fmtTee, playedRounds }: { player: Obj;
     <Panel
       className="player-detail"
       eyebrow="Player detail"
-      title={String(player.name ?? "")}
+      title={playerDisplayName(String(player.name ?? ""))}
       actions={
         <>
           {onAdjust && <button type="button" className="inputs-button" onClick={() => onAdjust(Number(player.dg_id))}>Adjust this player</button>}
@@ -636,7 +636,7 @@ function PlayersTab({ doc, onAdjust, playedRounds }: { doc: Obj; onAdjust?: (dgI
             if ((column === "mu_untouched" && !differs(row.mu, value)) || (column === "sd_untouched" && !differs(row.sd, value))) return "";
             if (column === "name") {
               const rounds = num(row.prior_rounds);
-              return rounds !== null && rounds < THIN_ROUNDS ? <>{String(value)} <span className="inputs-muted" title={GLOSSARY.thin_data} style={{ fontStyle: "italic" }}>(thin data)</span></> : undefined;
+              return rounds !== null && rounds < THIN_ROUNDS ? <>{playerDisplayName(String(value))} <span className="inputs-muted" title={GLOSSARY.thin_data} style={{ fontStyle: "italic" }}>(thin data)</span></> : playerDisplayName(String(value));
             }
             if (column.startsWith("prob_")) return pct(value);
             if (column.startsWith("chl_") || SIGNED_COLUMNS.has(column)) return num(value) === null ? undefined : signed(value);
@@ -1383,7 +1383,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed, appliedIds }: { 
 
   const spec = specFor(scope, field);
   const fieldsForScope = specs.filter((s) => s.scope === scope);
-  const playerName = useMemo(() => new Map(players.map((p) => [String(p.dg_id), String(p.name ?? "")])), [players]);
+  const playerName = useMemo(() => new Map(players.map((p) => [String(p.dg_id), playerDisplayName(String(p.name ?? ""))])), [players]);
   const effectiveCut = obj(eventObj.cut_rule);
   const playerOptions = useMemo(() => {
     const all = players.flatMap((p) => (num(p.dg_id) === null ? [] : [{ name: String(p.name ?? ""), dg_id: num(p.dg_id) as number }]));
@@ -1502,7 +1502,7 @@ function AdjustTab({ doc, eventUid, presetPlayer, onPresetUsed, appliedIds }: { 
                   <span>Find a player</span>
                   <input type="search" autoComplete="off" value={playerFilter} onChange={(e) => setPlayerFilter(e.target.value)} placeholder="Type part of a name…" />
                 </label>
-                <Select label="Player" value={target} onChange={setTarget} options={[{ value: "", label: "Choose a player…" }, ...playerOptions.map((c) => ({ value: String(c.dg_id), label: c.name }))]} />
+                <Select label="Player" value={target} onChange={setTarget} options={[{ value: "", label: "Choose a player…" }, ...playerOptions.map((c) => ({ value: String(c.dg_id), label: playerDisplayName(c.name) }))]} />
               </>
             )}
           </div>

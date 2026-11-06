@@ -308,7 +308,7 @@ function ThisWeek({ doc, event, latest, market, setMarket, openPlayer }: Shell) 
   const phone = usePhone();
   const [hasChanged, setHasChanged] = useState(false);
   const boardSection = live ? (
-    <Section id="board" title="Leaderboard" purpose="Top 12 by win chance now, with the move since the last run (arrow and points).">
+    <Section id="board" title="Leaderboard">
       <LiveSection doc={doc} openPlayer={openPlayer} />
     </Section>
   ) : (
@@ -861,7 +861,12 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
   const withCon = doc.players.filter((p) => Math.abs(p.live?.d_contention_since_last ?? 0) >= 0.02).length;
   const hasCon = lb.some((p) => p.live?.contention !== null && p.live?.contention !== undefined && Math.abs(p.live.contention) > 0.0005);
   const hasB8 = lb.some((p) => p.live?.b8_delta !== null && p.live?.b8_delta !== undefined);
-  const prev = doc.since_last ? (doc.since_last.prev_after_round !== null && doc.since_last.prev_after_round !== undefined ? `the run after round ${doc.since_last.prev_after_round}` : "the pre-tournament prices") : null;
+  const sl = doc.since_last;
+  const prevMs = sl?.prev_as_of ? Date.parse(sl.prev_as_of) : NaN;
+  const curMs = doc.as_of ? Date.parse(doc.as_of) : NaN;
+  const prevSpan = Number.isFinite(prevMs) && Number.isFinite(curMs) && curMs > prevMs ? spanText(curMs - prevMs) : "";
+  const prevWhat = sl ? (sl.prev_after_round !== null && sl.prev_after_round !== undefined ? `the run after round ${sl.prev_after_round}` : "the pre-tournament prices") : null;
+  const prev = prevWhat ? `${prevWhat}${Number.isFinite(prevMs) ? ` (${etTime(sl?.prev_as_of ?? "")}${prevSpan ? `, ${prevSpan} earlier` : ""})` : ""}` : null;
   const rows: PriceRowData[] = lb.map((p) => {
     const d = (p.live?.since_last.win ?? 0) * 100;
     return {
@@ -879,7 +884,7 @@ function LiveSection({ doc, openPlayer }: { doc: ExplainDoc; openPlayer: (id: nu
   });
   return (
     <div className="ex-sub">
-      <p className="ex-muted">After round {doc.after_round}{prev ? `; changes compared with ${prev}` : ""}. {withB8 > 0 ? `Form this week changed the prices of ${withB8} players` : "No player price moved much on form this week"}{withCon > 0 ? `, and the title race changed ${withCon}` : ""}.</p>
+      <p className="ex-muted ex-lb-intro">Ranked by win chance after round {doc.after_round}{prev ? `. Arrows show the move since ${prev}` : ""}. {withB8 > 0 ? `Form this week changed the prices of ${withB8} players` : "No player price moved much on form this week"}{withCon > 0 ? `, and the title race changed ${withCon}` : ""}.</p>
       <PriceList rows={rows} limit={phone ? 8 : 12} range={6} label="Leaderboard" onOpen={openPlayer} heads={["Pos / player", "Score and chances", "", ""]} />
     </div>
   );
