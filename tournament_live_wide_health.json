@@ -2,32 +2,32 @@
   "schema_version": 1,
   "gate_version": "golfprice.board_seal/1",
   "kind": "live_tournament_tape",
-  "generated_at": "2026-11-06 14:45:00 UTC",
+  "generated_at": "2026-11-07 15:00:00 UTC",
   "simulation_manifest": {
     "schema_version": 1,
     "gate_version": "golfprice.board_seal/1",
     "kind": "golfprice_live_simulation",
     "producer": {
       "name": "golfprice",
-      "run_id": "pga:457:2026-11-05/R1_20261106T144500Z",
-      "model_version": "B8+v2.6 in-play",
-      "after_round": 1,
-      "run_manifest_sha256": "f69c9c270e99a4e56e0a6887d4463d0c5b37d1f0f8d3ce760be49b199606b6f2",
+      "run_id": "pga:457:2026-11-05/R2_20261107T150000Z",
+      "model_version": "v2.4+v2.6 in-play",
+      "after_round": 2,
+      "run_manifest_sha256": "1b8455b744a55046d2b8b65d0b9dd36efe81ae5df6fdfb2403f40c91b33c5e1f",
       "base_run_as_of": "2026-11-05 10:30:00 UTC"
     },
     "event": {
       "event_id": "457",
       "tourney": "wide",
-      "round": 2
+      "round": 3
     },
     "source": {
-      "generated_at": "2026-11-06 14:45:00 UTC",
-      "root_generated_at": "2026-11-06 14:45:00 UTC"
+      "generated_at": "2026-11-07 15:00:00 UTC",
+      "root_generated_at": "2026-11-07 15:00:00 UTC"
     },
     "simulation": {
-      "num_players": 120,
+      "num_players": 75,
       "num_sims": 150000,
-      "player_set_sha256": "0e49858a2fb38979d2a87f16bb48f4452ef8894045b8c17efbca7db8e9239204",
+      "player_set_sha256": "23950e01d5e222b961ea1ad33d344306bd2e62647ac245276a5f817983f62dc4",
       "seeds": [
         20250929,
         20250930,
@@ -40,39 +40,39 @@
       "status": "approved",
       "by": "golfprice.board_seal",
       "basis": "live checks.json has no blocking failure; tapes, field, pair and round coverage verified",
-      "at": "2026-11-06 14:45:00 UTC"
+      "at": "2026-11-07 15:00:00 UTC"
     },
     "checks": {
       "passed": true,
-      "n_checks": 8
+      "n_checks": 10
     },
-    "manifest_sha256": "25a580629a18d3c82eaf105afe6a5c236c995483a15d3d33f12f0c9aa354cac5"
+    "manifest_sha256": "d4f145802cc74a480e1a177f530f0523b76892f951cd6cda4f3d878b74d4a4a7"
   },
   "files": {
     "final_scores": {
       "path": "final_scores_live_wide.npy",
-      "sha256": "43a229dbdb7a8e11c580e759a82802641cb73c720e26c5e9d60b593ae576e43e"
+      "sha256": "2f6a62ef0c386c4f0b5ed8b77dd38c509acb4de1aa4b4373f36dbe7a0a53fd2f"
     },
     "finish_probs": {
       "path": "simulated_probs_live.csv",
-      "sha256": "301700cefb708331ffe317585ca4496d027733e7f9388826c33cb197bf025dff"
+      "sha256": "4f74ee5e11a271825437d2c110635742aab8102aeed0605d23158ba12afc80b0"
     },
     "finish_probs_event": {
       "path": "top_finish_probs_live_wide.csv",
-      "sha256": "5d96a5401f358f5da0549b2f0ff10b6f6724f59067124c07e3cf5f30736e624d"
+      "sha256": "6c4c4cf5cc116d26a0360f90462d76c7eef31af78fda89ba409507bda1955418"
     },
     "made_cut": {
       "path": "made_cut_live_wide.npy",
-      "sha256": "0f47cda5f858cee1b048d63dd0bee152209b427c7a2aca1531642eeb8bd86d3d"
+      "sha256": "b0a803250b9eeed79425e12b89245159a711f4b034dc41cc787e4120b4f99471"
     },
     "player_names": {
       "path": "player_names_live_wide.json",
-      "sha256": "fd7e7c78dbd94ac562335db855a9c640bbf788409192def7423acb7adfd6579f"
+      "sha256": "07ce7f1445695b3bdaf1e35dbd3dbb81cd600e0c80b0fafe4b7436c4ec20e729"
     }
   },
   "extra": {
-    "num_players": 120,
+    "num_players": 75,
     "num_sims": 150000
   },
-  "manifest_sha256": "02b07604e26401a45ba07f2acca5b248f731dd59699b2c1b779b276e55097c53"
+  "manifest_sha256": "ac5880f985d3db2c6ca244acf31bde9ce96ad5273a23898e968f78049904cdfc"
 }
